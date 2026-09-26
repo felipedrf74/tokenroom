@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 2.1.0 — unreleased
+
+Tokenroom for Mac 2.1.0, and the iPhone and Apple Watch app, build 3.
 
 ### iPhone
 - The Usage tab is a grid of tiles, one per plan: the weekly (or monthly) limit as a ring and the 5-hour limit as a bar, each with the even-pace mark and when it resets, or when it runs out if that comes first. Balances show what's left.

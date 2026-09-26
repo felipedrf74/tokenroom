@@ -10,7 +10,7 @@ What's left from the design review of September 26, 2026: the Usage tab, alerts,
 | M16 | Provider icons on every platform | Done on `tokenroom/provider-icons-m16` (Copilot and xAI API still monograms) |
 | M17 | News on iPhone: the Today edition (River as an option) | Done on `tokenroom/news-ios-m17` |
 | M18 | News on the Mac: the News window | Done on `tokenroom/news-mac-m18` |
-| M19 | Release 2.1: docs, screenshots, App Store copy, TestFlight | Last |
+| M19 | Release 2.1: docs, screenshots, App Store copy, TestFlight | Prepared on `tokenroom/release-m19`; the rest needs your accounts |
 
 ## M13 — Usage tiles (done)
 
@@ -90,8 +90,18 @@ The window's minimum size goes from 460 × 520 to 820 × 560. The popover's pill
 
 ## M19 — Release 2.1
 
-- **Docs:** `docs/app-store.md` (copy and the screenshot list still mention Next up), README images regenerated with `-TokenroomSnapshots` and the iPhone sample mode, and the CHANGELOG dated.
-- **Skill files:** the iPhone and Mac skill files updated for icons, alerts and News.
-- **Design system:** the artifact marked as implemented.
-- **CloudKit:** the new data is values inside existing fields (alert kinds, preferences in the payload), so no schema deployment is expected. Confirm in CloudKit Console before a Production build.
-- **Builds and testing:** iPhone and Watch build 3 to TestFlight. Run `TokenroomMobileTests` locally on a signed host. Walk through alerts, the Live Activity, quiet hours and the new News on devices.
+Prepared on `tokenroom/release-m19`: versions (Mac 2.1.0 build 3; iPhone and Watch build 3), the CHANGELOG heading, and the App Store copy and screenshot list. What's left needs your accounts and devices:
+
+1. **Review and merge** #14 → #15 → #16 → #17 → #18 → #19 in order (each is stacked on the one before; GitHub retargets the next to `main` as each merges).
+2. **Check on devices:**
+   - Usage tiles at large Dynamic Type and with VoiceOver.
+   - A run-out alert and a 5-hour 80% alert arriving from a Mac, and quiet hours holding the non-urgent ones.
+   - The Live Activity's pace tick.
+   - The Mac News window's sidebar selection in a real window.
+   - Provider icons in tinted and clear Home Screen modes; widgets fall back to monograms there.
+3. **CloudKit:** no schema change is expected (new alert kinds and choices are values inside existing fields). Confirm in CloudKit Console that Production matches Development before a Production build.
+4. **Mac:** `./scripts/release.sh` builds the notarized Developer ID zip. Then date the CHANGELOG heading and publish the GitHub release.
+5. **iPhone and Watch:** archive the TokenroomMobile scheme in Xcode (build 3) and upload it to TestFlight. Regenerate the App Store screenshots with the steps in `docs/app-store.md`; the list there is updated.
+6. **README images:** retake `docs/images/iphone.png` and `hero.png`. They still show Next up and monograms. The Mac popover images can come from `-TokenroomSnapshots`.
+7. **Design system:** the Tokenroom Design System artifact is marked implemented (Usage round 2: E3; News approved and built).
+8. **Waiting on owners:** GitHub's written permission for the Copilot icon, and xAI's logo kit (browser download). Add both as in `docs/provider-icons.md`.
