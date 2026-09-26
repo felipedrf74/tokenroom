@@ -10,13 +10,17 @@ enum UsageRanking {
     }
 
     static func pace(for window: RelayWindow, isStale: Bool, history: UsageHistory?, now: Date = .now) -> Pace? {
+        pace(for: window, isStale: isStale, samples: history?.points ?? [], now: now)
+    }
+
+    static func pace(for window: RelayWindow, isStale: Bool, samples: [(date: Date, used: Double)], now: Date = .now) -> Pace? {
         Pace.evaluate(
             used: window.used,
             kind: window.windowKind,
             resetsAt: window.resetsAt,
             startsAt: window.startsAt,
             windowSeconds: window.periodSec,
-            samples: history?.points ?? [],
+            samples: samples,
             measured: window.pace,
             isStale: isStale,
             now: now

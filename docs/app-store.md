@@ -61,8 +61,9 @@ ALERTS THAT DON'T NAG
 • Quiet hours hold what can wait until morning
 
 NEWS
-• New models from the labs you follow
-• Official changelogs and announcements, in one list
+• Today: a short daily paper with what's new since you last looked, a top story, and models retiring soon
+• New models from the labs you follow, with context window and prices
+• Each tool's official changelog and releases, grouped by tool, or newest first by day
 
 APPLE WATCH
 • Rings for every plan, complications, and a Smart Stack widget when a limit nears its reset

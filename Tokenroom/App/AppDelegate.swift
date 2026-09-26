@@ -9,6 +9,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var newsWindow: NSWindow?
     /// Set before Settings opens to show a tab other than the last one.
     let settingsTab = SettingsTabRequest()
+    /// Set each time News opens, to the section asked for.
+    let newsPage = NewsPageRequest()
 
     override init() {
         // Headroom 1.x settings and cache must be in place before the store reads them.
@@ -100,9 +102,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusItem?.closePopover()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
-        UserDefaults.standard.set(section.rawValue, forKey: NewsSection.defaultsKey)
+        newsPage.open(section)
         if newsWindow == nil {
-            let view = NewsWindowView(store: store) { [weak self] in
+            let view = NewsWindowView(store: store, request: newsPage) { [weak self] in
                 self?.openSettings(tab: .news)
             }
             let hosting = NSHostingController(rootView: view)

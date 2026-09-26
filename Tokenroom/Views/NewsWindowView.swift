@@ -23,20 +23,39 @@ enum NewsPage: Hashable {
     case tool(String)
 }
 
+/// The section the News window should show, set each time the popover opens it.
+@Observable
+@MainActor
+final class NewsPageRequest {
+    private(set) var section: NewsSection = .today
+    /// Counts requests, so asking again for the section last asked for still leaves a lab, a
+    /// tool, or a search the window shows now.
+    private(set) var count = 0
+
+    func open(_ section: NewsSection) {
+        self.section = section
+        count += 1
+    }
+}
+
 /// The Mac's News window: a sidebar index (Today, the kinds of news, then the labs and tools you
 /// follow, with counts) beside the page it selects. Off until turned on, since it's the one thing
 /// the Mac fetches that isn't your own usage.
 struct NewsWindowView: View {
     @Bindable var store: QuotaStore
+    var request: NewsPageRequest?
     var onOpenSettings: () -> Void
     @AppStorage(NewsSection.defaultsKey) private var savedFilter: NewsFilter = .today
     @State private var page: NewsPage?
     @State private var showsAllLabs = false
     @State private var search = ""
 
-    /// - Parameter page: where to open instead of the saved section (debug snapshots).
-    init(store: QuotaStore, onOpenSettings: @escaping () -> Void, page: NewsPage? = nil) {
+    /// - Parameters:
+    ///   - request: the section the popover asks for, followed while the window stays open.
+    ///   - page: where to open instead of the requested or saved section (debug snapshots).
+    init(store: QuotaStore, request: NewsPageRequest? = nil, onOpenSettings: @escaping () -> Void, page: NewsPage? = nil) {
         self.store = store
+        self.request = request
         self.onOpenSettings = onOpenSettings
         _page = State(initialValue: page)
     }
@@ -125,11 +144,13 @@ struct NewsWindowView: View {
             }
         }
         .onAppear {
-            if page == nil { page = .filter(savedFilter) }
+            if page == nil { page = .filter(request?.section ?? savedFilter) }
         }
-        .onChange(of: savedFilter) { _, filter in
-            // The popover's pills open the window on a section.
-            page = .filter(filter)
+        .onChange(of: request?.count) {
+            // The popover's pills and News button, while the window is open or kept after closing.
+            guard let request else { return }
+            search = ""
+            page = .filter(request.section)
         }
         .onChange(of: page) { _, page in
             if case .filter(let filter)? = page { savedFilter = filter }

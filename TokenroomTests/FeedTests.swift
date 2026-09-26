@@ -343,7 +343,9 @@ final class FeedTests: XCTestCase {
         ]
         let sources = ["blog", "news"].map { FeedSource(id: $0, name: $0, url: URL(string: "https://example.com/\($0).xml")!) }
         XCTAssertEqual(cache.announcements(from: sources).map(\.id), ["b1", "b2", "n2"], "The newest copy of a shared link; items without links all stay")
+        XCTAssertEqual(cache.announcements(from: sources).map(\.alsoIn), ["news", nil, nil], "The kept copy notes the feed folded into it")
         XCTAssertEqual(cache.announcements(from: [sources[1]]).map(\.id), ["n1", "n2"], "Alone, a feed keeps its copy")
+        XCTAssertNil(cache.announcements(from: [sources[1]]).first?.alsoIn)
     }
 
     func testTitlesOnlyFoldWithinAProduct() {
@@ -356,6 +358,7 @@ final class FeedTests: XCTestCase {
         ]
         let shown = cache.announcements(from: FeedSource.catalog)
         XCTAssertEqual(shown.map(\.id), ["z1", "c1", "d1"], "Two labs' \"Release notes\" are two posts; two products linking to one page are one")
+        XCTAssertEqual(shown.map(\.alsoIn), [nil, "GitHub Copilot", nil])
         XCTAssertEqual(shown.last?.published, utc(2026, 9, 20), "Each dated by its own feed")
     }
 
@@ -381,6 +384,11 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(shown.map(\.displayTitle), ["Claude Code v2.1.283", "Claude Code 2.1.282"], "2.1.282 is in both feeds and shows once; 2.1.283 isn't in the changelog yet")
         XCTAssertEqual(Set(shown.map(\.source)), ["Claude Code"], "Both read as Claude Code")
         XCTAssertEqual(shown.last?.published, utc(2026, 9, 24, 18), "Dated when the first copy appeared, so the second doesn't make it new again")
+        XCTAssertEqual(shown.map(\.alsoIn), [nil, "Claude Code releases"], "The changelog's copy notes the releases feed it folded")
+
+        // The releases feed's copy kept, the changelog's folded: named so it doesn't read as its own source.
+        cache.items["claude-code"] = [FeedItem(id: "c1", title: "2.1.282", link: URL(string: "https://code.claude.com/docs/en/changelog#2-1-282"), published: utc(2026, 9, 24, 12), source: "Claude Code")]
+        XCTAssertEqual(cache.announcements(from: FeedSource.catalog).last?.alsoIn, "Claude Code changelog")
     }
 
     func testEachFeedHasItsOwnSizeLimit() {

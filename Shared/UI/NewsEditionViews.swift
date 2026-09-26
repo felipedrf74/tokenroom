@@ -325,6 +325,12 @@ struct ToolNewsCard: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                if let alsoIn = item.alsoIn {
+                    Text("Also in \(alsoIn)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -365,9 +371,10 @@ struct RetiringModelRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(release.shortName)
                     .font(.headline)
-                Text("\(release.vendorName) · ") + Text(days == 1 ? "Retires tomorrow" : "Retires in \(days) days")
+                let retires = Text(days == 1 ? "Retires tomorrow" : "Retires in \(days) days")
                     .foregroundStyle(soon ? TokenroomTokens.accentText : .secondary)
                     .fontWeight(soon ? .medium : .regular)
+                Text("\(release.vendorName) · \(retires)")
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -408,6 +415,11 @@ struct RiverRow: View {
                     .font(.system(.body, design: .serif, weight: .semibold))
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
+                if let alsoIn = item.alsoIn {
+                    Text("Also in \(alsoIn)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer(minLength: 0)
         }

@@ -29,27 +29,40 @@ struct NewsCache: Codable, Equatable, Sendable {
 
     /// Announcements from the given feeds, newest first. An entry two feeds share shows once: the
     /// newer copy, dated when the first one appeared, so it isn't new again when the second feed
-    /// catches up. Titles and versions only match within a product's own feeds (a changelog and
-    /// its GitHub releases); two products' entries fold only when they link to the same page.
+    /// catches up, and noting the other feed in `alsoIn`. Titles and versions only match within a
+    /// product's own feeds (a changelog and its GitHub releases); two products' entries fold only
+    /// when they link to the same page.
     func announcements(from sources: [FeedSource], limit: Int = 80) -> [FeedItem] {
         let products = Dictionary(sources.map { ($0.id, $0.partOf ?? $0.id) }) { first, _ in first }
+        let feeds = Dictionary(sources.map { ($0.id, $0) }) { first, _ in first }
         let newestFirst: (FeedItem, FeedItem) -> Bool = { ($0.published ?? .distantPast) > ($1.published ?? .distantPast) }
         var kept: [FeedItem] = []
+        var keptFeeds: [String] = []
         var positions: [String: Int] = [:]
-        let entries = items.flatMap { id, feed in products[id].map { product in feed.map { (item: $0, product: product) } } ?? [] }
-        for (item, product) in entries.sorted(by: { newestFirst($0.item, $1.item) }) {
+        let entries = items.flatMap { id, feed in products[id].map { product in feed.map { (item: $0, feed: id, product: product) } } ?? [] }
+        for (item, feed, product) in entries.sorted(by: { newestFirst($0.item, $1.item) }) {
             let keys = [item.link.map { "link \($0.absoluteString)" }, "title \(product) \(item.duplicateKey)"].compactMap { $0 }
             if let position = keys.lazy.compactMap({ positions[$0] }).first {
                 if let published = item.published, published < (kept[position].published ?? .distantFuture) {
                     kept[position].published = published
+                }
+                if kept[position].alsoIn == nil, feed != keptFeeds[position], let other = feeds[feed] {
+                    kept[position].alsoIn = Self.name(of: other, besides: kept[position].source)
                 }
                 keys.forEach { positions[$0] = position }
                 continue
             }
             keys.forEach { positions[$0] = kept.count }
             kept.append(item)
+            keptFeeds.append(feed)
         }
         return Array(kept.sorted(by: newestFirst).prefix(limit))
+    }
+
+    /// A feed's name as a place an entry also appeared: "Claude Code releases", or "Claude Code
+    /// changelog" beside an entry already shown under "Claude Code".
+    static func name(of feed: FeedSource, besides source: String) -> String {
+        feed.name == source ? "\(feed.name) \(NewsEditions.kind(of: feed).lowercased())" : feed.name
     }
 
     static func load(from directory: URL?) -> NewsCache {

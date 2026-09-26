@@ -70,6 +70,16 @@ enum UsageTiles {
         }
     }
 
+    /// `items` (in rank order) in the order their IDs had when last ranked: tiles keep their
+    /// places between looks. Ones not in `order` follow, in their rank.
+    static func ordered<Item>(_ items: [Item], id: (Item) -> String, as order: [String]) -> [Item] {
+        let position = Dictionary(order.enumerated().map { ($1, $0) }) { first, _ in first }
+        return items.enumerated()
+            .map { (item: $0.element, key: (position[id($0.element)] ?? order.count + $0.offset, $0.offset)) }
+            .sorted { $0.key < $1.key }
+            .map(\.item)
+    }
+
     /// How long before the reset a window runs out: "35 min before it resets",
     /// "3 hours before it resets", "2 days before it resets".
     static func lead(runsOut: Date, resetsAt: Date) -> String {

@@ -96,6 +96,14 @@ final class UsageTileTests: XCTestCase {
         XCTAssertEqual(close.map { "\($0.provider.id)/\($0.window.id)" }, ["kimiCode/session", "claude/session", "openai/weekly", "copilot/premium"])
     }
 
+    func testTilesKeepTheirPlacesUntilRankedAgain() {
+        let ranked = ["claude", "openai", "cursor"]
+        XCTAssertEqual(UsageTiles.ordered(["openai", "claude", "cursor"], id: { $0 }, as: ranked), ranked, "A refresh that re-ranks doesn't move tiles")
+        XCTAssertEqual(UsageTiles.ordered(["zai", "openai", "claude", "kimiCode"], id: { $0 }, as: ranked), ["claude", "openai", "zai", "kimiCode"],
+                       "Providers new since the last look follow, in their rank; ones gone drop out")
+        XCTAssertEqual(UsageTiles.ordered(["openai", "claude"], id: { $0 }, as: []), ["openai", "claude"], "Nothing ranked yet: rank order")
+    }
+
     func testLeadSaysHowLongBeforeTheReset() {
         XCTAssertEqual(UsageTiles.lead(runsOut: now, resetsAt: now.addingTimeInterval(35 * 60)), "35 min before it resets")
         XCTAssertEqual(UsageTiles.lead(runsOut: now, resetsAt: now.addingTimeInterval(3600)), "1 hour before it resets")

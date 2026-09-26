@@ -346,7 +346,9 @@ enum AlertRules {
 
     /// Alerts raised going from `previous` to `current` for one provider. A provider seen for the
     /// first time raises nothing, so installing or restarting never floods notifications.
-    static func alerts(previous: RelayProvider?, current: RelayProvider, preferences: AlertPreferences, now: Date = .now) -> [UsageAlert] {
+    /// - Parameter samples: the provider's recent readings by window id, for the pace of a reading
+    ///   that carries no measured one (the iPhone reading its own sessions).
+    static func alerts(previous: RelayProvider?, current: RelayProvider, preferences: AlertPreferences, samples: [String: [(date: Date, used: Double)]] = [:], now: Date = .now) -> [UsageAlert] {
         guard let previous, current.isLive else { return [] }
         var alerts: [UsageAlert] = []
         for window in current.windows where window.isMetered {
@@ -361,7 +363,7 @@ enum AlertRules {
             }
             if let level = crossed {
                 alerts.append(isMoney ? lowBalance(current, window: window, level: level, now: now) : threshold(current, window: window, level: level, now: now))
-            } else if !isMoney, let alert = runsOut(current, window: window, preferences: preferences, now: now) {
+            } else if !isMoney, let alert = runsOut(current, window: window, preferences: preferences, samples: samples[window.id] ?? [], now: now) {
                 // Not in the same step as a threshold: one notification per reading and window.
                 alerts.append(alert)
             }
@@ -442,13 +444,14 @@ enum AlertRules {
 
     /// "Claude: 5-hour limit runs out at 10:18 AM" / "86% used, 35 min before it resets." Raised
     /// once per window instance, when its switch is on, when at least half is used and the pace
-    /// (a Mac's measured run-out, else the rate so far) runs out before the reset: at all for a
-    /// session, a day early for a longer limit. Past 95% the 95% alert has said it.
-    static func runsOut(_ provider: RelayProvider, window: RelayWindow, preferences: AlertPreferences, now: Date) -> UsageAlert? {
+    /// (a Mac's measured run-out, else the recent `samples`, else the rate so far) runs out before
+    /// the reset: at all for a session, a day early for a longer limit. Past 95% the 95% alert has
+    /// said it.
+    static func runsOut(_ provider: RelayProvider, window: RelayWindow, preferences: AlertPreferences, samples: [(date: Date, used: Double)] = [], now: Date) -> UsageAlert? {
         let isSession = window.windowKind == .session
         guard isSession ? preferences.sessionRunsOut : preferences.limitRunsOut,
               window.used >= runsOutMinimumUse, window.used < 95,
-              let pace = UsageRanking.pace(for: window, isStale: !provider.isLive, history: nil, now: now),
+              let pace = UsageRanking.pace(for: window, isStale: !provider.isLive, samples: samples, now: now),
               pace.verdict == .ahead, let runsOutAt = pace.runsOutAt,
               isSession || pace.resetsAt.timeIntervalSince(runsOutAt) >= runsOutLongLead
         else { return nil }
@@ -666,12 +669,13 @@ struct AlertLedger: Codable, Equatable, Sendable {
 
     /// Raises alerts for these readings and queues them; returns the ones raised now. Readings
     /// that aren't live (stale, expired) don't move `lastSeen`, so a crossing is judged against
-    /// the last real one.
+    /// the last real one. `samples` holds recent readings by provider id, then window id, for the
+    /// pace of readings without a measured one.
     @discardableResult
-    mutating func process(_ providers: [RelayProvider], preferences: AlertPreferences, now: Date = .now) -> [UsageAlert] {
+    mutating func process(_ providers: [RelayProvider], preferences: AlertPreferences, samples: [String: [String: [(date: Date, used: Double)]]] = [:], now: Date = .now) -> [UsageAlert] {
         var fresh: [UsageAlert] = []
         for provider in providers where provider.isLive {
-            for alert in AlertRules.alerts(previous: lastSeen[provider.id], current: provider, preferences: preferences, now: now)
+            for alert in AlertRules.alerts(previous: lastSeen[provider.id], current: provider, preferences: preferences, samples: samples[provider.id] ?? [:], now: now)
             where sent[alert.id] == nil && !pending.contains(where: { $0.alert.id == alert.id }) && !fresh.contains(where: { $0.id == alert.id }) {
                 fresh.append(alert)
                 pending.append(Pending(alert: alert, raisedAt: now))
