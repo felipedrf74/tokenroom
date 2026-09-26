@@ -8,6 +8,8 @@ struct UsageRing: View {
     var label: String
     /// Stroke width; nil scales with the ring.
     var lineWidth: CGFloat? = nil
+    /// Where an even pace would be now, 0–1 of the window; drawn as a notch across the ring.
+    var paceMark: Double? = nil
 
     var body: some View {
         GeometryReader { geometry in
@@ -20,6 +22,13 @@ struct UsageRing: View {
                     .trim(from: 0, to: fraction)
                     .stroke(fill, style: StrokeStyle(lineWidth: width, lineCap: .round))
                     .rotationEffect(.degrees(-90))
+                if let paceMark, !isStale {
+                    Capsule()
+                        .fill(Color.primary.opacity(0.7))
+                        .frame(width: 2, height: width + 4)
+                        .offset(y: -side / 2)
+                        .rotationEffect(.degrees(360 * min(max(paceMark, 0), 1)))
+                }
                 Text(label)
                     .font(.system(size: side * 0.3, weight: .semibold, design: .rounded))
                     .monospacedDigit()
@@ -32,7 +41,13 @@ struct UsageRing: View {
         }
         .accessibilityElement()
         .accessibilityLabel(label)
-        .accessibilityValue("\(TokenroomFormat.percentText(used)) percent used")
+        .accessibilityValue(accessibilityValue)
+    }
+
+    private var accessibilityValue: String {
+        let used = "\(TokenroomFormat.percentText(used)) percent used"
+        guard let paceMark, !isStale else { return used }
+        return "\(used), \(TokenroomFormat.percentText(min(max(paceMark, 0), 1) * 100)) percent of the window has passed"
     }
 
     private var fraction: CGFloat {

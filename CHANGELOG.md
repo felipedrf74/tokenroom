@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### iPhone
+- The Usage tab is a grid of tiles, one per plan: the weekly (or monthly) limit as a ring and the 5-hour limit as a bar, each with the even-pace mark and when it resets, or when it runs out if that comes first. Balances show what's left.
+- **Close to a limit** leads the tab: every limit at 80% or more, or on course to run out before it resets, most urgent first, with Follow on Lock Screen for the first. It replaces Next up.
+- New models and updates are counted on the News tab's badge rather than on the Usage tab.
+
 ## 2.0.1 — 2026-09-26
 
 Fixes from an independent review of 2.0, for Tokenroom for Mac and the next iPhone and Apple Watch update.

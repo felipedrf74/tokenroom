@@ -7,6 +7,8 @@ struct MeterTrack: View {
     /// Where an even pace would be now, 0–1 of the window; drawn as a tick.
     var paceMark: Double? = nil
     var height: CGFloat = TokenroomTokens.meterHeight
+    /// One colour by level (the menu bar's rule) instead of the gradient across the track.
+    var solid = false
 
     var body: some View {
         let radius = min(2.5, height / 2)
@@ -46,6 +48,9 @@ struct MeterTrack: View {
     private var usageGradient: some ShapeStyle {
         if isStale {
             return AnyShapeStyle(Color.secondary.opacity(0.72))
+        }
+        if solid {
+            return AnyShapeStyle(TokenroomTokens.usageColor(usedPercent: usedPercent, isStale: false))
         }
         return AnyShapeStyle(
             LinearGradient(

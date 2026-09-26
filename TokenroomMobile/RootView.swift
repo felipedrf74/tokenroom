@@ -29,10 +29,7 @@ struct RootView: View {
     private var tabs: some View {
         TabView(selection: $tab) {
             Tab("Usage", systemImage: "gauge.with.dots.needle.50percent", value: .usage) {
-                UsageView(store: store, news: news, path: $usagePath, openNews: { section in
-                    UserDefaults.standard.set(section.rawValue, forKey: "newsSection")
-                    tab = .news
-                }, openAlerts: {
+                UsageView(store: store, path: $usagePath, openAlerts: {
                     tab = .settings
                     settingsPath = [.alerts]
                 })
