@@ -116,7 +116,7 @@ private struct WatchRow: View {
                 UsageRing(used: window.used, isStale: !provider.isLive, label: provider.monogram)
                     .frame(width: 40, height: 40)
             } else {
-                MonogramMark(provider: provider, size: 36)
+                ProviderMark(provider: provider, size: 36)
             }
             VStack(alignment: .leading, spacing: 1) {
                 HStack {

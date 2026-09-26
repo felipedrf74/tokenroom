@@ -13,6 +13,9 @@
 - Sessions are called "5-hour" everywhere: alerts ("80% of 5-hour limit used"), the Live Activity, the provider screen, widgets, the Watch, and the Mac's cards.
 - The Live Activity's meter shows the even pace, and follows the alert levels for its kind of limit.
 
+### Provider icons
+- Providers show their own icons on iPhone, in widgets and the Live Activity, on Apple Watch, and in the Mac's popover and Settings. The Mac's five app icons are joined by official marks from each provider's brand page or GitHub: Antigravity, Devin, Z.ai, Kimi Code, MiniMax, OpenCode Go, OpenRouter, DeepSeek, Moonshot, Vercel AI Gateway, and Anthropic API (OpenAI API shares OpenAI's). GitHub Copilot and xAI API keep their monograms for now, as do widgets the system tints.
+
 ### Readability
 - Small orange and red text (pace lines, "Runs out", New, warnings) uses darker and lighter shades that read at 4.5:1 or better in light and dark; the brand orange stays for buttons, big numbers, and the icon.
 

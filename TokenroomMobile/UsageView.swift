@@ -194,7 +194,7 @@ private struct DisconnectedRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            MonogramMark(provider: reading.provider, size: 28)
+            ProviderMark(provider: reading.provider, size: 28)
                 .opacity(0.6)
             VStack(alignment: .leading, spacing: 2) {
                 Text(reading.provider.name)

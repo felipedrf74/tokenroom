@@ -122,7 +122,7 @@ private struct KeyRowLabel: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            MonogramMark(text: provider.monogram, tint: Color(hex: provider.tintHex), size: 30)
+            ProviderMark(provider: provider, size: 30)
             Text(provider.displayName)
             Spacer()
             Text(metadata.map { "•••• \($0.last4)" } ?? "Add")

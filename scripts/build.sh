@@ -86,7 +86,8 @@ build_with_xcode() {
 # Name.svg, Name(@2x|@3x).png, and Name-32/-64.png as Name.png/Name@2x.png.
 copy_loose_images() {
   local res="$1" set name suffix
-  for set in "$ASSETS"/*.imageset(N); do
+  # The app's own images, and the provider icons every platform shares.
+  for set in "$ASSETS"/*.imageset(N) "$ROOT/Shared/UI/ProviderIcons.xcassets"/*.imageset(N); do
     name="${set:t:r}"
     [[ -f "$set/$name.svg" ]] && cp "$set/$name.svg" "$res/$name.svg"
     for suffix in "" "@2x" "@3x"; do

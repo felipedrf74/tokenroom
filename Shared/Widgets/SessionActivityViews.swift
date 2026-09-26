@@ -13,7 +13,7 @@ struct SessionLockScreenView: View {
         if family == .small {
             // The Apple Watch Smart Stack.
             HStack(spacing: 8) {
-                MonogramMark(text: attributes.monogram, tint: Color(hex: attributes.tint), size: 24)
+                ProviderMark(providerID: attributes.providerID, monogram: attributes.monogram, tint: attributes.tint, size: 24)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(attributes.shortName) \(state.percentText)")
                         .font(.headline)
@@ -26,7 +26,7 @@ struct SessionLockScreenView: View {
             .padding(8)
         } else {
             HStack(spacing: 14) {
-                MonogramMark(text: attributes.monogram, tint: Color(hex: attributes.tint), size: 40)
+                ProviderMark(providerID: attributes.providerID, monogram: attributes.monogram, tint: attributes.tint, size: 40)
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .firstTextBaseline) {
                         Text(attributes.providerName)

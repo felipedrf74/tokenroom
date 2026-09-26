@@ -55,7 +55,7 @@ private struct SmallWidget: View {
         let window = provider.primaryWindow
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
-                MonogramMark(provider: provider, size: 20)
+                ProviderMark(provider: provider, size: 20)
                 Text(provider.shortName)
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
@@ -135,7 +135,7 @@ private struct ListRow: View {
         let provider = item.provider
         let window = provider.primaryWindow
         HStack(spacing: 8) {
-            MonogramMark(provider: provider, size: 20)
+            ProviderMark(provider: provider, size: 20)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(provider.shortName)

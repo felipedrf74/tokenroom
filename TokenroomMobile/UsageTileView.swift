@@ -54,7 +54,7 @@ struct UsageTileView: View {
 
     private func header(isClose: Bool) -> some View {
         HStack(spacing: 8) {
-            MonogramMark(provider: provider, size: 24)
+            ProviderMark(provider: provider, size: 24)
             Text(provider.name)
                 .font(.subheadline.weight(.semibold))
                 .lineLimit(1)
@@ -211,7 +211,7 @@ struct CloseToLimitCard: View {
                 open(item.provider.id)
             } label: {
                 HStack(spacing: 12) {
-                    MonogramMark(provider: item.provider, size: 26)
+                    ProviderMark(provider: item.provider, size: 26)
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Text(item.provider.name)
