@@ -78,21 +78,21 @@ final class AlertTests: XCTestCase {
     func testCrossingsAlertOnceAtTheHighestLevel() throws {
         let eighty = AlertRules.alerts(previous: reading(used: 70), current: reading(used: 82), preferences: preferences, now: now)
         XCTAssertEqual(eighty.map(\.level), [80])
-        XCTAssertEqual(eighty.first?.title, "Claude: 80% of weekly used")
+        XCTAssertEqual(eighty.first?.title, "Claude: 80% of weekly limit used")
         XCTAssertFalse(try XCTUnwrap(eighty.first).isUrgent)
 
         let jump = AlertRules.alerts(previous: reading(used: 70), current: reading(used: 97), preferences: preferences, now: now)
         XCTAssertEqual(jump.map(\.level), [95], "A jump past both thresholds sends only the higher one")
         XCTAssertTrue(try XCTUnwrap(jump.first).isUrgent)
 
-        XCTAssertTrue(AlertRules.alerts(previous: reading(used: 85), current: reading(used: 88), preferences: preferences, now: now).isEmpty, "Already past 80% in this window")
+        XCTAssertFalse(AlertRules.alerts(previous: reading(used: 85), current: reading(used: 88), preferences: preferences, now: now).contains { $0.kind == .threshold }, "Already past 80% in this window")
         XCTAssertTrue(AlertRules.alerts(previous: reading(used: 70), current: reading(used: 97, state: "stale"), preferences: preferences, now: now).isEmpty, "Only live readings alert")
     }
 
     func testResetJitterIsTheSameWindow() {
         let reset = now.addingTimeInterval(2 * 86_400)
         let alerts = AlertRules.alerts(previous: reading(used: 85, resetsAt: reset), current: reading(used: 86, resetsAt: reset.addingTimeInterval(180)), preferences: preferences, now: now)
-        XCTAssertTrue(alerts.isEmpty, "Reset times a few minutes apart are one window, not a reset")
+        XCTAssertFalse(alerts.contains { $0.kind == .reset || $0.kind == .threshold }, "Reset times a few minutes apart are one window, not a reset")
     }
 
     func testAResetAfterHeavyUseSaysSo() throws {
@@ -372,17 +372,23 @@ final class AlertTests: XCTestCase {
 
     func testSubscriptionFollowsTheChoices() {
         XCTAssertEqual(AlertPreferences().subscribedKeys, [
-            "threshold-80", "threshold-95", "lowBalance-80", "lowBalance-95",
+            "threshold-80", "threshold-95", "runsOut", "lowBalance-80", "lowBalance-95",
             "reset", "bankedNew", "bankedExpiring-48", "bankedExpiring-6", "test",
         ])
         var few = AlertPreferences()
         few.thresholds = [95]
+        few.sessionThresholds = [95]
+        few.sessionRunsOut = false
+        few.limitRunsOut = false
         few.lowBalance = false
         few.resets = false
         few.banked = false
         XCTAssertEqual(few.subscribedKeys, ["threshold-95", "test"], "Test alerts always come through")
         var balancesOnly = AlertPreferences()
         balancesOnly.thresholds = []
+        balancesOnly.sessionThresholds = []
+        balancesOnly.sessionRunsOut = false
+        balancesOnly.limitRunsOut = false
         balancesOnly.resets = false
         balancesOnly.banked = false
         XCTAssertEqual(balancesOnly.subscribedKeys, ["lowBalance-80", "lowBalance-95", "test"], "Balances have their own switch")
@@ -482,9 +488,9 @@ final class AlertTests: XCTestCase {
     func testAMovedResetIsTheSameWindow() {
         let reset = now.addingTimeInterval(3 * 3600)
         let moved = AlertRules.alerts(previous: session(used: 85, resetsAt: reset), current: session(used: 86, resetsAt: reset.addingTimeInterval(3600)), preferences: preferences, now: now)
-        XCTAssertTrue(moved.isEmpty, "The provider moved the reset; the session goes on, already past 80%")
+        XCTAssertFalse(moved.contains { $0.kind == .threshold || $0.kind == .reset }, "The provider moved the reset; the session goes on, already past 80%")
         let dipped = AlertRules.alerts(previous: session(used: 85, resetsAt: reset), current: session(used: 81, resetsAt: reset.addingTimeInterval(3600)), preferences: preferences, now: now)
-        XCTAssertTrue(dipped.isEmpty, "A small dip isn't a new window either")
+        XCTAssertFalse(dipped.contains { $0.kind == .threshold || $0.kind == .reset }, "A small dip isn't a new window either")
         let farther = AlertRules.alerts(previous: session(used: 85, resetsAt: reset), current: session(used: 86, resetsAt: reset.addingTimeInterval(2 * 3600)), preferences: preferences, now: now)
         XCTAssertEqual(farther.map(\.level), [80], "Two hours on is more than a quarter of a session: another window")
         XCTAssertFalse(AlertRules.isSameInstance(
@@ -644,12 +650,14 @@ final class AlertTests: XCTestCase {
             (reading(used: 10, banked: later), reading(used: 10, banked: later)),
             (balance(remaining: 6), balance(remaining: 3)),
             (balance(remaining: 6), balance(remaining: 0.5)),
+            // 60% of a session 2.5 hours in: on course to run out before its reset.
+            (session(used: 55, resetsAt: now.addingTimeInterval(2.5 * 3600 + 600)), session(used: 60, resetsAt: now.addingTimeInterval(2.5 * 3600))),
         ]
         var raised: [UsageAlert] = []
         for (previous, current) in steps {
             raised += AlertRules.alerts(previous: previous, current: current, preferences: preferences, now: now)
         }
-        XCTAssertEqual(Set(raised.map(\.kind)), [.threshold, .reset, .bankedNew, .bankedExpiring, .lowBalance])
+        XCTAssertEqual(Set(raised.map(\.kind)), [.threshold, .reset, .bankedNew, .bankedExpiring, .lowBalance, .runsOut])
         let subscribed = Set(AlertPreferences().subscribedKeys)
         for alert in raised {
             XCTAssertTrue(subscribed.contains(alert.key), "\(alert.key) would never reach the iPhone")

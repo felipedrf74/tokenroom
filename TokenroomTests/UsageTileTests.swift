@@ -46,10 +46,14 @@ final class UsageTileTests: XCTestCase {
     }
 
     func testSessionsAreNamedByTheirLength() {
-        XCTAssertEqual(UsageTiles.title(of: session(10)), "5-hour")
-        XCTAssertEqual(UsageTiles.title(of: session(10, period: nil)), "5-hour", "Sessions are 5 hours unless the provider says otherwise")
-        XCTAssertEqual(UsageTiles.title(of: session(10, period: 4 * 3600)), "4-hour")
-        XCTAssertEqual(UsageTiles.title(of: weekly(10)), "Weekly")
+        XCTAssertEqual(session(10).displayTitle, "5-hour")
+        XCTAssertEqual(session(10, period: nil).displayTitle, "5-hour", "Sessions are 5 hours unless the provider says otherwise")
+        XCTAssertEqual(session(10, period: 4 * 3600).displayTitle, "4-hour")
+        XCTAssertEqual(weekly(10).displayTitle, "Weekly")
+        XCTAssertEqual(session(10).limitName, "5-hour limit")
+        XCTAssertEqual(weekly(10).limitName, "weekly limit")
+        XCTAssertEqual(RelayWindow(id: "premium", kind: "monthly", title: "Premium requests", used: 1, resetsAt: nil).limitName, "limit for premium requests")
+        XCTAssertEqual(QuotaWindow(id: "session", kind: .session, title: "Session", usedPercent: 10, resetsAt: nil, windowSeconds: 5 * 3600).displayTitle, "5-hour")
     }
 
     func testCloseMeansEightyPercentUsedOrRunningOutBeforeTheReset() {

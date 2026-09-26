@@ -29,8 +29,8 @@ struct SessionActivityWidget: Widget {
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(alignment: .leading, spacing: 6) {
-                        ProgressView(value: min(max(state.used, 0), 100), total: 100)
-                            .tint(TokenroomTokens.usageColor(usedPercent: state.used, isStale: state.isStale))
+                        MeterTrack(usedPercent: state.used, remaining: 100 - state.used, isStale: state.isStale,
+                                   paceMark: attributes.paceMark(for: state), height: 6, solid: true)
                         HStack {
                             Text(attributes.windowTitle)
                             Spacer()

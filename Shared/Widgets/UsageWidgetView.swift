@@ -76,7 +76,7 @@ private struct SmallWidget: View {
                 if window.isMetered {
                     WidgetMeter(used: window.used, isStale: !provider.isLive)
                 }
-                Text(window.title)
+                Text(window.displayTitle)
                     .font(.caption2.weight(.medium))
                     .lineLimit(1)
                 ResetText(window: window, date: entry.date)

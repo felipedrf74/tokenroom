@@ -168,7 +168,7 @@ struct KeyEditorView: View {
                     if let warning = metadata.warning {
                         Label(warning, systemImage: "exclamationmark.triangle")
                             .font(.footnote)
-                            .foregroundStyle(TokenroomTokens.tight)
+                            .foregroundStyle(TokenroomTokens.accentText)
                     }
                     Button("Replace Key") { replacing = true }
                     Button("Remove Key", role: .destructive) { remove() }
@@ -198,7 +198,7 @@ struct KeyEditorView: View {
                     Section {
                         Label(warning, systemImage: "exclamationmark.triangle")
                             .font(.footnote)
-                            .foregroundStyle(TokenroomTokens.tight)
+                            .foregroundStyle(TokenroomTokens.accentText)
                     }
                 }
                 if spec?.isAdmin == true {

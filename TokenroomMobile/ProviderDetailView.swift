@@ -19,7 +19,7 @@ struct ProviderDetailView: View {
                 header
             }
             ForEach(Array(orderedWindows.enumerated()), id: \.element.id) { index, window in
-                Section(window.title) {
+                Section(window.displayTitle) {
                     WindowDetail(
                         window: window,
                         history: reading.history[window.id],
@@ -32,7 +32,7 @@ struct ProviderDetailView: View {
                     Section {
                         FollowButton(provider: provider) { followError = $0 }
                     } footer: {
-                        Text(followError ?? "Shows a countdown to the \(candidate.title.lowercased()) reset on the Lock Screen and in the Dynamic Island until it resets.")
+                        Text(followError ?? "Shows a countdown to the \(candidate.displayTitle.lowercased()) reset on the Lock Screen and in the Dynamic Island until it resets.")
                     }
                 }
             }

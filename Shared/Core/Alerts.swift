@@ -14,6 +14,9 @@ struct UsageAlert: Codable, Equatable, Sendable, Identifiable {
         case bankedExpiring
         /// A balance or a spend budget crossed 80% or 95% of its reference.
         case lowBalance
+        /// A window is on course to run out before it resets: a 5-hour limit at all, a longer one
+        /// at least a day early.
+        case runsOut
     }
 
     var id: String
@@ -30,6 +33,9 @@ struct UsageAlert: Codable, Equatable, Sendable, Identifiable {
     /// raised by 2.0.0, and for banked resets.
     var window: String? = nil
     var instance: String? = nil
+    /// The window's kind (`session`, `weekly`…), so a held alert follows the switches for its
+    /// kind of limit. Nil in alerts raised before 2.1.
+    var windowKind: String? = nil
     /// A budget alert's text before its countdown, so a held alert can say how long is left
     /// when it goes out rather than when it was raised.
     var detail: String? = nil
@@ -50,15 +56,28 @@ struct UsageAlert: Codable, Equatable, Sendable, Identifiable {
         switch kind {
         case .threshold, .lowBalance, .bankedExpiring:
             "\(kind.rawValue)-\(level)"
-        case .reset, .bankedNew:
+        case .reset, .bankedNew, .runsOut:
             kind.rawValue
         }
+    }
+
+    /// Whether it's about a session (a 5-hour limit), for the switches that treat those apart.
+    var isSession: Bool {
+        windowKind == WindowKind.session.rawValue
     }
 }
 
 /// Shared by the iPhone and the Mac through iCloud; whichever changed them last wins.
 struct AlertPreferences: Codable, Equatable, Sendable {
+    /// Levels for weekly, monthly, and other longer limits. Tokenroom before 2.1 applies them to
+    /// sessions too.
     var thresholds: [Int] = [80, 95]
+    /// Levels for sessions (5-hour limits). Saved copies without them take `thresholds`.
+    var sessionThresholds: [Int] = [80, 95]
+    /// Alert when a session is on course to run out before it resets.
+    var sessionRunsOut = true
+    /// Alert when a longer limit is on course to run out at least a day before it resets.
+    var limitRunsOut = true
     var resets = true
     var banked = true
     /// Balances and spend budgets crossing 80% or 95% of the reference the user set.
@@ -79,7 +98,7 @@ struct AlertPreferences: Codable, Equatable, Sendable {
     static let supportedThresholds = [80, 95]
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
-        case thresholds, resets, banked, lowBalance, newModels, quietHours, quietStartHour, quietEndHour, timeZoneID, updatedAt
+        case thresholds, sessionThresholds, sessionRunsOut, limitRunsOut, resets, banked, lowBalance, newModels, quietHours, quietStartHour, quietEndHour, timeZoneID, updatedAt
     }
 
     init() {}
@@ -89,6 +108,10 @@ struct AlertPreferences: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = AlertPreferences()
         thresholds = try container.decodeIfPresent([Int].self, forKey: .thresholds) ?? defaults.thresholds
+        // Choices saved before sessions had their own levels meant the same levels for both.
+        sessionThresholds = try container.decodeIfPresent([Int].self, forKey: .sessionThresholds) ?? thresholds
+        sessionRunsOut = try container.decodeIfPresent(Bool.self, forKey: .sessionRunsOut) ?? defaults.sessionRunsOut
+        limitRunsOut = try container.decodeIfPresent(Bool.self, forKey: .limitRunsOut) ?? defaults.limitRunsOut
         resets = try container.decodeIfPresent(Bool.self, forKey: .resets) ?? defaults.resets
         banked = try container.decodeIfPresent(Bool.self, forKey: .banked) ?? defaults.banked
         lowBalance = try container.decodeIfPresent(Bool.self, forKey: .lowBalance) ?? defaults.lowBalance
@@ -111,6 +134,9 @@ struct AlertPreferences: Codable, Equatable, Sendable {
             try container.encode(value, forKey: AnyCodingKey(key))
         }
         try container.encode(thresholds, forKey: AnyCodingKey(CodingKeys.thresholds.rawValue))
+        try container.encode(sessionThresholds, forKey: AnyCodingKey(CodingKeys.sessionThresholds.rawValue))
+        try container.encode(sessionRunsOut, forKey: AnyCodingKey(CodingKeys.sessionRunsOut.rawValue))
+        try container.encode(limitRunsOut, forKey: AnyCodingKey(CodingKeys.limitRunsOut.rawValue))
         try container.encode(resets, forKey: AnyCodingKey(CodingKeys.resets.rawValue))
         try container.encode(banked, forKey: AnyCodingKey(CodingKeys.banked.rawValue))
         try container.encode(lowBalance, forKey: AnyCodingKey(CodingKeys.lowBalance.rawValue))
@@ -138,8 +164,13 @@ struct AlertPreferences: Codable, Equatable, Sendable {
     /// Kinds the iPhone's alert subscription lets through, as `UsageAlert.key` values.
     var subscribedKeys: [String] {
         var keys: [String] = []
-        for level in Self.supportedThresholds where thresholds.contains(level) {
+        // Sessions and longer limits share the key, so older Macs' alerts still come through;
+        // the device that raises an alert applies the kind's own levels.
+        for level in Self.supportedThresholds where thresholds.contains(level) || sessionThresholds.contains(level) {
             keys.append("threshold-\(level)")
+        }
+        if sessionRunsOut || limitRunsOut {
+            keys.append("runsOut")
         }
         // Balances have their own switch, at both levels, whatever the usage levels are.
         if lowBalance {
@@ -183,11 +214,17 @@ struct AlertPreferences: Codable, Equatable, Sendable {
     /// dropped when its switch is turned off meanwhile.
     func allows(_ alert: UsageAlert) -> Bool {
         switch alert.kind {
-        case .threshold: thresholds.contains(alert.level)
+        case .threshold: (alert.isSession ? sessionThresholds : thresholds).contains(alert.level)
         case .lowBalance: lowBalance
         case .reset: resets
         case .bankedNew, .bankedExpiring: banked
+        case .runsOut: alert.isSession ? sessionRunsOut : limitRunsOut
         }
+    }
+
+    /// The levels that apply to a window: the session levels for a 5-hour limit, else the rest.
+    func thresholds(for window: RelayWindow) -> [Int] {
+        window.windowKind == .session ? sessionThresholds : thresholds
     }
 
     /// The same choices, whenever they were made. A saved copy's `updatedAt` can come back a
@@ -211,15 +248,19 @@ struct AlertPreferences: Codable, Equatable, Sendable {
         guard let baseFields = fields(of: base), let localFields = fields(of: local), var result = fields(of: remote) else {
             return local
         }
-        let byLevel: Set<String> = [CodingKeys.updatedAt.rawValue, CodingKeys.thresholds.rawValue]
+        let byLevel: Set<String> = [CodingKeys.updatedAt.rawValue, CodingKeys.thresholds.rawValue, CodingKeys.sessionThresholds.rawValue]
         for (key, value) in localFields where !byLevel.contains(key) && baseFields[key] != value {
             result[key] = value
         }
         guard var merged = decoded(result) else { return local }
         // Levels merge one by one: 80% turned off here and 95% there both stay off.
-        let added = Set(local.thresholds).subtracting(base.thresholds)
-        let removed = Set(base.thresholds).subtracting(local.thresholds)
-        merged.thresholds = Set(remote.thresholds).union(added).subtracting(removed).sorted()
+        func levels(_ keyPath: KeyPath<AlertPreferences, [Int]>) -> [Int] {
+            let added = Set(local[keyPath: keyPath]).subtracting(base[keyPath: keyPath])
+            let removed = Set(base[keyPath: keyPath]).subtracting(local[keyPath: keyPath])
+            return Set(remote[keyPath: keyPath]).union(added).subtracting(removed).sorted()
+        }
+        merged.thresholds = levels(\.thresholds)
+        merged.sessionThresholds = levels(\.sessionThresholds)
         merged.updatedAt = [local.updatedAt, remote.updatedAt].compactMap { $0 }.max()
         return merged
     }
@@ -297,6 +338,11 @@ enum AlertRules {
     /// A fall in use this large means the window started over (a banked reset used early),
     /// not a provider moving its reset time.
     static let resetDrop = 10.0
+    /// A run-out alert waits until at least this much is used: early in a window one busy
+    /// stretch projects a run-out that rarely comes.
+    static let runsOutMinimumUse = 50.0
+    /// A limit longer than a session alerts about a run-out only this far ahead of its reset.
+    static let runsOutLongLead: TimeInterval = 86_400
 
     /// Alerts raised going from `previous` to `current` for one provider. A provider seen for the
     /// first time raises nothing, so installing or restarting never floods notifications.
@@ -307,14 +353,17 @@ enum AlertRules {
             guard let before = previous.windows.first(where: { $0.id == window.id }) else { continue }
             let sameInstance = isSameInstance(before: before, current: window, now: now)
             let isMoney = isMoneyWindow(window)
-            // Balances follow their own switch; usage windows, the 80% and 95% ones.
-            let levels = isMoney ? (preferences.lowBalance ? AlertPreferences.supportedThresholds : []) : preferences.thresholds
+            // Balances follow their own switch; usage windows, the levels for their kind.
+            let levels = isMoney ? (preferences.lowBalance ? AlertPreferences.supportedThresholds : []) : preferences.thresholds(for: window)
             // Only the highest threshold crossed in one step.
             let crossed = levels.sorted(by: >).first { level in
                 window.used >= Double(level) && (!sameInstance || before.used < Double(level))
             }
             if let level = crossed {
                 alerts.append(isMoney ? lowBalance(current, window: window, level: level, now: now) : threshold(current, window: window, level: level, now: now))
+            } else if !isMoney, let alert = runsOut(current, window: window, preferences: preferences, now: now) {
+                // Not in the same step as a threshold: one notification per reading and window.
+                alerts.append(alert)
             }
             if preferences.resets, !isMoney, !sameInstance, before.used >= resetWorthyUse, let oldReset = before.resetsAt,
                oldReset <= now.addingTimeInterval(resetJitter), oldReset > now.addingTimeInterval(-resetNewsWindow) {
@@ -324,7 +373,7 @@ enum AlertRules {
                     provider: current.id,
                     kind: .reset,
                     level: 0,
-                    title: "\(current.name): \(window.title) reset",
+                    title: "\(current.name): \(window.displayTitle) reset",
                     body: "Fresh headroom. It was at \(TokenroomFormat.percentText(before.used))% before the reset.",
                     resetsAt: window.resetsAt,
                     isUrgent: false,
@@ -381,12 +430,46 @@ enum AlertRules {
             provider: provider.id,
             kind: .threshold,
             level: level,
-            title: "\(provider.name): \(level)% of \(window.title.lowercased()) used",
+            title: "\(provider.name): \(level)% of \(window.limitName) used",
             body: resetSentence(window.resetsAt, now: now) ?? "It resets when \(provider.name) says so.",
             resetsAt: window.resetsAt,
             isUrgent: level >= 95,
             window: window.id,
-            instance: name
+            instance: name,
+            windowKind: window.kind
+        )
+    }
+
+    /// "Claude: 5-hour limit runs out at 10:18 AM" / "86% used, 35 min before it resets." Raised
+    /// once per window instance, when its switch is on, when at least half is used and the pace
+    /// (a Mac's measured run-out, else the rate so far) runs out before the reset: at all for a
+    /// session, a day early for a longer limit. Past 95% the 95% alert has said it.
+    static func runsOut(_ provider: RelayProvider, window: RelayWindow, preferences: AlertPreferences, now: Date) -> UsageAlert? {
+        let isSession = window.windowKind == .session
+        guard isSession ? preferences.sessionRunsOut : preferences.limitRunsOut,
+              window.used >= runsOutMinimumUse, window.used < 95,
+              let pace = UsageRanking.pace(for: window, isStale: !provider.isLive, history: nil, now: now),
+              pace.verdict == .ahead, let runsOutAt = pace.runsOutAt,
+              isSession || pace.resetsAt.timeIntervalSince(runsOutAt) >= runsOutLongLead
+        else { return nil }
+        let name = instance(window.resetsAt, window: window, now: now)
+        let zone = TimeZone(identifier: preferences.timeZoneID) ?? .current
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        let moment = Pace.shortMoment(runsOutAt, now: now, timeZone: zone)
+        let when = calendar.isDate(runsOutAt, inSameDayAs: now) ? "at \(moment)" : moment
+        return UsageAlert(
+            id: "evt-\(provider.id)-\(window.id)-runsOut-\(name)",
+            provider: provider.id,
+            kind: .runsOut,
+            level: 0,
+            title: "\(provider.name): \(window.limitName) runs out \(when)",
+            body: "\(TokenroomFormat.percentText(window.used))% used, \(UsageTiles.lead(runsOut: runsOutAt, resetsAt: pace.resetsAt)).",
+            resetsAt: window.resetsAt,
+            isUrgent: runsOutAt.timeIntervalSince(now) < 3600,
+            window: window.id,
+            instance: name,
+            windowKind: window.kind
         )
     }
 
@@ -407,7 +490,7 @@ enum AlertRules {
             if let detail = alert.detail, let reset = RelativeTime.resets(resetsAt, now: now) {
                 alert.body = "\(detail) It \(reset)."
             }
-        case .reset, .bankedNew, .bankedExpiring:
+        case .reset, .bankedNew, .bankedExpiring, .runsOut:
             break
         }
         return alert
@@ -429,7 +512,7 @@ enum AlertRules {
         switch alert.kind {
         case .threshold: return "evt-\(alert.provider)-\(window)-\(level)-\(instance)"
         case .lowBalance: return "evt-\(alert.provider)-\(window)-low-\(level)-\(instance)"
-        case .reset, .bankedNew, .bankedExpiring: return nil
+        case .reset, .bankedNew, .bankedExpiring, .runsOut: return nil
         }
     }
 
@@ -474,6 +557,7 @@ enum AlertRules {
             isUrgent: level >= 95,
             window: window.id,
             instance: name,
+            windowKind: window.kind,
             detail: detail
         )
     }
@@ -616,6 +700,11 @@ struct AlertLedger: Codable, Equatable, Sendable {
         if let key = levelKey(alert), let higher = levelsSent[key], higher.level > alert.level, higher.sentAt >= item.raisedAt {
             return true
         }
+        // A run-out held for quiet hours says nothing the window's 95% alert hasn't.
+        if alert.kind == .runsOut, let window = alert.window,
+           let sent95 = levelsSent["\(alert.provider)/\(window)/\(UsageAlert.Kind.threshold.rawValue)"], sent95.level >= 95, sent95.sentAt >= item.raisedAt {
+            return true
+        }
         return AlertPreferences.supportedThresholds.contains { level in
             guard level > alert.level, let higher = AlertRules.id(of: alert, atLevel: level) else { return false }
             return sent[higher] != nil || going.contains(higher)
@@ -662,7 +751,7 @@ struct AlertLedger: Codable, Equatable, Sendable {
             if now.timeIntervalSince(item.raisedAt) > lifetime { return true }
             if !preferences.allows(item.alert) || Self.isSuperseded(item, sent: delivered, levelsSent: levels, going: []) { return true }
             switch item.alert.kind {
-            case .threshold, .lowBalance, .bankedExpiring:
+            case .threshold, .lowBalance, .bankedExpiring, .runsOut:
                 return item.alert.resetsAt.map { $0 <= now } ?? false
             case .reset, .bankedNew:
                 return false

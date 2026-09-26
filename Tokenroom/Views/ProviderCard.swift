@@ -222,7 +222,7 @@ struct ProviderCard: View {
             toggleable {
                 header(value: headlineValue(snapshot), remaining: 100, stale: stale)
             }
-            caption(primary.title)
+            caption(primary.displayTitle)
             if !stale, let forecast = Forecast.text(for: primary, history: weeks[primary.id], checkedAt: checkedAt ?? snapshot.fetchedAt) {
                 caption(forecast)
             }
@@ -305,7 +305,7 @@ struct ProviderCard: View {
             }
             ForEach(extraWindows(snapshot)) { window in
                 WindowRow(
-                    title: window.title,
+                    title: window.displayTitle,
                     headline: windowHeadline(window),
                     usedPercent: window.isMetered ? window.usedPercent : nil,
                     isStale: stale,
@@ -423,8 +423,8 @@ struct ProviderCard: View {
     private func paceColor(_ pace: Pace) -> Color {
         guard pace.needsAttention else { return Color.secondary }
         switch pace.severity {
-        case .critical: return TokenroomTokens.critical
-        case .tight: return TokenroomTokens.tight
+        case .critical: return TokenroomTokens.criticalText
+        case .tight: return TokenroomTokens.accentText
         case .watch, .none: return Color.secondary
         }
     }
@@ -455,7 +455,7 @@ struct ProviderCard: View {
 
     /// "Session 18%", or the amount for a window without a meter.
     private func windowSummary(_ window: QuotaWindow) -> String {
-        "\(window.title) \(windowHeadline(window))"
+        "\(window.displayTitle) \(windowHeadline(window))"
     }
 
     private func windowHeadline(_ window: QuotaWindow) -> String {

@@ -31,14 +31,34 @@ struct AlertsSettingsView: View {
 
             Section {
                 ForEach(AlertPreferences.supportedThresholds, id: \.self) { level in
-                    Toggle("\(level)% of a limit is used", isOn: threshold(level))
+                    Toggle("\(level)% used", isOn: threshold(level, \.sessionThresholds))
                 }
+                Toggle("Before it runs out", isOn: $store.alertPreferences.sessionRunsOut)
+            } header: {
+                Text("5-hour limits")
+            } footer: {
+                Text("\"Before it runs out\" alerts when the pace so far would use the limit up before it resets, once at least half is used.")
+            }
+
+            Section {
+                ForEach(AlertPreferences.supportedThresholds, id: \.self) { level in
+                    Toggle("\(level)% used", isOn: threshold(level, \.thresholds))
+                }
+                Toggle(isOn: $store.alertPreferences.limitRunsOut) {
+                    Text("Before it runs out")
+                    Text("At least a day early")
+                }
+            } header: {
+                Text("Weekly and monthly limits")
+            }
+
+            Section {
                 Toggle("A busy window resets", isOn: $store.alertPreferences.resets)
                 Toggle("Banked resets", isOn: $store.alertPreferences.banked)
                 Toggle("A balance or budget runs low", isOn: $store.alertPreferences.lowBalance)
                 Toggle("New models from labs you follow", isOn: $store.alertPreferences.newModels)
             } header: {
-                Text("Notify me when")
+                Text("Also notify me when")
             } footer: {
                 Text("Once per window, whichever device notices first. \"A busy window resets\" means one that reached 80%. Banked resets alert when one is added and before it expires. Low balance needs a reference or budget in API Keys. Your Macs share these choices through iCloud; a change on either applies to both.")
             }
@@ -54,7 +74,7 @@ struct AlertsSettingsView: View {
                     }
                 }
             } footer: {
-                Text("During quiet hours only 95% alerts and banked resets about to expire come through; the rest arrive when quiet hours end. Your Macs follow these hours too.")
+                Text("During quiet hours only 95% alerts, limits that run out within the hour, and banked resets about to expire come through; the rest arrive when quiet hours end. Your Macs follow these hours too.")
             }
         }
         .navigationTitle("Alerts")
@@ -72,13 +92,13 @@ struct AlertsSettingsView: View {
         permission = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
     }
 
-    private func threshold(_ level: Int) -> Binding<Bool> {
+    private func threshold(_ level: Int, _ keyPath: WritableKeyPath<AlertPreferences, [Int]>) -> Binding<Bool> {
         Binding(
-            get: { store.alertPreferences.thresholds.contains(level) },
+            get: { store.alertPreferences[keyPath: keyPath].contains(level) },
             set: { isOn in
-                var levels = Set(store.alertPreferences.thresholds)
+                var levels = Set(store.alertPreferences[keyPath: keyPath])
                 if isOn { levels.insert(level) } else { levels.remove(level) }
-                store.alertPreferences.thresholds = levels.sorted()
+                store.alertPreferences[keyPath: keyPath] = levels.sorted()
             }
         )
     }

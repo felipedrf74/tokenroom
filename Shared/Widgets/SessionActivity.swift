@@ -17,6 +17,8 @@ struct SessionActivityAttributes: ActivityAttributes {
     var tint: String
     var windowID: String
     var windowTitle: String
+    /// The window's length, for the pace tick. Nil in activities started before 2.1.
+    var windowSeconds: Double? = nil
 }
 
 /// Starting, updating, and ending the usage Live Activities. Starting only works in the app
@@ -63,7 +65,8 @@ enum LiveActivities {
             monogram: provider.monogram,
             tint: provider.tint,
             windowID: window.id,
-            windowTitle: window.title
+            windowTitle: window.displayTitle,
+            windowSeconds: window.periodSec ?? AlertRules.typicalLength(kind: window.kind)
         )
         let state = SessionActivityAttributes.ContentState(used: window.used, resetsAt: resetsAt, isStale: !provider.isLive)
         _ = try Activity.request(attributes: attributes, content: ActivityContent(state: state, staleDate: resetsAt, relevanceScore: window.used), pushType: nil)
@@ -105,13 +108,13 @@ enum LiveActivities {
             let state = SessionActivityAttributes.ContentState(used: window.used, resetsAt: resetsAt, isStale: !provider.isLive)
             guard state != old else { continue }
             let crossed = [95, 80].first { level in
-                preferences.thresholds.contains(level) && old.used < Double(level) && window.used >= Double(level)
+                preferences.thresholds(for: window).contains(level) && old.used < Double(level) && window.used >= Double(level)
                     && (level >= 95 || !preferences.isQuiet(at: now))
             }
             let alert = crossed.map { level in
                 AlertConfiguration(
                     title: "\(provider.name): \(level)% used",
-                    body: "\(window.title) \(RelativeTime.resets(resetsAt, now: now) ?? "resets soon").",
+                    body: "\(window.displayTitle) \(RelativeTime.resets(resetsAt, now: now) ?? "resets soon").",
                     sound: .default
                 )
             }

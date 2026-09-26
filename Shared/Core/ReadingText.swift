@@ -69,6 +69,6 @@ enum ReadingText {
 
     /// "Weekly · resets in 2d 5h".
     static func caption(_ window: RelayWindow, now: Date = .now) -> String {
-        [window.title, reset(window, now: now)].compactMap { $0 }.joined(separator: " · ")
+        [window.displayTitle, reset(window, now: now)].compactMap { $0 }.joined(separator: " · ")
     }
 }

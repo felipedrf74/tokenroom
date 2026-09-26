@@ -7,6 +7,15 @@
 - **Close to a limit** leads the tab: every limit at 80% or more, or on course to run out before it resets, most urgent first, with Follow on Lock Screen for the first. It replaces Next up.
 - New models and updates are counted on the News tab's badge rather than on the Usage tab.
 
+### Alerts, on iPhone and Mac
+- A new alert when a limit is on course to run out before it resets: "Claude: 5-hour limit runs out at 10:18 AM" with how long before the reset. For 5-hour limits once at least half is used; for weekly and monthly limits when it's at least a day early. One running out within the hour comes through quiet hours.
+- 5-hour limits and weekly or monthly limits have their own 80% and 95% switches, and their own "Before it runs out", in Settings › Alerts on both. Choices saved before keep the same levels for both.
+- Sessions are called "5-hour" everywhere: alerts ("80% of 5-hour limit used"), the Live Activity, the provider screen, widgets, the Watch, and the Mac's cards.
+- The Live Activity's meter shows the even pace, and follows the alert levels for its kind of limit.
+
+### Readability
+- Small orange and red text (pace lines, "Runs out", New, warnings) uses darker and lighter shades that read at 4.5:1 or better in light and dark; the brand orange stays for buttons, big numbers, and the icon.
+
 ## 2.0.1 — 2026-09-26
 
 Fixes from an independent review of 2.0, for Tokenroom for Mac and the next iPhone and Apple Watch update.

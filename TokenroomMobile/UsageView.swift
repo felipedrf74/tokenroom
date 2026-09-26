@@ -287,8 +287,8 @@ struct UsageEmptyState: View {
 enum PaceStyle {
     static func color(_ severity: Pace.Severity) -> Color {
         switch severity {
-        case .critical: TokenroomTokens.critical
-        case .tight: TokenroomTokens.tight
+        case .critical: TokenroomTokens.criticalText
+        case .tight: TokenroomTokens.accentText
         case .watch, .none: .secondary
         }
     }

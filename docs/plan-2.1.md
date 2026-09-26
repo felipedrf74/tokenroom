@@ -5,8 +5,8 @@ What's left from the design review of September 26, 2026: the Usage tab, alerts,
 | Milestone | What | Status |
 | --- | --- | --- |
 | M13 | Usage tab: tiles (variation E3) and Close to a limit | Done on `tokenroom/usage-tiles-e3` |
-| M14 | Alerts: "5-hour limit", the pace alert, separate switches (iPhone, Mac, Live Activity) | Next |
-| M15 | Text-safe accent and critical colours | Small; can ride with M14 |
+| M14 | Alerts: "5-hour limit", the pace alert, separate switches (iPhone, Mac, Live Activity) | Done on `tokenroom/alerts-m14` |
+| M15 | Text-safe accent and critical colours | Done with M14 |
 | M16 | Provider icons on every platform | Blocked on the decisions below |
 | M17 | News on iPhone: the Today edition (River as an option) | Approved design |
 | M18 | News on the Mac: the News window | Approved design |
@@ -33,7 +33,7 @@ Work:
 - iPhone `TokenroomMobile/AlertsSettingsView.swift`: the sections from the design ("5-hour limits", "Weekly and monthly limits", "Also notify me when", Quiet Hours). Mac: the Alerts tab in `Tokenroom/Views/SettingsView.swift`, same switches.
 - Mac `Tokenroom/Refresh/MacAlerts.swift` and `RelayPublisher` post and save the new kind like the others.
 - Live Activity (`Shared/Widgets/SessionActivityViews.swift`): "5-hour" as the window title, a `MeterTrack` with the pace tick instead of `ProgressView`, and an alert when the pace alert fires, if on.
-- To check before merging: an older iPhone receiving an `Event` with an unknown `alertKind` (the push still shows its title and body; make sure the ledger and claim paths skip it instead of failing). If they fail, add a `minReader` bump or keep the new kind off the shared record until readers update.
+- Checked: readers of `Event` records use only their names and dates, and a push shows the record's own title and body, so an older iPhone is unaffected by the new kind (its subscription doesn't list `runsOut`, so it simply doesn't get those pushes). Older Macs apply `thresholds` to sessions until they update.
 
 ## M15 — Text-safe accent and critical colours
 
