@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 2.1.1 — 2026-09-26
+
+Tokenroom for Mac 2.1.1, and the iPhone and Apple Watch app, build 4.
 
 - GitHub Copilot shows its own icon on the Mac, iPhone, widgets, the Live Activity and Apple Watch, instead of "GH". Only xAI API keeps its monogram, until its kit is added.
 - iPhone: the welcome screen's four features line up on their column's leading edge, and the alerts line mentions the run-out alert ("Alerts before a limit runs out").
