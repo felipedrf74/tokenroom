@@ -1,25 +1,30 @@
 # Changelog
 
-## Unreleased
+## 2.1.0 — unreleased
+
+Tokenroom for Mac 2.1.0, and the iPhone and Apple Watch app, build 3.
 
 ### iPhone
 - The Usage tab is a grid of tiles, one per plan: the weekly (or monthly) limit as a ring and the 5-hour limit as a bar, each with the even-pace mark and when it resets, or when it runs out if that comes first. Balances show what's left.
 - **Close to a limit** leads the tab: every limit at 80% or more, or on course to run out before it resets, most urgent first, with Follow on Lock Screen for the first. It replaces Next up.
+- Tiles keep their places while you look: they re-rank by urgency when you open the tab, come back to the app, or pull to refresh. At the largest text sizes they stack one to a row, and Close to a limit puts each limit's name under its provider's.
 - New models and updates are counted on the News tab's badge rather than on the Usage tab.
 
 - News opens on **Today**, a short daily paper about your tools: what's new since you last looked, one top story (the newest model from a lab you follow, with its context window and prices), more new models, each tool's own changelog and releases with up to three headlines, and models retiring soon. Filters show Models, Announcements (newest first, by day), and Retiring. Headlines are set in New York.
+- A release that's in two of a tool's feeds shows once, noting the other ("Also in Claude Code releases").
 
 ### Mac
 - The News window has a sidebar: Today, Models, Announcements, and Retiring with what's new in each, then the labs and tools you follow. Today shows the top story beside the newest models, then each tool's news in two columns, then models retiring soon. Search finds titles across all of it.
+- The popover's News button and its "new models" and "updates" pills always open the window on their section, even when it's already open on a lab, a tool, or a search.
 
 ### Alerts, on iPhone and Mac
-- A new alert when a limit is on course to run out before it resets: "Claude: 5-hour limit runs out at 10:18 AM" with how long before the reset. For 5-hour limits once at least half is used; for weekly and monthly limits when it's at least a day early. One running out within the hour comes through quiet hours.
+- A new alert when a limit is on course to run out before it resets: "Claude: 5-hour limit runs out at 10:18 AM" with how long before the reset. For 5-hour limits once at least half is used; for weekly and monthly limits when it's at least a day early. One running out within the hour comes through quiet hours. A Mac projects it from its frequent readings; an iPhone reading its own API keys, from its recent readings, so a burst or a pause counts.
 - 5-hour limits and weekly or monthly limits have their own 80% and 95% switches, and their own "Before it runs out", in Settings › Alerts on both. Choices saved before keep the same levels for both.
 - Sessions are called "5-hour" everywhere: alerts ("80% of 5-hour limit used"), the Live Activity, the provider screen, widgets, the Watch, and the Mac's cards.
-- The Live Activity's meter shows the even pace, and follows the alert levels for its kind of limit.
+- The Live Activity's meter shows the even pace, and follows the alert levels for its kind of limit. With "Before it runs out" on, it also alerts once when the window it follows is on course to run out.
 
 ### Provider icons
-- Providers show their own icons on iPhone, in widgets and the Live Activity, on Apple Watch, and in the Mac's popover and Settings. The Mac's five app icons are joined by official marks from each provider's brand page or GitHub: Antigravity, Devin, Z.ai, Kimi Code, MiniMax, OpenCode Go, OpenRouter, DeepSeek, Moonshot, Vercel AI Gateway, and Anthropic API (OpenAI API shares OpenAI's). GitHub Copilot and xAI API keep their monograms for now, as do widgets the system tints.
+- Providers show their own icons on iPhone, in widgets and the Live Activity, on Apple Watch (inside each plan's ring), and in the Mac's popover and Settings. The Mac's five app icons are joined by official marks from each provider's brand page or GitHub: Antigravity, Devin, Z.ai, Kimi Code, MiniMax, OpenCode Go, OpenRouter, DeepSeek, Moonshot, Vercel AI Gateway, and Anthropic API (OpenAI API shares OpenAI's). GitHub Copilot and xAI API keep their monograms for now, as do widgets the system tints.
 
 ### Readability
 - Small orange and red text (pace lines, "Runs out", New, warnings) uses darker and lighter shades that read at 4.5:1 or better in light and dark; the brand orange stays for buttons, big numbers, and the icon.

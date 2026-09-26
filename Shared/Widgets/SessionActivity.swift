@@ -8,6 +8,9 @@ struct SessionActivityAttributes: ActivityAttributes {
         var used: Double
         var resetsAt: Date
         var isStale: Bool
+        /// Whether this activity has alerted that the window runs out before its reset; once per
+        /// activity, which ends at the reset. Nil in activities started before 2.1.
+        var warnedRunsOut: Bool? = nil
     }
 
     var providerID: String
@@ -87,7 +90,9 @@ enum LiveActivities {
     /// Moves each activity to the latest reading, with an alert as it crosses 80% and 95% (when
     /// those alerts are on, and outside quiet hours but for 95%), and ends the ones whose window
     /// has reset, stale ones included.
-    static func update(with providers: [RelayProvider], preferences: AlertPreferences, now: Date = .now) async {
+    /// - Parameter samples: recent readings by provider id, then window id, for the pace of readings
+    ///   without a measured one (the iPhone's own).
+    static func update(with providers: [RelayProvider], preferences: AlertPreferences, samples: [String: [String: [(date: Date, used: Double)]]] = [:], now: Date = .now) async {
         for activity in shown {
             let old = activity.content.state
             let provider = providers.first { $0.id == activity.attributes.providerID }
@@ -105,18 +110,25 @@ enum LiveActivities {
                 }
                 continue
             }
-            let state = SessionActivityAttributes.ContentState(used: window.used, resetsAt: resetsAt, isStale: !provider.isLive)
+            var state = SessionActivityAttributes.ContentState(used: window.used, resetsAt: resetsAt, isStale: !provider.isLive, warnedRunsOut: old.warnedRunsOut)
             guard state != old else { continue }
             let crossed = [95, 80].first { level in
                 preferences.thresholds(for: window).contains(level) && old.used < Double(level) && window.used >= Double(level)
                     && (level >= 95 || !preferences.isQuiet(at: now))
             }
-            let alert = crossed.map { level in
+            var alert = crossed.map { level in
                 AlertConfiguration(
                     title: "\(provider.name): \(level)% used",
                     body: "\(window.displayTitle) \(RelativeTime.resets(resetsAt, now: now) ?? "resets soon").",
                     sound: .default
                 )
+            }
+            // The pace alert, when its switch is on: once, and not in the same update as a level.
+            if alert == nil, old.warnedRunsOut != true,
+               let runsOut = AlertRules.runsOut(provider, window: window, preferences: preferences, samples: samples[provider.id]?[window.id] ?? [], now: now),
+               runsOut.isUrgent || !preferences.isQuiet(at: now) {
+                alert = AlertConfiguration(title: "\(runsOut.title)", body: "\(runsOut.body)", sound: .default)
+                state.warnedRunsOut = true
             }
             await activity.update(ActivityContent(state: state, staleDate: resetsAt, relevanceScore: window.used), alertConfiguration: alert)
         }

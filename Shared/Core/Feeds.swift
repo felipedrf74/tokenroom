@@ -112,6 +112,9 @@ struct FeedItem: Codable, Equatable, Sendable, Identifiable {
     var published: Date?
     /// Which feed it came from, e.g. "Claude Code".
     var source: String
+    /// Another feed that had the same entry and was folded into this one, e.g. "Claude Code
+    /// releases". Set by `NewsCache.announcements`, never stored.
+    var alsoIn: String? = nil
 
     /// Release feeds title entries with a bare version; "Codex 0.157.0" reads better in a list.
     var displayTitle: String {

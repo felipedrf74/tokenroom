@@ -11,7 +11,11 @@ struct UsageView: View {
     @State private var notificationsOff = false
     /// Why following a tile's window failed, from its context menu.
     @State private var followError: String?
+    /// Tile order as of the last look: tiles re-rank by urgency when the tab appears, the app
+    /// comes back, or you pull to refresh, not under your finger on a background refresh.
+    @State private var order: [String] = []
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -70,13 +74,20 @@ struct UsageView: View {
             }
             .refreshable {
                 await store.refresh(force: true)
+                rank()
             }
             .task {
                 await checkNotifications()
             }
+            .onAppear(perform: rank)
+            .onChange(of: store.readings.map(\.id)) { _, ids in
+                // The first readings, or a different set (sample data on or off): rank them now.
+                if !ids.contains(where: order.contains) { order = ids }
+            }
             .onChange(of: scenePhase) { _, phase in
                 // Back from Settings, where notifications may have been turned on.
                 if phase == .active {
+                    rank()
                     Task { await checkNotifications() }
                 }
             }
@@ -88,10 +99,12 @@ struct UsageView: View {
         }
     }
 
-    /// Two tiles a row, each row as tall as its taller tile.
+    /// Two tiles a row, each row as tall as its taller tile; one a row at the accessibility text
+    /// sizes.
     private var tiles: some View {
-        let readings = store.readings
-        let rows = stride(from: 0, to: readings.count, by: 2).map { Array(readings[$0..<min($0 + 2, readings.count)]) }
+        let readings = orderedReadings
+        let columns = typeSize.isAccessibilitySize ? 1 : 2
+        let rows = stride(from: 0, to: readings.count, by: columns).map { Array(readings[$0..<min($0 + columns, readings.count)]) }
         return Grid(horizontalSpacing: 12, verticalSpacing: 12) {
             ForEach(rows, id: \.first?.id) { row in
                 GridRow {
@@ -107,7 +120,7 @@ struct UsageView: View {
                             Button("Details", systemImage: "info.circle") { path = [reading.id] }
                         }
                     }
-                    if row.count == 1 {
+                    if row.count < columns {
                         Color.clear
                             .gridCellUnsizedAxes([.horizontal, .vertical])
                     }
@@ -135,6 +148,14 @@ struct UsageView: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 16)
         }
+    }
+
+    private var orderedReadings: [MobileStore.Reading] {
+        UsageTiles.ordered(store.readings, id: \.id, as: order)
+    }
+
+    private func rank() {
+        order = store.readings.map(\.id)
     }
 
     private var closeWindows: [CloseWindow] {

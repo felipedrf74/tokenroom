@@ -163,6 +163,7 @@ struct CloseToLimitCard: View {
     var windows: [CloseWindow]
     var open: (String) -> Void
     @State private var followError: String?
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -214,13 +215,19 @@ struct CloseToLimitCard: View {
                     ProviderMark(provider: item.provider, size: 26)
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text(item.provider.name)
-                                .font(.subheadline.weight(.semibold))
-                                .lineLimit(1)
-                            Text(window.displayTitle)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                            // At the accessibility sizes the limit goes under the name, so neither is cut short.
+                            let names = typeSize.isAccessibilitySize
+                                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0))
+                                : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 6))
+                            names {
+                                Text(item.provider.name)
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
+                                Text(window.displayTitle)
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
+                            }
                             Spacer(minLength: 4)
                             Text(ReadingText.headline(window))
                                 .font(.system(.body, design: .rounded, weight: .semibold))
@@ -230,7 +237,7 @@ struct CloseToLimitCard: View {
                         MeterTrack(usedPercent: window.used, remaining: 100 - window.used, isStale: false, paceMark: item.pace?.elapsedFraction, height: 5, solid: true)
                         caption(item)
                             .font(.caption)
-                            .lineLimit(2)
+                            .lineLimit(typeSize.isAccessibilitySize ? 4 : 2)
                     }
                 }
                 .contentShape(Rectangle())
@@ -259,7 +266,7 @@ struct CloseToLimitCard: View {
             let moment = Text("Runs out \(Pace.shortMoment(runsOut, now: .now, timeZone: .current))")
                 .fontWeight(.semibold)
                 .foregroundStyle(PaceStyle.color(pace.severity))
-            return moment + Text(" · \(UsageTiles.lead(runsOut: runsOut, resetsAt: pace.resetsAt))").foregroundStyle(.secondary)
+            return Text("\(moment) · \(UsageTiles.lead(runsOut: runsOut, resetsAt: pace.resetsAt))").foregroundStyle(.secondary)
         }
         let level = AlertPreferences.supportedThresholds.filter { Double($0) <= item.window.used }.max() ?? Int(UsageTiles.closeUse)
         let reset = ReadingText.reset(item.window).map { " · \($0)" } ?? ""

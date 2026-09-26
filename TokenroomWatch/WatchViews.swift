@@ -113,8 +113,10 @@ private struct WatchRow: View {
         let window = provider.primaryWindow
         HStack(spacing: 10) {
             if let window, window.isMetered {
-                UsageRing(used: window.used, isStale: !provider.isLive, label: provider.monogram)
+                // The provider's icon in the ring; the row reads its name, so the ring has no label.
+                UsageRing(used: window.used, isStale: !provider.isLive, label: "")
                     .frame(width: 40, height: 40)
+                    .overlay { ProviderMark(provider: provider, size: 22) }
             } else {
                 ProviderMark(provider: provider, size: 36)
             }

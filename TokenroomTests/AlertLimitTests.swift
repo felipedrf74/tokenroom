@@ -112,6 +112,24 @@ final class AlertLimitTests: XCTestCase {
         XCTAssertTrue(ledger.process([claude([session(62, resetsIn: 2.5 * 3600 - 300)])], preferences: preferences, now: now.addingTimeInterval(300)).isEmpty, "The same window instance alerts once")
     }
 
+    func testRecentReadingsDecideTheRunOutWhenTheReadingHasNoMeasuredPace() {
+        // 60% used 2.5 hours in runs out early at the rate so far, but the last half hour was idle.
+        let idle = [25.0, 15, 5, 0].map { (date: now.addingTimeInterval(-$0 * 60), used: 60.0) }
+        let before = claude([session(55, resetsIn: 2.5 * 3600 + 600)])
+        let after = claude([session(60, resetsIn: 2.5 * 3600)])
+        XCTAssertTrue(AlertRules.alerts(previous: before, current: after, preferences: preferences, samples: ["session": idle], now: now).isEmpty)
+
+        var ledger = AlertLedger()
+        ledger.process([before], preferences: preferences, now: now)
+        XCTAssertTrue(ledger.process([after], preferences: preferences, samples: ["claude": ["session": idle]], now: now).isEmpty, "The iPhone passes its own readings")
+
+        // A busy half hour, about 48% an hour: out within the hour, so urgent.
+        let busy = [(25.0, 40.0), (15, 47), (5, 55), (0, 60)].map { (date: now.addingTimeInterval(-$0.0 * 60), used: $0.1) }
+        let raised = AlertRules.alerts(previous: before, current: after, preferences: preferences, samples: ["session": busy], now: now)
+        XCTAssertEqual(raised.map(\.kind), [.runsOut])
+        XCTAssertTrue(raised[0].isUrgent)
+    }
+
     func testARunOutWithinTheHourIsUrgent() {
         // 88% used 3.5 hours in: out in under half an hour, an hour and a half before the reset.
         let raised = alerts(from: [session(87, resetsIn: 1.5 * 3600 + 300)], to: [session(88, resetsIn: 1.5 * 3600)])

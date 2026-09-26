@@ -607,11 +607,28 @@ final class MobileStore {
         saveCache(ReadingCache(savedAt: now, isSample: false, items: output.connected))
         let providers = output.connected.map(\.provider)
         let preferences = preferencesHere
+        let samples = recentSamples(for: providers)
         let previous = liveActivityUpdate
         liveActivityUpdate = Task {
             await previous?.value
-            await LiveActivities.update(with: providers, preferences: preferences, now: now)
+            await LiveActivities.update(with: providers, preferences: preferences, samples: samples, now: now)
         }
+    }
+
+    /// This iPhone's recent readings by provider id, then window id. Its own readings carry no
+    /// measured pace, so a run-out is projected from these; a Mac's reading carries its own.
+    private func recentSamples(for providers: [RelayProvider]) -> [String: [String: [(date: Date, used: Double)]]] {
+        var samples: [String: [String: [(date: Date, used: Double)]]] = [:]
+        for provider in providers {
+            guard let key = Provider(rawValue: provider.id) else { continue }
+            for window in provider.windows where window.isMetered {
+                let recent = history.samples(provider: key, window: window.id)
+                if !recent.isEmpty {
+                    samples[provider.id, default: [:]][window.id] = recent
+                }
+            }
+        }
+        return samples
     }
 
     /// Widgets redraw from this. When nothing they'd draw changed, only the save time moves, so
@@ -810,7 +827,7 @@ final class MobileStore {
         let read = keyedProviders.compactMap { provider in
             localStatuses[provider].map { RelayProvider(provider: provider, status: budgeted($0, for: provider), checkedAt: localCheckedAt[provider]) }
         }
-        alertLedger.process(read, preferences: preferences, now: now)
+        alertLedger.process(read, preferences: preferences, samples: recentSamples(for: read), now: now)
         // Urgent ones now; the rest when quiet hours end.
         let due = alertLedger.due(preferences: preferences, now: now).filter { !isCovered($0) }
         var shown = unclaimed

@@ -30,6 +30,8 @@ A draft for App Store Connect. Provider names appear only in the description, as
 
 Export compliance: `ITSAppUsesNonExemptEncryption = NO` (only Apple's HTTPS and CloudKit).
 
+Provider icons: the app shows each provider's own icon, used under its owner's published terms (sources in `docs/provider-icons.md`). If App Review asks about third-party marks (guideline 5.2), point to those terms; returning `nil` from `Provider.assetName` brings back monograms without other changes.
+
 ## Promotional text (170)
 
 See how much of your AI plans you've used, your pace, and when each limit resets, from your Mac or your API keys. Widgets, Live Activity, alerts, and Apple Watch.
@@ -39,8 +41,8 @@ See how much of your AI plans you've used, your pace, and when each limit resets
 Tokenroom shows how much of your AI coding and chat plans you've used, whether you're on pace, and when each limit resets, on your iPhone, your Lock Screen, and your wrist.
 
 YOUR PLANS AT A GLANCE
-• Next up: your most pressing limit, with a live countdown to its reset
-• Used percent, reset times, and pace for every plan, most urgent first
+• Close to a limit: every limit at 80% or more, or on course to run out before it resets, most urgent first
+• A tile for every plan: the weekly limit as a ring and the 5-hour limit as a bar, each with your pace and when it resets
 • When you'd run out at the current pace, and a week of history for each window
 • Banked resets, credits, balances, and this month's spend, with how long a balance lasts
 
@@ -53,13 +55,15 @@ WIDGETS AND LIVE ACTIVITY
 • Follow a session, or a nearly spent week, on the Lock Screen and in the Dynamic Island until it resets. Start it from the app, Control Center, the Action button, or Siri.
 
 ALERTS THAT DON'T NAG
-• At 80% and 95%, when a busy window resets, for banked resets, and when a balance runs low
+• At 80% and 95%, set apart for 5-hour and weekly limits, and before a limit runs out at your current pace
+• When a busy window resets, for banked resets, and when a balance runs low
 • Once per event, however many devices notice it
 • Quiet hours hold what can wait until morning
 
 NEWS
-• New models from the labs you follow
-• Official changelogs and announcements, in one list
+• Today: a short daily paper with what's new since you last looked, a top story, and models retiring soon
+• New models from the labs you follow, with context window and prices
+• Each tool's official changelog and releases, grouped by tool, or newest first by day
 
 APPLE WATCH
 • Rings for every plan, complications, and a Smart Stack widget when a limit nears its reset
@@ -91,11 +95,11 @@ The Watch app reads the same iCloud records. Notifications are optional and come
 
 6.9" iPhone (1320 × 2868), from sample data on the iPhone 18 Pro Max simulator in US English, with the status bar set to 9:41:
 
-1. Usage: Next up, highlights, and every plan
+1. Usage: Close to a limit and the plan tiles
 2. Detail with pace and a week of history (OpenAI)
 3. Home Screen widgets
 4. Lock Screen widgets and the Live Activity
-5. News
+5. News: Today
 6. API keys
 7. Welcome
 
