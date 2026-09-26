@@ -6,6 +6,8 @@ struct FollowButton: View {
     var provider: RelayProvider
     /// The window the screen shows, followed when it resets within 8 hours.
     var preferring: String? = nil
+    /// "Follow" and "Stop" instead of the full labels, for tight rows.
+    var isCompact = false
     /// Reports why following failed, for a caption next to the button.
     var onError: (String?) -> Void = { _ in }
     @State private var isFollowing = false
@@ -15,7 +17,7 @@ struct FollowButton: View {
             Button {
                 toggle(window)
             } label: {
-                Label(isFollowing ? "Stop Following" : "Follow on Lock Screen", systemImage: isFollowing ? "xmark.circle" : "timer")
+                Label(isFollowing ? (isCompact ? "Stop" : "Stop Following") : (isCompact ? "Follow" : "Follow on Lock Screen"), systemImage: isFollowing ? "xmark.circle" : "timer")
             }
             .onAppear {
                 isFollowing = LiveActivities.activity(for: provider.id) != nil
