@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.1.0 — unreleased
+## 2.1.0 — 2026-09-26
 
 Tokenroom for Mac 2.1.0, and the iPhone and Apple Watch app, build 3.
 

@@ -102,7 +102,7 @@ Prepared on `tokenroom/release-m19`: versions (Mac 2.1.0 build 3; iPhone and Wat
    - The Mac News window's sidebar selection in a real window.
    - Provider icons in tinted and clear Home Screen modes; widgets fall back to monograms there.
 3. **CloudKit:** no schema change is expected (new alert kinds and choices are values inside existing fields). Confirm in CloudKit Console that Production matches Development before a Production build.
-4. **Mac:** `./scripts/release.sh` builds the notarized Developer ID zip. Then date the CHANGELOG heading and publish the GitHub release.
+4. **Mac:** done on September 26, 2026. `./scripts/release.sh` built the notarized Developer ID zip, the CHANGELOG is dated, and v2.1.0 is published on GitHub.
 5. **iPhone and Watch:** archive the TokenroomMobile scheme in Xcode (build 3) and upload it to TestFlight. Regenerate the App Store screenshots with the steps in `docs/app-store.md`; the list there is updated.
 6. **README images:** done in the audit. `hero.png`, `iphone.png`, `popover.png` and `popover-details.png` retaken from sample data (the Mac with `-TokenroomSnapshots`, the iPhone 18 Pro and Apple Watch Ultra 4 simulators with `-sampleMode YES`), framed like the old ones. `menubar.png` is unchanged in 2.1.
 7. **Design system:** done. The Tokenroom Design System artifact (version 6) marks every built piece as built, keeps E1, E2 and E4 as unchosen proposals, shows Copilot's monogram as the app does, and has the retaken screens.
