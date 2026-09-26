@@ -8,7 +8,7 @@ What's left from the design review of September 26, 2026: the Usage tab, alerts,
 | M14 | Alerts: "5-hour limit", the pace alert, separate switches (iPhone, Mac, Live Activity) | Done on `tokenroom/alerts-m14` |
 | M15 | Text-safe accent and critical colours | Done with M14 |
 | M16 | Provider icons on every platform | Done on `tokenroom/provider-icons-m16` (Copilot and xAI API still monograms) |
-| M17 | News on iPhone: the Today edition (River as an option) | Approved design |
+| M17 | News on iPhone: the Today edition (River as an option) | Done on `tokenroom/news-ios-m17` |
 | M18 | News on the Mac: the News window | Approved design |
 | M19 | Release 2.1: docs, screenshots, App Store copy, TestFlight | Last |
 
@@ -69,7 +69,7 @@ The Today edition from the design:
 - **More new models:** a row of model cards.
 - **From your tools:** one card per followed tool, newest first. Up to three headlines each, with folded releases noted ("Also in Claude Code releases").
 - **Retiring soon**, and the attribution footer.
-- **River** as an optional layout for Announcements (a choice in Follow).
+- **River** as the Announcements filter's layout (chronological, by day). A setting to use it for Today too can come later if people ask.
 
 Work:
 

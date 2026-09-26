@@ -39,6 +39,7 @@ struct ModelReleaseRow: View {
             // Links tint their labels; rows keep their own colors.
             Link(destination: link) { row }
                 .foregroundStyle(.primary)
+                .multilineTextAlignment(.leading)
         } else {
             row
         }
@@ -105,6 +106,7 @@ struct AnnouncementRow: View {
         if let link = item.link {
             Link(destination: link) { row }
                 .foregroundStyle(.primary)
+                .multilineTextAlignment(.leading)
         } else {
             row
         }
