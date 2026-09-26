@@ -68,7 +68,7 @@ struct ProviderDetailView: View {
 
     private var header: some View {
         HStack(spacing: 14) {
-            MonogramMark(provider: provider, size: 44)
+            ProviderMark(provider: provider, size: 44)
             VStack(alignment: .leading, spacing: 3) {
                 if let plan = provider.plan {
                     Text(plan)

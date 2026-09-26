@@ -253,7 +253,7 @@ private struct ResetSoonView: View {
     var body: some View {
         if let item = entry.item, let window = item.provider.windows.first(where: { $0.id == entry.windowID }) ?? item.provider.primaryWindow {
             HStack(spacing: 8) {
-                MonogramMark(provider: item.provider, size: 28)
+                ProviderMark(provider: item.provider, size: 28)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(item.provider.shortName) \(window.displayTitle.lowercased()) \(ReadingText.headline(window))")
                         .font(.headline)

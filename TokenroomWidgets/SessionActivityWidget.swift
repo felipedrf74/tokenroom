@@ -15,7 +15,7 @@ struct SessionActivityWidget: Widget {
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     HStack(spacing: 8) {
-                        MonogramMark(text: attributes.monogram, tint: Color(hex: attributes.tint), size: 28)
+                        ProviderMark(providerID: attributes.providerID, monogram: attributes.monogram, tint: attributes.tint, size: 28)
                         Text(attributes.shortName)
                             .font(.headline)
                             .lineLimit(1)

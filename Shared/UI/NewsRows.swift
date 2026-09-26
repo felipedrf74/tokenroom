@@ -77,7 +77,7 @@ struct AnnouncementRow: View {
     var body: some View {
         let row = HStack(alignment: .top, spacing: 10) {
             if let provider {
-                MonogramMark(text: provider.monogram, tint: Color(hex: provider.tintHex), size: 26)
+                ProviderMark(provider: provider, size: 26)
                     .padding(.top, 1)
             }
             VStack(alignment: .leading, spacing: 3) {

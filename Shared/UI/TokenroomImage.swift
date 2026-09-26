@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 
 enum TokenroomImage {
@@ -47,3 +48,4 @@ enum TokenroomImage {
         return nil
     }
 }
+#endif

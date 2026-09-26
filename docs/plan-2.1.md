@@ -7,7 +7,7 @@ What's left from the design review of September 26, 2026: the Usage tab, alerts,
 | M13 | Usage tab: tiles (variation E3) and Close to a limit | Done on `tokenroom/usage-tiles-e3` |
 | M14 | Alerts: "5-hour limit", the pace alert, separate switches (iPhone, Mac, Live Activity) | Done on `tokenroom/alerts-m14` |
 | M15 | Text-safe accent and critical colours | Done with M14 |
-| M16 | Provider icons on every platform | Blocked on the decisions below |
+| M16 | Provider icons on every platform | Done on `tokenroom/provider-icons-m16` (Copilot and xAI API still monograms) |
 | M17 | News on iPhone: the Today edition (River as an option) | Approved design |
 | M18 | News on the Mac: the News window | Approved design |
 | M19 | Release 2.1: docs, screenshots, App Store copy, TestFlight | Last |

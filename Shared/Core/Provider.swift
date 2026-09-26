@@ -54,7 +54,7 @@ struct ProviderDescriptor: Sendable {
     var shortName: String
     /// One letter for the Mac's fallback icon tile.
     var letter: String
-    /// Up to two letters for the monogram mark on iPhone and Apple Watch (no brand logos there).
+    /// Up to two letters for the monogram, shown where there's no icon (and in tinted widgets).
     var monogram: String
     /// Monogram tint, `#RRGGBB`.
     var tintHex: String
@@ -62,8 +62,12 @@ struct ProviderDescriptor: Sendable {
     /// Whether a provider this install has never seen starts enabled. Otherwise it is enabled
     /// only when a local session is detected.
     var enabledByDefault: Bool = false
-    /// Mac popover icon in the asset catalog; nil falls back to the letter tile.
+    /// The provider's icon in `Shared/UI/ProviderIcons.xcassets`, on every platform; nil falls
+    /// back to the monogram. Sources and terms: `docs/provider-icons.md`.
     var assetName: String?
+    /// An official mark without a square of its own: drawn whole on a white tile with clear
+    /// space, never cropped or recoloured.
+    var iconIsMark = false
     /// Mac menu-bar glyph; nil falls back to a drawn mark.
     var menuGlyphName: String?
     var signInHint: String
@@ -210,6 +214,8 @@ extension Provider {
                 letter: "A",
                 monogram: "AG",
                 tintHex: "#4285F4",
+                assetName: "ProviderAntigravity",
+                iconIsMark: true,
                 signInHint: "Sign in to Antigravity, and install agy 1.1.11 or later, to see usage.",
                 expiredHint: "Session expired. Open Antigravity to sign in again.",
                 // Each check runs the agy CLI, which can take a while.
@@ -222,6 +228,7 @@ extension Provider {
                 letter: "D",
                 monogram: "DV",
                 tintHex: "#2F6F5E",
+                assetName: "ProviderDevin",
                 signInHint: "Sign in to Devin Desktop to see usage.",
                 expiredHint: "Session expired. Sign in to Devin Desktop again."
             )
@@ -232,6 +239,7 @@ extension Provider {
                 letter: "Z",
                 monogram: "Z",
                 tintHex: "#2D5BFF",
+                assetName: "ProviderZai",
                 signInHint: "Add a Z.ai API key, or use a GLM Coding Plan key in Claude Code on this Mac.",
                 expiredHint: "Z.ai rejected this key. It may belong to the other region.",
                 key: KeySpec(createURL: URL(string: "https://z.ai/manage-apikey/apikey-list")!, regions: ["Global", "China"], isCodingPlan: true)
@@ -243,6 +251,8 @@ extension Provider {
                 letter: "K",
                 monogram: "K",
                 tintHex: "#1F2937",
+                assetName: "ProviderKimi",
+                iconIsMark: true,
                 signInHint: "Sign in with the kimi CLI (Kimi Code), or add a Kimi Code API key.",
                 // The CLI owns its login; Tokenroom never refreshes it.
                 expiredHint: "Session expired. Run kimi once to refresh it, or add an API key.",
@@ -255,6 +265,8 @@ extension Provider {
                 letter: "M",
                 monogram: "MM",
                 tintHex: "#E2167E",
+                assetName: "ProviderMiniMax",
+                iconIsMark: true,
                 signInHint: "Add a MiniMax Coding Plan key, or use one in Claude Code on this Mac.",
                 expiredHint: "MiniMax rejected this key. It may belong to the other region.",
                 key: KeySpec(createURL: URL(string: "https://platform.minimax.io/user-center/basic-information/interface-key")!, regions: ["Global", "China"], isCodingPlan: true)
@@ -266,6 +278,8 @@ extension Provider {
                 letter: "O",
                 monogram: "OC",
                 tintHex: "#211E1E",
+                assetName: "ProviderOpenCode",
+                iconIsMark: true,
                 signInHint: "Sign in to OpenCode Go in OpenCode, or add its API key.",
                 expiredHint: "OpenCode rejected this key. Sign in to OpenCode again.",
                 key: KeySpec(createURL: URL(string: "https://opencode.ai/go")!, isCodingPlan: true)
@@ -278,6 +292,8 @@ extension Provider {
                 monogram: "OR",
                 tintHex: "#6467F2",
                 category: .apiBalance,
+                assetName: "ProviderOpenRouter",
+                iconIsMark: true,
                 signInHint: "Add an OpenRouter API key to see usage.",
                 expiredHint: "Couldn't use this OpenRouter key. Add a new one in Settings.",
                 key: KeySpec(createURL: URL(string: "https://openrouter.ai/settings/keys")!, prefixHint: "sk-or-")
@@ -290,6 +306,8 @@ extension Provider {
                 monogram: "DS",
                 tintHex: "#4D6BFE",
                 category: .apiBalance,
+                assetName: "ProviderDeepSeek",
+                iconIsMark: true,
                 signInHint: "Add a DeepSeek API key to see your balance.",
                 expiredHint: "Couldn't use this DeepSeek key. Add a new one in Settings.",
                 key: KeySpec(createURL: URL(string: "https://platform.deepseek.com/api_keys")!, prefixHint: "sk-")
@@ -302,6 +320,7 @@ extension Provider {
                 monogram: "MS",
                 tintHex: "#16191E",
                 category: .apiBalance,
+                assetName: "ProviderMoonshot",
                 signInHint: "Add a Moonshot API key to see your balance.",
                 expiredHint: "Couldn't use this Moonshot key. It may belong to the other region.",
                 key: KeySpec(createURL: URL(string: "https://platform.kimi.ai/console/api-keys")!, prefixHint: "sk-", regions: ["Global", "China"])
@@ -314,6 +333,8 @@ extension Provider {
                 monogram: "V",
                 tintHex: "#000000",
                 category: .apiBalance,
+                assetName: "ProviderVercel",
+                iconIsMark: true,
                 signInHint: "Add an AI Gateway API key to see your credits.",
                 expiredHint: "Couldn't use this AI Gateway key. Add a new one in Settings.",
                 key: KeySpec(createURL: URL(string: "https://vercel.com/dashboard/ai-gateway/api-keys")!)
@@ -326,6 +347,7 @@ extension Provider {
                 monogram: "OA",
                 tintHex: "#0E7C66",
                 category: .orgSpend,
+                assetName: "ProviderGPT",
                 signInHint: "Add an OpenAI Admin key to see this month's spend.",
                 expiredHint: "Couldn't use this key. It needs to be an OpenAI Admin key.",
                 key: KeySpec(label: "Admin key", createURL: URL(string: "https://platform.openai.com/settings/organization/admin-keys")!, prefixHint: "sk-admin-", isAdmin: true)
@@ -338,6 +360,8 @@ extension Provider {
                 monogram: "AN",
                 tintHex: "#B85C38",
                 category: .orgSpend,
+                assetName: "ProviderAnthropic",
+                iconIsMark: true,
                 signInHint: "Add an Anthropic Admin key to see this month's spend.",
                 expiredHint: "Couldn't use this key. It needs to be an Anthropic Admin key.",
                 // Cost reports update slowly; polling faster only spends rate limit.
@@ -374,6 +398,7 @@ extension Provider {
     var category: ProviderDescriptor.Category { descriptor.category }
     var enabledByDefault: Bool { descriptor.enabledByDefault }
     var assetName: String? { descriptor.assetName }
+    var iconIsMark: Bool { descriptor.iconIsMark }
     var menuGlyphName: String? { descriptor.menuGlyphName }
     var signInHint: String { descriptor.signInHint }
     var expiredHint: String { descriptor.expiredHint }
