@@ -22,7 +22,7 @@ A draft for App Store Connect. Provider names appear only in the description, as
 | Content rights | Yes: shows third-party content (provider names, model and feed titles) it has the right to use |
 | EU trader status (DSA) | Non-trader |
 | Tracking | None |
-| Release | Manual, after approval |
+| Release | Automatic, as soon as App Review approves it |
 
 ## App privacy
 
