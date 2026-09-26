@@ -7,6 +7,8 @@
 - **Close to a limit** leads the tab: every limit at 80% or more, or on course to run out before it resets, most urgent first, with Follow on Lock Screen for the first. It replaces Next up.
 - New models and updates are counted on the News tab's badge rather than on the Usage tab.
 
+- News opens on **Today**, a short daily paper about your tools: what's new since you last looked, one top story (the newest model from a lab you follow, with its context window and prices), more new models, each tool's own changelog and releases with up to three headlines, and models retiring soon. Filters show Models, Announcements (newest first, by day), and Retiring. Headlines are set in New York.
+
 ### Alerts, on iPhone and Mac
 - A new alert when a limit is on course to run out before it resets: "Claude: 5-hour limit runs out at 10:18 AM" with how long before the reset. For 5-hour limits once at least half is used; for weekly and monthly limits when it's at least a day early. One running out within the hour comes through quiet hours.
 - 5-hour limits and weekly or monthly limits have their own 80% and 95% switches, and their own "Before it runs out", in Settings › Alerts on both. Choices saved before keep the same levels for both.

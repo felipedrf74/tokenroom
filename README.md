@@ -98,7 +98,7 @@ Tokenroom for iPhone shows the same meters, pace, and a week of history. They co
 - Home Screen and Lock Screen widgets, with countdowns that tick without draining the widget budget
 - a Live Activity that follows a session, or a nearly spent week, to its reset; start it from the app, Control Center, the Action button, or Siri ("Follow usage in Tokenroom")
 - the alerts above, as notifications, even when the app isn't running
-- News, with a badge for what's new
+- News as a short daily paper about your tools: what's new since you looked, one top story, each tool's own changelog, and models retiring soon, with a badge for what's new
 
 The Apple Watch app and its complications read the same iCloud records, so they keep working with the iPhone away. The Smart Stack shows a limit as it nears its reset or passes 80%. The signed download of Tokenroom for Mac sends its readings on its own (**Settings → iPhone & Watch** turns that off). A copy you build and sign yourself can't use iCloud.
 
