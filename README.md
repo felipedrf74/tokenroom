@@ -72,7 +72,7 @@ New models from the labs you follow (from OpenRouter's public model list) and of
 
 ## Alerts
 
-At 80% and 95%, when a busy window resets, when a banked reset arrives or is about to expire, and when a balance or budget runs low. Each alert goes out once, from whichever device sees it first. Quiet hours hold the ones that can wait until morning. Set them in **Settings → Alerts** on the Mac or in the iPhone app; the choices are shared through iCloud.
+At 80% and 95% of a limit, set apart for 5-hour limits and for weekly and monthly ones; when a limit is on course to run out before it resets; when a busy window resets, when a banked reset arrives or is about to expire, and when a balance or budget runs low. Each alert goes out once, from whichever device sees it first. Quiet hours hold the ones that can wait until morning. Set them in **Settings → Alerts** on the Mac or in the iPhone app; the choices are shared through iCloud.
 
 ## Why it exists
 

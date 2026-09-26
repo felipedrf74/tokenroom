@@ -427,7 +427,7 @@ private struct KeyRow: View {
             if let warning = metadata?.warning {
                 Label(warning, systemImage: "exclamationmark.triangle")
                     .font(.system(size: 11))
-                    .foregroundStyle(TokenroomTokens.tight)
+                    .foregroundStyle(TokenroomTokens.accentText)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let message {
@@ -548,7 +548,7 @@ private struct AddKeySheet: View {
             if let warning {
                 Label(warning, systemImage: "exclamationmark.triangle")
                     .font(.system(size: 11))
-                    .foregroundStyle(TokenroomTokens.tight)
+                    .foregroundStyle(TokenroomTokens.accentText)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text(message ?? "Tokenroom only reads your balance and usage with this key. It stays in this Mac's Keychain.")
@@ -685,23 +685,31 @@ private struct AlertsSettings: View {
 
             Section {
                 ForEach(AlertPreferences.supportedThresholds, id: \.self) { level in
-                    Toggle("\(level)% of a limit is used", isOn: binding(
-                        get: { $0.thresholds.contains(level) },
-                        set: { preferences, isOn in
-                            if isOn {
-                                preferences.thresholds = Array(Set(preferences.thresholds + [level])).sorted()
-                            } else {
-                                preferences.thresholds.removeAll { $0 == level }
-                            }
-                        }
-                    ))
+                    Toggle("\(level)% used", isOn: levelBinding(level, \.sessionThresholds))
                 }
+                Toggle("Before it runs out", isOn: binding(get: \.sessionRunsOut, set: { $0.sessionRunsOut = $1 }))
+            } header: {
+                Text("5-hour limits")
+            } footer: {
+                Text("\"Before it runs out\" alerts when the pace would use the limit up before it resets, once at least half is used.")
+            }
+
+            Section {
+                ForEach(AlertPreferences.supportedThresholds, id: \.self) { level in
+                    Toggle("\(level)% used", isOn: levelBinding(level, \.thresholds))
+                }
+                Toggle("Before it runs out, at least a day early", isOn: binding(get: \.limitRunsOut, set: { $0.limitRunsOut = $1 }))
+            } header: {
+                Text("Weekly and monthly limits")
+            }
+
+            Section {
                 Toggle("A busy window resets", isOn: binding(get: \.resets, set: { $0.resets = $1 }))
                 Toggle("Banked resets arrive or are about to expire", isOn: binding(get: \.banked, set: { $0.banked = $1 }))
                 Toggle("A balance or budget runs low", isOn: binding(get: \.lowBalance, set: { $0.lowBalance = $1 }))
                 Toggle("New models from labs you follow", isOn: binding(get: \.newModels, set: { $0.newModels = $1 }))
             } header: {
-                Text("Alert me when")
+                Text("Also alert me when")
             } footer: {
                 Text("Shared with Tokenroom on your iPhone through iCloud; a change on either device applies to both. Low balance alerts need a reference or budget in API Keys.")
             }
@@ -717,7 +725,7 @@ private struct AlertsSettings: View {
                     }
                 }
             } footer: {
-                Text("Only 95% alerts and banked resets about to expire come through. The rest wait until quiet hours end.")
+                Text("Only 95% alerts, limits that run out within the hour, and banked resets about to expire come through. The rest wait until quiet hours end.")
             }
         }
         .formStyle(.grouped)
@@ -736,6 +744,18 @@ private struct AlertsSettings: View {
 
     private func binding<Value>(get keyPath: KeyPath<AlertPreferences, Value>, set: @escaping (inout AlertPreferences, Value) -> Void) -> Binding<Value> {
         binding(get: { $0[keyPath: keyPath] }, set: set)
+    }
+
+    /// One level (80, 95) of a list of levels, on or off.
+    private func levelBinding(_ level: Int, _ keyPath: WritableKeyPath<AlertPreferences, [Int]>) -> Binding<Bool> {
+        binding(
+            get: { $0[keyPath: keyPath].contains(level) },
+            set: { preferences, isOn in
+                var levels = Set(preferences[keyPath: keyPath])
+                if isOn { levels.insert(level) } else { levels.remove(level) }
+                preferences[keyPath: keyPath] = levels.sorted()
+            }
+        )
     }
 
     static func hourText(_ hour: Int) -> String {
@@ -899,14 +919,14 @@ private struct ClaudeBridgeRow: View {
             if isOn == true, !overrides.isEmpty {
                 Text("\(overrides.count == 1 ? "A project sets" : "\(overrides.count) projects set") its own status line, which replaces the bridge there: \(overrides.joined(separator: ", ")). Tokenroom never edits project settings.")
                     .font(.system(size: 11))
-                    .foregroundStyle(TokenroomTokens.tight)
+                    .foregroundStyle(TokenroomTokens.accentText)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let replacedLink {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text("Tokenroom 2.0.0 replaced ~/.claude/settings.json, a link to \(replacedLink), with a file. If you keep it with your dotfiles, link it again; Tokenroom 2.0.1 leaves links alone.")
                         .font(.system(size: 11))
-                        .foregroundStyle(TokenroomTokens.tight)
+                        .foregroundStyle(TokenroomTokens.accentText)
                         .fixedSize(horizontal: false, vertical: true)
                     Button("Dismiss") {
                         self.replacedLink = nil

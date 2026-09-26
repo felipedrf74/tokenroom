@@ -18,7 +18,7 @@ struct ModelReleaseRow: View {
                 if let expires = release.expires, expires > .now {
                     Text("Retires \(expires.formatted(.dateTime.month(.abbreviated).day()))")
                         .font(.caption)
-                        .foregroundStyle(TokenroomTokens.tight)
+                        .foregroundStyle(TokenroomTokens.accentText)
                 } else {
                     Text(release.created.formatted(.dateTime.month(.abbreviated).day()))
                         .font(.caption)
@@ -135,7 +135,7 @@ struct NewBadge: View {
     var body: some View {
         Text("New")
             .font(.caption2.weight(.semibold))
-            .foregroundStyle(.tint)
+            .foregroundStyle(TokenroomTokens.accentText)
             .accessibilityLabel("New")
     }
 }

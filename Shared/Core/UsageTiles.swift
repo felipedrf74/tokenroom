@@ -36,14 +36,6 @@ enum UsageTiles {
         return UsageTile(ring: ring, bar: bar, balance: balance)
     }
 
-    /// "5-hour" for a session, from its length when the provider says (sessions are 5 hours
-    /// unless told otherwise); the window's own title for anything else.
-    static func title(of window: RelayWindow) -> String {
-        guard window.windowKind == .session else { return window.title }
-        let hours = Int(((window.periodSec ?? 5 * 3600) / 3600).rounded())
-        return hours > 0 ? "\(hours)-hour" : window.title
-    }
-
     /// 80% or more used, the limit reached, or running ahead of pace toward a run-out before
     /// the reset.
     static func isClose(_ window: RelayWindow, pace: Pace?) -> Bool {

@@ -1,11 +1,42 @@
 import SwiftUI
 
+#if os(macOS)
+import AppKit
+#elseif os(iOS)
+import UIKit
+#endif
+
+extension Color {
+    /// A colour for light and dark appearances, as 0–255 sRGB components. The Watch is always dark.
+    init(light: (Double, Double, Double), dark: (Double, Double, Double)) {
+        #if os(macOS)
+        self.init(nsColor: NSColor(name: nil) { appearance in
+            let rgb = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+            return NSColor(srgbRed: rgb.0 / 255, green: rgb.1 / 255, blue: rgb.2 / 255, alpha: 1)
+        })
+        #elseif os(iOS)
+        self.init(uiColor: UIColor { traits in
+            let rgb = traits.userInterfaceStyle == .dark ? dark : light
+            return UIColor(red: rgb.0 / 255, green: rgb.1 / 255, blue: rgb.2 / 255, alpha: 1)
+        })
+        #else
+        self.init(red: dark.0 / 255, green: dark.1 / 255, blue: dark.2 / 255)
+        #endif
+    }
+}
+
 enum TokenroomTokens {
     static let tightRemaining = 25.0
     static let criticalRemaining = 10.0
 
     static let tight = Color(red: 196 / 255, green: 122 / 255, blue: 44 / 255)
     static let critical = Color(red: 194 / 255, green: 59 / 255, blue: 34 / 255)
+    /// `tight` and the accent as small text: the brand orange is 3.4:1 on white, this 5.7:1 there
+    /// and 6.5:1 on dark cells. The orange stays for controls, large numbers, and marks.
+    static let accentText = Color(light: (154, 85, 24), dark: (217, 143, 74))
+    /// `critical` as small text: the same red in light, lighter in dark (6.0:1 on dark cells,
+    /// where the red is 3.2:1).
+    static let criticalText = Color(light: (194, 59, 34), dark: (255, 107, 79))
     static let usageHealthy = Color(red: 110 / 255, green: 196 / 255, blue: 245 / 255)
     static let usageWatch = Color(red: 242 / 255, green: 196 / 255, blue: 22 / 255)
     static let usageTight = Color(red: 232 / 255, green: 122 / 255, blue: 16 / 255)

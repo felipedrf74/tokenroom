@@ -132,7 +132,7 @@ private struct WatchRow: View {
                         .minimumScaleFactor(0.7)
                 }
                 if let window {
-                    Text(ReadingText.reset(window) ?? window.title)
+                    Text(ReadingText.reset(window) ?? window.displayTitle)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -158,7 +158,7 @@ struct WatchDetailView: View {
             ForEach(provider.windows) { window in
                 let pace = window.isMetered ? UsageRanking.pace(for: window, isStale: !provider.isLive, history: item.history[window.id]) : nil
                 WindowRow(
-                    title: window.title,
+                    title: window.displayTitle,
                     headline: ReadingText.headline(window),
                     usedPercent: window.isMetered ? window.used : nil,
                     isStale: !provider.isLive,

@@ -255,7 +255,7 @@ private struct ResetSoonView: View {
             HStack(spacing: 8) {
                 MonogramMark(provider: item.provider, size: 28)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("\(item.provider.shortName) \(window.title.lowercased()) \(ReadingText.headline(window))")
+                    Text("\(item.provider.shortName) \(window.displayTitle.lowercased()) \(ReadingText.headline(window))")
                         .font(.headline)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)

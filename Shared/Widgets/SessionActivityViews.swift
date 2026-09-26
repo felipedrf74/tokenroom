@@ -37,8 +37,7 @@ struct SessionLockScreenView: View {
                             .monospacedDigit()
                             .foregroundStyle(color)
                     }
-                    ProgressView(value: min(max(state.used, 0), 100), total: 100)
-                        .tint(color)
+                    MeterTrack(usedPercent: state.used, remaining: 100 - state.used, isStale: state.isStale, paceMark: attributes.paceMark(for: state), height: 6, solid: true)
                     HStack {
                         Text(attributes.windowTitle)
                         Spacer()
@@ -51,6 +50,14 @@ struct SessionLockScreenView: View {
             .padding(16)
             .opacity(state.isStale ? 0.7 : 1)
         }
+    }
+}
+
+extension SessionActivityAttributes {
+    /// Where an even pace would be when the view is drawn, from the window's length.
+    func paceMark(for state: ContentState) -> Double? {
+        guard let length = windowSeconds, length > 0 else { return nil }
+        return min(max(1 - state.resetsAt.timeIntervalSinceNow / length, 0), 1)
     }
 }
 

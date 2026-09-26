@@ -75,7 +75,7 @@ struct UsageTileView: View {
             UsageRing(used: ring.used, isStale: isStale, label: ReadingText.headline(ring), lineWidth: 6, paceMark: pace(ring)?.elapsedFraction)
                 .frame(width: 58, height: 58)
             VStack(alignment: .leading, spacing: 2) {
-                Text(UsageTiles.title(of: ring))
+                Text(ring.displayTitle)
                     .font(.footnote.weight(.semibold))
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
@@ -87,7 +87,7 @@ struct UsageTileView: View {
     private func barBlock(_ bar: RelayWindow) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
-                Text(UsageTiles.title(of: bar))
+                Text(bar.displayTitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 4)
@@ -177,7 +177,7 @@ struct CloseToLimitCard: View {
                     .background(Capsule().fill(TokenroomTokens.tight.opacity(0.15)))
             }
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(TokenroomTokens.tight)
+            .foregroundStyle(TokenroomTokens.accentText)
             .padding(.horizontal, 16)
             .padding(.top, 12)
             .padding(.bottom, 4)
@@ -217,7 +217,7 @@ struct CloseToLimitCard: View {
                             Text(item.provider.name)
                                 .font(.subheadline.weight(.semibold))
                                 .lineLimit(1)
-                            Text(UsageTiles.title(of: window))
+                            Text(window.displayTitle)
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)

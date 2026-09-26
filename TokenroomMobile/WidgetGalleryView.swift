@@ -73,7 +73,7 @@ struct WidgetGalleryView: View {
             let provider = item.provider
             guard let window = LiveActivities.candidate(in: provider, now: date), let resetsAt = window.resetsAt else { continue }
             return (
-                SessionActivityAttributes(providerID: provider.id, providerName: provider.name, shortName: provider.shortName, monogram: provider.monogram, tint: provider.tint, windowID: window.id, windowTitle: window.title),
+                SessionActivityAttributes(providerID: provider.id, providerName: provider.name, shortName: provider.shortName, monogram: provider.monogram, tint: provider.tint, windowID: window.id, windowTitle: window.displayTitle, windowSeconds: window.periodSec),
                 SessionActivityAttributes.ContentState(used: window.used, resetsAt: resetsAt, isStale: !provider.isLive)
             )
         }
