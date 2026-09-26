@@ -10,7 +10,8 @@ extension TokenroomTokens {
         #if os(iOS)
         Color(uiColor: .secondarySystemGroupedBackground)
         #elseif os(macOS)
-        Color(nsColor: .controlBackgroundColor)
+        // The popover's card fill: windows are white already.
+        Color.primary.opacity(0.045)
         #else
         Color(white: 0.12)
         #endif
@@ -420,5 +421,42 @@ struct RiverRow: View {
         } else {
             row
         }
+    }
+}
+
+/// Announcements as a River: newest first, a card per day ("Today", "Yesterday", then dates).
+struct NewsRiver: View {
+    var items: [FeedItem]
+    var isNew: (Date?) -> Bool
+
+    var body: some View {
+        let byDay = Dictionary(grouping: items) { Calendar.current.startOfDay(for: $0.published ?? .distantPast) }
+        ForEach(byDay.keys.sorted(by: >), id: \.self) { day in
+            VStack(alignment: .leading, spacing: 8) {
+                Text(Self.title(day))
+                    .font(.headline)
+                    .padding(.horizontal, 4)
+                VStack(alignment: .leading, spacing: 10) {
+                    let dayItems = byDay[day] ?? []
+                    ForEach(Array(dayItems.enumerated()), id: \.element.id) { index, item in
+                        if index > 0 {
+                            Divider()
+                                .padding(.leading, 68)
+                        }
+                        RiverRow(item: item, isNew: isNew(item.published))
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(TokenroomTokens.cardFill))
+            }
+        }
+    }
+
+    /// "Today", "Yesterday", or the date.
+    static func title(_ day: Date) -> String {
+        if Calendar.current.isDateInToday(day) { return "Today" }
+        if Calendar.current.isDateInYesterday(day) { return "Yesterday" }
+        return day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
     }
 }

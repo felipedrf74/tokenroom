@@ -9,7 +9,7 @@ What's left from the design review of September 26, 2026: the Usage tab, alerts,
 | M15 | Text-safe accent and critical colours | Done with M14 |
 | M16 | Provider icons on every platform | Done on `tokenroom/provider-icons-m16` (Copilot and xAI API still monograms) |
 | M17 | News on iPhone: the Today edition (River as an option) | Done on `tokenroom/news-ios-m17` |
-| M18 | News on the Mac: the News window | Approved design |
+| M18 | News on the Mac: the News window | Done on `tokenroom/news-mac-m18` |
 | M19 | Release 2.1: docs, screenshots, App Store copy, TestFlight | Last |
 
 ## M13 — Usage tiles (done)

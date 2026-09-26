@@ -153,20 +153,7 @@ struct NewsView: View {
 
     @ViewBuilder
     private var river: some View {
-        let byDay = Dictionary(grouping: news.announcements) { item in
-            Calendar.current.startOfDay(for: item.published ?? .distantPast)
-        }
-        ForEach(byDay.keys.sorted(by: >), id: \.self) { day in
-            section(dayTitle(day)) {
-                card {
-                    let items = byDay[day] ?? []
-                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        if index > 0 { Divider().padding(.leading, 68) }
-                        RiverRow(item: item, isNew: news.isNew(item.published))
-                    }
-                }
-            }
-        }
+        NewsRiver(items: news.announcements) { news.isNew($0) }
         if let problem = news.announcementProblem {
             Text(problem).font(.footnote).foregroundStyle(.secondary)
         }
@@ -192,13 +179,6 @@ struct NewsView: View {
             .font(.footnote)
             .foregroundStyle(.secondary)
             .padding(.horizontal, 4)
-    }
-
-    /// "Today", "Yesterday", or the date.
-    private func dayTitle(_ day: Date) -> String {
-        if Calendar.current.isDateInToday(day) { return "Today" }
-        if Calendar.current.isDateInYesterday(day) { return "Yesterday" }
-        return day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
     }
 
     private func section<Content: View>(_ title: String, action: (String, (() -> Void)?)? = nil, @ViewBuilder content: () -> Content) -> some View {
