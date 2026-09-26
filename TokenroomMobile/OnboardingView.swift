@@ -19,9 +19,10 @@ struct OnboardingView: View {
                     }
                     .padding(.bottom, 4)
 
-                    LazyVGrid(columns: [GridItem(.flexible(), alignment: .top), GridItem(.flexible(), alignment: .top)], alignment: .leading, spacing: 14) {
+                    // Leading-aligned cells: each feature starts at its column's edge, whatever its width.
+                    LazyVGrid(columns: [GridItem(.flexible(), alignment: .topLeading), GridItem(.flexible(), alignment: .topLeading)], alignment: .leading, spacing: 14) {
                         Feature(symbol: "chart.line.uptrend.xyaxis", text: "Pace, and when you'd run out")
-                        Feature(symbol: "bell.badge", text: "Alerts at 80%, 95%, and resets")
+                        Feature(symbol: "bell.badge", text: "Alerts before a limit runs out")
                         Feature(symbol: "rectangle.stack", text: "Widgets, Live Activity, Watch")
                         Feature(symbol: "newspaper", text: "New models and updates")
                     }
@@ -78,6 +79,7 @@ private struct Feature: View {
                 .font(.subheadline)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
     }
 }

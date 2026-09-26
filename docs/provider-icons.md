@@ -17,10 +17,10 @@ Tokenroom shows each provider's own icon (`ProviderMark`, from `Shared/UI/Provid
 | Moonshot | `ProviderMoonshot` (PNG from the 460 px JPEG, own square) | The MoonshotAI GitHub organization's avatar (moonshot.ai offers only a white wordmark) | none published |
 | Vercel AI Gateway | `ProviderVercel` (SVG, mark) | vercel.com/geist/brands, `vercel-icon-light.svg` | Don't modify; don't imply endorsement |
 | Anthropic API | `ProviderAnthropic` (SVG, mark) | anthropic.com/press-kit, Anthropic symbol in Slate | anthropic.com/legal/trademark-guidelines: no changes to colour or proportion; keep clear space |
+| GitHub Copilot | `ProviderCopilot` (SVG, mark, black) | brand.github.com, GitHub Logos kit, the Copilot icon, as downloaded | Don't modify or recolour; don't imply affiliation. GitHub's terms ask for written permission to use it; added on September 26, 2026 at the owner's direction, without it. |
 
 ## Waiting
 
-- **GitHub Copilot:** GitHub's logo terms (brand.github.com, Legal) need written permission to use the Copilot icon. Ask GitHub, then add `ProviderCopilot` from the GitHub Logos kit.
 - **xAI API:** xAI's kit (linked from x.ai/legal/brand-guidelines) refuses scripted downloads. Download it in a browser, then add `ProviderXAI`.
 
 ## App Store

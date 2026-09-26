@@ -196,6 +196,8 @@ extension Provider {
                 letter: "H",
                 monogram: "GH",
                 tintHex: "#24292F",
+                assetName: "ProviderCopilot",
+                iconIsMark: true,
                 signInHint: "Sign in with gh auth login, or in a Copilot editor extension, to see usage.",
                 expiredHint: "GitHub session expired. Run gh auth login again.",
                 fallbackKey: KeySpec(

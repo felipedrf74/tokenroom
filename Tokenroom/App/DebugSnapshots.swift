@@ -68,6 +68,11 @@ enum DebugSnapshots {
         render(NewsWindowView(store: store, onOpenSettings: {}, page: .filter(.today)), width: 920, height: 660, appearance: .darkAqua, to: output.appendingPathComponent("news-dark.png"))
         render(NewsWindowView(store: store, onOpenSettings: {}, page: .filter(.announcements)), width: 920, height: 660, appearance: .aqua, to: output.appendingPathComponent("news-announcements.png"))
 
+        // Every provider's icon (or its monogram), light and dark: providers outside the sample
+        // data, such as Grok Bot, show here too.
+        render(ProviderIconSheet(), width: 560, appearance: .aqua, to: output.appendingPathComponent("provider-icons.png"))
+        render(ProviderIconSheet(), width: 560, appearance: .darkAqua, to: output.appendingPathComponent("provider-icons-dark.png"))
+
         // The menu bar in each style, on a light and a dark bar. A few providers, as people keep it.
         let meters = store.menuMeters.filter { [.claude, .openai, .cursor, .copilot].contains($0.provider) }
         for style in MenuBarStyle.allCases {
@@ -81,6 +86,23 @@ enum DebugSnapshots {
             }
         }
         return true
+    }
+
+    /// Each provider's mark at the popover's size and the sidebar's, with its name.
+    private struct ProviderIconSheet: View {
+        var body: some View {
+            LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 10) {
+                ForEach(Provider.allCases, id: \.self) { provider in
+                    HStack(spacing: 8) {
+                        ProviderMark(provider: provider, size: 36)
+                        ProviderMark(provider: provider, size: 18)
+                        Text(provider.displayName)
+                            .font(.system(size: 13))
+                    }
+                }
+            }
+            .padding(16)
+        }
     }
 
     private static func render<Content: View>(_ view: Content, width: CGFloat?, height: CGFloat? = nil, appearance: NSAppearance.Name, to url: URL) {
