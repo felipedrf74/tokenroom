@@ -7,7 +7,7 @@ What's left from the design review of September 26, 2026: the Usage tab, alerts,
 | M13 | Usage tab: tiles (variation E3) and Close to a limit | Done on `tokenroom/usage-tiles-e3`; follow-ups done in the audit |
 | M14 | Alerts: "5-hour limit", the pace alert, separate switches (iPhone, Mac, Live Activity) | Done on `tokenroom/alerts-m14`; the iPhone's history and the Live Activity alert done in the audit |
 | M15 | Text-safe accent and critical colours | Done with M14 |
-| M16 | Provider icons on every platform | Done on `tokenroom/provider-icons-m16`; Watch rings done in the audit (Copilot and xAI API stay monograms, waiting on their owners) |
+| M16 | Provider icons on every platform | Done on `tokenroom/provider-icons-m16`; Watch rings done in the audit; the Copilot icon added after release (xAI API stays a monogram, waiting on its kit) |
 | M17 | News on iPhone: the Today edition (River as an option) | Done on `tokenroom/news-ios-m17`; "Also in …" done in the audit |
 | M18 | News on the Mac: the News window | Done on `tokenroom/news-mac-m18`; pill routing fixed in the audit |
 | M19 | Release 2.1: docs, screenshots, App Store copy, TestFlight | Prepared on `tokenroom/release-m19`, README images retaken in the audit; the rest needs your accounts |
@@ -49,7 +49,7 @@ Files: the Mac's 5 app icons (moved from `Tokenroom/Assets.xcassets`) and 11 off
 
 **Decisions (made September 26, 2026: icons from the providers' press and brand pages, on every platform):**
 
-- **GitHub Copilot:** GitHub's logo terms require written permission for use. The monogram stays until GitHub gives it.
+- **GitHub Copilot:** GitHub's logo terms require written permission for use. The icon was added on September 26, 2026 at the owner's direction (`ProviderCopilot`, from the GitHub Logos kit).
 - **OpenAI:** its logo kit asks you to accept usage terms. The repo's OpenAI icon covers OpenAI and OpenAI API for now.
 - **xAI:** the kit at x.ai/legal/brand-guidelines refuses scripted downloads; xAI API keeps its monogram until it's downloaded in a browser.
 - **DeepSeek:** its terms allow the mark where you integrate DeepSeek, which Tokenroom does.
@@ -102,11 +102,11 @@ Prepared on `tokenroom/release-m19`: versions (Mac 2.1.0 build 3; iPhone and Wat
    - The Mac News window's sidebar selection in a real window.
    - Provider icons in tinted and clear Home Screen modes; widgets fall back to monograms there.
 3. **CloudKit:** no schema change is expected (new alert kinds and choices are values inside existing fields). Confirm in CloudKit Console that Production matches Development before a Production build.
-4. **Mac:** done on September 26, 2026. `./scripts/release.sh` built the notarized Developer ID zip, the CHANGELOG is dated, and v2.1.0 is published on GitHub.
-5. **iPhone and Watch:** archive the TokenroomMobile scheme in Xcode (build 3) and upload it to TestFlight. Regenerate the App Store screenshots with the steps in `docs/app-store.md`; the list there is updated.
+4. **Mac:** done on September 26, 2026. `./scripts/release.sh` built the notarized Developer ID zips, the CHANGELOG is dated, and v2.1.0 and v2.1.1 (Copilot's icon) are published on GitHub.
+5. **iPhone and Watch:** builds 3 and 4 uploaded to TestFlight on September 26, 2026 (build 4 adds Copilot's icon and the welcome screen fix). The App Store screenshots are regenerated from build 4's code with the steps in `docs/app-store.md`; upload them to App Store Connect with the build.
 6. **README images:** done in the audit. `hero.png`, `iphone.png`, `popover.png` and `popover-details.png` retaken from sample data (the Mac with `-TokenroomSnapshots`, the iPhone 18 Pro and Apple Watch Ultra 4 simulators with `-sampleMode YES`), framed like the old ones. `menubar.png` is unchanged in 2.1.
 7. **Design system:** done. The Tokenroom Design System artifact (version 6) marks every built piece as built, keeps E1, E2 and E4 as unchosen proposals, shows Copilot's monogram as the app does, and has the retaken screens.
-8. **Waiting on owners:** GitHub's written permission for the Copilot icon, and xAI's logo kit (browser download). Add both as in `docs/provider-icons.md`.
+8. **Waiting on owners:** xAI's logo kit (browser download); add it as in `docs/provider-icons.md`. The Copilot icon is in, added at the owner's direction.
 
 ## Completion audit (September 26, 2026)
 
@@ -133,4 +133,4 @@ Not possible without you, and why:
 - **The Mac News window's sidebar selection in a real window:** offscreen snapshots draw the selected row as a black bar, and launching a second Tokenroom here would read your real logins.
 - **Provider icons in tinted and clear Home Screen modes:** need widgets placed on a Home Screen by hand.
 - **CloudKit Console, notarization (`./scripts/release.sh`), TestFlight, App Store screenshots upload:** need your Apple Developer account and credentials.
-- **GitHub Copilot's icon and xAI API's mark:** need GitHub's written permission, and xAI's kit downloaded in a browser after accepting its terms, which is yours to accept.
+- **xAI API's mark:** needs xAI's kit downloaded in a browser after accepting its terms, which is yours to accept. (The Copilot icon was added at your direction.)

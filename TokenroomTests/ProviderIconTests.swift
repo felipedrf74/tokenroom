@@ -12,8 +12,16 @@ final class ProviderIconTests: XCTestCase {
     }
 
     func testProvidersWithoutAnIconAreTheOnesWaitingOnTheirOwners() {
-        // GitHub's terms need written permission for the Copilot icon; xAI's kit isn't in yet.
-        XCTAssertEqual(Set(Provider.allCases.filter { $0.assetName == nil }), [.copilot, .xaiOrg])
+        // xAI's kit isn't in yet.
+        XCTAssertEqual(Set(Provider.allCases.filter { $0.assetName == nil }), [.xaiOrg])
+    }
+
+    func testGrokAndCopilotShowTheirOwnIcons() {
+        XCTAssertEqual(Provider.grok.assetName, "ProviderBuild")
+        XCTAssertEqual(Provider.grokBot.assetName, "ProviderBot")
+        XCTAssertFalse(Provider.grokBot.iconIsMark, "Grok Bot's is an app icon, drawn as it is")
+        XCTAssertEqual(Provider.copilot.assetName, "ProviderCopilot")
+        XCTAssertTrue(Provider.copilot.iconIsMark, "GitHub's Copilot mark sits on a white tile")
     }
 
     func testOnlyMarksWithoutASquareGetATile() {
