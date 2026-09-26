@@ -265,7 +265,7 @@ struct PopoverView: View {
             }
             .buttonStyle(.plain)
             Button("News") {
-                onNews(.models)
+                onNews(.today)
             }
             .buttonStyle(.plain)
             Spacer()

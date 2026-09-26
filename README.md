@@ -68,7 +68,7 @@ The footer strip counts banked resets, new models, and updates; click one to ope
 
 ## News
 
-New models from the labs you follow (from OpenRouter's public model list) and official changelogs and blogs from the tools you use: Claude Code, Codex and ChatGPT, Gemini and Antigravity, GitHub Copilot, Cursor, Devin, Z.ai, Kimi Code, MiniMax, and OpenRouter. It's off on the Mac until you turn it on in **Settings → News** or from the News window. Only the public feeds are read; nothing about you is sent.
+New models from the labs you follow (from OpenRouter's public model list) and official changelogs and blogs from the tools you use: Claude Code, Codex and ChatGPT, Gemini and Antigravity, GitHub Copilot, Cursor, Devin, Z.ai, Kimi Code, MiniMax, and OpenRouter. On the Mac, the News window keeps an index of Today, Models, Announcements, and Retiring, then the labs and tools you follow, each with what's new; Today reads like a short paper about your tools. It's off on the Mac until you turn it on in **Settings → News** or from the News window. Only the public feeds are read; nothing about you is sent.
 
 ## Alerts
 

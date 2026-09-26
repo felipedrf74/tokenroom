@@ -64,7 +64,9 @@ enum DebugSnapshots {
             request.tab = tab
             render(SettingsView(store: store, request: request), width: 600, height: 640, appearance: .aqua, to: output.appendingPathComponent("settings-\(tab.rawValue).png"))
         }
-        render(NewsWindowView(store: store, onOpenSettings: {}), width: 520, height: 640, appearance: .aqua, to: output.appendingPathComponent("news.png"))
+        render(NewsWindowView(store: store, onOpenSettings: {}, page: .filter(.today)), width: 920, height: 660, appearance: .aqua, to: output.appendingPathComponent("news.png"))
+        render(NewsWindowView(store: store, onOpenSettings: {}, page: .filter(.today)), width: 920, height: 660, appearance: .darkAqua, to: output.appendingPathComponent("news-dark.png"))
+        render(NewsWindowView(store: store, onOpenSettings: {}, page: .filter(.announcements)), width: 920, height: 660, appearance: .aqua, to: output.appendingPathComponent("news-announcements.png"))
 
         // The menu bar in each style, on a light and a dark bar. A few providers, as people keep it.
         let meters = store.menuMeters.filter { [.claude, .openai, .cursor, .copilot].contains($0.provider) }

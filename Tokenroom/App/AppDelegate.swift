@@ -105,10 +105,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let view = NewsWindowView(store: store) { [weak self] in
                 self?.openSettings(tab: .news)
             }
-            let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+            let hosting = NSHostingController(rootView: view)
+            // The window takes its toolbar (Check Now, Follow…, search) and title from SwiftUI.
+            hosting.sceneBridgingOptions = [.toolbars, .title]
+            let window = NSWindow(contentViewController: hosting)
             window.title = "News"
-            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            window.setContentSize(NSSize(width: 520, height: 640))
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+            window.toolbarStyle = .unified
+            window.setContentSize(NSSize(width: 920, height: 660))
+            window.setFrameAutosaveName("TokenroomNews")
             window.isReleasedWhenClosed = false
             window.hidesOnDeactivate = false
             window.delegate = self
