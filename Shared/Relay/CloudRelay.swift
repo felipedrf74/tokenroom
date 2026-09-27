@@ -329,7 +329,7 @@ extension CloudRelay {
         zoneReady = false
     }
 
-    /// `.allKeys` replaces a record with the same name; `.ifServerRecordUnchanged` only creates.
+    /// `.allKeys` replaces by name; `.ifServerRecordUnchanged` creates or checks a fetched change tag.
     private func save(_ records: [CKRecord], policy: CKModifyRecordsOperation.RecordSavePolicy = .allKeys) async throws {
         try await ensureZone()
         do {

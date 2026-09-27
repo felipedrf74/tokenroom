@@ -103,8 +103,8 @@ final class WatchStore {
         }
     }
 
-    /// `fresh` unless it holds an older reading of a provider shown (the iPhone's handover is
-    /// saved now even when it carries older readings), saved for complications.
+    /// Incoming membership with each provider's newest measurement, saved for complications.
+    /// A delayed whole cache cannot undo removals; a mixed-age update still advances fresh providers.
     /// Complications reload for what they'd draw differently; from the background, only for
     /// what matters (`ReadingCache.reloadSignature`), as their reloads are budgeted. Smaller
     /// changes show on their next timeline, which reads the saved readings.

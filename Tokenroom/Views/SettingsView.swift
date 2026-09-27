@@ -153,6 +153,9 @@ private struct ProvidersSettings: View {
         }
         .formStyle(.grouped)
         .task {
+            #if DEBUG
+            if UserDefaults.standard.string(forKey: "TokenroomSnapshots") != nil { return }
+            #endif
             detected = await BlockingIO.run {
                 Set(Provider.allCases.filter { CredentialReaders.hasSession($0) })
             }
@@ -443,6 +446,9 @@ private struct KeyRow: View {
             }
         }
         .task(id: reload) {
+            #if DEBUG
+            if UserDefaults.standard.string(forKey: "TokenroomSnapshots") != nil { return }
+            #endif
             let keys = self.keys
             let provider = self.provider
             let loaded = await BlockingIO.run { (keys.metadata(for: provider), LocalKeys.settingsCaption(for: provider)) }
@@ -509,6 +515,7 @@ private struct AddKeySheet: View {
     @State private var key = ""
     @State private var region: String
     @State private var working = false
+    @State private var saving = false
     @State private var validation = KeyValidationRevision()
     @State private var message: String?
     @State private var offerSaveAnyway = false
@@ -533,10 +540,11 @@ private struct AddKeySheet: View {
             SecureField(provider.keySpec?.prefixHint.isEmpty == false ? "\(provider.keySpec!.prefixHint)…" : "Paste your key", text: $key)
                 .textFieldStyle(.roundedBorder)
                 .frame(minWidth: 320)
+                .disabled(saving)
             if let regions = provider.keySpec?.regions, !regions.isEmpty {
                 let picker = Picker(provider.keySpec?.choiceLabel ?? "Account", selection: $region) {
                     ForEach(regions, id: \.self) { Text($0).tag($0) }
-                }
+                }.disabled(saving)
                 // Two regions fit side by side; Copilot's seven plans don't fit the sheet that way.
                 if regions.count > 2 {
                     picker.pickerStyle(.menu)
@@ -584,7 +592,7 @@ private struct AddKeySheet: View {
                     Button("Save Anyway") { Task { await save() } }
                         .disabled(working)
                 }
-                Button(working ? "Testing…" : (warning == nil ? "Test & Save" : "Save With This Key")) {
+                Button(working ? (saving ? "Saving…" : "Testing…") : (warning == nil ? "Test & Save" : "Save With This Key")) {
                     if warning == nil {
                         test()
                     } else {
@@ -660,9 +668,12 @@ private struct AddKeySheet: View {
     }
 
     private func save() async {
-        guard !working, let attempt = validation.attempt,
+        guard !working, provider.key?.isAdmin != true || acknowledgedAdmin,
+              let attempt = validation.attempt,
               validation.accepts(attempt, current: credential) else { return }
         working = true
+        saving = true
+        defer { working = false; saving = false }
         let credential = attempt.credential
         let savedWarning = warning
         do {
@@ -674,7 +685,6 @@ private struct AddKeySheet: View {
         } catch {
             message = "Couldn't save the key in the Keychain."
         }
-        working = false
     }
 
 }

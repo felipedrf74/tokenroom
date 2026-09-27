@@ -71,6 +71,9 @@ struct RootView: View {
             #endif
         }
         .onOpenURL(perform: open)
+        .onChange(of: tab, initial: true) { _, tab in
+            if tab == .news { news.beginVisit() } else { news.endVisit() }
+        }
     }
 
     private func open(_ url: URL) {

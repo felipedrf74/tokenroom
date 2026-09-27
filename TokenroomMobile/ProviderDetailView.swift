@@ -130,7 +130,7 @@ private struct WindowDetail: View {
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(PaceStyle.color(pace.severity))
             }
-            if let forecast = Forecast.text(for: window, history: history, checkedAt: checkedAt) {
+            if !isStale, let forecast = Forecast.text(for: window, history: history, checkedAt: checkedAt) {
                 Text(forecast)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)

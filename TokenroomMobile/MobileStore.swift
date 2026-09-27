@@ -696,7 +696,7 @@ final class MobileStore {
         readings.first { $0.id == id } ?? disconnected.first { $0.id == id }
     }
 
-    /// When the freshest source last checked.
+    /// When the oldest shown provider was last successfully checked.
     var lastChecked: Date? {
         readings.compactMap { $0.provider.checkedAt ?? $0.provider.fetchedAt }.min()
     }

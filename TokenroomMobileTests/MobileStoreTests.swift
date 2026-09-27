@@ -115,6 +115,39 @@ final class MobileStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testInvalidBudgetPreservesTheSavedAmountUntilExplicitlyCleared() throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let store = makeStore(defaults: defaults, folder: folder)
+        store.setBudget(50, for: .deepseek)
+        for invalid in [0.0, -1, .infinity, .nan] {
+            store.setBudget(invalid, for: .deepseek)
+            XCTAssertEqual(store.budget(for: .deepseek), 50)
+        }
+        XCTAssertEqual(makeStore(defaults: defaults, folder: folder).budget(for: .deepseek), 50)
+        store.setBudget(nil, for: .deepseek)
+        XCTAssertNil(store.budget(for: .deepseek))
+    }
+
+    @MainActor
+    func testRetainedReadingsAgeWhileTheUsagePageStaysOpen() async throws {
+        let folder = try makeFolder()
+        let checked = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
+        let provider = RelayProvider(id: "claude", name: "Claude", shortName: "Claude", monogram: "C", tint: "#D97757", state: "live",
+            checkedAt: checked, primaryWindowID: "weekly", windows: [.init(id: "weekly", kind: "weekly", title: "Weekly", used: 42)])
+        try ReadingCache(savedAt: checked, isSample: false, items: [.init(provider: provider, source: "Mac")])
+            .save(to: folder.appendingPathComponent(ReadingCache.fileName))
+        let store = makeStore(defaults: makeDefaults(), folder: folder)
+        await store.refresh(force: true, now: checked)
+        XCTAssertEqual(store.readings.first?.provider.state, "live")
+        store.ageReadings(at: checked.addingTimeInterval(3601))
+        XCTAssertEqual(store.readings.first?.provider.state, "stale")
+        XCTAssertEqual(store.lastChecked, checked, "Aging does not invent a successful check")
+        store.ageReadings(at: checked.addingTimeInterval(7 * 86_400 + 1))
+        XCTAssertTrue(store.readings.isEmpty)
+    }
+
+    @MainActor
     func testAlertChoicesMadeOnTheIPhoneAreStampedAndKept() throws {
         let defaults = makeDefaults()
         let folder = try makeFolder()

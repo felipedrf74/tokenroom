@@ -6,7 +6,7 @@ struct ReadingsEntry: TimelineEntry {
     /// The chosen provider first, then most urgent first.
     var items: [ReadingCache.Item]
     var isSample: Bool
-    /// When the freshest reading was last confirmed; the cache itself is saved on every rebuild,
+    /// When the oldest shown reading was last confirmed; the cache is saved on every rebuild,
     /// however old the readings in it.
     var checkedAt: Date?
     var isPlaceholder = false

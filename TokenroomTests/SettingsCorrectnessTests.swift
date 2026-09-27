@@ -29,6 +29,22 @@ final class SettingsCorrectnessTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testInvalidBudgetCannotClearAPreviousSavedAmount() {
+        let name = "tokenroom.tests.SettingsCorrectness.budget"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        defer { defaults.removePersistentDomain(forName: name) }
+        let settings = AppSettings(defaults: defaults)
+        settings.setBudget(50, for: .deepseek)
+        for invalid in [0.0, -1, .infinity, .nan] {
+            settings.setBudget(invalid, for: .deepseek)
+            XCTAssertEqual(settings.budget(for: .deepseek), 50)
+        }
+        settings.setBudget(nil, for: .deepseek)
+        XCTAssertNil(settings.budget(for: .deepseek))
+    }
+
     func testConcurrentPreferenceWriteReReadsAndPreservesBothChanges() async throws {
         var base = AlertPreferences()
         base.updatedAt = Date(timeIntervalSince1970: 100)

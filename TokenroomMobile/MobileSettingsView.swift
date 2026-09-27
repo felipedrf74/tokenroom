@@ -90,6 +90,7 @@ struct MobileSettingsView: View {
 /// Providers this iPhone can read with a key, grouped like the Mac's settings.
 struct KeysView: View {
     @Bindable var store: MobileStore
+    @State private var search = ""
 
     private let groups: [(title: String, providers: [Provider])] = [
         ("Coding plans", Provider.allCases.filter { $0.access == .codingPlanKey || $0.descriptor.fallbackKey != nil }),
@@ -101,7 +102,7 @@ struct KeysView: View {
         List {
             ForEach(groups, id: \.title) { group in
                 Section(group.title) {
-                    ForEach(group.providers) { provider in
+                    ForEach(group.providers.filter { NewsSearch.matches(search, title: $0.displayName, source: $0.rawValue) }) { provider in
                         NavigationLink {
                             KeyEditorView(store: store, provider: provider)
                         } label: {
@@ -112,6 +113,7 @@ struct KeysView: View {
             }
         }
         .navigationTitle("API Keys")
+        .searchable(text: $search, prompt: "Search providers")
     }
 }
 
@@ -144,6 +146,7 @@ struct KeyEditorView: View {
     @State private var region: String
     @State private var replacing = false
     @State private var working = false
+    @State private var saving = false
     @State private var validation = KeyValidationRevision()
     @State private var message: String?
     @State private var offerSaveAnyway = false
@@ -183,10 +186,11 @@ struct KeyEditorView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .textContentType(.password)
+                        .disabled(saving)
                     if let regions = spec?.regions, !regions.isEmpty {
                         Picker(spec?.choiceLabel ?? "Account", selection: $region) {
                             ForEach(regions, id: \.self) { Text($0).tag($0) }
-                        }
+                        }.disabled(saving)
                     }
                     if let url = spec?.createURL {
                         Link(spec?.createTitle ?? "Create a key", destination: url)
@@ -211,7 +215,7 @@ struct KeyEditorView: View {
                     }
                 }
                 Section {
-                    Button(working ? "Testing…" : (warning == nil ? "Test & Save" : "Save With This Key")) {
+                    Button(working ? (saving ? "Saving…" : "Testing…") : (warning == nil ? "Test & Save" : "Save With This Key")) {
                         if warning == nil { test() } else { Task { await save() } }
                     }
                         .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || working || (spec?.isAdmin == true && !acknowledgedAdmin))
@@ -302,9 +306,12 @@ struct KeyEditorView: View {
     }
 
     private func save() async {
-        guard !working, let attempt = validation.attempt,
+        guard !working, provider.key?.isAdmin != true || acknowledgedAdmin,
+              let attempt = validation.attempt,
               validation.accepts(attempt, current: credential) else { return }
         working = true
+        saving = true
+        defer { working = false; saving = false }
         let credential = attempt.credential
         let savedWarning = warning
         do {
@@ -313,7 +320,6 @@ struct KeyEditorView: View {
         } catch {
             message = "Couldn't save the key in the Keychain."
         }
-        working = false
     }
     private func remove() {
         Task {
@@ -328,6 +334,7 @@ struct KeyEditorView: View {
     }
 
     private func saveBudget() {
+        guard provider.category != .subscription else { return }
         switch BudgetInput.parse(budgetText) {
         case .clear: budgetError = nil; store.setBudget(nil, for: provider)
         case .amount(let value):

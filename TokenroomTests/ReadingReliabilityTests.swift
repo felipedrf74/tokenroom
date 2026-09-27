@@ -63,4 +63,13 @@ final class ReadingReliabilityTests: XCTestCase {
         XCTAssertNil(UsageRanking.pace(for: current.windows[0], isStale: false, history: nil, now: now))
         XCTAssertEqual(ReadingText.reset(current.windows[0], now: now), "Reset · awaiting reading")
     }
+    func testWidgetTimelinesIncludeFreshnessAndExpiryBoundaries() {
+        let cache = ReadingCache(savedAt: now, isSample: false, items: [item("old", age: 3500)])
+        let dates = cache.presentationDates(after: now, until: now.addingTimeInterval(8 * 3600))
+        XCTAssertTrue(dates.contains(now.addingTimeInterval(101)))
+        let expiring = ReadingCache(savedAt: now, isSample: false, items: [item("old", age: 7 * 86_400 - 60)])
+        XCTAssertTrue(expiring.presentationDates(after: now, until: now.addingTimeInterval(3600)).contains(now.addingTimeInterval(61)))
+        XCTAssertTrue(expiring.presented(at: now.addingTimeInterval(61)).items.isEmpty)
+    }
+
 }

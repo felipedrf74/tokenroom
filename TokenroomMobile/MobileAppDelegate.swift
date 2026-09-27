@@ -7,7 +7,16 @@ import UserNotifications
 @MainActor
 final class MobileAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     let store = MobileStore()
-    let news = NewsStore()
+    let news: NewsStore = {
+        #if DEBUG
+        if let path = UserDefaults.standard.string(forKey: "TokenroomSnapshotNews") {
+            return NewsStore(directory: URL(fileURLWithPath: path).deletingLastPathComponent(), fetch: {
+                .init(cache: $0.cache, newModels: [])
+            })
+        }
+        #endif
+        return NewsStore()
+    }()
 
     func application(
         _ application: UIApplication,

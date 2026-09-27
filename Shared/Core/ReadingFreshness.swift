@@ -54,6 +54,18 @@ extension ReadingCache {
     func staleCount(at date: Date) -> Int {
         presented(at: date).items.filter { !$0.provider.isLive }.count
     }
+
+    /// Timeline entries age readings even if WidgetKit postpones the next network reload.
+    func presentationDates(after now: Date, until horizon: Date) -> [Date] {
+        let dates = items.flatMap { item -> [Date] in
+            let checked = item.provider.checkedAt ?? item.provider.fetchedAt ?? savedAt
+            return item.provider.windows.compactMap(\.resetsAt) + [
+                checked.addingTimeInterval(ReadingFreshness.staleAfter + 1),
+                checked.addingTimeInterval(ReadingFreshness.expiresAfter + 1)
+            ]
+        }
+        return Set(dates.filter { $0 > now && $0 < horizon }).sorted()
+    }
 }
 
 /// A phone handover cannot restore readings after sign-out until iCloud is validated again.

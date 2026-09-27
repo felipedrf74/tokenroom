@@ -227,6 +227,8 @@ private struct CircularWidget: View {
             }
         }
         .widgetURL(DeepLink.provider(item.id).url)
+        .opacity(item.provider.isLive ? 1 : 0.65)
+        .accessibilityValue("Last successful check \(RelativeTime.ago(item.provider.checkedAt ?? item.provider.fetchedAt, now: date))\(item.provider.isLive ? "" : ", stale")")
     }
 }
 
@@ -241,6 +243,10 @@ private struct RectangularWidget: View {
                 rows(items)
                 if isSample {
                     sampleLine
+                } else if let first = items.first, first.provider.primaryWindow?.isAwaitingReading(at: date) == true {
+                    Text("Reset · awaiting reading").font(.caption2).lineLimit(1)
+                } else if items.contains(where: { !$0.provider.isLive }) {
+                    Text("\(items.filter { !$0.provider.isLive }.count) stale").font(.caption2).lineLimit(1)
                 } else if let first = items.first, let resetsAt = first.provider.primaryWindow?.resetsAt, resetsAt > date {
                     HStack(spacing: 3) {
                         Image(systemName: "arrow.counterclockwise")

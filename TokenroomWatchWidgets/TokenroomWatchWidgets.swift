@@ -35,10 +35,10 @@ struct ComplicationProvider: TimelineProvider {
             let now = Date.now
             let reloads = WidgetReloadLog.record(widget, at: now)
             let cache = await RelayReadings.cache(at: ReadingCache.defaultURL, maxAge: 15 * 60, budget: 6, now: now)
-            // One entry now and one at each reset in the next 8 hours, so rings empty on time.
+            // Reset, stale, and expiry boundaries update presentation without inventing usage.
             let horizon = now.addingTimeInterval(8 * 3600)
-            let resets = Set((cache?.items ?? []).flatMap { $0.provider.windows.compactMap(\.resetsAt) }.filter { $0 > now && $0 < horizon })
-            let entries = ([now] + resets.sorted().prefix(11)).map { date in
+            let boundaries = cache?.presentationDates(after: now, until: horizon) ?? []
+            let entries = ([now] + boundaries.prefix(31)).map { date in
                 ComplicationEntry(date: date, items: cache?.presented(at: date).items ?? [], isSample: cache?.isSample ?? false)
             }
             completion(Timeline(entries: entries, policy: .after(WidgetSchedule.nextReload(after: now, items: cache?.presented(at: .now).items ?? [], reloads: reloads))))
@@ -65,6 +65,7 @@ private struct ComplicationView: View {
     var body: some View {
         content
             .widgetURL(link)
+            .opacity(entry.items.first?.provider.isLive == false ? 0.7 : 1)
             .accessibilityValue(entry.items.first.map { "Last successful check \(RelativeTime.ago($0.provider.checkedAt ?? $0.provider.fetchedAt, now: entry.date))" } ?? "No readings")
     }
 
@@ -125,8 +126,14 @@ private struct ComplicationView: View {
                                 .minimumScaleFactor(0.7)
                         }
                     }
-                    let stale = entry.items.filter { !$0.provider.isLive }.count
-                    if stale > 0 { Text("\(stale) stale").font(.caption2).foregroundStyle(.secondary) }
+                    if let warning = UsageRanking.limitWarning(for: first.provider, now: entry.date) {
+                        Text(warning).font(.caption2.weight(.semibold)).foregroundStyle(TokenroomTokens.usageCritical).lineLimit(1)
+                    } else if window?.isAwaitingReading(at: entry.date) == true {
+                        Text("Reset · awaiting reading").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    } else {
+                        let stale = entry.items.filter { !$0.provider.isLive }.count
+                        if stale > 0 { Text("\(stale) stale").font(.caption2).foregroundStyle(.secondary) }
+                    }
                     if entry.isSample {
                         Text("Sample data")
                             .font(.system(size: 12))
@@ -177,7 +184,7 @@ private struct ComplicationView: View {
 
     /// "Codex 78% · Claude 64%", after "Sample" for samples.
     private var inlineText: String {
-        let readings = entry.items.prefix(2).map { "\($0.provider.shortName) \(ReadingText.headline($0.provider.primaryWindow, now: entry.date))" + (!$0.provider.isLive ? " · stale" : "") }
+        let readings = entry.items.prefix(2).map { "\($0.provider.shortName) \(ReadingText.headline($0.provider.primaryWindow, now: entry.date))" + (UsageRanking.limitWarning(for: $0.provider, now: entry.date).map { " · \($0)" } ?? "") + (!$0.provider.isLive ? " · stale" : "") }
         return ((entry.isSample ? ["Sample"] : []) + readings).joined(separator: " · ")
     }
 

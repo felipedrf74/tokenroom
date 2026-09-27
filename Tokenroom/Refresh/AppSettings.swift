@@ -139,7 +139,8 @@ final class AppSettings {
     }
 
     func setBudget(_ value: Double?, for provider: Provider) {
-        if let value, value > 0 {
+        if let value, (!value.isFinite || value <= 0) { return }
+        if let value {
             budgets[provider] = value
         } else {
             budgets.removeValue(forKey: provider)

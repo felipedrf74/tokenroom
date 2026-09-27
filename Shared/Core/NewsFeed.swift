@@ -10,6 +10,13 @@ struct NewsCache: Codable, Equatable, Sendable {
         var lastModified: String?
     }
 
+    struct SourceCheck: Codable, Equatable, Sendable {
+        var succeededAt: Date?
+        var failedAt: Date?
+    }
+    /// Optional for caches written by earlier releases.
+    var sourceChecks: [String: SourceCheck]?
+
     var models: [ModelRelease] = []
     var modelsFetchedAt: Date?
     /// When the last check failed (no answer, or an error status), so the next waits
@@ -26,6 +33,14 @@ struct NewsCache: Codable, Equatable, Sendable {
     /// Feeds whose last answer couldn't be read in full, by ID (`ModelFeed.id` for the model
     /// list): an error status, a feed past its size limit, or not a feed at all.
     var unreadable: Set<String>?
+
+    func check(for source: FeedSource) -> SourceCheck {
+        if let check = sourceChecks?[source.id] { return check }
+        // Migrate a cached source's old shared success time; never delay an uncached source.
+        guard items[source.id] != nil else { return SourceCheck() }
+        return SourceCheck(succeededAt: announcementsFetchedAt,
+                           failedAt: unreadable?.contains(source.id) == true ? (announcementsFailedAt ?? announcementsFetchedAt) : nil)
+    }
 
     /// Announcements from the given feeds, newest first. An entry two feeds share shows once: the
     /// newer copy, dated when the first one appeared, so it isn't new again when the second feed
@@ -97,6 +112,14 @@ enum NewsFetcher {
         var newModels: [ModelRelease]
     }
 
+    struct Request: Sendable {
+        var cache: NewsCache
+        var sources: [FeedSource]
+        var vendors: Set<String>
+        var maxAge: TimeInterval?
+        var now: Date
+    }
+
     /// What a GET got back.
     enum Answer: Sendable {
         /// The body, up to the size limit; `isTruncated` when it went on past it.
@@ -113,6 +136,12 @@ enum NewsFetcher {
     /// `maxAge` when given (opening the tab, pulling to refresh).
     static func refresh(_ cache: NewsCache, sources: [FeedSource], following vendors: Set<String>, maxAge: TimeInterval? = nil, now: Date = .now) async -> Result {
         var cache = cache
+        // Freeze legacy sources' dates before another source advances the shared timestamp.
+        var migrated = cache.sourceChecks ?? [:]
+        for source in FeedSource.catalog + sources where cache.items[source.id] != nil && migrated[source.id] == nil {
+            migrated[source.id] = cache.check(for: source)
+        }
+        if !migrated.isEmpty { cache.sourceChecks = migrated }
         var newModels: [ModelRelease] = []
         var unreadable = cache.unreadable ?? []
 
@@ -125,17 +154,24 @@ enum NewsFetcher {
                     newModels = cache.modelState.takeNew(from: cache.models, following: vendors)
                     cache.validators[key] = validator
                     unreadable.remove(ModelFeed.id)
+                    cache.modelsFetchedAt = now
+                    cache.modelsFailedAt = nil
                 } else {
                     // Keeps the last list, and asks for the whole answer next time.
                     cache.validators[key] = nil
                     unreadable.insert(ModelFeed.id)
+                    cache.modelsFailedAt = now
                 }
-                cache.modelsFetchedAt = now
-                cache.modelsFailedAt = nil
             case .notModified:
-                cache.modelsFetchedAt = now
-                cache.modelsFailedAt = nil
-                unreadable.remove(ModelFeed.id)
+                if cache.modelsFetchedAt != nil {
+                    cache.modelsFetchedAt = now
+                    cache.modelsFailedAt = nil
+                    unreadable.remove(ModelFeed.id)
+                } else {
+                    cache.validators[key] = nil
+                    cache.modelsFailedAt = now
+                    unreadable.insert(ModelFeed.id)
+                }
             case .status:
                 cache.modelsFailedAt = now
                 unreadable.insert(ModelFeed.id)
@@ -143,62 +179,70 @@ enum NewsFetcher {
                 // A cancelled refresh (quitting, sleep) isn't a failure.
                 if !Task.isCancelled {
                     cache.modelsFailedAt = now
+                    unreadable.insert(ModelFeed.id)
                 }
             }
         }
 
-        if isDue(cache.announcementsFetchedAt, failedAt: cache.announcementsFailedAt, interval: maxAge ?? announcementInterval, now: now) {
+        let due = sources.filter { source in
+            let check = cache.check(for: source)
+            return isDue(check.succeededAt, failedAt: check.failedAt, interval: maxAge ?? announcementInterval, now: now)
+        }
+        if !due.isEmpty {
             let previous = cache.validators
             let answers = await withTaskGroup(of: (FeedSource, Answer).self) { group in
-                for source in sources {
-                    group.addTask {
-                        let answer = await get(source.url, validator: previous[source.url.absoluteString], sizeLimit: source.sizeLimit)
-                        return (source, answer)
-                    }
+                for source in due {
+                    group.addTask { (source, await get(source.url, validator: previous[source.url.absoluteString], sizeLimit: source.sizeLimit)) }
                 }
                 var answers: [(FeedSource, Answer)] = []
-                for await answer in group {
-                    answers.append(answer)
-                }
+                for await answer in group { answers.append(answer) }
                 return answers
             }
-            var anyAnswered = false
+            var anySucceeded = false
+            var anyFailed = false
+            var checks = cache.sourceChecks ?? [:]
             for (source, answer) in answers {
                 let key = source.url.absoluteString
+                var check = cache.check(for: source)
+                var success = false
                 switch answer {
                 case let .body(data, validator, isTruncated):
-                    anyAnswered = true
                     let read = FeedParser.read(data, source: source)
-                    let items = firstSeen(read.items, previous: cache.items[source.id] ?? [], now: now)
+                    let previousItems = cache.items[source.id] ?? []
+                    let items = firstSeen(read.items, previous: previousItems, now: now)
                     if read.isComplete, !isTruncated {
                         cache.items[source.id] = items
                         cache.validators[key] = validator
-                        unreadable.remove(source.id)
+                        success = true
                     } else {
-                        // Cut short at the size limit, or broken: shows what arrived, but not as
-                        // the whole feed. Without a validator the next check reads it again,
-                        // rather than getting a 304 for this partial copy.
-                        if !items.isEmpty {
-                            cache.items[source.id] = items
-                        }
+                        // A partial response supplements the last complete copy, never deletes it.
+                        let ids = Set(items.map(\.id))
+                        cache.items[source.id] = (items + previousItems.filter { !ids.contains($0.id) })
+                            .sorted { ($0.published ?? .distantPast) > ($1.published ?? .distantPast) }
                         cache.validators[key] = nil
-                        unreadable.insert(source.id)
                     }
                 case .notModified:
-                    anyAnswered = true
-                    unreadable.remove(source.id)
-                case .status:
-                    unreadable.insert(source.id)
+                    success = cache.items[source.id] != nil
+                    if !success { cache.validators[key] = nil }
+                case .status: break
                 case .unreachable:
-                    break
+                    if Task.isCancelled { continue }
                 }
+                if success {
+                    check.succeededAt = now
+                    check.failedAt = nil
+                    unreadable.remove(source.id)
+                    anySucceeded = true
+                } else {
+                    check.failedAt = now
+                    unreadable.insert(source.id)
+                    anyFailed = true
+                }
+                checks[source.id] = check
             }
-            if anyAnswered {
-                cache.announcementsFetchedAt = now
-                cache.announcementsFailedAt = nil
-            } else if !sources.isEmpty, !Task.isCancelled {
-                cache.announcementsFailedAt = now
-            }
+            cache.sourceChecks = checks
+            if anySucceeded { cache.announcementsFetchedAt = now }
+            cache.announcementsFailedAt = anyFailed ? now : nil
         }
         cache.unreadable = unreadable.isEmpty ? nil : unreadable
         return Result(cache: cache, newModels: newModels)
@@ -211,7 +255,10 @@ enum NewsFetcher {
     /// Due by `interval`, and, after a failed check, once `retryInterval` has passed (or
     /// `interval`, when that's shorter: asking with a `maxAge` of 0 always goes out).
     static func isDue(_ fetchedAt: Date?, failedAt: Date?, interval: TimeInterval, now: Date) -> Bool {
-        isDue(fetchedAt, interval: interval, now: now) && isDue(failedAt, interval: min(interval, retryInterval), now: now)
+        if let failedAt, fetchedAt == nil || failedAt >= fetchedAt! {
+            return isDue(failedAt, interval: min(interval, retryInterval), now: now)
+        }
+        return isDue(fetchedAt, interval: interval, now: now)
     }
 
     /// Items dated no later than the check that first saw them: one dated ahead (a wrong time

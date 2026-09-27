@@ -112,7 +112,7 @@ struct UsageTileView: View {
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-            if let forecast = Forecast.text(for: balance, history: reading.history[balance.id], checkedAt: provider.checkedAt ?? provider.fetchedAt) {
+            if !isStale, let forecast = Forecast.text(for: balance, history: reading.history[balance.id], checkedAt: provider.checkedAt ?? provider.fetchedAt) {
                 Text(forecast)
                     .font(.caption)
                     .foregroundStyle(.secondary)

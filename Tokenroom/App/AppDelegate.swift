@@ -13,6 +13,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let newsPage = NewsPageRequest()
 
     override init() {
+        #if DEBUG
+        if UserDefaults.standard.string(forKey: "TokenroomSnapshots") != nil {
+            // Rendering must not initialize migrations, real settings, or the real cache first.
+            let name = "TokenroomSnapshotBootstrap"
+            let defaults = UserDefaults(suiteName: name)!
+            defaults.removePersistentDomain(forName: name)
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+            store = QuotaStore(settings: AppSettings(defaults: defaults), clients: [], cache: SnapshotCache(directory: directory))
+            super.init()
+            return
+        }
+        #endif
         // Headroom 1.x settings and cache must be in place before the store reads them.
         LegacyMigration.runIfNeeded()
         // Sessions for providers new to this install are looked for after launch, off the main
@@ -122,12 +134,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.center()
             newsWindow = window
         }
-        store.news?.markSeen()
+        if newsWindow?.isVisible != true { store.news?.beginVisit() }
         newsWindow?.makeKeyAndOrderFront(nil)
     }
 
     func windowWillClose(_ notification: Notification) {
         guard let closing = notification.object as? NSWindow, closing === settingsWindow || closing === newsWindow else { return }
+        if closing === newsWindow { store.news?.endVisit() }
         // Back to a menu-bar extra once no window is left.
         let others = [settingsWindow, newsWindow].compactMap { $0 }.filter { $0 !== closing && $0.isVisible }
         if others.isEmpty {
