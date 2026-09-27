@@ -947,16 +947,12 @@ final class MobileStore {
         guard let relay, relayPhase == .ready, !defaults.bool(forKey: Keys.alertPreferencesShared) else { return }
         let local = alertPreferences
         do {
-            let remote = try await Self.iCloud { try await relay.alertPreferences() }
-            let resolution = AlertPreferencesSync.resolve(base: preferencesBase, local: local, remote: remote)
+            let base = preferencesBase
+            let resolution = try await Self.iCloud { try await relay.syncAlertPreferences(base: base, local: local) }
             if resolution.needsPublish {
-                let preferences = resolution.preferences
-                try await Self.iCloud { try await relay.publishAlertPreferences(preferences) }
                 preferencesSharedAt = Date()
             }
-            if resolution.needsPublish || remote != nil {
-                preferencesBase = resolution.preferences
-            }
+            preferencesBase = resolution.preferences
             if alertPreferences.sameChoices(as: local) {
                 defaults.set(true, forKey: Keys.alertPreferencesShared)
                 take(resolution.preferences)
@@ -1113,7 +1109,8 @@ final class MobileStore {
 
     func setBudget(_ value: Double?, for provider: Provider) {
         var budgets = (defaults.dictionary(forKey: Keys.budgets) as? [String: Double]) ?? [:]
-        budgets[provider.rawValue] = value.flatMap { $0 > 0 ? $0 : nil }
+        if let value, (!value.isFinite || value <= 0) { return }
+        budgets[provider.rawValue] = value
         defaults.set(budgets, forKey: Keys.budgets)
         // Applied to the reading there is, at once: Anthropic's report may not be due for a
         // quarter of an hour.

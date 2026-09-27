@@ -86,7 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let hosting = NSHostingController(rootView: SettingsView(store: store, request: settingsTab))
             let window = NSWindow(contentViewController: hosting)
             window.title = "Tokenroom Settings"
-            window.styleMask = [.titled, .closable, .miniaturizable]
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             window.setContentSize(NSSize(width: 600, height: 640))
             window.isReleasedWhenClosed = false
             window.hidesOnDeactivate = false

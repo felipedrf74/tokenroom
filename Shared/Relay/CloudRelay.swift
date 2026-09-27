@@ -230,10 +230,29 @@ extension CloudRelay {
         }
     }
 
-    func publishAlertPreferences(_ preferences: AlertPreferences) async throws {
-        let record = CKRecord(recordType: RecordType.prefs, recordID: CKRecord.ID(recordName: Self.alertPreferencesRecord, zoneID: Self.zoneID))
+    func syncAlertPreferences(base: AlertPreferences?, local: AlertPreferences) async throws -> AlertPreferencesSync.Resolution {
+        try await AlertPreferencesSync.synchronize(base: base, local: local, read: {
+            try await self.preferenceRevision()
+        }, write: { preferences, record in
+            try await self.savePreferences(preferences, record: record)
+        }, isConflict: { ($0 as? CKError)?.code == .serverRecordChanged })
+    }
+
+    private func preferenceRevision() async throws -> AlertPreferencesSync.Versioned<CKRecord> {
+        let id = CKRecord.ID(recordName: Self.alertPreferencesRecord, zoneID: Self.zoneID)
+        do {
+            let record = try await database.record(for: id)
+            guard let data = record[Field.payload] as? Data else { throw ProviderError.parse }
+            let preferences = try RelayEnvelope.decoder.decode(AlertPreferences.self, from: data)
+            return .init(preferences: preferences, revision: record)
+        } catch let error as CKError where error.code == .unknownItem || error.code == .zoneNotFound {
+            return .init(preferences: nil, revision: CKRecord(recordType: RecordType.prefs, recordID: id))
+        }
+    }
+
+    private func savePreferences(_ preferences: AlertPreferences, record: CKRecord) async throws {
         record[Field.payload] = try RelayEnvelope.encoder.encode(preferences)
-        try await save([record])
+        try await save([record], policy: .ifServerRecordUnchanged)
     }
 
     /// Deletes in batches CloudKit accepts (at most 400 changes a request). Not atomic: a record
