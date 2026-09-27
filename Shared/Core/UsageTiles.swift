@@ -50,7 +50,7 @@ enum UsageTiles {
     static func closeWindows(_ readings: [(provider: RelayProvider, history: [String: UsageHistory])], now: Date = .now) -> [CloseWindow] {
         var found: [CloseWindow] = []
         for reading in readings where reading.provider.isLive {
-            for window in reading.provider.windows where window.isMetered {
+            for window in reading.provider.windows where window.isMetered && !window.isAwaitingReading(at: now) {
                 let pace = UsageRanking.pace(for: window, isStale: false, history: reading.history[window.id], now: now)
                 if isClose(window, pace: pace) {
                     found.append(CloseWindow(provider: reading.provider, window: window, pace: pace))

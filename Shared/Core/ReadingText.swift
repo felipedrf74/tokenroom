@@ -50,8 +50,9 @@ enum ReadingText {
         }
     }
 
-    static func headline(_ window: RelayWindow?) -> String {
+    static func headline(_ window: RelayWindow?, now: Date = .now) -> String {
         guard let window else { return "—" }
+        guard !window.isAwaitingReading(at: now) else { return "—" }
         if !window.isMetered, let amount = window.amount {
             return amountHeadline(amount) ?? "—"
         }
@@ -60,6 +61,7 @@ enum ReadingText {
 
     /// "resets in 2d 5h"; billing cycles say the day: "resets Oct 9".
     static func reset(_ window: RelayWindow, now: Date = .now) -> String? {
+        if window.isAwaitingReading(at: now) { return "Reset · awaiting reading" }
         guard let resetsAt = window.resetsAt else { return nil }
         if window.windowKind == .billingCycle || window.windowKind == .monthly {
             return resetsAt > now ? "resets \(resetsAt.formatted(.dateTime.month(.abbreviated).day()))" : "reset due"

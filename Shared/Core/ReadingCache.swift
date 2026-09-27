@@ -22,9 +22,9 @@ struct ReadingCache: Codable, Equatable, Sendable {
     /// Most urgent first.
     var items: [Item]
 
-    /// When the freshest reading was last confirmed.
+    /// The oldest last-success time, so one fresh provider never dates older readings as current.
     var checkedAt: Date? {
-        items.compactMap { $0.provider.checkedAt ?? $0.provider.fetchedAt }.max()
+        items.compactMap { $0.provider.checkedAt ?? $0.provider.fetchedAt }.min()
     }
 
     /// Whether this can replace `shown`: none of the providers both hold is older here. The
@@ -113,10 +113,15 @@ enum WidgetSchedule {
         let busy = items.map { $0.rolledOver(at: now) }.contains { item in
             item.provider.isLive && item.provider.windows.contains { window in
                 guard window.isMetered, window.used >= busyUse, let resetsAt = window.resetsAt else { return false }
-                return resetsAt.timeIntervalSince(now) <= busyHorizon
+                return resetsAt > now && resetsAt.timeIntervalSince(now) <= busyHorizon
             }
         }
-        return now.addingTimeInterval(busy ? busyInterval : calmInterval)
+        let scheduled = now.addingTimeInterval(busy ? busyInterval : calmInterval)
+        let boundaries = items.flatMap { item -> [Date] in
+            guard let checked = item.provider.checkedAt ?? item.provider.fetchedAt else { return [] }
+            return [checked.addingTimeInterval(ReadingFreshness.staleAfter + 1), checked.addingTimeInterval(ReadingFreshness.expiresAfter + 1)]
+        }.filter { $0 > now }
+        return min(scheduled, boundaries.min() ?? scheduled)
     }
 
     /// When the Watch's Smart Stack offers a live provider's windows: the last 8 hours before the
@@ -129,7 +134,7 @@ enum WidgetSchedule {
         if let followed, let resetsAt = followed.resetsAt {
             spans.append((followed, max(now, resetsAt.addingTimeInterval(-RelayProvider.followHorizon))...resetsAt))
         }
-        let busiest = provider.windows.filter { $0.isMetered && $0.used >= busyUse }.max { $0.used < $1.used }
+        let busiest = provider.windows.filter { $0.isMetered && $0.used >= busyUse && !$0.isAwaitingReading(at: now) }.max { $0.used < $1.used }
         if let busiest, busiest.id != followed?.id {
             let end = min(busiest.resetsAt ?? now.addingTimeInterval(busyHorizon), now.addingTimeInterval(busyHorizon))
             if end > now {

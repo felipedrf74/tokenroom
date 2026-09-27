@@ -300,7 +300,7 @@ final class AlertTests: XCTestCase {
         XCTAssertTrue(mac.process([reading(used: 84)], preferences: preferences, now: now).isEmpty, "Crossing 80% again in the same week was already sent")
         XCTAssertTrue(mac.pending.isEmpty)
 
-        let expired = mac.process([reading(used: 99)], preferences: preferences, now: now.addingTimeInterval(20 * 86_400))
+        let expired = mac.process([reading(used: 99, resetsAt: now.addingTimeInterval(22 * 86_400))], preferences: preferences, now: now.addingTimeInterval(20 * 86_400))
         XCTAssertEqual(expired.map(\.level), [95])
         XCTAssertFalse(mac.sent.keys.contains(first[0].id), "IDs are forgotten after two weeks")
     }

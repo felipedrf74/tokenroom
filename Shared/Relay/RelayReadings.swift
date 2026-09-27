@@ -17,7 +17,8 @@ enum RelayReadings {
         guard let container = RelayAvailability.containerIdentifier else { return .unavailable }
         let relay = CloudRelay(containerIdentifier: container)
         guard let status = try? await relay.accountStatus() else { return .failed }
-        guard status == .available else { return .noAccount }
+        if status == .noAccount { return .noAccount }
+        guard status == .available else { return .failed }
         guard let contents = try? await relay.contents() else { return .failed }
         return .readings(cache(from: contents, now: now))
     }
@@ -40,7 +41,19 @@ enum RelayReadings {
 
     /// The cache, or a fresh read when it's older than `maxAge`, within `budget` seconds.
     static func cache(at url: URL?, maxAge: TimeInterval, budget: TimeInterval, now: Date = .now) async -> ReadingCache? {
-        await cache(at: url, maxAge: maxAge, budget: budget, now: now) { await fetch(now: now) }
+        let cached = url.flatMap(ReadingCache.load)
+        if let cached, isRecent(cached, maxAge: maxAge, now: now) { return cached.presented(at: now) }
+        switch await TimeLimit.run(budget, otherwise: .failed, { await read(now: now) }) {
+        case .readings(let fresh):
+            let merged = cached?.mergingUpdate(fresh) ?? fresh
+            if let url { try? merged.save(to: url) }
+            return merged.presented(at: now)
+        case .noAccount:
+            let empty = ReadingCache(savedAt: now, isSample: false, items: [])
+            if let url { try? empty.save(to: url) }
+            return empty
+        case .failed, .unavailable: return cached?.presented(at: now)
+        }
     }
 
     /// - Parameter read: iCloud's readings; tests stand in for it.

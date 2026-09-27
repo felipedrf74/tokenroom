@@ -18,6 +18,12 @@ struct UsageView: View {
     @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { tick in
+            content.onChange(of: tick.date, initial: true) { _, date in store.ageReadings(at: date) }
+        }
+    }
+
+    private var content: some View {
         NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -103,7 +109,7 @@ struct UsageView: View {
     /// sizes.
     private var tiles: some View {
         let readings = orderedReadings
-        let columns = typeSize.isAccessibilitySize ? 1 : 2
+        let columns = typeSize >= .xxLarge ? 1 : 2
         let rows = stride(from: 0, to: readings.count, by: columns).map { Array(readings[$0..<min($0 + columns, readings.count)]) }
         return Grid(horizontalSpacing: 12, verticalSpacing: 12) {
             ForEach(rows, id: \.first?.id) { row in
@@ -195,7 +201,8 @@ struct UsageView: View {
     private var header: String? {
         guard !store.sampleMode, let source = store.sourceSummary else { return nil }
         guard let checked = store.lastChecked else { return "From \(source)" }
-        return "From \(source) · checked \(RelativeTime.ago(checked))"
+        let stale = store.readings.filter { !$0.provider.isLive }.count
+        return "From \(source) · checked \(RelativeTime.ago(checked))" + (stale > 0 ? " · \(stale) stale" : "")
     }
 
     /// Mac providers wait for a sign-in there; this iPhone's key providers for their key to work.

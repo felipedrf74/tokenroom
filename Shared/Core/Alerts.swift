@@ -378,7 +378,7 @@ enum AlertRules {
     static func alerts(previous: RelayProvider?, current: RelayProvider, preferences: AlertPreferences, samples: [String: [(date: Date, used: Double)]] = [:], now: Date = .now) -> [UsageAlert] {
         guard let previous, current.isLive else { return [] }
         var alerts: [UsageAlert] = []
-        for window in current.windows where window.isMetered {
+        for window in current.windows where window.isMetered && !window.isAwaitingReading(at: now) {
             guard let before = previous.windows.first(where: { $0.id == window.id }) else { continue }
             let sameInstance = isSameInstance(before: before, current: window, now: now)
             let isMoney = isMoneyWindow(window)

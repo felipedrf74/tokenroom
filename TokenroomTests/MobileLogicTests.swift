@@ -177,7 +177,7 @@ final class MobileLogicTests: XCTestCase {
         let balance = provider("Balance", used: 0, metered: false)
         let tie = provider("Also calm", used: 90)
         let paces: [String: Pace] = ["Urgent": Pace(verdict: .ahead, delta: 20, elapsedFraction: 0.3, resetsAt: now, runsOutAt: now, severity: .tight)]
-        let sorted = UsageRanking.sorted([balance, calm, urgent, tie], provider: { $0 }, pace: { paces[$0.name] })
+        let sorted = UsageRanking.sorted([balance, calm, urgent, tie], provider: { $0 }, now: now, pace: { paces[$0.name] })
         XCTAssertEqual(sorted.map(\.name), ["Urgent", "Also calm", "Calm", "Balance"])
     }
 
@@ -193,9 +193,9 @@ final class MobileLogicTests: XCTestCase {
         let pace = { (reading: RelayProvider) in UsageRanking.pace(for: reading, history: nil, now: self.now) }
         XCTAssertEqual(pace(weekly)?.severity, .watch)
         XCTAssertNil(pace(spent), "No reset time, no pace")
-        XCTAssertEqual(UsageRanking.sorted([weekly, spent], provider: { $0 }, pace: pace).map(\.name), ["Spent", "Weekly"])
+        XCTAssertEqual(UsageRanking.sorted([weekly, spent], provider: { $0 }, now: now, pace: pace).map(\.name), ["Spent", "Weekly"])
         let stale = provider("Spent", keyLimit, state: "stale")
-        XCTAssertEqual(UsageRanking.sorted([stale, weekly], provider: { $0 }, pace: pace).map(\.name), ["Weekly", "Spent"], "Like any stale reading, it has no urgency")
+        XCTAssertEqual(UsageRanking.sorted([stale, weekly], provider: { $0 }, now: now, pace: pace).map(\.name), ["Weekly", "Spent"], "Like any stale reading, it has no urgency")
     }
 
     // MARK: Sample data
@@ -287,8 +287,11 @@ final class MobileLogicTests: XCTestCase {
         let session = try XCTUnwrap(item.provider.windows.first { $0.id == "session" }?.resetsAt)
         let rolled = item.rolledOver(at: session.addingTimeInterval(1))
         let rolledSession = try XCTUnwrap(rolled.provider.windows.first { $0.id == "session" })
-        XCTAssertEqual(rolledSession.used, 0, "A widget doesn't keep a full meter past the reset")
-        XCTAssertNil(rolledSession.resetsAt)
+        XCTAssertEqual(rolledSession.used, item.provider.windows.first { $0.id == "session" }?.used, "Keep the measured value until a new reading confirms it")
+        XCTAssertEqual(rolledSession.resetsAt, session)
+        XCTAssertEqual(ReadingText.reset(rolledSession, now: session), "Reset · awaiting reading")
+        XCTAssertEqual(ReadingText.headline(rolledSession, now: session), "—")
+        XCTAssertNil(UsageRanking.pace(for: rolledSession, isStale: false, history: nil, now: session))
         XCTAssertEqual(rolled.provider.windows.first { $0.id == "weekly" }?.used, 64, "Windows that haven't reset keep their reading")
         XCTAssertEqual(item.rolledOver(at: now), item)
     }
@@ -321,7 +324,7 @@ final class MobileLogicTests: XCTestCase {
         let balance = RelayWindow(id: "b", kind: "pool", title: "Balance", used: 0, amount: QuotaAmount(remaining: 12.4, unit: "usd"), metered: false)
         XCTAssertEqual(ReadingText.headline(balance), "\(12.4.formatted(.currency(code: "USD"))) left")
         let meter = RelayWindow(id: "w", kind: "weekly", title: "Weekly", used: 63.6, resetsAt: now.addingTimeInterval(2 * 86_400 + 3600))
-        XCTAssertEqual(ReadingText.headline(meter), "64%")
+        XCTAssertEqual(ReadingText.headline(meter, now: now), "64%")
         XCTAssertEqual(ReadingText.caption(meter, now: now), "Weekly · resets in 2d 1h")
         XCTAssertEqual(ReadingText.amountDetail(QuotaAmount(used: 249, limit: 300, remaining: 51, unit: "requests")), "249 of 300 requests")
         XCTAssertEqual(ReadingText.amountDetail(QuotaAmount(used: 312.5, unit: "usd")), "\(312.5.formatted(.currency(code: "USD"))) spent")

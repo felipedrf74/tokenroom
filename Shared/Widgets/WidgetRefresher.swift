@@ -51,8 +51,10 @@ enum WidgetRefresher {
         let ownID = defaults.string(forKey: "relaySourceID")
         async let relayRead = readRelay()
         async let keyRead = readKeys(defaults: defaults, now: now)
-        let (contents, (fresh, readings)) = await (relayRead, keyRead)
-        guard contents != nil || !fresh.isEmpty else { return nil }
+        let (relayResult, (fresh, readings)) = await (relayRead, keyRead)
+        let contents = relayResult.contents
+        let signedOut = relayResult.signedOut
+        guard contents != nil || !fresh.isEmpty || signedOut else { return nil }
         // For the week's history: the app records these the next time it refreshes.
         HistoryStore.queue(readings, in: AppGroup.containerURL)
 
@@ -81,7 +83,7 @@ enum WidgetRefresher {
             return RelayMerge.Source(id: source.id, label: source.label, envelope: envelope)
         }
         var histories = contents?.histories ?? [:]
-        if contents == nil, let previous {
+        if contents == nil, !signedOut, let previous {
             // iCloud didn't answer in time: the other devices' readings from last time stay,
             // rather than leaving only this iPhone's.
             for carried in previous.carriedSources(excluding: localLabel) {
@@ -111,12 +113,19 @@ enum WidgetRefresher {
 
     /// Nil without iCloud, or when it doesn't answer within its share of the widget's seconds;
     /// `refresh` then keeps the other devices' last readings beside this iPhone's fresh ones.
-    private static func readRelay() async -> CloudRelay.Contents? {
-        guard let container = RelayAvailability.containerIdentifier else { return nil }
-        return await TimeLimit.run(readBudget, otherwise: nil) {
+    private struct RelayResult: Sendable {
+        var contents: CloudRelay.Contents?
+        var signedOut = false
+    }
+
+    private static func readRelay() async -> RelayResult {
+        guard let container = RelayAvailability.containerIdentifier else { return RelayResult() }
+        return await TimeLimit.run(readBudget, otherwise: RelayResult()) {
             let relay = CloudRelay(containerIdentifier: container)
-            guard (try? await relay.accountStatus()) == .available else { return nil }
-            return try? await relay.contents()
+            let status = try? await relay.accountStatus()
+            if status == .noAccount { return RelayResult(signedOut: true) }
+            guard status == .available else { return RelayResult() }
+            return RelayResult(contents: try? await relay.contents())
         }
     }
 

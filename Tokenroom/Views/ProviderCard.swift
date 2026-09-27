@@ -28,6 +28,10 @@ struct ProviderCard: View {
         }
     }
 
+    private var limitWarning: String? {
+        UsageRanking.limitWarning(for: RelayProvider(provider: provider, status: status, checkedAt: checkedAt))
+    }
+
     private var fullCard: some View {
         VStack(alignment: .leading, spacing: TokenroomTokens.rhythm) {
             switch status {
@@ -96,8 +100,10 @@ struct ProviderCard: View {
         } label: {
             HStack(spacing: 8) {
                 ProviderIcon(provider: provider, size: 18)
-                Text(provider.displayName)
-                    .font(.system(size: 12, weight: .semibold))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(provider.displayName).font(.system(size: 12, weight: .semibold))
+                    if let warning = limitWarning { Text(warning).font(.system(size: 9, weight: .semibold)).foregroundStyle(TokenroomTokens.usageCritical) }
+                }
                     .foregroundStyle(stale ? Color.secondary : Color.primary)
                     .lineLimit(1)
                     .frame(width: 104, alignment: .leading)
@@ -248,6 +254,10 @@ struct ProviderCard: View {
                 .font(.system(size: TokenroomTokens.captionSize, weight: pace.needsAttention ? .medium : .regular))
                 .foregroundStyle(paceColor(pace))
                 .fixedSize(horizontal: false, vertical: true)
+        }
+        if !stale, let warning = limitWarning {
+            Text(warning).font(.system(size: TokenroomTokens.captionSize, weight: .semibold))
+                .foregroundStyle(TokenroomTokens.usageCritical)
         }
         if isExpanded {
             expandedDetails(snapshot, stale: stale)
@@ -437,6 +447,7 @@ struct ProviderCard: View {
     }
 
     private func primaryCaption(_ snapshot: QuotaSnapshot) -> String {
+        if snapshot.resetsAt.map({ $0 <= .now }) == true { return "Reset · awaiting reading" }
         let reset: String?
         if snapshot.primaryTitle == "This cycle" {
             reset = RelativeTime.cycleDay(snapshot.resetsAt)
@@ -467,6 +478,7 @@ struct ProviderCard: View {
 
     /// "resets in 2h 10m · Ahead of pace".
     private func windowDetail(_ window: QuotaWindow, stale: Bool) -> String? {
+        if RelayWindow(window).isAwaitingReading() { return "Reset · awaiting reading" }
         var parts: [String] = []
         if let reset = RelativeTime.resets(window.resetsAt) {
             parts.append(reset)

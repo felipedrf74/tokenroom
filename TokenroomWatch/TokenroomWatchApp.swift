@@ -1,4 +1,5 @@
 import SwiftUI
+import CloudKit
 
 @main
 struct TokenroomWatchApp: App {
@@ -7,7 +8,10 @@ struct TokenroomWatchApp: App {
 
     var body: some Scene {
         WindowGroup {
-            WatchRootView(store: store)
+            TimelineView(.periodic(from: .now, by: 60)) { _ in
+                WatchRootView(store: store)
+            }
+                .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)) { _ in store.accountChanged() }
                 .task {
                     await store.refresh(force: true)
                 }

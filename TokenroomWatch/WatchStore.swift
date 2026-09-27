@@ -31,6 +31,9 @@ final class WatchStore {
     /// Opened from a complication or the Smart Stack: the provider to show.
     var openedProvider: String?
     private var lastRefresh: Date?
+    private var accountGate = WatchAccountGate(signedOutAt: AppGroup.defaults.object(forKey: "watchSignedOutAt") as? Date)
+    private var pendingPhone: ReadingCache?
+    private var accountRevision = 0
     private let cacheURL = ReadingCache.defaultURL
     private let link = PhoneLink()
 
@@ -48,13 +51,13 @@ final class WatchStore {
         }
         #endif
         link.onCache = { [weak self] cache in
-            self?.apply(cache)
+            self?.receivePhone(cache)
         }
         link.activate()
     }
 
     var items: [ReadingCache.Item] {
-        cache?.items ?? []
+        cache?.presented(at: .now).items ?? []
     }
 
     func item(id: String) -> ReadingCache.Item? {
@@ -67,16 +70,30 @@ final class WatchStore {
         isRefreshing = true
         defer { isRefreshing = false }
         lastRefresh = now
+        let revision = accountRevision
         let outcome = await TimeLimit.run(Self.readBudget, otherwise: .failed) { await RelayReadings.read(now: now) }
+        guard revision == accountRevision else {
+            Task { await refresh(force: true) }
+            return
+        }
         switch outcome {
         case .readings(let fresh):
+            accountGate.confirmAvailable()
             problem = nil
             apply(fresh)
+            if let pendingPhone, accountGate.accepts(pendingPhone) { apply(pendingPhone) }
+            pendingPhone = nil
         case .noAccount:
-            // An empty saved cache shows the problem too, rather than "No readings yet".
-            problem = items.isEmpty ? .noAccount : nil
+            accountGate.signOut(at: now)
+            AppGroup.defaults.set(now, forKey: "watchSignedOutAt")
+            pendingPhone = nil
+            problem = .noAccount
+            cache = ReadingCache(savedAt: now, isSample: false, items: [])
+            if let cacheURL, let cache { try? cache.save(to: cacheURL) }
+            WidgetCenter.shared.reloadAllTimelines()
+            WidgetCenter.shared.invalidateRelevance(ofKind: Self.resetSoonKind)
         case .failed:
-            problem = items.isEmpty ? .unreachable : nil
+            problem = .unreachable
         case .unavailable:
             // A build without iCloud (no team): sample readings, clearly marked.
             if cache == nil {
@@ -92,7 +109,7 @@ final class WatchStore {
     /// what matters (`ReadingCache.reloadSignature`), as their reloads are budgeted. Smaller
     /// changes show on their next timeline, which reads the saved readings.
     func apply(_ fresh: ReadingCache) {
-        if let cache, !cache.isSample, !fresh.isAtLeastAsFresh(as: cache) { return }
+        let fresh = cache?.mergingUpdate(fresh) ?? fresh
         let changed = fresh.materialHash != cache?.materialHash
         let matters = fresh.reloadSignature != cache?.reloadSignature
         cache = fresh
@@ -105,6 +122,20 @@ final class WatchStore {
         }
         // The Smart Stack widget picks its moments from the readings; let it look again.
         WidgetCenter.shared.invalidateRelevance(ofKind: WatchStore.resetSoonKind)
+    }
+
+    private func receivePhone(_ fresh: ReadingCache) {
+        guard fresh.v <= ReadingCache.version else { return }
+        if accountGate.accepts(fresh) { apply(fresh) }
+        else if accountGate.signedOutAt == nil { pendingPhone = fresh }
+    }
+
+    func accountChanged() {
+        accountRevision += 1
+        accountGate.invalidate()
+        pendingPhone = nil
+        lastRefresh = nil
+        Task { await refresh(force: true) }
     }
 
     func scheduleBackgroundRefresh(now: Date = .now) {

@@ -11,11 +11,20 @@ struct WatchRootView: View {
                     WatchEmptyView(store: store)
                 } else {
                     List {
+                        if store.problem == .unreachable {
+                            Label("Couldn't reach iCloud. Showing saved readings.", systemImage: "icloud.slash")
+                                .font(.footnote)
+                        }
                         ForEach(store.items) { item in
                             NavigationLink(value: item.id) {
                                 WatchRow(item: item)
                             }
                         }
+                        Button(store.isRefreshing ? "Refreshing…" : "Refresh", systemImage: "arrow.clockwise") {
+                            Task { await store.refresh(force: true) }
+                        }.disabled(store.isRefreshing)
+                        let stale = store.items.filter { !$0.provider.isLive }.count
+                        if stale > 0 { Text("\(stale) stale reading\(stale == 1 ? "" : "s")").font(.footnote).foregroundStyle(.secondary) }
                         if store.cache?.isSample == true {
                             Text("Sample data")
                                 .font(.footnote)
@@ -75,6 +84,7 @@ private struct WatchEmptyView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
+                    Button("Retry", systemImage: "arrow.clockwise") { Task { await store.refresh(force: true) } }
                 }
             }
         }
@@ -114,7 +124,7 @@ private struct WatchRow: View {
         HStack(spacing: 10) {
             if let window, window.isMetered {
                 // The provider's icon in the ring; the row reads its name, so the ring has no label.
-                UsageRing(used: window.used, isStale: !provider.isLive, label: "")
+                UsageRing(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(), label: "")
                     .frame(width: 40, height: 40)
                     .overlay { ProviderMark(provider: provider, size: 22) }
             } else {
@@ -132,6 +142,13 @@ private struct WatchRow: View {
                         .foregroundStyle(headlineColor(window, isLive: provider.isLive))
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
+                }
+                if let warning = UsageRanking.limitWarning(for: provider) {
+                    Text(warning).font(.caption2.weight(.semibold)).foregroundStyle(TokenroomTokens.usageCritical)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !provider.isLive, let checked = provider.checkedAt ?? provider.fetchedAt {
+                    Text("Checked \(RelativeTime.ago(checked))").font(.caption2).foregroundStyle(.secondary)
                 }
                 if let window {
                     Text(ReadingText.reset(window) ?? window.displayTitle)
@@ -163,7 +180,7 @@ struct WatchDetailView: View {
                     title: window.displayTitle,
                     headline: ReadingText.headline(window),
                     usedPercent: window.isMetered ? window.used : nil,
-                    isStale: !provider.isLive,
+                    isStale: !provider.isLive || window.isAwaitingReading(),
                     paceMark: pace?.elapsedFraction,
                     caption: detail(window, pace: pace),
                     titleFont: .caption,
@@ -178,6 +195,9 @@ struct WatchDetailView: View {
             if let extra = provider.extra, let text = ReadingText.extra(extra) {
                 Text(text)
                     .font(.footnote)
+            }
+            if let checked = provider.checkedAt ?? provider.fetchedAt {
+                Text("Last successful check \(RelativeTime.ago(checked))").font(.footnote).foregroundStyle(.secondary)
             }
             Text("From \(item.source)")
                 .font(.footnote)

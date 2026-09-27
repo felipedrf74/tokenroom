@@ -24,7 +24,7 @@ struct ProviderDetailView: View {
                         window: window,
                         history: reading.history[window.id],
                         checkedAt: provider.checkedAt ?? provider.fetchedAt,
-                        isStale: !provider.isLive,
+                        isStale: !provider.isLive || window.isAwaitingReading(),
                         tint: Color(hex: provider.tint)
                     )
                 }
@@ -56,7 +56,7 @@ struct ProviderDetailView: View {
             Section {
                 LabeledContent("From", value: reading.source)
                 if let checked = provider.checkedAt ?? provider.fetchedAt {
-                    LabeledContent("Checked", value: RelativeTime.ago(checked))
+                    LabeledContent("Last successful check", value: RelativeTime.ago(checked))
                 }
             } footer: {
                 Text("The line on each meter marks an even pace: where usage would be if spread evenly across the window. Tokenroom isn't affiliated with \(provider.name).")
@@ -139,7 +139,9 @@ private struct WindowDetail: View {
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
 
-        if let resetsAt = window.resetsAt {
+        if window.isAwaitingReading() {
+            Text("Reset · awaiting reading").font(.footnote).foregroundStyle(.secondary)
+        } else if let resetsAt = window.resetsAt {
             LabeledContent("Resets") {
                 VStack(alignment: .trailing) {
                     Text(resetsAt.formatted(date: .abbreviated, time: .shortened))

@@ -13,11 +13,12 @@ struct ReadingsEntry: TimelineEntry {
 
     /// The readings as they stand at `date`, the chosen provider first.
     static func make(_ cache: ReadingCache?, choice: ProviderOption, date: Date) -> ReadingsEntry {
-        var items = (cache?.items ?? []).map { $0.rolledOver(at: date) }
+        let presented = cache?.presented(at: date)
+        var items = presented?.items ?? []
         if let id = choice.providerID, let index = items.firstIndex(where: { $0.id == id }) {
             items.insert(items.remove(at: index), at: 0)
         }
-        return ReadingsEntry(date: date, items: items, isSample: cache?.isSample ?? false, checkedAt: cache?.checkedAt)
+        return ReadingsEntry(date: date, items: items, isSample: cache?.isSample ?? false, checkedAt: presented?.checkedAt)
     }
 }
 

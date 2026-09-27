@@ -15,7 +15,7 @@ struct UsageTileView: View {
 
     var body: some View {
         let tile = UsageTiles.tile(for: provider)
-        let isClose = !isStale && [tile.ring, tile.bar].compactMap { $0 }.contains { UsageTiles.isClose($0, pace: pace($0)) }
+        let isClose = !isStale && [tile.ring, tile.bar].compactMap { $0 }.contains { !$0.isAwaitingReading() && UsageTiles.isClose($0, pace: pace($0)) }
         VStack(alignment: .leading, spacing: 10) {
             header(isClose: isClose)
             if let ring = tile.ring {
@@ -30,6 +30,10 @@ struct UsageTileView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
+            }
+            if let warning = UsageRanking.limitWarning(for: provider) {
+                Text(warning).font(.caption.weight(.semibold)).foregroundStyle(TokenroomTokens.usageCritical)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if isStale {
                 Text(provider.message ?? "Last reading \(RelativeTime.ago(provider.fetchedAt)).")
@@ -72,7 +76,7 @@ struct UsageTileView: View {
 
     private func ringRow(_ ring: RelayWindow) -> some View {
         HStack(spacing: 10) {
-            UsageRing(used: ring.used, isStale: isStale, label: ReadingText.headline(ring), lineWidth: 6, paceMark: pace(ring)?.elapsedFraction)
+            UsageRing(used: ring.used, isStale: isStale || ring.isAwaitingReading(), label: ReadingText.headline(ring), lineWidth: 6, paceMark: pace(ring)?.elapsedFraction)
                 .frame(width: 58, height: 58)
             VStack(alignment: .leading, spacing: 2) {
                 Text(ring.displayTitle)
@@ -96,7 +100,7 @@ struct UsageTileView: View {
                     .monospacedDigit()
                     .foregroundStyle(TokenroomTokens.ink(remaining: 100 - bar.used, isStale: isStale))
             }
-            MeterTrack(usedPercent: bar.used, remaining: 100 - bar.used, isStale: isStale, paceMark: pace(bar)?.elapsedFraction, height: 6, solid: true)
+            MeterTrack(usedPercent: bar.used, remaining: 100 - bar.used, isStale: isStale || bar.isAwaitingReading(), paceMark: pace(bar)?.elapsedFraction, height: 6, solid: true)
             WindowStatus(window: bar, pace: pace(bar), isStale: isStale)
         }
     }

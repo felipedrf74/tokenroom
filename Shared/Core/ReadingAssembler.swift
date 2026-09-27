@@ -21,13 +21,15 @@ enum ReadingAssembler {
             )
         }
         return Output(
-            connected: UsageRanking.sorted(items.filter { !$0.provider.isDisconnected }, provider: \.provider) { pace(for: $0, now: now) },
+            connected: UsageRanking.sorted(items.filter { !$0.provider.isDisconnected }, provider: \.provider, now: now) { pace(for: $0, now: now) },
             disconnected: items.filter(\.provider.isDisconnected).sorted { $0.provider.name.localizedStandardCompare($1.provider.name) == .orderedAscending }
         )
     }
 
     static func pace(for item: ReadingCache.Item, now: Date = .now) -> Pace? {
-        UsageRanking.pace(for: item.provider, history: item.primaryHistory, now: now)
+        item.provider.windows.filter(\.isMetered).compactMap {
+            UsageRanking.pace(for: $0, isStale: !item.provider.isLive, history: item.history[$0.id], now: now)
+        }.max { UsageRanking.urgency($0) < UsageRanking.urgency($1) }
     }
 
     /// One provider's weeks from a collector's history, by window ID.
@@ -47,15 +49,9 @@ extension ReadingCache.Item {
         provider.primaryWindowID.flatMap { history[$0] }
     }
 
-    /// The reading as it stands at `date`: windows that have reset since show as empty until a
-    /// new reading arrives, so a widget doesn't keep a full meter past the reset.
+    /// Keep the measured value and reset boundary. Presentation labels an elapsed window as
+    /// awaiting a reading, rather than inventing a new live zero.
     func rolledOver(at date: Date) -> ReadingCache.Item {
-        var item = self
-        for index in item.provider.windows.indices {
-            guard let resetsAt = item.provider.windows[index].resetsAt, resetsAt <= date else { continue }
-            item.provider.windows[index].used = 0
-            item.provider.windows[index].resetsAt = nil
-        }
-        return item
+        self
     }
 }

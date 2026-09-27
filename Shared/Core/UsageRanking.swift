@@ -14,7 +14,8 @@ enum UsageRanking {
     }
 
     static func pace(for window: RelayWindow, isStale: Bool, samples: [(date: Date, used: Double)], now: Date = .now) -> Pace? {
-        Pace.evaluate(
+        guard !window.isAwaitingReading(at: now) else { return nil }
+        return Pace.evaluate(
             used: window.used,
             kind: window.windowKind,
             resetsAt: window.resetsAt,
@@ -44,16 +45,23 @@ enum UsageRanking {
     /// A live limit reached with no reset time (a spent key limit or balance reference) has no
     /// pace to say so, but is as pressing as one that has.
     private static func isReachedWithoutReset(_ provider: RelayProvider) -> Bool {
-        guard provider.isLive, let window = provider.primaryWindow else { return false }
-        return window.isMetered && window.resetsAt == nil && window.used >= 100
+        provider.isLive && provider.windows.contains { $0.isMetered && $0.resetsAt == nil && $0.used >= 100 }
+    }
+
+    static func limitWarning(for provider: RelayProvider, now: Date = .now) -> String? {
+        guard provider.isLive, let window = provider.windows.first(where: {
+            $0.id != provider.primaryWindow?.id && $0.isMetered && $0.used >= 100 && !$0.isAwaitingReading(at: now)
+        }) else { return nil }
+        return "\(window.displayTitle) limit reached"
     }
 
     /// Most urgent first; ties by name.
-    static func sorted<Item>(_ items: [Item], provider: (Item) -> RelayProvider, pace: (Item) -> Pace?) -> [Item] {
+    static func sorted<Item>(_ items: [Item], provider: (Item) -> RelayProvider, now: Date = .now, pace: (Item) -> Pace?) -> [Item] {
         let keyed = items.map { item in
             let reading = provider(item)
-            let window = reading.primaryWindow
-            let level = isReachedWithoutReset(reading) ? urgency(severity: .critical) : urgency(pace(item))
+            let window = reading.windows.filter { $0.isMetered && !$0.isAwaitingReading(at: now) }.max { $0.used < $1.used }
+            let reached = reading.isLive && window.map { $0.used >= 100 } == true
+            let level = reached || isReachedWithoutReset(reading) ? urgency(severity: .critical) : urgency(pace(item))
             return (item: item, metered: window?.isMetered ?? false, urgency: level, used: window?.used ?? 0, name: reading.name)
         }
         return keyed.sorted { lhs, rhs in

@@ -93,7 +93,7 @@ final class GoldenFixtureTests: XCTestCase {
         XCTAssertEqual(cache.items.map(\.source), ["Mac", "This iPhone"])
         XCTAssertEqual(cache.items[0].history["weekly"]?.points.last?.used, 64)
         XCTAssertTrue(cache.items[1].history.isEmpty)
-        XCTAssertEqual(cache.checkedAt, now.addingTimeInterval(-120))
+        XCTAssertEqual(cache.checkedAt, now.addingTimeInterval(-300), "Summary dates the oldest provider")
         XCTAssertEqual(cache.items[0].provider.windowToFollow(now: now)?.id, "session")
 
         let folder = try makeFolder()

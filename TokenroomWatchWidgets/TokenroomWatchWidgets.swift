@@ -26,7 +26,7 @@ struct ComplicationProvider: TimelineProvider {
     func getSnapshot(in context: Context, completion: @escaping @Sendable (ComplicationEntry) -> Void) {
         let saved = ReadingCache.defaultURL.flatMap(ReadingCache.load)
         let cache = context.isPreview && (saved?.items.isEmpty ?? true) ? SampleData.cache() : saved
-        completion(ComplicationEntry(date: .now, items: cache?.items ?? [], isSample: cache?.isSample ?? false))
+        completion(ComplicationEntry(date: .now, items: cache?.presented(at: .now).items ?? [], isSample: cache?.isSample ?? false))
     }
 
     func getTimeline(in context: Context, completion: @escaping @Sendable (Timeline<ComplicationEntry>) -> Void) {
@@ -39,9 +39,9 @@ struct ComplicationProvider: TimelineProvider {
             let horizon = now.addingTimeInterval(8 * 3600)
             let resets = Set((cache?.items ?? []).flatMap { $0.provider.windows.compactMap(\.resetsAt) }.filter { $0 > now && $0 < horizon })
             let entries = ([now] + resets.sorted().prefix(11)).map { date in
-                ComplicationEntry(date: date, items: (cache?.items ?? []).map { $0.rolledOver(at: date) }, isSample: cache?.isSample ?? false)
+                ComplicationEntry(date: date, items: cache?.presented(at: date).items ?? [], isSample: cache?.isSample ?? false)
             }
-            completion(Timeline(entries: entries, policy: .after(WidgetSchedule.nextReload(after: now, items: cache?.items ?? [], reloads: reloads))))
+            completion(Timeline(entries: entries, policy: .after(WidgetSchedule.nextReload(after: now, items: cache?.presented(at: .now).items ?? [], reloads: reloads))))
         }
     }
 }
@@ -65,6 +65,7 @@ private struct ComplicationView: View {
     var body: some View {
         content
             .widgetURL(link)
+            .accessibilityValue(entry.items.first.map { "Last successful check \(RelativeTime.ago($0.provider.checkedAt ?? $0.provider.fetchedAt, now: entry.date))" } ?? "No readings")
     }
 
     /// Circular and corner complications show one provider and open it; the rest open the list.
@@ -85,7 +86,7 @@ private struct ComplicationView: View {
             case .accessoryCorner:
                 let balance = window.flatMap { $0.isMetered ? nil : $0.amount }
                 // A balance has nothing to fill: its amount, and the provider's name for a label.
-                Text(balance.map(ReadingText.circleAmount) ?? ReadingText.headline(window))
+                Text(balance.map(ReadingText.circleAmount) ?? ReadingText.headline(window, now: entry.date))
                     .font(.system(size: 14, weight: .semibold, design: .rounded))
                     .widgetCurvesContent()
                     .widgetLabel {
@@ -118,12 +119,14 @@ private struct ComplicationView: View {
                                     .gaugeStyle(.accessoryLinearCapacity)
                                     .tint(ringTint)
                             }
-                            Text(ReadingText.headline(row))
+                            Text(ReadingText.headline(row, now: entry.date))
                                 .font(.system(size: 12).monospacedDigit())
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.7)
                         }
                     }
+                    let stale = entry.items.filter { !$0.provider.isLive }.count
+                    if stale > 0 { Text("\(stale) stale").font(.caption2).foregroundStyle(.secondary) }
                     if entry.isSample {
                         Text("Sample data")
                             .font(.system(size: 12))
@@ -159,7 +162,7 @@ private struct ComplicationView: View {
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.7)
                         } else {
-                            Text(TokenroomFormat.percentText(used))
+                            Text(window?.isAwaitingReading(at: entry.date) == true ? "—" : TokenroomFormat.percentText(used))
                                 .monospacedDigit()
                         }
                     }
@@ -174,7 +177,7 @@ private struct ComplicationView: View {
 
     /// "Codex 78% · Claude 64%", after "Sample" for samples.
     private var inlineText: String {
-        let readings = entry.items.prefix(2).map { "\($0.provider.shortName) \(ReadingText.headline($0.provider.primaryWindow))" }
+        let readings = entry.items.prefix(2).map { "\($0.provider.shortName) \(ReadingText.headline($0.provider.primaryWindow, now: entry.date))" + (!$0.provider.isLive ? " · stale" : "") }
         return ((entry.isSample ? ["Sample"] : []) + readings).joined(separator: " · ")
     }
 
@@ -214,7 +217,7 @@ struct ResetSoonEntry: RelevanceEntry {
 struct ResetSoonProvider: RelevanceEntriesProvider {
     func relevance() async -> WidgetRelevance<WindowIntent> {
         let now = Date.now
-        let items = ReadingCache.defaultURL.flatMap(ReadingCache.load)?.items ?? []
+        let items = ReadingCache.defaultURL.flatMap(ReadingCache.load)?.presented(at: now).items ?? []
         let attributes = items.flatMap { item in
             WidgetSchedule.relevance(of: item.provider, now: now).map { relevant in
                 WidgetRelevanceAttribute(
@@ -228,7 +231,7 @@ struct ResetSoonProvider: RelevanceEntriesProvider {
 
     func entry(configuration: WindowIntent, context: Context) async throws -> ResetSoonEntry {
         let cache = ReadingCache.defaultURL.flatMap(ReadingCache.load)
-        return ResetSoonEntry(item: cache?.items.first { $0.id == configuration.providerID }, windowID: configuration.windowID, isSample: cache?.isSample ?? false)
+        return ResetSoonEntry(item: cache?.presented(at: .now).items.first { $0.id == configuration.providerID }, windowID: configuration.windowID, isSample: cache?.isSample ?? false)
     }
 
     func placeholder(context: Context) -> ResetSoonEntry {
