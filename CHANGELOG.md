@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.2.0 — 2026-09-28
+
+Tokenroom for Mac 2.2.0, and the iPhone and Apple Watch app, build 5.
+
+- Settings keeps key-validation results tied to the exact key and account tested. Invalid budget input preserves the saved amount. Alert preferences retry concurrent iCloud edits without losing another device's changes. Provider controls have clearer labels, search, and a compact Claude Advanced section.
+- Usage now ages each provider's reading independently: after an hour it is marked stale, and after seven days it is hidden. An exhausted secondary limit gets its own warning and affects urgency even when the headline window is healthy. After a reset, the measured amount remains available but the interface says “Reset · awaiting reading” until a new check confirms usage.
+- The Watch retains the newest per-provider checks, honors removals, keeps saved readings beside connection errors, and prevents old phone data from reappearing after iCloud sign-out. It can adopt a complication-validated cache while the Watch app remains alive. Widgets, complications, and Live Activities use the same freshness and reset presentation rules.
+- News retries failed sources independently, checks newly followed feeds promptly, and shows freshness or failure on the page being read. New markers remain stable during a visit. Search, Show More, clearer price units, and larger-text layouts improve discovery.
+
+Source review found no confirmed defect. Runtime, accessibility, and paired-device acceptance remain open because the new regression methods and device checks have not been run.
+
 ## 2.1.1 — 2026-09-26
 
 Tokenroom for Mac 2.1.1, and the iPhone and Apple Watch app, build 4.
