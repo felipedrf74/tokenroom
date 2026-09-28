@@ -77,6 +77,7 @@ enum Forecast {
     /// The same for a reading last confirmed at `checkedAt` (a provider's `checkedAt ?? fetchedAt`),
     /// so a month projects from what was spent by then, and an old reading doesn't project.
     static func text(for window: RelayWindow, history: UsageHistory?, checkedAt: Date?, now: Date = .now) -> String? {
+        guard !window.isAwaitingReading(at: now) else { return nil }
         guard let amount = window.amount, amount.unit == "usd" || amount.unit == "cny" else { return nil }
         if window.resetsAt == nil, let remaining = amount.remainingOrComputed {
             return daysLeft(remaining: remaining, history: history, now: now).map(runwayText)

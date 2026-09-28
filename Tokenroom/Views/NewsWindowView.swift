@@ -49,6 +49,7 @@ struct NewsWindowView: View {
     @State private var page: NewsPage?
     @State private var showsAllLabs = false
     @State private var search = ""
+    @State private var modelLimit = 60
 
     /// - Parameters:
     ///   - request: the section the popover asks for, followed while the window stays open.
@@ -101,7 +102,9 @@ struct NewsWindowView: View {
         } detail: {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    health(news)
                     detail(news)
+                    if isEmpty(news) { emptyState(news) }
                     Text("From OpenRouter's public model list and each tool's official changelog, blog, or releases. Tokenroom shows titles and links and opens the rest in your browser. Tokenroom isn't affiliated with these providers.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -113,16 +116,9 @@ struct NewsWindowView: View {
             }
             .navigationTitle(title(news))
             .navigationSubtitle(subtitle(news))
-            .searchable(text: $search, placement: .toolbar, prompt: "Search titles")
-            .overlay {
-                if isEmpty(news) {
-                    if news.isRefreshing {
-                        ProgressView()
-                    } else {
-                        ContentUnavailableView("Nothing yet", systemImage: "newspaper", description: Text(news.modelProblem ?? news.announcementProblem ?? "Tokenroom checks for news every few hours."))
-                    }
-                }
-            }
+            .searchable(text: $search, placement: .toolbar, prompt: "Search titles and sources")
+            .onChange(of: search) { _, _ in modelLimit = 60 }
+            .onChange(of: showsAllLabs) { _, _ in modelLimit = 60 }
             .toolbar {
                 ToolbarItem {
                     Button {
@@ -153,6 +149,7 @@ struct NewsWindowView: View {
             page = .filter(request.section)
         }
         .onChange(of: page) { _, page in
+            modelLimit = 60
             if case .filter(let filter)? = page { savedFilter = filter }
         }
     }
@@ -288,12 +285,12 @@ struct NewsWindowView: View {
             }
         }
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 200, maximum: 280), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
-            ForEach(releases.prefix(60)) { release in
+            ForEach(releases.prefix(modelLimit)) { release in
                 ModelCardView(release: release, isNew: news.isNew(release.created), width: nil)
             }
         }
-        if let problem = news.modelProblem {
-            Text(problem).font(.footnote).foregroundStyle(.secondary)
+        if releases.count > modelLimit {
+            Button("Show More (\(releases.count - modelLimit) remaining)") { modelLimit += 60 }
         }
     }
 
@@ -314,7 +311,7 @@ struct NewsWindowView: View {
 
     @ViewBuilder
     private func searchResults(_ news: NewsStore) -> some View {
-        let models = news.models(all: true).filter { $0.name.localizedCaseInsensitiveContains(search) }
+        let models = news.models(all: true).filter { NewsSearch.matches(search, title: $0.name, source: $0.vendorName) }
         let items = news.announcements.filter { $0.displayTitle.localizedCaseInsensitiveContains(search) || $0.source.localizedCaseInsensitiveContains(search) }
         if !models.isEmpty {
             self.models(news, models, header: "Models", toggle: false)
@@ -323,7 +320,7 @@ struct NewsWindowView: View {
             NewsRiver(items: items) { news.isNew($0) }
         }
         if models.isEmpty, items.isEmpty {
-            ContentUnavailableView.search(text: search)
+            emptyState(news, searching: true)
         }
     }
 
@@ -341,17 +338,46 @@ struct NewsWindowView: View {
         }
     }
 
-    /// "Friday, September 26 · checked 12m ago".
+    private var currentFilter: NewsFilter {
+        switch page ?? .filter(savedFilter) {
+        case .filter(let filter): return filter
+        case .lab: return .models
+        case .tool: return .announcements
+        }
+    }
+
     private func subtitle(_ news: NewsStore) -> String {
-        let day = Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day())
-        let checked = [news.cache.modelsFetchedAt, news.cache.announcementsFetchedAt].compactMap { $0 }.max()
-        return checked.map { "\(day) · checked \(RelativeTime.ago($0))" } ?? day
+        Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day())
+    }
+
+    private func health(_ news: NewsStore) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(news.freshness(for: search.isEmpty ? currentFilter : .today)).font(.footnote).foregroundStyle(.secondary)
+            if let problem = news.problem(for: search.isEmpty ? currentFilter : .today) {
+                Text(problem + " Showing cached items where available.").font(.footnote).foregroundStyle(.secondary)
+                Button("Retry") { Task { await store.refreshNews(force: true) } }
+            }
+        }
+    }
+
+    private func emptyState(_ news: NewsStore, searching: Bool = false) -> some View {
+        let state = NewsEmptyPresentation.make(section: currentFilter, searching: searching,
+            hasLabs: !news.followedVendors.isEmpty || showsAllLabs, hasSources: !news.sources.isEmpty, problem: news.problem(for: currentFilter))
+        return VStack(spacing: 12) {
+            if news.isRefreshing { ProgressView("Checking news…") }
+            ContentUnavailableView(state.title, systemImage: "newspaper", description: Text(state.message))
+            HStack {
+                Button("Follow…", action: onOpenSettings)
+                Button("Show All") { search = ""; showsAllLabs = true; page = .filter(.models) }
+                Button("Retry") { Task { await store.refreshNews(force: true) } }
+            }
+        }.frame(maxWidth: .infinity)
     }
 
     private func isEmpty(_ news: NewsStore) -> Bool {
         guard search.isEmpty else { return false }
         switch page ?? .filter(savedFilter) {
-        case .filter(.today): return news.models().isEmpty && news.announcements.isEmpty
+        case .filter(.today): return edition(news).isEmpty
         case .filter(.models): return news.models(all: showsAllLabs).isEmpty
         case .filter(.announcements): return news.announcements.isEmpty
         case .filter(.retiring): return news.retiring.isEmpty

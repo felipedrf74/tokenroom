@@ -29,17 +29,17 @@ struct UsageWidgetView: View {
             case .systemLarge:
                 ListWidget(entry: entry, count: 8, showsHistory: true)
             case .accessoryCircular:
-                CircularWidget(item: first, isSample: entry.isSample)
+                CircularWidget(item: first, isSample: entry.isSample, date: entry.date)
             case .accessoryRectangular:
                 RectangularWidget(items: Array(entry.items.prefix(3)), date: entry.date, isSample: entry.isSample)
             case .accessoryInline:
-                InlineWidget(items: Array(entry.items.prefix(3)), isSample: entry.isSample)
+                InlineWidget(items: Array(entry.items.prefix(3)), isSample: entry.isSample, date: entry.date)
                     .widgetURL(DeepLink.provider(first.id).url)
             default:
                 SmallWidget(entry: entry, item: first)
             }
         } else {
-            EmptyWidget(isAccessory: isAccessory)
+            EmptyWidget(isAccessory: isAccessory, provider: entry.unavailableProvider)
         }
     }
 }
@@ -65,7 +65,7 @@ private struct SmallWidget: View {
                 }
             }
             Spacer(minLength: 0)
-            Text(ReadingText.headline(window))
+            Text(ReadingText.headline(window, now: entry.date))
                 .font(.system(size: 34, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .minimumScaleFactor(0.5)
@@ -74,12 +74,21 @@ private struct SmallWidget: View {
                 .widgetAccentable()
             if let window {
                 if window.isMetered {
-                    WidgetMeter(used: window.used, isStale: !provider.isLive)
+                    WidgetMeter(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(at: entry.date))
                 }
                 Text(window.displayTitle)
                     .font(.caption2.weight(.medium))
                     .lineLimit(1)
                 ResetText(window: window, date: entry.date)
+            }
+            if let note = ReadingText.attention(provider, now: entry.date),
+               UsageRanking.limitWarning(for: provider, now: entry.date) != nil || window?.isAwaitingReading(at: entry.date) != true {
+                Text(note).font(.caption2.weight(.semibold))
+                    .foregroundStyle(UsageRanking.limitWarning(for: provider, now: entry.date) == nil ? Color.secondary : TokenroomTokens.usageCritical).lineLimit(2)
+            }
+            if !provider.isLive {
+                Text("Stale · checked \(RelativeTime.ago(provider.checkedAt ?? provider.fetchedAt, now: entry.date))")
+                    .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
             }
         }
         .widgetURL(DeepLink.provider(provider.id).url)
@@ -101,8 +110,9 @@ private struct ListWidget: View {
                     SampleTag()
                 }
                 Spacer(minLength: 0)
-                if let checkedAt = entry.checkedAt, entry.date.timeIntervalSince(checkedAt) > 3600 {
-                    Text("Updated \(RelativeTime.ago(checkedAt, now: entry.date))")
+                let stale = entry.items.filter { !$0.provider.isLive }.count
+                if stale > 0 {
+                    Text("\(stale) stale")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -148,13 +158,17 @@ private struct ListRow: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
-                    Text(ReadingText.headline(window))
+                    Text(ReadingText.headline(window, now: date))
                         .font(.caption.weight(.semibold).monospacedDigit())
                         .foregroundStyle(headlineStyle(window, isLive: provider.isLive))
                         .widgetAccentable()
                 }
+                if let note = ReadingText.attention(provider, now: date) {
+                    Text(note).font(.caption2.weight(.semibold))
+                        .foregroundStyle(UsageRanking.limitWarning(for: provider, now: date) == nil ? Color.secondary : TokenroomTokens.usageCritical).lineLimit(2)
+                }
                 if let window, window.isMetered {
-                    WidgetMeter(used: window.used, isStale: !provider.isLive, height: 5)
+                    WidgetMeter(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(at: date), height: 5)
                 }
             }
             if showsHistory {
@@ -177,6 +191,7 @@ private struct ListRow: View {
 private struct CircularWidget: View {
     var item: ReadingCache.Item
     var isSample: Bool
+    var date: Date
 
     var body: some View {
         let window = item.provider.primaryWindow
@@ -186,10 +201,10 @@ private struct CircularWidget: View {
                 ZStack {
                     AccessoryWidgetBackground()
                     VStack(spacing: 0) {
-                        Text(ReadingText.circleAmount(amount))
+                        Text(window.isAwaitingReading(at: date) ? "—" : ReadingText.circleAmount(amount))
                             .font(.system(size: 17, weight: .semibold, design: .rounded))
                             .minimumScaleFactor(0.5)
-                        Text(isSample ? "Sample" : item.provider.monogram)
+                        Text(isSample ? "Sample" : window.isAwaitingReading(at: date) ? "Reset" : item.provider.monogram)
                             .font(.system(size: 10, weight: .semibold))
                             .minimumScaleFactor(0.6)
                     }
@@ -199,14 +214,14 @@ private struct CircularWidget: View {
                 }
             } else {
                 Gauge(value: min(max(window?.used ?? 0, 0), 100), in: 0...100) {
-                    Text(item.provider.monogram)
+                    Text(window?.isAwaitingReading(at: date) == true ? "Reset" : item.provider.monogram)
                 } currentValueLabel: {
                     // Samples say so where the number goes; the ring still shows the level.
                     if isSample {
                         Text("Sample")
                             .font(.system(size: 11, weight: .semibold))
                     } else {
-                        Text(window.map { TokenroomFormat.percentText($0.used) } ?? "–")
+                        Text(window.map { $0.isAwaitingReading(at: date) ? "—" : TokenroomFormat.percentText($0.used) } ?? "–")
                             .monospacedDigit()
                     }
                 }
@@ -215,6 +230,8 @@ private struct CircularWidget: View {
             }
         }
         .widgetURL(DeepLink.provider(item.id).url)
+        .opacity(item.provider.isLive && window?.isAwaitingReading(at: date) != true ? 1 : 0.65)
+        .accessibilityValue("Last successful check \(RelativeTime.ago(item.provider.checkedAt ?? item.provider.fetchedAt, now: date))\(item.provider.isLive ? "" : ", stale")" + (ReadingText.attention(item.provider, now: date).map { ", \($0)" } ?? ""))
     }
 }
 
@@ -227,25 +244,12 @@ private struct RectangularWidget: View {
         ViewThatFits(in: .vertical) {
             VStack(alignment: .leading, spacing: 2) {
                 rows(items)
-                if isSample {
-                    sampleLine
-                } else if let first = items.first, let resetsAt = first.provider.primaryWindow?.resetsAt, resetsAt > date {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.counterclockwise")
-                        Text(first.provider.shortName)
-                        ResetCountdown(resetsAt: resetsAt, date: date)
-                            .monospacedDigit()
-                    }
-                    .font(.caption2)
-                    .lineLimit(1)
-                }
+                statusLine
             }
             VStack(alignment: .leading, spacing: 3) {
                 // Samples give up a row rather than their label.
-                rows(isSample ? Array(items.prefix(2)) : items)
-                if isSample {
-                    sampleLine
-                }
+                rows(Array(items.prefix(2)))
+                statusLine
             }
         }
         .widgetURL(items.first.map { DeepLink.provider($0.id).url })
@@ -255,6 +259,27 @@ private struct RectangularWidget: View {
         Text("Sample data")
             .font(.caption2)
             .lineLimit(1)
+    }
+
+    @ViewBuilder
+    private var statusLine: some View {
+        if isSample {
+            sampleLine
+        } else if let item = items.first(where: { ReadingText.attention($0.provider, now: date) != nil }),
+                  let note = ReadingText.attention(item.provider, now: date) {
+            let stale = items.filter { !$0.provider.isLive }.count
+            Text("\(item.provider.shortName) · \(note)" + (stale > 0 ? " · \(stale) stale" : ""))
+                .font(.caption2.weight(.semibold)).lineLimit(2).minimumScaleFactor(0.7)
+                .foregroundStyle(UsageRanking.limitWarning(for: item.provider, now: date) == nil ? Color.secondary : TokenroomTokens.usageCritical)
+        } else if items.contains(where: { !$0.provider.isLive }) {
+            Text("\(items.filter { !$0.provider.isLive }.count) stale").font(.caption2).lineLimit(1)
+        } else if let first = items.first, let resetsAt = first.provider.primaryWindow?.resetsAt, resetsAt > date {
+            HStack(spacing: 3) {
+                Image(systemName: "arrow.counterclockwise")
+                Text(first.provider.shortName)
+                ResetCountdown(resetsAt: resetsAt, date: date).monospacedDigit()
+            }.font(.caption2).lineLimit(1)
+        }
     }
 
     private func rows(_ items: [ReadingCache.Item]) -> some View {
@@ -270,10 +295,12 @@ private struct RectangularWidget: View {
                 }
                 .gaugeStyle(.accessoryLinearCapacity)
                 .widgetAccentable()
-                Text(ReadingText.headline(item.provider.primaryWindow))
+                Text(ReadingText.headline(item.provider.primaryWindow, now: date))
                     .font(.caption2.monospacedDigit())
                     .lineLimit(1)
             }
+            .opacity(item.provider.isLive && item.provider.primaryWindow?.isAwaitingReading(at: date) != true ? 1 : 0.65)
+            .accessibilityValue("Last successful check \(RelativeTime.ago(item.provider.checkedAt ?? item.provider.fetchedAt, now: date))\(item.provider.isLive ? "" : ", stale")" + (ReadingText.attention(item.provider, now: date).map { ", \($0)" } ?? ""))
         }
     }
 }
@@ -281,6 +308,7 @@ private struct RectangularWidget: View {
 private struct InlineWidget: View {
     var items: [ReadingCache.Item]
     var isSample: Bool
+    var date: Date
 
     var body: some View {
         ViewThatFits {
@@ -291,8 +319,9 @@ private struct InlineWidget: View {
     }
 
     private func line(_ items: [ReadingCache.Item]) -> String {
-        let readings = items.map { "\($0.provider.shortName) \(ReadingText.headline($0.provider.primaryWindow))" }
-        return ((isSample ? ["Sample"] : []) + readings).joined(separator: " · ")
+        let readings = items.map { "\($0.provider.shortName) \(ReadingText.headline($0.provider.primaryWindow, now: date))" + (ReadingText.attention($0.provider, now: date).map { " · \($0)" } ?? "") }
+        let stale = items.filter { !$0.provider.isLive }.count
+        return ((isSample ? ["Sample"] : []) + readings + (stale > 0 ? ["\(stale) stale"] : [])).joined(separator: " · ")
     }
 }
 
@@ -300,25 +329,31 @@ private struct InlineWidget: View {
 
 private struct EmptyWidget: View {
     var isAccessory: Bool
+    var provider: ProviderOption?
+
+    private var name: String? { provider?.providerID.flatMap(Provider.init(rawValue:))?.displayName }
+    private var link: URL { provider?.providerID.map { DeepLink.provider($0).url } ?? DeepLink.settings.url }
 
     var body: some View {
         if isAccessory {
-            Image(systemName: "gauge.with.dots.needle.50percent")
-                .widgetURL(DeepLink.settings.url)
+            Text(name.map { "\($0): no recent reading" } ?? "No readings yet")
+                .font(.caption2)
+                .accessibilityLabel(name.map { "\($0), no recent reading" } ?? "No readings yet")
+                .widgetURL(link)
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 Image(systemName: "gauge.with.dots.needle.50percent")
                     .font(.title2)
                     .foregroundStyle(.tint)
                 Spacer(minLength: 0)
-                Text("No readings yet")
+                Text(name ?? "No readings yet")
                     .font(.headline)
-                Text("Open Tokenroom to connect your Mac or add a key.")
+                Text(name == nil ? "Open Tokenroom to connect your Mac or add a key." : "No recent reading. Open Tokenroom to refresh this provider.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .widgetURL(DeepLink.settings.url)
+            .widgetURL(link)
         }
     }
 }
@@ -359,8 +394,8 @@ private struct ResetText: View {
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-        } else if window.isMetered, window.resetsAt == nil, window.used == 0 {
-            Text("Reset")
+        } else if window.isAwaitingReading(at: date) {
+            Text("Reset · awaiting reading")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

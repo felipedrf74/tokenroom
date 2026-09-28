@@ -31,6 +31,9 @@ struct NewsEdition: Equatable, Sendable {
     var moreModels: [ModelRelease]
     var tools: [Tool]
     var retiring: [ModelRelease]
+
+    /// Match the visible edition, not retirements outside Today's 30-day horizon.
+    var isEmpty: Bool { topStory == nil && moreModels.isEmpty && tools.isEmpty && retiring.isEmpty }
 }
 
 enum NewsEditions {

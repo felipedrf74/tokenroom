@@ -6,18 +6,24 @@ struct ReadingsEntry: TimelineEntry {
     /// The chosen provider first, then most urgent first.
     var items: [ReadingCache.Item]
     var isSample: Bool
-    /// When the freshest reading was last confirmed; the cache itself is saved on every rebuild,
+    /// When the oldest shown reading was last confirmed; the cache is saved on every rebuild,
     /// however old the readings in it.
     var checkedAt: Date?
     var isPlaceholder = false
+    var unavailableProvider: ProviderOption? = nil
 
     /// The readings as they stand at `date`, the chosen provider first.
     static func make(_ cache: ReadingCache?, choice: ProviderOption, date: Date) -> ReadingsEntry {
-        var items = (cache?.items ?? []).map { $0.rolledOver(at: date) }
-        if let id = choice.providerID, let index = items.firstIndex(where: { $0.id == id }) {
+        let presented = cache?.presented(at: date)
+        var items = presented?.items ?? []
+        if let id = choice.providerID {
+            guard let index = items.firstIndex(where: { $0.id == id }) else {
+                return ReadingsEntry(date: date, items: [], isSample: cache?.isSample ?? false,
+                                     checkedAt: nil, unavailableProvider: choice)
+            }
             items.insert(items.remove(at: index), at: 0)
         }
-        return ReadingsEntry(date: date, items: items, isSample: cache?.isSample ?? false, checkedAt: cache?.checkedAt)
+        return ReadingsEntry(date: date, items: items, isSample: cache?.isSample ?? false, checkedAt: presented?.checkedAt)
     }
 }
 

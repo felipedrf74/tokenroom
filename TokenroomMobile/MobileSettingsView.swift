@@ -90,6 +90,7 @@ struct MobileSettingsView: View {
 /// Providers this iPhone can read with a key, grouped like the Mac's settings.
 struct KeysView: View {
     @Bindable var store: MobileStore
+    @State private var search = ""
 
     private let groups: [(title: String, providers: [Provider])] = [
         ("Coding plans", Provider.allCases.filter { $0.access == .codingPlanKey || $0.descriptor.fallbackKey != nil }),
@@ -101,7 +102,7 @@ struct KeysView: View {
         List {
             ForEach(groups, id: \.title) { group in
                 Section(group.title) {
-                    ForEach(group.providers) { provider in
+                    ForEach(group.providers.filter { NewsSearch.matches(search, title: $0.displayName, source: $0.rawValue) }) { provider in
                         NavigationLink {
                             KeyEditorView(store: store, provider: provider)
                         } label: {
@@ -112,6 +113,7 @@ struct KeysView: View {
             }
         }
         .navigationTitle("API Keys")
+        .searchable(text: $search, prompt: "Search providers")
     }
 }
 
@@ -144,10 +146,13 @@ struct KeyEditorView: View {
     @State private var region: String
     @State private var replacing = false
     @State private var working = false
+    @State private var saving = false
+    @State private var validation = KeyValidationRevision()
     @State private var message: String?
     @State private var offerSaveAnyway = false
     @State private var acknowledgedAdmin = false
     @State private var budgetText = ""
+    @State private var budgetError: String?
     /// Set when the key's test found something to warn about (an xAI key with write access).
     @State private var warning: String?
 
@@ -155,7 +160,7 @@ struct KeyEditorView: View {
         self.store = store
         self.provider = provider
         _region = State(initialValue: provider.keySpec?.regions.first ?? "")
-        _budgetText = State(initialValue: store.budget(for: provider).map { String(format: "%.2f", $0) } ?? "")
+        _budgetText = State(initialValue: store.budget(for: provider).map { $0.formatted(.number.grouping(.never)) } ?? "")
     }
 
     private var spec: KeySpec? { provider.keySpec }
@@ -181,10 +186,11 @@ struct KeyEditorView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .textContentType(.password)
+                        .disabled(saving)
                     if let regions = spec?.regions, !regions.isEmpty {
                         Picker(spec?.choiceLabel ?? "Account", selection: $region) {
                             ForEach(regions, id: \.self) { Text($0).tag($0) }
-                        }
+                        }.disabled(saving)
                     }
                     if let url = spec?.createURL {
                         Link(spec?.createTitle ?? "Create a key", destination: url)
@@ -209,12 +215,13 @@ struct KeyEditorView: View {
                     }
                 }
                 Section {
-                    Button(working ? "Testing…" : (warning == nil ? "Test & Save" : "Save With This Key")) {
-                        warning == nil ? test() : save()
+                    Button(working ? (saving ? "Saving…" : "Testing…") : (warning == nil ? "Test & Save" : "Save With This Key")) {
+                        if warning == nil { test() } else { Task { await save() } }
                     }
                         .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || working || (spec?.isAdmin == true && !acknowledgedAdmin))
                     if offerSaveAnyway {
-                        Button("Save Anyway") { save() }
+                        Button("Save Anyway") { Task { await save() } }
+                            .disabled(working || (spec?.isAdmin == true && !acknowledgedAdmin))
                     }
                 }
             }
@@ -223,6 +230,10 @@ struct KeyEditorView: View {
                     TextField("None", text: $budgetText)
                         .keyboardType(.decimalPad)
                         .onSubmit(saveBudget)
+                        .onChange(of: budgetText) { _, text in
+                            budgetError = BudgetInput.parse(text) == .invalid ? BudgetInput.error : nil
+                        }
+                    if let budgetError { Text(budgetError).font(.footnote).foregroundStyle(.red) }
                 } header: {
                     Text(provider.category == .orgSpend ? "Monthly budget (\(store.budgetCurrency(for: provider)))" : "Reference (\(store.budgetCurrency(for: provider)))")
                 } footer: {
@@ -241,10 +252,9 @@ struct KeyEditorView: View {
                 region = spec.initialChoice(saved: metadata)
             }
         }
-        .onChange(of: key) { _, _ in
-            // A different key needs its own test.
-            warning = nil
-        }
+        .onChange(of: key) { _, _ in invalidateValidation() }
+        .onChange(of: region) { _, _ in invalidateValidation() }
+        .onDisappear { invalidateValidation() }
         .onDisappear(perform: saveBudget)
     }
 
@@ -252,52 +262,65 @@ struct KeyEditorView: View {
         region.isEmpty ? nil : region
     }
 
-    private func test() {
-        working = true
+    private var credential: APIKeyCredential {
+        APIKeyCredential(key: key.trimmingCharacters(in: .whitespacesAndNewlines), region: regionValue)
+    }
+
+    private func invalidateValidation() {
+        validation.invalidate()
+        warning = nil
         message = nil
         offerSaveAnyway = false
-        let key = self.key.trimmingCharacters(in: .whitespacesAndNewlines)
-        let provider = self.provider
-        let region = regionValue
+    }
+
+    private func test() {
+        guard !working else { return }
+        working = true
+        message = nil
+        warning = nil
+        offerSaveAnyway = false
+        let attempt = validation.begin(credential)
         Task {
+            let result: Result<APIKeyClient.KeyCheck, Error>
             do {
-                let check = try await APIKeyClient.check(for: provider, key: key, region: region)
-                if let found = check.warning {
-                    warning = found
-                } else {
-                    save()
-                }
-            } catch ProviderError.expired {
-                message = spec?.regions.isEmpty == false
-                    ? "Couldn't use this key. Check it, and the account it belongs to, and try again."
-                    : "Couldn't use this key. Check it and try again."
-            } catch ProviderError.notEntitled(let reason) {
+                result = .success(try await APIKeyClient.check(for: provider, key: attempt.credential.key, region: attempt.credential.region))
+            } catch { result = .failure(error) }
+            working = false
+            guard validation.accepts(attempt, current: credential) else { return }
+            switch result {
+            case .success(let check):
+                if let found = check.warning { warning = found }
+                else { await save() }
+            case .failure(ProviderError.expired):
+                message = "Couldn't use this key. Check it and its account, and try again."
+            case .failure(ProviderError.notEntitled(let reason)):
                 message = reason
-            } catch ProviderError.unreachable, ProviderError.rateLimited {
+            case .failure(ProviderError.unreachable), .failure(ProviderError.rateLimited):
                 message = "Couldn't reach \(provider.displayName) to check the key."
                 offerSaveAnyway = true
-            } catch {
+            case .failure:
                 message = "Couldn't read \(provider.displayName)'s answer with this key."
                 offerSaveAnyway = true
             }
-            working = false
         }
     }
 
-    private func save() {
-        let key = self.key.trimmingCharacters(in: .whitespacesAndNewlines)
-        let region = regionValue
-        let warning = self.warning
-        Task {
-            do {
-                try await store.saveKey(key, for: provider, region: region, warning: warning)
-                dismiss()
-            } catch {
-                message = "Couldn't save the key in the Keychain."
-            }
+    private func save() async {
+        guard !working, provider.key?.isAdmin != true || acknowledgedAdmin,
+              let attempt = validation.attempt,
+              validation.accepts(attempt, current: credential) else { return }
+        working = true
+        saving = true
+        defer { working = false; saving = false }
+        let credential = attempt.credential
+        let savedWarning = warning
+        do {
+            try await store.saveKey(credential.key, for: provider, region: credential.region, warning: savedWarning)
+            dismiss()
+        } catch {
+            message = "Couldn't save the key in the Keychain."
         }
     }
-
     private func remove() {
         Task {
             do {
@@ -311,10 +334,14 @@ struct KeyEditorView: View {
     }
 
     private func saveBudget() {
-        let trimmed = budgetText.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
-        let value = Double(trimmed)
-        guard value != store.budget(for: provider) else { return }
-        store.setBudget(value, for: provider)
+        guard provider.category != .subscription else { return }
+        switch BudgetInput.parse(budgetText) {
+        case .clear: budgetError = nil; store.setBudget(nil, for: provider)
+        case .amount(let value):
+            budgetError = nil
+            if value != store.budget(for: provider) { store.setBudget(value, for: provider) }
+        case .invalid: budgetError = BudgetInput.error
+        }
     }
 }
 

@@ -6,9 +6,11 @@ import os
 @Observable
 @MainActor
 final class QuotaStore {
-    var statuses: [Provider: ProviderStatus] = [:]
+    var statuses: [Provider: ProviderStatus] = [:] { didSet { schedulePresentationClock() } }
     /// Last successful fetch per provider, even when usage didn't change.
-    var checkedAt: [Provider: Date] = [:]
+    var checkedAt: [Provider: Date] = [:] { didSet { schedulePresentationClock() } }
+    /// Presentation time advances independently of network polling and publishes reset/age changes.
+    private(set) var presentationNow = Date.now
     var lastAttempt: Date?
     var isRefreshing = false
     var settings: AppSettings
@@ -32,6 +34,7 @@ final class QuotaStore {
     /// Readings before a budget was applied, so a new budget shows at once.
     private var rawSnapshots: [Provider: QuotaSnapshot] = [:]
     private var loopTask: Task<Void, Never>?
+    private var presentationTask: Task<Void, Never>?
     private var wakeTask: Task<Void, Never>?
     private var sleepTask: Task<Void, Never>?
     /// The check running now.
@@ -97,6 +100,7 @@ final class QuotaStore {
                 await self.refresh()
             }
         }
+        schedulePresentationClock()
         wakeTask = Task { [weak self] in
             let notifications = NSWorkspace.shared.notificationCenter.notifications(named: NSWorkspace.didWakeNotification)
             for await _ in notifications {
@@ -117,6 +121,8 @@ final class QuotaStore {
     }
 
     func stop() {
+        presentationTask?.cancel()
+        presentationTask = nil
         loopTask?.cancel()
         loopTask = nil
         wakeTask?.cancel()
@@ -130,6 +136,40 @@ final class QuotaStore {
         sharing?.cancel()
         sharing = nil
         signIn.cancel()
+    }
+
+    private func schedulePresentationClock() {
+        guard loopTask != nil else { return }
+        presentationTask?.cancel()
+        presentationTask = Task { [weak self] in
+            while !Task.isCancelled {
+                let now = Date.now
+                self?.ageReadings(at: now)
+                guard let next = self?.nextPresentationDate(after: now) else { return }
+                try? await Task.sleep(for: .seconds(max(0.001, next.timeIntervalSince(now))))
+            }
+        }
+    }
+
+    func ageReadings(at date: Date) { presentationNow = date }
+
+    func nextPresentationDate(after date: Date) -> Date {
+        let boundaries = statuses.flatMap { provider, status -> [Date] in
+            guard let snapshot = status.snapshot else { return [] }
+            let checked = lastChecked(provider) ?? snapshot.fetchedAt
+            return snapshot.windows.compactMap(\.resetsAt) + [checked.addingTimeInterval(ReadingFreshness.staleAfter + 0.001)]
+        }
+        return boundaries.filter { $0 > date }.min().map { min($0, date.addingTimeInterval(60)) }
+            ?? date.addingTimeInterval(60)
+    }
+
+    func presentationStatus(for provider: Provider, at date: Date? = nil) -> ProviderStatus {
+        let status = statuses[provider] ?? .loading
+        if case .live(let snapshot) = status,
+           (date ?? presentationNow).timeIntervalSince(lastChecked(provider) ?? snapshot.fetchedAt) > ReadingFreshness.staleAfter {
+            return .stale(snapshot)
+        }
+        return status
     }
 
     func refreshIfStale(after seconds: TimeInterval = 45) async {
@@ -394,7 +434,7 @@ final class QuotaStore {
 
     /// Pace of a provider's primary window, from its recent readings.
     func pace(for provider: Provider, now: Date = .now) -> Pace? {
-        let status = statuses[provider] ?? .loading
+        let status = presentationStatus(for: provider, at: now)
         guard let snapshot = status.snapshot, let window = snapshot.windows.first else { return nil }
         return Pace.evaluate(
             used: window.usedPercent,
@@ -410,7 +450,7 @@ final class QuotaStore {
 
     /// Pace for every window of a provider, keyed by window ID.
     func windowPaces(for provider: Provider, now: Date = .now) -> [String: Pace] {
-        let status = statuses[provider] ?? .loading
+        let status = presentationStatus(for: provider, at: now)
         guard let snapshot = status.snapshot else { return [:] }
         var paces: [String: Pace] = [:]
         for window in snapshot.windows {
@@ -471,9 +511,10 @@ final class QuotaStore {
     }
 
     var menuMeters: [MenuMeter] {
-        Provider.allCases.compactMap { provider in
+        let now = presentationNow
+        return Provider.allCases.compactMap { provider in
             guard settings.isEnabled(provider), settings.showsInMenuBar(provider) else { return nil }
-            let status = statuses[provider] ?? .loading
+            let status = presentationStatus(for: provider, at: now)
             switch status {
             case .signedOut, .notEntitled, .expired(_, nil), .rateLimited(_, nil), .unreachable(nil):
                 return nil
@@ -490,13 +531,16 @@ final class QuotaStore {
                  .expired(_, let snapshot?), .rateLimited(_, let snapshot?):
                 // A balance with no limit has no percentage to show.
                 guard snapshot.windows.first?.isMetered ?? true else { return nil }
+                let awaiting = snapshot.windows.first.map { RelayWindow($0).isAwaitingReading(at: now) } ?? false
                 return MenuMeter(
                     provider: provider,
                     valueText: Self.percentText(snapshot.usedPercent),
                     remaining: snapshot.remainingPercent,
                     usedPercent: snapshot.usedPercent,
-                    isStale: status.isStale,
-                    isPlaceholder: false
+                    isStale: status.isStale || awaiting,
+                    isPlaceholder: false,
+                    isAwaitingReading: awaiting,
+                    attention: ReadingText.attention(RelayProvider(provider: provider, status: status, checkedAt: lastChecked(provider)), now: now)
                 )
             }
         }
@@ -508,7 +552,13 @@ final class QuotaStore {
 
     /// Enabled providers with a reading (or still loading), shown first.
     var connectedProviders: [Provider] {
-        popoverProviders.filter { !isDisconnected($0) }
+        let now = presentationNow
+        return UsageRanking.sorted(popoverProviders.filter { !isDisconnected($0) }, provider: { provider in
+            RelayProvider(provider: provider, status: presentationStatus(for: provider, at: now), checkedAt: lastChecked(provider))
+        }, now: now, windowPace: { provider, window in
+            UsageRanking.pace(for: window, isStale: presentationStatus(for: provider, at: now).isStale,
+                              samples: history.samples(provider: provider, window: window.id), now: now)
+        })
     }
 
     /// Enabled providers waiting for a sign-in or key, collapsed at the bottom.

@@ -24,7 +24,8 @@ enum RelayMerge {
     static func entries(from sources: [Source], now: Date = .now) -> [Entry] {
         var best: [String: (entry: Entry, live: Bool, checked: Date)] = [:]
         for source in sources where now.timeIntervalSince(source.envelope.checkedAt) <= maxSourceAge {
-            for provider in source.envelope.providers {
+            for saved in source.envelope.providers {
+                guard let provider = ReadingFreshness.present(saved, fallback: source.envelope.checkedAt, now: now) else { continue }
                 let live = provider.state == "live"
                 let checked = provider.checkedAt ?? provider.fetchedAt ?? source.envelope.checkedAt
                 let candidate = (Entry(provider: provider, sourceID: source.id, sourceLabel: source.label), live, checked)

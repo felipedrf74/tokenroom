@@ -230,10 +230,36 @@ extension CloudRelay {
         }
     }
 
-    func publishAlertPreferences(_ preferences: AlertPreferences) async throws {
-        let record = CKRecord(recordType: RecordType.prefs, recordID: CKRecord.ID(recordName: Self.alertPreferencesRecord, zoneID: Self.zoneID))
+    func syncAlertPreferences(base: AlertPreferences?, local: AlertPreferences) async throws -> AlertPreferencesSync.Resolution {
+        try await AlertPreferencesSync.synchronize(base: base, local: local, read: {
+            try await self.preferenceRevision()
+        }, write: { preferences, record in
+            try await self.savePreferences(preferences, record: record)
+        }, isConflict: Self.isPreferenceConflict)
+    }
+
+    static func isPreferenceConflict(_ error: Error) -> Bool {
+        guard let error = error as? CKError else { return false }
+        if error.code == .serverRecordChanged { return true }
+        guard error.code == .partialFailure else { return false }
+        return error.partialErrorsByItemID?.values.contains(where: isPreferenceConflict) == true
+    }
+
+    private func preferenceRevision() async throws -> AlertPreferencesSync.Versioned<CKRecord> {
+        let id = CKRecord.ID(recordName: Self.alertPreferencesRecord, zoneID: Self.zoneID)
+        do {
+            let record = try await database.record(for: id)
+            guard let data = record[Field.payload] as? Data else { throw ProviderError.parse }
+            let preferences = try RelayEnvelope.decoder.decode(AlertPreferences.self, from: data)
+            return .init(preferences: preferences, revision: record)
+        } catch let error as CKError where error.code == .unknownItem || error.code == .zoneNotFound {
+            return .init(preferences: nil, revision: CKRecord(recordType: RecordType.prefs, recordID: id))
+        }
+    }
+
+    private func savePreferences(_ preferences: AlertPreferences, record: CKRecord) async throws {
         record[Field.payload] = try RelayEnvelope.encoder.encode(preferences)
-        try await save([record])
+        try await save([record], policy: .ifServerRecordUnchanged)
     }
 
     /// Deletes in batches CloudKit accepts (at most 400 changes a request). Not atomic: a record
@@ -310,7 +336,7 @@ extension CloudRelay {
         zoneReady = false
     }
 
-    /// `.allKeys` replaces a record with the same name; `.ifServerRecordUnchanged` only creates.
+    /// `.allKeys` replaces by name; `.ifServerRecordUnchanged` creates or checks a fetched change tag.
     private func save(_ records: [CKRecord], policy: CKModifyRecordsOperation.RecordSavePolicy = .allKeys) async throws {
         try await ensureZone()
         do {

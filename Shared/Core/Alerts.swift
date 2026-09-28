@@ -290,11 +290,38 @@ struct AlertPreferences: Codable, Equatable, Sendable {
 /// this device last knew to match iCloud; whatever changed here since then is this device's own
 /// change, laid over the shared copy, so a choice made on another device meanwhile isn't undone.
 enum AlertPreferencesSync {
-    struct Resolution: Equatable {
+    struct Resolution: Equatable, Sendable {
         /// What this device should use now.
         var preferences: AlertPreferences
         /// Whether iCloud needs these, because they hold a change made here.
         var needsPublish: Bool
+    }
+
+    struct Versioned<Revision: Sendable>: Sendable {
+        var preferences: AlertPreferences?
+        var revision: Revision
+    }
+
+    /// Re-read and re-merge every conflict. Keep the original base/local delta throughout.
+    static func synchronize<Revision: Sendable>(
+        base: AlertPreferences?, local: AlertPreferences,
+        read: @Sendable () async throws -> Versioned<Revision>,
+        write: @Sendable (AlertPreferences, Revision) async throws -> Void,
+        isConflict: @Sendable (Error) -> Bool
+    ) async throws -> Resolution {
+        for attempt in 0..<3 {
+            try Task.checkCancellation()
+            let fetched = try await read()
+            let resolution = resolve(base: base, local: local, remote: fetched.preferences)
+            guard resolution.needsPublish else { return resolution }
+            do {
+                try await write(resolution.preferences, fetched.revision)
+                return resolution
+            } catch {
+                guard isConflict(error), attempt < 2 else { throw error }
+            }
+        }
+        preconditionFailure("Bounded preference attempts always return or throw")
     }
 
     static func resolve(base: AlertPreferences?, local: AlertPreferences, remote: AlertPreferences?) -> Resolution {
@@ -351,7 +378,7 @@ enum AlertRules {
     static func alerts(previous: RelayProvider?, current: RelayProvider, preferences: AlertPreferences, samples: [String: [(date: Date, used: Double)]] = [:], now: Date = .now) -> [UsageAlert] {
         guard let previous, current.isLive else { return [] }
         var alerts: [UsageAlert] = []
-        for window in current.windows where window.isMetered {
+        for window in current.windows where window.isMetered && !window.isAwaitingReading(at: now) {
             guard let before = previous.windows.first(where: { $0.id == window.id }) else { continue }
             let sameInstance = isSameInstance(before: before, current: window, now: now)
             let isMoney = isMoneyWindow(window)

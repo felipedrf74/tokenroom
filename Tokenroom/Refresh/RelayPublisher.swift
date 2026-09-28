@@ -164,13 +164,14 @@ final class RelayPublisher {
             return resolution.preferences
         }
         do {
-            try await relay.publishAlertPreferences(resolution.preferences)
-            preferencesBase = resolution.preferences
-            preferencesCache = (resolution.preferences, now)
+            let saved = try await relay.syncAlertPreferences(base: base, local: local)
+            preferencesBase = saved.preferences
+            preferencesCache = (saved.preferences, now)
+            return saved.preferences
         } catch {
             handle(error, now: now)
+            return local
         }
-        return resolution.preferences
     }
 
     /// Sends alerts to the iPhone; returns the IDs that went out (or already had). The rest stay

@@ -23,6 +23,7 @@ struct SessionActivityWidget: Widget {
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     Text(state.percentText)
+                    .accessibilityLabel(state.accessibilityPercent)
                         .font(.system(.title2, design: .rounded, weight: .semibold))
                         .monospacedDigit()
                         .foregroundStyle(TokenroomTokens.usageColor(usedPercent: state.used, isStale: state.isStale))
@@ -34,7 +35,7 @@ struct SessionActivityWidget: Widget {
                         HStack {
                             Text(attributes.windowTitle)
                             Spacer()
-                            Countdown(resetsAt: state.resetsAt)
+                            SessionResetCaption(state: state)
                         }
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -46,15 +47,20 @@ struct SessionActivityWidget: Widget {
                     .foregroundStyle(Color(hex: attributes.tint))
             } compactTrailing: {
                 Text(state.percentText)
+                    .accessibilityLabel(state.accessibilityPercent)
                     .font(.caption.weight(.semibold))
                     .monospacedDigit()
                     .foregroundStyle(TokenroomTokens.usageColor(usedPercent: state.used, isStale: state.isStale))
             } minimal: {
-                Gauge(value: min(max(state.used, 0), 100), in: 0...100) {
-                    Text(attributes.monogram)
+                if state.awaitingReading == true {
+                    Text("—").accessibilityLabel("Reset, awaiting reading")
+                } else {
+                    Gauge(value: min(max(state.used, 0), 100), in: 0...100) {
+                        Text(attributes.monogram)
+                    }
+                    .gaugeStyle(.accessoryCircularCapacity)
+                    .tint(TokenroomTokens.usageColor(usedPercent: state.used, isStale: state.isStale))
                 }
-                .gaugeStyle(.accessoryCircularCapacity)
-                .tint(TokenroomTokens.usageColor(usedPercent: state.used, isStale: state.isStale))
             }
             .widgetURL(DeepLink.provider(attributes.providerID).url)
             .keylineTint(Color(hex: attributes.tint))

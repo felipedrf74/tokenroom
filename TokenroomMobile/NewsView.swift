@@ -8,18 +8,23 @@ struct NewsView: View {
     @Bindable var store: MobileStore
     @AppStorage("newsSection") private var filter: NewsFilter = .today
     @State private var showsAllLabs = false
+    @State private var search = ""
+    @State private var modelLimit = 50
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     chips
-                    switch filter {
+                    health
+                    if !search.isEmpty { searchResults }
+                    else { switch filter {
                     case .today: today
                     case .models: modelsList
                     case .announcements: river
                     case .retiring: retiringList
-                    }
+                    } }
+                    if isEmpty { emptyState }
                     footer
                 }
                 .padding(.horizontal, 20)
@@ -43,19 +48,10 @@ struct NewsView: View {
             .task {
                 await news.refresh(maxAge: NewsFetcher.openInterval, preferences: store.alertPreferences)
             }
-            .onAppear {
-                // Clears the tab's badge; this visit's new items stay marked.
-                news.markSeen()
-            }
-            .overlay {
-                if isEmpty {
-                    if news.isRefreshing {
-                        ProgressView()
-                    } else {
-                        ContentUnavailableView("Nothing yet", systemImage: "newspaper", description: Text(problem ?? "Pull down to check for news."))
-                    }
-                }
-            }
+            .searchable(text: $search, prompt: "Search titles and sources")
+            .onChange(of: search) { _, _ in modelLimit = 50 }
+            .onChange(of: showsAllLabs) { _, _ in modelLimit = 50 }
+
         }
     }
 
@@ -133,30 +129,46 @@ struct NewsView: View {
         }
     }
 
-    @ViewBuilder
+    private var matchingModels: [ModelRelease] {
+        news.models(all: search.isEmpty ? showsAllLabs : true).filter {
+            NewsSearch.matches(search, title: $0.name, source: $0.vendorName)
+        }
+    }
+
+    private var matchingAnnouncements: [FeedItem] {
+        news.announcements.filter { NewsSearch.matches(search, title: $0.displayTitle, source: $0.source) }
+    }
+
     private var modelsList: some View {
-        let models = news.models(all: showsAllLabs)
+        section(showsAllLabs ? "All labs" : "Labs you follow", action: (showsAllLabs ? "Followed" : "Show All", { showsAllLabs.toggle() })) {
+            modelRows(matchingModels)
+        }
+    }
+
+    @ViewBuilder
+    private func modelRows(_ models: [ModelRelease]) -> some View {
         if !models.isEmpty {
-            section(showsAllLabs ? "All labs" : "Labs you follow", action: (showsAllLabs ? "Followed" : "All", { showsAllLabs.toggle() })) {
-                card {
-                    ForEach(Array(models.prefix(50).enumerated()), id: \.element.id) { index, release in
-                        if index > 0 { Divider() }
-                        ModelReleaseRow(release: release, isNew: news.isNew(release.created))
-                    }
+            card {
+                ForEach(Array(models.prefix(modelLimit).enumerated()), id: \.element.id) { index, release in
+                    if index > 0 { Divider() }
+                    ModelReleaseRow(release: release, isNew: news.isNew(release.created))
                 }
             }
+            if models.count > modelLimit {
+                Button("Show More (\(models.count - modelLimit) remaining)") { modelLimit += 50 }
+            }
         }
-        if let problem = news.modelProblem {
-            Text(problem).font(.footnote).foregroundStyle(.secondary)
-        }
+    }
+
+    @ViewBuilder
+    private var searchResults: some View {
+        if !matchingModels.isEmpty { section("Models") { modelRows(matchingModels) } }
+        if !matchingAnnouncements.isEmpty { NewsRiver(items: matchingAnnouncements) { news.isNew($0) } }
     }
 
     @ViewBuilder
     private var river: some View {
         NewsRiver(items: news.announcements) { news.isNew($0) }
-        if let problem = news.announcementProblem {
-            Text(problem).font(.footnote).foregroundStyle(.secondary)
-        }
     }
 
     @ViewBuilder
@@ -214,26 +226,52 @@ struct NewsView: View {
     }
 
     private var isEmpty: Bool {
+        if !search.isEmpty { return matchingModels.isEmpty && matchingAnnouncements.isEmpty }
         switch filter {
-        case .today: news.models().isEmpty && news.announcements.isEmpty
-        case .models: news.models(all: showsAllLabs).isEmpty
-        case .announcements: news.announcements.isEmpty
-        case .retiring: news.retiring.isEmpty
+        case .today: return edition.isEmpty
+        case .models: return matchingModels.isEmpty
+        case .announcements: return news.announcements.isEmpty
+        case .retiring: return news.retiring.isEmpty
         }
     }
 
-    private var problem: String? {
-        switch filter {
-        case .today, .models: news.modelProblem ?? news.announcementProblem
-        case .announcements: news.announcementProblem
-        case .retiring: news.modelProblem
+    private var emptyState: some View {
+        let state = NewsEmptyPresentation.make(section: filter, searching: !search.isEmpty,
+            hasLabs: !news.followedVendors.isEmpty || showsAllLabs, hasSources: !news.sources.isEmpty, problem: news.problem(for: filter))
+        return VStack(spacing: 12) {
+            if news.isRefreshing { ProgressView("Checking news…") }
+            ContentUnavailableView(state.title, systemImage: "newspaper", description: Text(state.message))
+            ViewThatFits(in: .horizontal) {
+                HStack { emptyActions }
+                VStack { emptyActions }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private var emptyActions: some View {
+        NavigationLink("Follow") { NewsSettingsView(news: news, store: store) }
+        Button("Show All") { search = ""; showsAllLabs = true; filter = .models }
+        Button("Retry") { Task { await news.refresh(maxAge: 0, preferences: store.alertPreferences) } }
+    }
+
+    private var health: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(news.freshness(for: search.isEmpty ? filter : .today)).font(.footnote).foregroundStyle(.secondary)
+            if let problem = news.problem(for: search.isEmpty ? filter : .today) {
+                Text(problem + " Showing cached items where available.").font(.footnote).foregroundStyle(.secondary)
+                Button("Retry") { Task { await news.refresh(maxAge: 0, preferences: store.alertPreferences) } }
+            }
         }
     }
+
 }
 
 struct NewsSettingsView: View {
     @Bindable var news: NewsStore
     @Bindable var store: MobileStore
+    @State private var search = ""
 
     var body: some View {
         Form {
@@ -243,7 +281,7 @@ struct NewsSettingsView: View {
                 Text("One notification per batch, from the labs you follow, held until quiet hours end.")
             }
             Section("Labs") {
-                ForEach(news.vendorChoices, id: \.id) { vendor in
+                ForEach(news.vendorChoices.filter { NewsSearch.matches(search, title: $0.name, source: $0.id) }, id: \.id) { vendor in
                     Toggle(vendor.name, isOn: Binding(
                         get: { news.followedVendors.contains(vendor.id) },
                         set: { isOn in
@@ -253,7 +291,7 @@ struct NewsSettingsView: View {
                 }
             }
             Section {
-                ForEach(FeedSource.toggles) { source in
+                ForEach(FeedSource.toggles.filter { NewsSearch.matches(search, title: $0.name, source: $0.id) }) { source in
                     Toggle(source.name, isOn: Binding(
                         get: { news.followedSources.contains(source.id) },
                         set: { isOn in
@@ -267,6 +305,7 @@ struct NewsSettingsView: View {
                 Text("Official changelogs and blogs only. Tokenroom shows titles and links, and opens the rest in Safari.")
             }
         }
+        .searchable(text: $search, prompt: "Search labs and sources")
         .navigationTitle("Follow")
         .navigationBarTitleDisplayMode(.inline)
     }

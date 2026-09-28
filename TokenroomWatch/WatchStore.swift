@@ -31,11 +31,14 @@ final class WatchStore {
     /// Opened from a complication or the Smart Stack: the provider to show.
     var openedProvider: String?
     private var lastRefresh: Date?
+    private var accountGate = WatchAccountGate(signedOutAt: AppGroup.defaults.object(forKey: "watchSignedOutAt") as? Date)
+    private var pendingPhone: ReadingCache?
+    private var accountRevision = 0
     private let cacheURL = ReadingCache.defaultURL
     private let link = PhoneLink()
 
     init() {
-        cache = cacheURL.flatMap(ReadingCache.load)
+        cache = WatchCacheAccess.load(at: cacheURL, defaults: AppGroup.defaults)
         #if DEBUG
         // Screenshots and simulator checks: `-sampleMode YES` shows sample readings.
         if UserDefaults.standard.bool(forKey: "sampleMode") {
@@ -48,35 +51,61 @@ final class WatchStore {
         }
         #endif
         link.onCache = { [weak self] cache in
-            self?.apply(cache)
+            self?.receivePhone(cache)
         }
         link.activate()
     }
 
     var items: [ReadingCache.Item] {
-        cache?.items ?? []
+        items(at: .now)
     }
 
-    func item(id: String) -> ReadingCache.Item? {
-        items.first { $0.id == id }
+    func items(at date: Date) -> [ReadingCache.Item] {
+        guard cache?.isSample == true || (AppGroup.defaults.object(forKey: WatchCacheAccess.cutoffKey) as? Date) == accountGate.signedOutAt else { return [] }
+        return cache?.presented(at: date).items ?? []
+    }
+
+    func item(id: String, at date: Date = .now) -> ReadingCache.Item? {
+        items(at: date).first { $0.id == id }
     }
 
     func refresh(force: Bool = false, now: Date = .now) async {
+        _ = synchronizeAccountCutoff()
+        adoptValidatedDiskCache()
         guard !isRefreshing else { return }
         if !force, let lastRefresh, now.timeIntervalSince(lastRefresh) < 60 { return }
         isRefreshing = true
         defer { isRefreshing = false }
+        let previousRefresh = lastRefresh
         lastRefresh = now
+        let revision = accountRevision
+        let cutoff = AppGroup.defaults.object(forKey: WatchCacheAccess.cutoffKey) as? Date
         let outcome = await TimeLimit.run(Self.readBudget, otherwise: .failed) { await RelayReadings.read(now: now) }
+        guard revision == accountRevision,
+              (AppGroup.defaults.object(forKey: WatchCacheAccess.cutoffKey) as? Date) == cutoff else {
+            Task { await refresh(force: true) }
+            return
+        }
         switch outcome {
         case .readings(let fresh):
+            adoptValidatedDiskCache()
+            accountGate.confirmAvailable()
             problem = nil
             apply(fresh)
+            if let pendingPhone, accountGate.accepts(pendingPhone) { apply(pendingPhone) }
+            pendingPhone = nil
         case .noAccount:
-            // An empty saved cache shows the problem too, rather than "No readings yet".
-            problem = items.isEmpty ? .noAccount : nil
+            accountGate.signOut(at: now)
+            WatchCacheAccess.invalidate(in: AppGroup.defaults, at: now)
+            pendingPhone = nil
+            problem = .noAccount
+            cache = ReadingCache(savedAt: now, isSample: false, items: [])
+            if let cacheURL, let cache { try? cache.save(to: cacheURL) }
+            WidgetCenter.shared.reloadAllTimelines()
+            WidgetCenter.shared.invalidateRelevance(ofKind: Self.resetSoonKind)
         case .failed:
-            problem = items.isEmpty ? .unreachable : nil
+            adoptValidatedDiskCache()
+            problem = .unreachable
         case .unavailable:
             // A build without iCloud (no team): sample readings, clearly marked.
             if cache == nil {
@@ -84,21 +113,32 @@ final class WatchStore {
             }
             problem = nil
         }
+        if let previousRefresh, cache?.resetDates(after: previousRefresh, through: now).isEmpty == false {
+            WidgetCenter.shared.reloadTimelines(ofKind: Self.resetSoonKind)
+        }
     }
 
-    /// `fresh` unless it holds an older reading of a provider shown (the iPhone's handover is
-    /// saved now even when it carries older readings), saved for complications.
+    private func adoptValidatedDiskCache() {
+        let recovered = WatchCacheRecovery.recover(cache, at: cacheURL, defaults: AppGroup.defaults)
+        guard recovered != cache else { return }
+        cache = recovered
+        // The complication has revalidated the account. Leave phone handovers gated until this
+        // process independently completes an iCloud read.
+        if problem == .noAccount { problem = nil }
+    }
+
+    /// Incoming membership with each provider's newest measurement, saved for complications.
+    /// A delayed whole cache cannot undo removals; a mixed-age update still advances fresh providers.
     /// Complications reload for what they'd draw differently; from the background, only for
     /// what matters (`ReadingCache.reloadSignature`), as their reloads are budgeted. Smaller
     /// changes show on their next timeline, which reads the saved readings.
     func apply(_ fresh: ReadingCache) {
-        if let cache, !cache.isSample, !fresh.isAtLeastAsFresh(as: cache) { return }
+        let fresh = cache?.mergingUpdate(fresh) ?? fresh
         let changed = fresh.materialHash != cache?.materialHash
         let matters = fresh.reloadSignature != cache?.reloadSignature
         cache = fresh
-        if let cacheURL {
-            try? fresh.save(to: cacheURL)
-        }
+        try? WatchCacheAccess.saveValidated(fresh, at: cacheURL, defaults: AppGroup.defaults,
+                                           cutoff: accountGate.signedOutAt)
         guard changed else { return }
         if matters || WKApplication.shared().applicationState == .active {
             WidgetCenter.shared.reloadAllTimelines()
@@ -107,9 +147,45 @@ final class WatchStore {
         WidgetCenter.shared.invalidateRelevance(ofKind: WatchStore.resetSoonKind)
     }
 
+    private func receivePhone(_ fresh: ReadingCache) {
+        guard fresh.v <= ReadingCache.version else { return }
+        if synchronizeAccountCutoff() { Task { await refresh(force: true) } }
+        if accountGate.accepts(fresh) { apply(fresh) }
+        else if accountGate.signedOutAt.map({ fresh.savedAt > $0 }) != false {
+            pendingPhone = pendingPhone?.mergingUpdate(fresh) ?? fresh
+        }
+    }
+
+    /// A complication can confirm sign-out while the app is suspended. Observe its durable fence
+    /// before accepting phone data, as well as before reading iCloud.
+    @discardableResult
+    private func synchronizeAccountCutoff() -> Bool {
+        guard let cutoff = AppGroup.defaults.object(forKey: WatchCacheAccess.cutoffKey) as? Date,
+              cutoff != accountGate.signedOutAt else { return false }
+        accountGate.signOut(at: cutoff)
+        cache = nil
+        pendingPhone = nil
+        return true
+    }
+
+    func accountChanged(now: Date = .now) {
+        accountRevision += 1
+        accountGate.signOut(at: now)
+        WatchCacheAccess.invalidate(in: AppGroup.defaults, at: now)
+        cache = nil
+        problem = nil
+        WidgetCenter.shared.reloadAllTimelines()
+        WidgetCenter.shared.invalidateRelevance(ofKind: Self.resetSoonKind)
+        pendingPhone = nil
+        lastRefresh = nil
+        Task { await refresh(force: true) }
+    }
+
     func scheduleBackgroundRefresh(now: Date = .now) {
+        let usual = now.addingTimeInterval(Self.backgroundInterval)
+        let preferred = cache?.resetDates(after: now, through: usual).first.map { $0.addingTimeInterval(1) } ?? usual
         WKApplication.shared().scheduleBackgroundRefresh(
-            withPreferredDate: now.addingTimeInterval(Self.backgroundInterval),
+            withPreferredDate: preferred,
             userInfo: Self.backgroundTaskID as NSString
         ) { _ in }
     }

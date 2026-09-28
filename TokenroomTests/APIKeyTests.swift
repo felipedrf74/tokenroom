@@ -194,6 +194,64 @@ final class APIKeyTests: XCTestCase {
         XCTAssertEqual(store.disconnectedProviders, [.cursor])
     }
 
+    @MainActor
+    func testMacPopoverRanksAnExhaustedSecondarySessionFirst() {
+        let defaults = makeDefaults()
+        defaults.set(["claude", "cursor"], forKey: "enabledProviders")
+        let store = QuotaStore(settings: AppSettings(defaults: defaults), clients: [], cache: SnapshotCache(directory: makeFolder()))
+        var urgent = meterSnapshot(.claude, used: 10)
+        urgent.windows.append(.init(id: "session", kind: .session, title: "5-hour", usedPercent: 100, resetsAt: .now.addingTimeInterval(3600), windowSeconds: 5 * 3600))
+        store.statuses[.claude] = .live(urgent)
+        store.statuses[.cursor] = .live(meterSnapshot(.cursor, used: 80))
+        XCTAssertEqual(store.connectedProviders, [.claude, .cursor])
+        XCTAssertEqual(store.statuses[.claude]?.snapshot?.usedPercent, 10)
+    }
+
+    @MainActor
+    func testMacMenuBarDoesNotPresentAnElapsedWindowAsCurrentUsage() throws {
+        let defaults = makeDefaults()
+        defaults.set(["claude", "cursor"], forKey: "enabledProviders")
+        let store = QuotaStore(settings: AppSettings(defaults: defaults), clients: [], cache: SnapshotCache(directory: makeFolder()))
+        var pending = meterSnapshot(.claude, used: 100)
+        pending.resetsAt = .distantPast
+        pending.windows[0].resetsAt = .distantPast
+        store.statuses[.claude] = .live(pending)
+        store.statuses[.cursor] = .live(meterSnapshot(.cursor, used: 80))
+        let meter = try XCTUnwrap(store.menuMeters.first { $0.provider == .claude })
+        XCTAssertEqual(meter.displayValue, "—")
+        XCTAssertTrue(meter.isStale)
+        XCTAssertEqual(meter.usedPercent, 100, "The recorded measurement is retained")
+        XCTAssertTrue(MenuBarLayout.tooltip(for: [meter]).contains("Reset · awaiting reading"))
+        XCTAssertTrue(meter.accessibilityText.contains("Reset · awaiting reading"))
+        XCTAssertEqual(MenuBarLayout.displayed(store.menuMeters, style: .highest).first?.provider, .cursor)
+    }
+
+    @MainActor
+    func testMacPresentationClockCrossesResetAndStaleBoundariesWithoutFetching() throws {
+        let defaults = makeDefaults()
+        defaults.set(["claude", "cursor"], forKey: "enabledProviders")
+        let store = QuotaStore(settings: AppSettings(defaults: defaults), clients: [], cache: SnapshotCache(directory: makeFolder()))
+        let now = Date.now
+        var urgent = meterSnapshot(.claude, used: 100)
+        urgent.fetchedAt = now
+        urgent.resetsAt = now.addingTimeInterval(10)
+        urgent.windows[0].resetsAt = urgent.resetsAt
+        store.statuses[.claude] = .live(urgent)
+        store.statuses[.cursor] = .live(meterSnapshot(.cursor, used: 80))
+        store.checkedAt = [.claude: now, .cursor: now]
+        store.ageReadings(at: now)
+        XCTAssertEqual(store.nextPresentationDate(after: now), now.addingTimeInterval(10))
+        XCTAssertEqual(MenuBarLayout.displayed(store.menuMeters, style: .highest).first?.provider, .claude)
+        store.ageReadings(at: now.addingTimeInterval(10))
+        XCTAssertEqual(store.menuMeters.first { $0.provider == .claude }?.displayValue, "—")
+        XCTAssertEqual(MenuBarLayout.displayed(store.menuMeters, style: .highest).first?.provider, .cursor)
+        store.ageReadings(at: now.addingTimeInterval(3601))
+        XCTAssertTrue(store.presentationStatus(for: .cursor).isStale)
+        XCTAssertTrue(store.menuMeters.allSatisfy(\.isStale))
+        XCTAssertFalse(store.statuses[.cursor]!.isStale, "Presentation cannot rewrite collector state")
+        XCTAssertNil(store.lastAttempt, "The presentation clock never calls providers")
+    }
+
     private func meterSnapshot(_ provider: Provider, used: Double) -> QuotaSnapshot {
         QuotaSnapshot(
             provider: provider, usedPercent: used, resetsAt: nil, fetchedAt: .now, primaryTitle: "Weekly",

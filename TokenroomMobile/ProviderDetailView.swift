@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ProviderDetailView: View {
     var reading: MobileStore.Reading
+    var date: Date = .now
     @State private var followError: String?
 
     private var provider: RelayProvider { reading.provider }
@@ -24,8 +25,9 @@ struct ProviderDetailView: View {
                         window: window,
                         history: reading.history[window.id],
                         checkedAt: provider.checkedAt ?? provider.fetchedAt,
-                        isStale: !provider.isLive,
-                        tint: Color(hex: provider.tint)
+                        isStale: !provider.isLive || window.isAwaitingReading(at: date),
+                        tint: Color(hex: provider.tint),
+                        date: date
                     )
                 }
                 if index == 0, let candidate = LiveActivities.candidate(in: provider) {
@@ -38,8 +40,8 @@ struct ProviderDetailView: View {
             }
             if let banked = provider.banked, banked.available > 0 {
                 Section {
-                    Text(ReadingText.banked(banked))
-                    ForEach(banked.expiries.filter { $0 > .now }.sorted(), id: \.self) { expiry in
+                    Text(ReadingText.banked(banked, now: date))
+                    ForEach(banked.expiries.filter { $0 > date }.sorted(), id: \.self) { expiry in
                         LabeledContent("Expires", value: expiry.formatted(date: .abbreviated, time: .shortened))
                     }
                 } header: {
@@ -56,7 +58,7 @@ struct ProviderDetailView: View {
             Section {
                 LabeledContent("From", value: reading.source)
                 if let checked = provider.checkedAt ?? provider.fetchedAt {
-                    LabeledContent("Checked", value: RelativeTime.ago(checked))
+                    LabeledContent("Last successful check", value: RelativeTime.ago(checked, now: date))
                 }
             } footer: {
                 Text("The line on each meter marks an even pace: where usage would be if spread evenly across the window. Tokenroom isn't affiliated with \(provider.name).")
@@ -82,7 +84,7 @@ struct ProviderDetailView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 } else if let checked = provider.checkedAt ?? provider.fetchedAt {
-                    Text("Checked \(RelativeTime.ago(checked))")
+                    Text("Checked \(RelativeTime.ago(checked, now: date))")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -99,38 +101,39 @@ private struct WindowDetail: View {
     var checkedAt: Date?
     var isStale: Bool
     var tint: Color
+    var date: Date
 
     private var pace: Pace? {
-        window.isMetered ? UsageRanking.pace(for: window, isStale: isStale, history: history) : nil
+        window.isMetered ? UsageRanking.pace(for: window, isStale: isStale, history: history, now: date) : nil
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
-                Text(ReadingText.headline(window))
+                Text(ReadingText.headline(window, now: date))
                     .font(.system(.largeTitle, design: .rounded, weight: .semibold))
                     .monospacedDigit()
                     .foregroundStyle(window.isMetered ? TokenroomTokens.ink(remaining: 100 - window.used, isStale: isStale) : .primary)
-                if window.isMetered {
+                if window.isMetered, !window.isAwaitingReading(at: date) {
                     Text("used")
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                if let amount = window.amount, let detail = ReadingText.amountDetail(amount), detail != ReadingText.headline(window) {
+                if let amount = window.amount, let detail = ReadingText.amountDetail(amount), detail != ReadingText.headline(window, now: date) {
                     Text(detail)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
             }
             if window.isMetered {
-                MeterTrack(usedPercent: window.used, remaining: 100 - window.used, isStale: isStale, paceMark: pace?.elapsedFraction, height: 10)
+                MeterTrack(usedPercent: window.used, remaining: 100 - window.used, isStale: isStale || window.isAwaitingReading(at: date), paceMark: pace?.elapsedFraction, height: 10)
             }
             if let pace {
                 Text(pace.caption())
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(PaceStyle.color(pace.severity))
             }
-            if let forecast = Forecast.text(for: window, history: history, checkedAt: checkedAt) {
+            if !isStale, let forecast = Forecast.text(for: window, history: history, checkedAt: checkedAt, now: date) {
                 Text(forecast)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -139,11 +142,13 @@ private struct WindowDetail: View {
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
 
-        if let resetsAt = window.resetsAt {
+        if window.isAwaitingReading(at: date) {
+            Text("Reset · awaiting reading").font(.footnote).foregroundStyle(.secondary)
+        } else if let resetsAt = window.resetsAt {
             LabeledContent("Resets") {
                 VStack(alignment: .trailing) {
                     Text(resetsAt.formatted(date: .abbreviated, time: .shortened))
-                    if let relative = RelativeTime.resets(resetsAt) {
+                    if let relative = RelativeTime.resets(resetsAt, now: date) {
                         Text(relative)
                             .font(.caption)
                             .foregroundStyle(.secondary)

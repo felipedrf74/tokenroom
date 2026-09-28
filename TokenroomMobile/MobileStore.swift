@@ -74,7 +74,17 @@ final class MobileStore {
     private(set) var localStatuses: [Provider: ProviderStatus] = [:]
     private(set) var localCheckedAt: [Provider: Date] = [:]
     /// Connected providers, most urgent first.
-    private(set) var readings: [Reading] = []
+    private var storedReadings: [Reading] = []
+    private var presentationNow = Date.now
+    var readings: [Reading] {
+        storedReadings.compactMap { reading in
+            guard let provider = ReadingFreshness.present(reading.provider, fallback: lastRefresh ?? .distantPast, now: presentationNow) else { return nil }
+            var result = reading
+            result.provider = provider
+            result.pace = ReadingAssembler.pace(for: .init(provider: provider, source: reading.source, history: reading.history), now: presentationNow)
+            return result
+        }
+    }
     /// Providers a Mac reports as signed out or not on a plan.
     private(set) var disconnected: [Reading] = []
     private(set) var lastRefresh: Date?
@@ -568,16 +578,19 @@ final class MobileStore {
             return
         }
         guard let cacheURL, let cache = ReadingCache.load(from: cacheURL), !cache.isSample else { return }
-        readings = cache.items.map { Reading($0) }
+        storedReadings = cache.items.map { Reading($0) }
         lastCacheHash = cache.materialHash
         lastReloadSignature = cache.reloadSignature
         lastHandoverRunOuts = cache.runOuts
     }
 
+    func ageReadings(at date: Date) { presentationNow = date }
+
     private func rebuild(now: Date = .now) {
+        presentationNow = now
         if sampleMode {
             let cache = SampleData.cache(now: now)
-            readings = cache.items.map { Reading($0, now: now) }
+            storedReadings = cache.items.map { Reading($0, now: now) }
             disconnected = []
             saveCache(cache)
             return
@@ -602,7 +615,7 @@ final class MobileStore {
             histories[sourceID] = RelayHistory(series: history.weeks)
         }
         let output = ReadingAssembler.assemble(sources: sources, histories: histories, now: now)
-        readings = output.connected.map { Reading($0, now: now) }
+        storedReadings = output.connected.map { Reading($0, now: now) }
         disconnected = output.disconnected.map { Reading($0, now: now) }
         saveCache(ReadingCache(savedAt: now, isSample: false, items: output.connected))
         let providers = output.connected.map(\.provider)
@@ -683,9 +696,9 @@ final class MobileStore {
         readings.first { $0.id == id } ?? disconnected.first { $0.id == id }
     }
 
-    /// When the freshest source last checked.
+    /// When the oldest shown provider was last successfully checked.
     var lastChecked: Date? {
-        readings.compactMap { $0.provider.checkedAt ?? $0.provider.fetchedAt }.max()
+        readings.compactMap { $0.provider.checkedAt ?? $0.provider.fetchedAt }.min()
     }
 
     /// Where readings came from, e.g. "Mac" or "Mac and This iPhone".
@@ -947,16 +960,12 @@ final class MobileStore {
         guard let relay, relayPhase == .ready, !defaults.bool(forKey: Keys.alertPreferencesShared) else { return }
         let local = alertPreferences
         do {
-            let remote = try await Self.iCloud { try await relay.alertPreferences() }
-            let resolution = AlertPreferencesSync.resolve(base: preferencesBase, local: local, remote: remote)
+            let base = preferencesBase
+            let resolution = try await Self.iCloud { try await relay.syncAlertPreferences(base: base, local: local) }
             if resolution.needsPublish {
-                let preferences = resolution.preferences
-                try await Self.iCloud { try await relay.publishAlertPreferences(preferences) }
                 preferencesSharedAt = Date()
             }
-            if resolution.needsPublish || remote != nil {
-                preferencesBase = resolution.preferences
-            }
+            preferencesBase = resolution.preferences
             if alertPreferences.sameChoices(as: local) {
                 defaults.set(true, forKey: Keys.alertPreferencesShared)
                 take(resolution.preferences)
@@ -1113,7 +1122,8 @@ final class MobileStore {
 
     func setBudget(_ value: Double?, for provider: Provider) {
         var budgets = (defaults.dictionary(forKey: Keys.budgets) as? [String: Double]) ?? [:]
-        budgets[provider.rawValue] = value.flatMap { $0 > 0 ? $0 : nil }
+        if let value, (!value.isFinite || value <= 0) { return }
+        budgets[provider.rawValue] = value
         defaults.set(budgets, forKey: Keys.budgets)
         // Applied to the reading there is, at once: Anthropic's report may not be due for a
         // quarter of an hour.

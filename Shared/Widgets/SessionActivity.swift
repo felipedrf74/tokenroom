@@ -11,6 +11,8 @@ struct SessionActivityAttributes: ActivityAttributes {
         /// Whether this activity has alerted that the window runs out before its reset; once per
         /// activity, which ends at the reset. Nil in activities started before 2.1.
         var warnedRunsOut: Bool? = nil
+        /// Optional for activities created by earlier versions. Usage remains the last measurement.
+        var awaitingReading: Bool? = nil
     }
 
     var providerID: String
@@ -56,7 +58,7 @@ enum LiveActivities {
     @MainActor
     @discardableResult
     static func start(_ provider: RelayProvider, window: RelayWindow, now: Date = .now) async throws -> Bool {
-        guard isEnabled, let resetsAt = window.resetsAt else { return false }
+        guard isEnabled, let resetsAt = window.resetsAt, resetsAt > now else { return false }
         if activity(for: provider.id, now: now) != nil { return true }
         await stop(provider.id)
         // Again: another Follow may have started one while those ended.
@@ -78,7 +80,7 @@ enum LiveActivities {
 
     /// Follows the most urgent window that qualifies, from the readings saved for widgets.
     static func startMostUrgent(now: Date = .now) async throws -> Bool {
-        let items = ReadingCache.defaultURL.flatMap(ReadingCache.load)?.items ?? []
+        let items = ReadingCache.defaultURL.flatMap(ReadingCache.load)?.presented(at: now).items ?? []
         for item in items {
             if let window = candidate(in: item.provider, now: now) {
                 return try await start(item.provider, window: window)
@@ -112,7 +114,7 @@ enum LiveActivities {
             }
             var state = SessionActivityAttributes.ContentState(used: window.used, resetsAt: resetsAt, isStale: !provider.isLive, warnedRunsOut: old.warnedRunsOut)
             guard state != old else { continue }
-            let crossed = [95, 80].first { level in
+            let crossed = (provider.isLive && old.awaitingReading != true ? [95, 80] : []).first { level in
                 preferences.thresholds(for: window).contains(level) && old.used < Double(level) && window.used >= Double(level)
                     && (level >= 95 || !preferences.isQuiet(at: now))
             }
@@ -135,7 +137,10 @@ enum LiveActivities {
     }
 
     private static func end(_ activity: Activity<SessionActivityAttributes>, resetAt: Date, now: Date) async {
-        let final = SessionActivityAttributes.ContentState(used: 0, resetsAt: resetAt, isStale: false)
+        var final = activity.content.state
+        final.resetsAt = resetAt
+        final.isStale = true
+        final.awaitingReading = true
         await activity.end(ActivityContent(state: final, staleDate: nil), dismissalPolicy: .after(now.addingTimeInterval(lingering)))
     }
 
@@ -148,11 +153,13 @@ enum LiveActivities {
 }
 
 extension SessionActivityAttributes.ContentState {
-    /// What to show once the system marks the activity stale, which happens at its reset: the
-    /// window started over, even if the app hasn't run since to say so.
+    /// A scheduled reset isn't a new measurement. Keep the recorded amount and mark it pending.
     func shown(isStale activityIsStale: Bool, now: Date = .now) -> Self {
         guard activityIsStale || resetsAt <= now else { return self }
-        return Self(used: 0, resetsAt: resetsAt, isStale: false)
+        var result = self
+        result.isStale = true
+        result.awaitingReading = true
+        return result
     }
 }
 

@@ -246,7 +246,8 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(first.cache.items["long"]?.map(\.title), ["Short post"], "What arrived before the limit")
         XCTAssertNil(first.cache.validators[source.url.absoluteString], "Not taken for the whole feed: no 304 keeps it")
         XCTAssertEqual(first.cache.unreadable, ["long"])
-        XCTAssertEqual(first.cache.announcementsFetchedAt, now, "It answered: it waits for the next check like the others")
+        XCTAssertNil(first.cache.announcementsFetchedAt, "A partial answer is a failure, not a successful check")
+        XCTAssertEqual(first.cache.sourceChecks?["long"]?.failedAt, now)
 
         let short = Data("<rss version=\"2.0\"><channel><item><title>Short post</title><link>https://example.com/short</link></item></channel></rss>".utf8)
         StubURLProtocol.handler = { request in request.url == ModelFeed.url ? (200, Self.noModels) : (200, short) }
@@ -613,6 +614,209 @@ final class FeedTests: XCTestCase {
         let addedSince = Set(FeedSource.catalog.map(\.id)).subtracting(NewsStore.firstCatalog)
         XCTAssertEqual(news.followedSources, Set(["claude-code", "cursor"]).union(addedSince), "2.0 had offered every feed it knew")
     }
+    func testFeedsRetryIndependentlyAndNewlyFollowedSourcesFetchImmediately() async {
+        defer { unstubNetwork() }
+        let good = FeedSource(id: "good", name: "Good", url: URL(string: "https://example.com/good.xml")!)
+        let failed = FeedSource(id: "failed", name: "Failed", url: URL(string: "https://example.com/failed.xml")!)
+        let added = FeedSource(id: "added", name: "Added", url: URL(string: "https://example.com/added.xml")!)
+        stubNetwork { request in
+            if request.url == ModelFeed.url { return (200, Self.noModels) }
+            if request.url?.lastPathComponent == "failed.xml" { return (503, Data()) }
+            return (200, Self.rss("Update", "Thu, 24 Sep 2026 12:00:00 GMT"))
+        }
+        let now = utc(2026, 9, 25, 12)
+        let first = await NewsFetcher.refresh(NewsCache(), sources: [good, failed], following: [], now: now).cache
+        XCTAssertEqual(first.sourceChecks?[good.id]?.succeededAt, now)
+        XCTAssertEqual(first.sourceChecks?[failed.id]?.failedAt, now)
+        let before = StubURLProtocol.requests.count
+        let second = await NewsFetcher.refresh(first, sources: [good, failed, added], following: [], now: now.addingTimeInterval(600)).cache
+        XCTAssertEqual(StubURLProtocol.requests.count, before + 1)
+        XCTAssertEqual(StubURLProtocol.requests.last?.url, added.url, "A fresh global timestamp cannot delay an uncached source")
+        _ = await NewsFetcher.refresh(second, sources: [good, failed, added], following: [], now: now.addingTimeInterval(3600))
+        XCTAssertEqual(StubURLProtocol.requests.count, before + 2)
+        XCTAssertEqual(StubURLProtocol.requests.last?.url, failed.url, "Only the failed source retries after an hour")
+    }
+
+    func testParsingFailureDoesNotAdvanceSuccessAndRetriesAfterAnHour() async {
+        defer { unstubNetwork() }
+        stubNetwork { _ in (200, Data("not a feed".utf8)) }
+        let now = utc(2026, 9, 25, 12)
+        var cache = NewsCache()
+        cache.modelsFetchedAt = now.addingTimeInterval(-60)
+        cache.announcementsFetchedAt = now.addingTimeInterval(-60)
+        cache.items[claudeCode.id] = []
+        cache = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], maxAge: 0, now: now).cache
+        XCTAssertEqual(cache.modelsFetchedAt, now.addingTimeInterval(-60))
+        XCTAssertEqual(cache.modelsFailedAt, now)
+        XCTAssertEqual(cache.sourceChecks?[claudeCode.id]?.succeededAt, now.addingTimeInterval(-60))
+        XCTAssertEqual(cache.sourceChecks?[claudeCode.id]?.failedAt, now)
+        let count = StubURLProtocol.requests.count
+        _ = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], now: now.addingTimeInterval(3600))
+        XCTAssertEqual(StubURLProtocol.requests.count, count + 2, "A recently successful check does not delay a failed manual check's retry")
+    }
+
+    func testTransportFailureIsVisibleInSourceHealth() async {
+        defer { unstubNetwork() }
+        StubURLProtocol.handler = { _ in (200, Self.noModels) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfflineFeedProtocol.self, StubETagProtocol.self]
+        TokenroomHTTP.overrideSession(URLSession(configuration: configuration))
+        let source = FeedSource(id: "offline", name: "Offline", url: URL(string: "https://offline.example.com/feed")!)
+        let now = utc(2026, 9, 25, 12)
+        let cache = await NewsFetcher.refresh(NewsCache(), sources: [source], following: [], now: now).cache
+        XCTAssertEqual(cache.sourceChecks?[source.id]?.failedAt, now)
+        XCTAssertTrue(cache.unreadable?.contains(source.id) == true)
+    }
+
+    func testAnExplicitUncachedFollowRetriesOnlyThatSourceBeforeItsFailureCooldown() async {
+        defer { unstubNetwork() }
+        stubNetwork { _ in (200, Self.rss("Recovered", "Thu, 24 Sep 2026 12:00:00 GMT")) }
+        let now = utc(2026, 9, 25, 12)
+        let other = FeedSource(id: "other", name: "Other", url: URL(string: "https://example.com/other.xml")!)
+        var cache = NewsCache()
+        cache.modelsFetchedAt = now
+        cache.sourceChecks = [claudeCode.id: .init(failedAt: now), other.id: .init(failedAt: now)]
+        let result = await NewsFetcher.refresh(cache, sources: [claudeCode, other], following: [], now: now.addingTimeInterval(60), forcedSources: [claudeCode.id]).cache
+        XCTAssertEqual(StubURLProtocol.requests.map(\.url), [claudeCode.url])
+        XCTAssertEqual(result.sourceChecks?[claudeCode.id]?.succeededAt, now.addingTimeInterval(60))
+        XCTAssertNil(result.sourceChecks?[claudeCode.id]?.failedAt)
+        XCTAssertEqual(result.sourceChecks?[other.id]?.failedAt, now)
+    }
+
+    func testOldNewsCacheMetadataIsOptional() throws {
+        var cache = NewsCache()
+        cache.sourceChecks = nil
+        let decoded = try RelayEnvelope.decoder.decode(NewsCache.self, from: RelayEnvelope.encoder.encode(cache))
+        XCTAssertNil(decoded.sourceChecks)
+        XCTAssertEqual(decoded.items, [:])
+    }
+
+    func testLegacyFeedDatesDoNotAdvanceWhenANewSourceSucceeds() async {
+        defer { unstubNetwork() }
+        stubNetwork { _ in (200, Self.rss("Update", "Thu, 24 Sep 2026 12:00:00 GMT")) }
+        let now = utc(2026, 9, 25, 12)
+        let added = FeedSource(id: "added", name: "Added", url: URL(string: "https://example.com/added.xml")!)
+        var cache = NewsCache()
+        cache.modelsFetchedAt = now
+        cache.announcementsFetchedAt = now
+        cache.items[claudeCode.id] = []
+        let result = await NewsFetcher.refresh(cache, sources: [claudeCode, added], following: [], now: now.addingTimeInterval(600)).cache
+        XCTAssertEqual(result.sourceChecks?[claudeCode.id]?.succeededAt, now)
+        XCTAssertEqual(result.sourceChecks?[added.id]?.succeededAt, now.addingTimeInterval(600))
+        XCTAssertEqual(StubURLProtocol.requests.count, 1)
+
+        // Older partial failures had no shared failure date when another source succeeded.
+        cache.unreadable = [claudeCode.id]
+        XCTAssertEqual(cache.check(for: claudeCode).failedAt, now)
+        let retried = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], now: now.addingTimeInterval(3600)).cache
+        XCTAssertEqual(retried.sourceChecks?[claudeCode.id]?.succeededAt, now.addingTimeInterval(3600))
+        XCTAssertNil(retried.sourceChecks?[claudeCode.id]?.failedAt)
+    }
+
+    @MainActor
+    func testVisitBaselineSurvivesFollowNavigationAndAdvancesAtNextEntry() throws {
+        let defaults = makeDefaults()
+        defaults.set(utc(2026, 9, 24).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt)
+        let news = NewsStore(defaults: defaults, directory: try makeNewsFolder(), now: utc(2026, 9, 25, 12))
+        news.beginVisit(now: utc(2026, 9, 25, 12))
+        let baseline = news.visitBaseline
+        news.beginVisit(now: utc(2026, 9, 25, 13))
+        XCTAssertEqual(news.visitBaseline, baseline)
+        XCTAssertTrue(news.isNew(utc(2026, 9, 25, 8)))
+        XCTAssertEqual(news.unseenCount, 0)
+        news.endVisit()
+        news.beginVisit(now: utc(2026, 9, 26))
+        XCTAssertFalse(news.isNew(utc(2026, 9, 25, 8)))
+    }
+
+    @MainActor
+    func testManualRefreshesDuringARefreshCoalesceIntoOneFollowUp() async {
+        let probe = NewsRefreshProbe()
+        let news = NewsStore(defaults: makeDefaults(), directory: nil, fetch: { await probe.fetch($0) })
+        let first = Task { await news.refresh(preferences: AlertPreferences(), notifies: false) }
+        await probe.waitUntilStarted()
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false)
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false)
+        await probe.release()
+        await first.value
+        let ages = await probe.ages
+        XCTAssertEqual(ages.count, 2)
+        XCTAssertNil(ages[0])
+        XCTAssertEqual(ages[1], 0)
+        XCTAssertFalse(news.isRefreshing)
+    }
+
+    @MainActor
+    func testQueuedUncachedFollowsSurviveAManualRefreshInOneFollowUp() async {
+        let probe = NewsRefreshProbe()
+        let news = NewsStore(defaults: makeDefaults(), directory: nil, fetch: { await probe.fetch($0) })
+        let first = Task { await news.refresh(preferences: AlertPreferences(), notifies: false) }
+        await probe.waitUntilStarted()
+        await news.refresh(preferences: AlertPreferences(), notifies: false, forcedSources: ["claude-code"])
+        await news.refresh(preferences: AlertPreferences(), notifies: false, forcedSources: ["cursor"])
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false)
+        await probe.release()
+        await first.value
+        let forced = await probe.forcedSources
+        let ages = await probe.ages
+        XCTAssertEqual(forced, [[], ["claude-code", "cursor"]])
+        XCTAssertEqual(ages.count, 2)
+        XCTAssertEqual(ages.last!, 0)
+        XCTAssertFalse(news.isRefreshing)
+    }
+
+    @MainActor
+    func testQueuedFollowKeepsManualNotificationIntentAndLatestPreferences() async {
+        let model = ModelRelease(id: "lab/model", name: "Model", vendor: "lab", created: .now, contextLength: nil, promptPrice: nil, completionPrice: nil, expires: nil)
+        let probe = NewsRefreshProbe(newModels: [model])
+        var notifications: [AlertPreferences] = []
+        let news = NewsStore(defaults: makeDefaults(), directory: nil, fetch: { await probe.fetch($0) },
+                             notify: { _, preferences, _ in notifications.append(preferences) })
+        let first = Task { await news.refresh(preferences: AlertPreferences(), notifies: false) }
+        await probe.waitUntilStarted()
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: true)
+        var latest = AlertPreferences()
+        latest.resets = false
+        await news.refresh(preferences: latest, notifies: false, forcedSources: ["claude-code"])
+        await probe.release()
+        await first.value
+        XCTAssertEqual(notifications.count, 1)
+        XCTAssertEqual(notifications.first?.resets, false, "Follow-up uses the latest preferences")
+        let ages = await probe.ages
+        let forced = await probe.forcedSources
+        XCTAssertEqual(ages.count, 2)
+        XCTAssertEqual(ages[1], 0)
+        XCTAssertEqual(forced[1], ["claude-code"])
+    }
+
+    @MainActor
+    func testCancelledRefreshOwnerStillRunsQueuedManualAndFollowRequest() async {
+        let probe = NewsRefreshProbe()
+        let news = NewsStore(defaults: makeDefaults(), directory: nil, fetch: { await probe.fetch($0) })
+        let first = Task { await news.refresh(preferences: AlertPreferences(), notifies: false) }
+        await probe.waitUntilStarted()
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false)
+        await news.refresh(preferences: AlertPreferences(), notifies: false, forcedSources: ["claude-code"])
+        first.cancel() // A SwiftUI .task can be cancelled when its page disappears.
+        await probe.release()
+        await first.value
+        let ages = await probe.ages
+        let forced = await probe.forcedSources
+        XCTAssertEqual(ages.count, 2, "The queued pass has its own lifetime")
+        XCTAssertEqual(ages.last!, 0)
+        XCTAssertEqual(forced.last!, ["claude-code"])
+        XCTAssertFalse(news.isRefreshing)
+    }
+
+    func testNewsSearchAndEmptyStatesExplainTheCurrentSection() {
+        XCTAssertTrue(NewsSearch.matches("openai", title: "A new model", source: "OpenAI"))
+        XCTAssertTrue(NewsSearch.matches("NEW", title: "A new model", source: "Lab"))
+        XCTAssertFalse(NewsSearch.matches("other", title: "Model", source: "Lab"))
+        XCTAssertEqual(NewsEmptyPresentation.make(section: .announcements, searching: false, hasLabs: true, hasSources: false, problem: nil).title, "No sources followed")
+        XCTAssertEqual(NewsEmptyPresentation.make(section: .retiring, searching: false, hasLabs: true, hasSources: true, problem: nil).title, "No upcoming retirements")
+        XCTAssertEqual(NewsEmptyPresentation.make(section: .retiring, searching: false, hasLabs: true, hasSources: true, problem: "Couldn't load").title, "Couldn't load this section")
+    }
+
 }
 
 /// Like StubURLProtocol, with an ETag on every 200.
@@ -631,4 +835,37 @@ final class StubETagProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func stopLoading() {}
+}
+
+private final class OfflineFeedProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "offline.example.com" }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() { client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet)) }
+    override func stopLoading() {}
+}
+
+private actor NewsRefreshProbe {
+    var newModels: [ModelRelease]
+    init(newModels: [ModelRelease] = []) { self.newModels = newModels }
+    var ages: [TimeInterval?] = []
+    var forcedSources: [Set<String>] = []
+    private var started: CheckedContinuation<Void, Never>?
+    private var blocked: CheckedContinuation<Void, Never>?
+    func fetch(_ request: NewsFetcher.Request) async -> NewsFetcher.Result {
+        ages.append(request.maxAge)
+        forcedSources.append(request.forcedSources)
+        if ages.count == 1 {
+            await withCheckedContinuation { continuation in
+                blocked = continuation
+                started?.resume()
+                started = nil
+            }
+        }
+        return .init(cache: request.cache, newModels: ages.count > 1 ? newModels : [])
+    }
+    func waitUntilStarted() async {
+        if !ages.isEmpty { return }
+        await withCheckedContinuation { started = $0 }
+    }
+    func release() { blocked?.resume(); blocked = nil }
 }

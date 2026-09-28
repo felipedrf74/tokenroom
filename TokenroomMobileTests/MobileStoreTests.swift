@@ -115,6 +115,39 @@ final class MobileStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testInvalidBudgetPreservesTheSavedAmountUntilExplicitlyCleared() throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let store = makeStore(defaults: defaults, folder: folder)
+        store.setBudget(50, for: .deepseek)
+        for invalid in [0.0, -1, .infinity, .nan] {
+            store.setBudget(invalid, for: .deepseek)
+            XCTAssertEqual(store.budget(for: .deepseek), 50)
+        }
+        XCTAssertEqual(makeStore(defaults: defaults, folder: folder).budget(for: .deepseek), 50)
+        store.setBudget(nil, for: .deepseek)
+        XCTAssertNil(store.budget(for: .deepseek))
+    }
+
+    @MainActor
+    func testRetainedReadingsAgeWhileTheUsagePageStaysOpen() async throws {
+        let folder = try makeFolder()
+        let checked = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
+        let provider = RelayProvider(id: "claude", name: "Claude", shortName: "Claude", monogram: "C", tint: "#D97757", state: "live",
+            checkedAt: checked, primaryWindowID: "weekly", windows: [.init(id: "weekly", kind: "weekly", title: "Weekly", used: 42)])
+        try ReadingCache(savedAt: checked, isSample: false, items: [.init(provider: provider, source: "Mac")])
+            .save(to: folder.appendingPathComponent(ReadingCache.fileName))
+        let store = makeStore(defaults: makeDefaults(), folder: folder)
+        await store.refresh(force: true, now: checked)
+        XCTAssertEqual(store.readings.first?.provider.state, "live")
+        store.ageReadings(at: checked.addingTimeInterval(3601))
+        XCTAssertEqual(store.readings.first?.provider.state, "stale")
+        XCTAssertEqual(store.lastChecked, checked, "Aging does not invent a successful check")
+        store.ageReadings(at: checked.addingTimeInterval(7 * 86_400 + 1))
+        XCTAssertTrue(store.readings.isEmpty)
+    }
+
+    @MainActor
     func testAlertChoicesMadeOnTheIPhoneAreStampedAndKept() throws {
         let defaults = makeDefaults()
         let folder = try makeFolder()
@@ -166,6 +199,41 @@ final class MobileStoreTests: XCTestCase {
         let window = try XCTUnwrap(store.reading(id: Provider.deepseek.rawValue)?.provider.windows.first)
         XCTAssertEqual(window.used, 87.6, accuracy: 0.001, "12.40 left of 100")
         XCTAssertEqual(window.amount?.limit, 100)
+    }
+
+    func testLiveActivityResetRetainsMeasurementAndSuppressesHeadlineAndPace() throws {
+        let original = SessionActivityAttributes.ContentState(used: 96, resetsAt: now, isStale: false, warnedRunsOut: true)
+        let decoded = try RelayEnvelope.decoder.decode(SessionActivityAttributes.ContentState.self, from: RelayEnvelope.encoder.encode(original))
+        XCTAssertNil(decoded.awaitingReading, "Activities created before this field remain readable")
+        let pending = decoded.shown(isStale: false, now: now)
+        XCTAssertEqual(pending.used, 96)
+        XCTAssertEqual(pending.percentText, "—")
+        XCTAssertTrue(pending.isStale)
+        XCTAssertEqual(pending.warnedRunsOut, true)
+        let attributes = SessionActivityAttributes(providerID: "claude", providerName: "Claude", shortName: "Claude", monogram: "C", tint: "#D97757", windowID: "session", windowTitle: "5-hour", windowSeconds: 5 * 3600)
+        XCTAssertNil(attributes.paceMark(for: pending))
+        var future = original
+        future.resetsAt = now.addingTimeInterval(3600)
+        XCTAssertEqual(future.shown(isStale: false, now: now).used, 96)
+        XCTAssertEqual(future.shown(isStale: false, now: now).percentText, "96%")
+        XCTAssertEqual(future.shown(isStale: true, now: now).percentText, "—", "ActivityKit stale dates also produce a pending reading")
+        XCTAssertEqual(future.shown(isStale: true, now: now).used, 96)
+    }
+
+    func testPinnedWidgetNeverSubstitutesAnAbsentOrExpiredProvider() {
+        func reading(_ id: String, age: TimeInterval) -> ReadingCache.Item {
+            .init(provider: RelayProvider(id: id, name: id, shortName: id, monogram: "X", tint: "#000000", state: "live", checkedAt: now.addingTimeInterval(-age), primaryWindowID: "weekly", windows: [.init(id: "weekly", kind: "weekly", title: "Weekly", used: 40)]), source: "Mac")
+        }
+        let cache = ReadingCache(savedAt: now, isSample: false, items: [reading("cursor", age: 0), reading("claude", age: 7 * 86_400 + 1)])
+        let pinned = ReadingsEntry.make(cache, choice: .claude, date: now)
+        XCTAssertTrue(pinned.items.isEmpty)
+        XCTAssertEqual(pinned.unavailableProvider, .claude)
+        XCTAssertNil(pinned.checkedAt)
+        XCTAssertEqual(ReadingsEntry.make(cache, choice: .automatic, date: now).items.first?.id, "cursor")
+        XCTAssertEqual(ReadingsEntry.make(cache, choice: .cursor, date: now).items.first?.id, "cursor")
+        XCTAssertNil(ReadingsEntry.make(cache, choice: .cursor, date: now).unavailableProvider)
+        XCTAssertEqual(ReadingsEntry.make(nil, choice: .claude, date: now).unavailableProvider, .claude)
+        XCTAssertTrue(ReadingsEntry.make(cache, choice: .openai, date: now).items.isEmpty)
     }
 
     // MARK: Shared with the widgets

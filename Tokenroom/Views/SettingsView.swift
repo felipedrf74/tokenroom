@@ -110,10 +110,12 @@ private struct ProvidersSettings: View {
     var onManageKeys: () -> Void
     /// Providers signed in or configured on this Mac, checked off the main thread.
     @State private var detected: Set<Provider> = []
+    @State private var search = ""
 
     var body: some View {
         Form {
-            let personal = Provider.allCases.filter { $0.category != .orgSpend }
+            TextField("Search providers", text: $search)
+            let personal = Provider.allCases.filter { $0.category != .orgSpend && matches($0.displayName) }
             let connected = personal.filter { store.settings.isEnabled($0) }
             let detectedOff = personal.filter { !store.settings.isEnabled($0) && detected.contains($0) }
             let available = personal.filter { !store.settings.isEnabled($0) && !detected.contains($0) }
@@ -122,7 +124,7 @@ private struct ProvidersSettings: View {
                 Section {
                     ForEach(connected) { providerRow($0) }
                 } header: {
-                    Text("Connected")
+                    Text("Enabled")
                 } footer: {
                     Text("Tokenroom reuses the login you already have for each tool and never refreshes it. Tokens, names, and emails are never stored or sent anywhere. Tools you sign in to are read from the same endpoints their own apps use: unofficial, and they can change without notice.")
                 }
@@ -142,7 +144,7 @@ private struct ProvidersSettings: View {
                 }
             }
             Section {
-                ForEach(Provider.allCases.filter { $0.category == .orgSpend }) { providerRow($0) }
+                ForEach(Provider.allCases.filter { $0.category == .orgSpend && matches($0.displayName) }) { providerRow($0) }
             } header: {
                 Text("Organization billing")
             } footer: {
@@ -151,6 +153,9 @@ private struct ProvidersSettings: View {
         }
         .formStyle(.grouped)
         .task {
+            #if DEBUG
+            if UserDefaults.standard.string(forKey: "TokenroomSnapshots") != nil { return }
+            #endif
             detected = await BlockingIO.run {
                 Set(Provider.allCases.filter { CredentialReaders.hasSession($0) })
             }
@@ -171,18 +176,20 @@ private struct ProvidersSettings: View {
                 signInActions(provider)
             }
             if provider == .claude {
-                ClaudeBridgeRow()
-                    .padding(.leading, 28)
-            }
-            if provider == .claude {
-                Text("Unofficial: read from the same endpoint \(provider.toolName) uses. It can change without notice.")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 28)
+                DisclosureGroup("Advanced") {
+                    ClaudeBridgeRow()
+                    Text("Unofficial: read from the same endpoint \(provider.toolName) uses. It can change without notice.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.leading, 28)
             }
         }
         .padding(.vertical, 2)
+    }
+
+    private func matches(_ name: String) -> Bool {
+        search.isEmpty || name.localizedCaseInsensitiveContains(search)
     }
 
     private func needsKey(_ provider: Provider) -> Bool {
@@ -206,6 +213,8 @@ private struct ProvidersSettings: View {
                 }
             }
         }
+        .accessibilityLabel(provider.displayName)
+        .accessibilityValue(caption(provider))
     }
 
     private func caption(_ provider: Provider) -> String {
@@ -437,6 +446,9 @@ private struct KeyRow: View {
             }
         }
         .task(id: reload) {
+            #if DEBUG
+            if UserDefaults.standard.string(forKey: "TokenroomSnapshots") != nil { return }
+            #endif
             let keys = self.keys
             let provider = self.provider
             let loaded = await BlockingIO.run { (keys.metadata(for: provider), LocalKeys.settingsCaption(for: provider)) }
@@ -466,16 +478,30 @@ private struct BudgetField: View {
     var label: String
     var currency: String
     @Binding var value: Double?
+    @State private var text = ""
+    @State private var error: String?
+    @FocusState private var focused: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text(label)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-            TextField("None", value: $value, format: .currency(code: currency))
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 11))
-                .frame(width: 110)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text("\(label) (\(currency))").font(.system(size: 11)).foregroundStyle(.secondary)
+                TextField("None", text: $text)
+                    .textFieldStyle(.roundedBorder).font(.system(size: 11)).frame(width: 110)
+                    .focused($focused).onSubmit(save)
+            }
+            if let error { Text(error).font(.caption).foregroundStyle(.red) }
+        }
+        .onAppear { text = value.map { $0.formatted(.number.grouping(.never)) } ?? "" }
+        .onChange(of: focused) { _, focused in if !focused { save() } }
+        .onDisappear(perform: save)
+    }
+
+    private func save() {
+        switch BudgetInput.parse(text) {
+        case .clear: error = nil; value = nil
+        case .amount(let amount): error = nil; value = amount
+        case .invalid: error = BudgetInput.error
         }
     }
 }
@@ -489,6 +515,8 @@ private struct AddKeySheet: View {
     @State private var key = ""
     @State private var region: String
     @State private var working = false
+    @State private var saving = false
+    @State private var validation = KeyValidationRevision()
     @State private var message: String?
     @State private var offerSaveAnyway = false
     @State private var acknowledgedAdmin = false
@@ -512,10 +540,11 @@ private struct AddKeySheet: View {
             SecureField(provider.keySpec?.prefixHint.isEmpty == false ? "\(provider.keySpec!.prefixHint)…" : "Paste your key", text: $key)
                 .textFieldStyle(.roundedBorder)
                 .frame(minWidth: 320)
+                .disabled(saving)
             if let regions = provider.keySpec?.regions, !regions.isEmpty {
                 let picker = Picker(provider.keySpec?.choiceLabel ?? "Account", selection: $region) {
                     ForEach(regions, id: \.self) { Text($0).tag($0) }
-                }
+                }.disabled(saving)
                 // Two regions fit side by side; Copilot's seven plans don't fit the sheet that way.
                 if regions.count > 2 {
                     picker.pickerStyle(.menu)
@@ -560,11 +589,10 @@ private struct AddKeySheet: View {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 if offerSaveAnyway {
-                    Button("Save Anyway") {
-                        Task { await save() }
-                    }
+                    Button("Save Anyway") { Task { await save() } }
+                        .disabled(working || (provider.key?.isAdmin == true && !acknowledgedAdmin))
                 }
-                Button(working ? "Testing…" : (warning == nil ? "Test & Save" : "Save With This Key")) {
+                Button(working ? (saving ? "Saving…" : "Testing…") : (warning == nil ? "Test & Save" : "Save With This Key")) {
                     if warning == nil {
                         test()
                     } else {
@@ -577,10 +605,9 @@ private struct AddKeySheet: View {
         }
         .padding(20)
         .frame(width: 420)
-        .onChange(of: key) { _, _ in
-            // A different key needs its own test.
-            warning = nil
-        }
+        .onChange(of: key) { _, _ in invalidateValidation() }
+        .onChange(of: region) { _, _ in invalidateValidation() }
+        .onDisappear { invalidateValidation() }
         .task {
             // Replacing a key starts from the choice saved with it, such as its Copilot plan.
             guard let spec = provider.keySpec, !spec.regions.isEmpty else { return }
@@ -597,55 +624,69 @@ private struct AddKeySheet: View {
         region.isEmpty ? nil : region
     }
 
-    private func test() {
-        working = true
+    private var credential: APIKeyCredential {
+        APIKeyCredential(key: key.trimmingCharacters(in: .whitespacesAndNewlines), region: regionValue)
+    }
+
+    private func invalidateValidation() {
+        validation.invalidate()
+        warning = nil
         message = nil
         offerSaveAnyway = false
-        let key = self.key.trimmingCharacters(in: .whitespacesAndNewlines)
-        let provider = self.provider
-        let region = regionValue
+    }
+
+    private func test() {
+        guard !working else { return }
+        working = true
+        message = nil
+        warning = nil
+        offerSaveAnyway = false
+        let attempt = validation.begin(credential)
         Task {
+            let result: Result<APIKeyClient.KeyCheck, Error>
             do {
-                let check = try await APIKeyClient.check(for: provider, key: key, region: region)
-                if let found = check.warning {
-                    warning = found
-                } else {
-                    await save()
-                }
-            } catch ProviderError.expired {
-                message = provider.keySpec?.regions.isEmpty == false
-                    ? "Couldn't use this key. Check it, and the account it belongs to, and try again."
-                    : "Couldn't use this key. Check it and try again."
-            } catch ProviderError.notEntitled(let reason) {
+                result = .success(try await APIKeyClient.check(for: provider, key: attempt.credential.key, region: attempt.credential.region))
+            } catch { result = .failure(error) }
+            working = false
+            guard validation.accepts(attempt, current: credential) else { return }
+            switch result {
+            case .success(let check):
+                if let found = check.warning { warning = found }
+                else { await save() }
+            case .failure(ProviderError.expired):
+                message = "Couldn't use this key. Check it and its account, and try again."
+            case .failure(ProviderError.notEntitled(let reason)):
                 message = reason
-            } catch ProviderError.unreachable, ProviderError.rateLimited {
+            case .failure(ProviderError.unreachable), .failure(ProviderError.rateLimited):
                 message = "Couldn't reach \(provider.displayName) to check the key."
                 offerSaveAnyway = true
-            } catch {
+            case .failure:
                 message = "Couldn't read \(provider.displayName)'s answer with this key."
                 offerSaveAnyway = true
             }
-            working = false
         }
     }
 
-    /// The Keychain can block, so the write runs off the main thread.
     private func save() async {
+        guard !working, provider.key?.isAdmin != true || acknowledgedAdmin,
+              let attempt = validation.attempt,
+              validation.accepts(attempt, current: credential) else { return }
         working = true
-        let key = self.key.trimmingCharacters(in: .whitespacesAndNewlines)
-        let keys = self.keys
-        let provider = self.provider
-        let region = regionValue
-        let warning = self.warning
+        saving = true
+        defer { working = false; saving = false }
+        let credential = attempt.credential
+        let savedWarning = warning
         do {
-            try await BlockingIO.run { try keys.save(key, for: provider, region: region, warning: warning) }
+            let keys = self.keys
+            let provider = self.provider
+            try await BlockingIO.run { try keys.save(credential.key, for: provider, region: credential.region, warning: savedWarning) }
             onSaved()
             dismiss()
         } catch {
             message = "Couldn't save the key in the Keychain."
         }
-        working = false
     }
+
 }
 
 // MARK: Alerts
@@ -770,6 +811,7 @@ private struct AlertsSettings: View {
 
 private struct NewsSettings: View {
     @Bindable var store: QuotaStore
+    @State private var search = ""
 
     var body: some View {
         Form {
@@ -787,8 +829,9 @@ private struct NewsSettings: View {
                 Text("Reads OpenRouter's public model list every 6 hours and official changelogs and blogs every 12. No account, key, or usage is sent. Open News from the popover.")
             }
             if store.settings.newsEnabled, let news = store.news {
+                TextField("Search labs and sources", text: $search)
                 Section("Labs") {
-                    ForEach(news.vendorChoices, id: \.id) { vendor in
+                    ForEach(news.vendorChoices.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }, id: \.id) { vendor in
                         Toggle(vendor.name, isOn: Binding(
                             get: { news.followedVendors.contains(vendor.id) },
                             set: { isOn in
@@ -798,7 +841,7 @@ private struct NewsSettings: View {
                     }
                 }
                 Section {
-                    ForEach(FeedSource.toggles) { source in
+                    ForEach(FeedSource.toggles.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }) { source in
                         Toggle(source.name, isOn: Binding(
                             get: { news.followedSources.contains(source.id) },
                             set: { isOn in

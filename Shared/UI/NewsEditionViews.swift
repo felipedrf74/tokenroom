@@ -41,11 +41,13 @@ struct LabMark: View {
 
 /// "Since you last looked": new models, updates, and models retiring soon, each opening its list.
 struct NewsDigestView: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
     var digest: NewsEdition.Digest
     var open: (NewsFilter) -> Void
 
     var body: some View {
-        HStack(spacing: 0) {
+        let layout = typeSize >= .xxLarge ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0)) : AnyLayout(HStackLayout(spacing: 0))
+        return layout {
             cell(digest.models, digest.models == 1 ? "new model" : "new models", .models)
             Divider()
             cell(digest.updates, digest.updates == 1 ? "update" : "updates", .announcements)
@@ -177,15 +179,17 @@ struct TopStoryView: View {
 
 /// Context, input and output price per million tokens, in three columns.
 struct ModelSpecs: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
     var release: ModelRelease
 
     var body: some View {
-        HStack(spacing: 0) {
+        let layout = typeSize >= .xxLarge ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 0))
+        return layout {
             spec(release.contextText ?? "—", "Context")
             Divider()
-            spec(price(release.promptPrice), "Input / M")
+            spec(price(release.promptPrice), "Input / million")
             Divider()
-            spec(price(release.completionPrice), "Output / M")
+            spec(price(release.completionPrice), "Output / million")
         }
         .fixedSize(horizontal: false, vertical: true)
         .padding(.top, 8)
@@ -207,12 +211,13 @@ struct ModelSpecs: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.leading, label == "Context" ? 0 : 12)
+        .padding(.leading, label == "Context" || typeSize >= .xxLarge ? 0 : 12)
     }
 }
 
 /// A compact model: lab, name, context and prices, age. A dot marks it new.
 struct ModelCardView: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
     var release: ModelRelease
     var isNew: Bool
     var width: CGFloat? = 168
@@ -239,13 +244,13 @@ struct ModelCardView: View {
                 .font(.caption)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
-                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
             Text(RelativeTime.ago(release.created))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .padding(12)
-        .frame(width: width, alignment: .leading)
+        .frame(width: width.map { typeSize >= .xxLarge ? max($0, 240) : $0 }, alignment: .leading)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(TokenroomTokens.cardFill))
         .multilineTextAlignment(.leading)
@@ -263,7 +268,7 @@ struct ModelCardView: View {
         var parts: [String] = []
         if let context = release.contextText { parts.append("\(context) context") }
         if let prompt = release.promptPrice, let completion = release.completionPrice {
-            parts.append(prompt == 0 && completion == 0 ? "Free" : "\(ModelReleaseRow.price(prompt)) / \(ModelReleaseRow.price(completion))")
+            parts.append(prompt == 0 && completion == 0 ? "Free" : "Input \(ModelReleaseRow.price(prompt)) / Output \(ModelReleaseRow.price(completion)) per million tokens")
         }
         return parts.joined(separator: " · ")
     }

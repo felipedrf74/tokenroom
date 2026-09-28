@@ -65,4 +65,12 @@ final class NewsEditionTests: XCTestCase {
         XCTAssertNil(NewsEditions.labProviders["google"], "Google has no organization icon; its models show a monogram")
         XCTAssertEqual(model("x", daysAgo: 1).contextText, "1M")
     }
+
+    func testTodayIsEmptyWhenOnlyDistantRetirementsAreCached() {
+        let later = model("later", daysAgo: 100, expiresInDays: 45)
+        let edition = NewsEditions.today(models: [], announcements: [], retiring: [later], since: now, now: now)
+        XCTAssertTrue(edition.isEmpty, "A retirement outside Today must not suppress its empty actions")
+        let models = NewsEditions.today(models: [later], announcements: [], retiring: [later], since: now, now: now)
+        XCTAssertFalse(models.isEmpty, "Older cached models are still visible under More models")
+    }
 }
