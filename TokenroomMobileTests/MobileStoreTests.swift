@@ -201,6 +201,41 @@ final class MobileStoreTests: XCTestCase {
         XCTAssertEqual(window.amount?.limit, 100)
     }
 
+    func testLiveActivityResetRetainsMeasurementAndSuppressesHeadlineAndPace() throws {
+        let original = SessionActivityAttributes.ContentState(used: 96, resetsAt: now, isStale: false, warnedRunsOut: true)
+        let decoded = try RelayEnvelope.decoder.decode(SessionActivityAttributes.ContentState.self, from: RelayEnvelope.encoder.encode(original))
+        XCTAssertNil(decoded.awaitingReading, "Activities created before this field remain readable")
+        let pending = decoded.shown(isStale: false, now: now)
+        XCTAssertEqual(pending.used, 96)
+        XCTAssertEqual(pending.percentText, "—")
+        XCTAssertTrue(pending.isStale)
+        XCTAssertEqual(pending.warnedRunsOut, true)
+        let attributes = SessionActivityAttributes(providerID: "claude", providerName: "Claude", shortName: "Claude", monogram: "C", tint: "#D97757", windowID: "session", windowTitle: "5-hour", windowSeconds: 5 * 3600)
+        XCTAssertNil(attributes.paceMark(for: pending))
+        var future = original
+        future.resetsAt = now.addingTimeInterval(3600)
+        XCTAssertEqual(future.shown(isStale: false, now: now).used, 96)
+        XCTAssertEqual(future.shown(isStale: false, now: now).percentText, "96%")
+        XCTAssertEqual(future.shown(isStale: true, now: now).percentText, "—", "ActivityKit stale dates also produce a pending reading")
+        XCTAssertEqual(future.shown(isStale: true, now: now).used, 96)
+    }
+
+    func testPinnedWidgetNeverSubstitutesAnAbsentOrExpiredProvider() {
+        func reading(_ id: String, age: TimeInterval) -> ReadingCache.Item {
+            .init(provider: RelayProvider(id: id, name: id, shortName: id, monogram: "X", tint: "#000000", state: "live", checkedAt: now.addingTimeInterval(-age), primaryWindowID: "weekly", windows: [.init(id: "weekly", kind: "weekly", title: "Weekly", used: 40)]), source: "Mac")
+        }
+        let cache = ReadingCache(savedAt: now, isSample: false, items: [reading("cursor", age: 0), reading("claude", age: 7 * 86_400 + 1)])
+        let pinned = ReadingsEntry.make(cache, choice: .claude, date: now)
+        XCTAssertTrue(pinned.items.isEmpty)
+        XCTAssertEqual(pinned.unavailableProvider, .claude)
+        XCTAssertNil(pinned.checkedAt)
+        XCTAssertEqual(ReadingsEntry.make(cache, choice: .automatic, date: now).items.first?.id, "cursor")
+        XCTAssertEqual(ReadingsEntry.make(cache, choice: .cursor, date: now).items.first?.id, "cursor")
+        XCTAssertNil(ReadingsEntry.make(cache, choice: .cursor, date: now).unavailableProvider)
+        XCTAssertEqual(ReadingsEntry.make(nil, choice: .claude, date: now).unavailableProvider, .claude)
+        XCTAssertTrue(ReadingsEntry.make(cache, choice: .openai, date: now).items.isEmpty)
+    }
+
     // MARK: Shared with the widgets
 
     func testWidgetsSeeTheAppsCallsThroughTheSharedGate() {

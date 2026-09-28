@@ -2,12 +2,15 @@ import SwiftUI
 
 struct WatchRootView: View {
     var store: WatchStore
+    var date: Date = .now
     @State private var path: [String] = []
+
+    private var items: [ReadingCache.Item] { store.items(at: date) }
 
     var body: some View {
         NavigationStack(path: $path) {
             Group {
-                if store.items.isEmpty {
+                if items.isEmpty {
                     WatchEmptyView(store: store)
                 } else {
                     List {
@@ -15,22 +18,22 @@ struct WatchRootView: View {
                             Label("Couldn't reach iCloud. Showing saved readings.", systemImage: "icloud.slash")
                                 .font(.footnote)
                         }
-                        ForEach(store.items) { item in
+                        ForEach(items) { item in
                             NavigationLink(value: item.id) {
-                                WatchRow(item: item)
+                                WatchRow(item: item, date: date)
                             }
                         }
                         Button(store.isRefreshing ? "Refreshing…" : "Refresh", systemImage: "arrow.clockwise") {
                             Task { await store.refresh(force: true) }
                         }.disabled(store.isRefreshing)
-                        let stale = store.items.filter { !$0.provider.isLive }.count
+                        let stale = items.filter { !$0.provider.isLive }.count
                         if stale > 0 { Text("\(stale) stale reading\(stale == 1 ? "" : "s")").font(.footnote).foregroundStyle(.secondary) }
                         if store.cache?.isSample == true {
                             Text("Sample data")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
-                        } else if let checked = store.cache?.checkedAt {
-                            Text("Checked \(RelativeTime.ago(checked))")
+                        } else if let checked = items.compactMap({ $0.provider.checkedAt ?? $0.provider.fetchedAt }).min() {
+                            Text("Checked \(RelativeTime.ago(checked, now: date))")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
@@ -39,8 +42,8 @@ struct WatchRootView: View {
             }
             .navigationTitle("Tokenroom")
             .navigationDestination(for: String.self) { id in
-                if let item = store.item(id: id) {
-                    WatchDetailView(item: item)
+                if let item = store.item(id: id, at: date) {
+                    WatchDetailView(item: item, date: date)
                 }
             }
         }
@@ -55,11 +58,11 @@ struct WatchRootView: View {
         }
         // Opened from a complication or the Smart Stack; if the readings aren't in yet, once they are.
         .onChange(of: store.openedProvider, initial: true) { _, _ in openRequestedProvider() }
-        .onChange(of: store.items.map(\.id)) { _, _ in openRequestedProvider() }
+        .onChange(of: items.map(\.id)) { _, _ in openRequestedProvider() }
     }
 
     private func openRequestedProvider() {
-        guard let id = store.openedProvider, store.item(id: id) != nil else { return }
+        guard let id = store.openedProvider, store.item(id: id, at: date) != nil else { return }
         path = [id]
         store.openedProvider = nil
     }
@@ -117,6 +120,7 @@ private struct WatchEmptyView: View {
 
 private struct WatchRow: View {
     var item: ReadingCache.Item
+    var date: Date
 
     var body: some View {
         let provider = item.provider
@@ -124,7 +128,7 @@ private struct WatchRow: View {
         HStack(spacing: 10) {
             if let window, window.isMetered {
                 // The provider's icon in the ring; the row reads its name, so the ring has no label.
-                UsageRing(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(), label: "")
+                UsageRing(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(at: date), label: "")
                     .frame(width: 40, height: 40)
                     .overlay { ProviderMark(provider: provider, size: 22) }
             } else {
@@ -137,21 +141,23 @@ private struct WatchRow: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
                     Spacer(minLength: 2)
-                    Text(ReadingText.headline(window))
+                    Text(ReadingText.headline(window, now: date))
                         .font(.headline.monospacedDigit())
-                        .foregroundStyle(headlineColor(window, isLive: provider.isLive))
+                        .foregroundStyle(headlineColor(window, isLive: provider.isLive, now: date))
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                 }
-                if let warning = UsageRanking.limitWarning(for: provider) {
-                    Text(warning).font(.caption2.weight(.semibold)).foregroundStyle(TokenroomTokens.usageCritical)
+                if let note = ReadingText.attention(provider, now: date),
+                   UsageRanking.limitWarning(for: provider, now: date) != nil || window?.isAwaitingReading(at: date) != true {
+                    Text(note).font(.caption2.weight(.semibold))
+                        .foregroundStyle(UsageRanking.limitWarning(for: provider, now: date) == nil ? Color.secondary : TokenroomTokens.usageCritical)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if !provider.isLive, let checked = provider.checkedAt ?? provider.fetchedAt {
-                    Text("Checked \(RelativeTime.ago(checked))").font(.caption2).foregroundStyle(.secondary)
+                    Text("Checked \(RelativeTime.ago(checked, now: date))").font(.caption2).foregroundStyle(.secondary)
                 }
                 if let window {
-                    Text(ReadingText.reset(window) ?? window.displayTitle)
+                    Text(ReadingText.reset(window, now: date) ?? window.displayTitle)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -165,6 +171,7 @@ private struct WatchRow: View {
 
 struct WatchDetailView: View {
     var item: ReadingCache.Item
+    var date: Date = .now
 
     var body: some View {
         let provider = item.provider
@@ -175,12 +182,12 @@ struct WatchDetailView: View {
                     .foregroundStyle(.secondary)
             }
             ForEach(provider.windows) { window in
-                let pace = window.isMetered ? UsageRanking.pace(for: window, isStale: !provider.isLive, history: item.history[window.id]) : nil
+                let pace = window.isMetered ? UsageRanking.pace(for: window, isStale: !provider.isLive, history: item.history[window.id], now: date) : nil
                 WindowRow(
                     title: window.displayTitle,
-                    headline: ReadingText.headline(window),
+                    headline: ReadingText.headline(window, now: date),
                     usedPercent: window.isMetered ? window.used : nil,
-                    isStale: !provider.isLive || window.isAwaitingReading(),
+                    isStale: !provider.isLive || window.isAwaitingReading(at: date),
                     paceMark: pace?.elapsedFraction,
                     caption: detail(window, pace: pace),
                     titleFont: .caption,
@@ -189,7 +196,7 @@ struct WatchDetailView: View {
                 .padding(.vertical, 2)
             }
             if let banked = provider.banked, banked.available > 0 {
-                Text(ReadingText.banked(banked))
+                Text(ReadingText.banked(banked, now: date))
                     .font(.footnote)
             }
             if let extra = provider.extra, let text = ReadingText.extra(extra) {
@@ -197,7 +204,7 @@ struct WatchDetailView: View {
                     .font(.footnote)
             }
             if let checked = provider.checkedAt ?? provider.fetchedAt {
-                Text("Last successful check \(RelativeTime.ago(checked))").font(.footnote).foregroundStyle(.secondary)
+                Text("Last successful check \(RelativeTime.ago(checked, now: date))").font(.footnote).foregroundStyle(.secondary)
             }
             Text("From \(item.source)")
                 .font(.footnote)
@@ -209,7 +216,7 @@ struct WatchDetailView: View {
     /// "resets in 2h 10m · Ahead of pace".
     private func detail(_ window: RelayWindow, pace: Pace?) -> String? {
         var parts: [String] = []
-        if let reset = ReadingText.reset(window) {
+        if let reset = ReadingText.reset(window, now: date) {
             parts.append(reset)
         }
         if let pace, pace.needsAttention {
@@ -219,7 +226,7 @@ struct WatchDetailView: View {
     }
 }
 
-private func headlineColor(_ window: RelayWindow?, isLive: Bool) -> Color {
+private func headlineColor(_ window: RelayWindow?, isLive: Bool, now: Date = .now) -> Color {
     guard let window, window.isMetered else { return .primary }
-    return TokenroomTokens.ink(remaining: 100 - window.used, isStale: !isLive)
+    return TokenroomTokens.ink(remaining: 100 - window.used, isStale: !isLive || window.isAwaitingReading(at: now))
 }

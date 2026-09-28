@@ -98,10 +98,10 @@ struct PopoverView: View {
                 let isExpanded = expanded.contains(provider)
                 ProviderCard(
                     provider: provider,
-                    status: store.statuses[provider] ?? .loading,
+                    status: store.presentationStatus(for: provider),
                     checkedAt: store.lastChecked(provider),
-                    pace: store.pace(for: provider),
-                    windowPaces: isExpanded ? store.windowPaces(for: provider) : [:],
+                    pace: store.pace(for: provider, now: store.presentationNow),
+                    windowPaces: isExpanded ? store.windowPaces(for: provider, now: store.presentationNow) : [:],
                     weeks: store.weeks(for: provider),
                     isExpanded: isExpanded,
                     isCompact: isCompact,
@@ -109,7 +109,8 @@ struct PopoverView: View {
                     signInPhase: store.signIn.phase,
                     onSignIn: { store.signIn.signIn(provider) },
                     onCancelSignIn: { store.signIn.cancel() },
-                    onInstall: { store.signIn.openInstallPage(provider) }
+                    onInstall: { store.signIn.openInstallPage(provider) },
+                    date: store.presentationNow
                 )
             }
         }
@@ -232,7 +233,7 @@ struct PopoverView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text("Tokenroom")
                     .font(.system(size: 15, weight: .semibold))
-                Text(store.isRefreshing ? "Updating…" : "Updated \(RelativeTime.ago(store.lastAttempt))")
+                Text(store.isRefreshing ? "Updating…" : "Updated \(RelativeTime.ago(store.lastAttempt, now: store.presentationNow))")
                     .font(.system(size: TokenroomTokens.captionSize))
                     .foregroundStyle(.secondary)
             }

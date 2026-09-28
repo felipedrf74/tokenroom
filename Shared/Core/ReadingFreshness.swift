@@ -33,26 +33,38 @@ extension ReadingCache {
             item.provider = provider
             return item
         }
-        result.items = UsageRanking.sorted(result.items, provider: \.provider, now: date) { ReadingAssembler.pace(for: $0, now: date) }
+        result.items = UsageRanking.sorted(result.items, provider: \.provider, now: date, windowPace: { item, window in
+            UsageRanking.pace(for: window, isStale: !item.provider.isLive, history: item.history[window.id], now: date)
+        })
         return result
     }
 
-    /// Membership comes from the incoming cache; each retained provider keeps its newest value.
+    /// Membership comes from the newest envelope; older envelopes may advance retained readings,
+    /// but cannot reintroduce removed providers or remove newly added ones.
     func mergingUpdate(_ incoming: ReadingCache) -> ReadingCache {
         guard !isSample, !incoming.isSample else { return incoming }
-        guard incoming.savedAt >= savedAt else { return self }
-        let previous = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        var result = incoming
-        result.items = incoming.items.map { item in
-            guard let old = previous[item.id], let oldTime = old.provider.checkedAt ?? old.provider.fetchedAt else { return item }
-            let newTime = item.provider.checkedAt ?? item.provider.fetchedAt ?? .distantPast
-            return oldTime > newTime ? old : item
+        let newer = incoming.savedAt >= savedAt ? incoming : self
+        let older = incoming.savedAt >= savedAt ? self : incoming
+        let other = Dictionary(older.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var result = newer
+        result.items = newer.items.map { item in
+            guard let candidate = other[item.id] else { return item }
+            let currentTime = item.provider.checkedAt ?? item.provider.fetchedAt ?? newer.savedAt
+            let candidateTime = candidate.provider.checkedAt ?? candidate.provider.fetchedAt ?? older.savedAt
+            return candidateTime > currentTime ? candidate : item
         }
         return result
     }
 
     func staleCount(at date: Date) -> Int {
         presented(at: date).items.filter { !$0.provider.isLive }.count
+    }
+
+    /// Predictable Watch reset boundaries used to request a Smart Stack refresh when the app
+    /// gets a background turn. WidgetKit may still defer the actual redraw.
+    func resetDates(after start: Date, through end: Date) -> [Date] {
+        Set(items.flatMap { $0.provider.windows.compactMap(\.resetsAt) }
+            .filter { $0 > start && $0 <= end }).sorted()
     }
 
     /// Timeline entries age readings even if WidgetKit postpones the next network reload.
@@ -65,6 +77,42 @@ extension ReadingCache {
             ]
         }
         return Set(dates.filter { $0 > now && $0 < horizon }).sorted()
+    }
+}
+
+/// A durable local gate shared by the Watch app and complications. The gate stays closed if
+/// clearing or replacing the disk cache fails, and opens only after a validated read is saved.
+enum WatchCacheAccess {
+    static let cutoffKey = "watchSignedOutAt"
+    static let validationKey = "watchAccountNeedsValidation"
+
+    static func invalidate(in defaults: UserDefaults, at date: Date) {
+        defaults.set(true, forKey: validationKey)
+        defaults.set(date, forKey: cutoffKey)
+    }
+
+    static func load(at url: URL?, defaults: UserDefaults) -> ReadingCache? {
+        guard !defaults.bool(forKey: validationKey), let cache = url.flatMap(ReadingCache.load) else { return nil }
+        guard (defaults.object(forKey: cutoffKey) as? Date).map({ cache.savedAt > $0 }) != false else { return nil }
+        return cache
+    }
+
+    static func saveValidated(_ cache: ReadingCache, at url: URL?, defaults: UserDefaults, cutoff: Date?) throws {
+        // Account changes during a read invalidate that result, even if the new account is available.
+        guard (defaults.object(forKey: cutoffKey) as? Date) == cutoff,
+              cutoff.map({ cache.savedAt > $0 }) != false, let url else { return }
+        try cache.save(to: url)
+        guard (defaults.object(forKey: cutoffKey) as? Date) == cutoff else { return }
+        defaults.set(false, forKey: validationKey)
+    }
+}
+
+/// Reconcile a complication's validated write with an app process that stayed alive. A failed
+/// iCloud read must not leave its memory empty while a usable, gated reading exists on disk.
+enum WatchCacheRecovery {
+    static func recover(_ memory: ReadingCache?, at url: URL?, defaults: UserDefaults) -> ReadingCache? {
+        guard let saved = WatchCacheAccess.load(at: url, defaults: defaults) else { return memory }
+        return memory?.mergingUpdate(saved) ?? saved
     }
 }
 

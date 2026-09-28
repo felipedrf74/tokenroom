@@ -118,6 +118,7 @@ enum NewsFetcher {
         var vendors: Set<String>
         var maxAge: TimeInterval?
         var now: Date
+        var forcedSources: Set<String> = []
     }
 
     /// What a GET got back.
@@ -134,7 +135,7 @@ enum NewsFetcher {
 
     /// Fetches what's due: models every 6 hours, announcements every 12, or anything older than
     /// `maxAge` when given (opening the tab, pulling to refresh).
-    static func refresh(_ cache: NewsCache, sources: [FeedSource], following vendors: Set<String>, maxAge: TimeInterval? = nil, now: Date = .now) async -> Result {
+    static func refresh(_ cache: NewsCache, sources: [FeedSource], following vendors: Set<String>, maxAge: TimeInterval? = nil, now: Date = .now, forcedSources: Set<String> = []) async -> Result {
         var cache = cache
         // Freeze legacy sources' dates before another source advances the shared timestamp.
         var migrated = cache.sourceChecks ?? [:]
@@ -186,7 +187,7 @@ enum NewsFetcher {
 
         let due = sources.filter { source in
             let check = cache.check(for: source)
-            return isDue(check.succeededAt, failedAt: check.failedAt, interval: maxAge ?? announcementInterval, now: now)
+            return forcedSources.contains(source.id) || isDue(check.succeededAt, failedAt: check.failedAt, interval: maxAge ?? announcementInterval, now: now)
         }
         if !due.isEmpty {
             let previous = cache.validators

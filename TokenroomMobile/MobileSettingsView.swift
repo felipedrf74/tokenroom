@@ -221,7 +221,7 @@ struct KeyEditorView: View {
                         .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || working || (spec?.isAdmin == true && !acknowledgedAdmin))
                     if offerSaveAnyway {
                         Button("Save Anyway") { Task { await save() } }
-                            .disabled(working)
+                            .disabled(working || (spec?.isAdmin == true && !acknowledgedAdmin))
                     }
                 }
             }

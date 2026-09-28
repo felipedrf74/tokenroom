@@ -19,6 +19,7 @@ struct ProviderCard: View {
     var onSignIn: () -> Void = {}
     var onCancelSignIn: () -> Void = {}
     var onInstall: () -> Void = {}
+    var date: Date = .now
 
     var body: some View {
         if isCompact, !isExpanded, let snapshot = compactSnapshot {
@@ -29,7 +30,11 @@ struct ProviderCard: View {
     }
 
     private var limitWarning: String? {
-        UsageRanking.limitWarning(for: RelayProvider(provider: provider, status: status, checkedAt: checkedAt))
+        UsageRanking.limitWarning(for: RelayProvider(provider: provider, status: status, checkedAt: checkedAt), now: date)
+    }
+
+    private var attention: String? {
+        ReadingText.attention(RelayProvider(provider: provider, status: status, checkedAt: checkedAt), now: date)
     }
 
     private var fullCard: some View {
@@ -92,9 +97,11 @@ struct ProviderCard: View {
 
     private func compactRow(_ snapshot: QuotaSnapshot) -> some View {
         let stale = status.isStale
+        let awaiting = snapshot.windows.first.map { RelayWindow($0).isAwaitingReading(at: date) } ?? false
+        let meterStale = stale || awaiting
         let metered = snapshot.windows.first?.isMetered ?? true
         let value = headlineValue(snapshot) ?? "—"
-        let note = Self.compactNote(status, provider: provider, checkedAt: checkedAt)
+        let note = Self.compactNote(status, provider: provider, checkedAt: checkedAt, now: date)
         return Button {
             onToggleExpanded?()
         } label: {
@@ -102,7 +109,11 @@ struct ProviderCard: View {
                 ProviderIcon(provider: provider, size: 18)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(provider.displayName).font(.system(size: 12, weight: .semibold))
-                    if let warning = limitWarning { Text(warning).font(.system(size: 9, weight: .semibold)).foregroundStyle(TokenroomTokens.usageCritical) }
+                    if let attention {
+                        Text(attention).font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(limitWarning == nil ? Color.secondary : TokenroomTokens.usageCritical)
+                            .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                     .foregroundStyle(stale ? Color.secondary : Color.primary)
                     .lineLimit(1)
@@ -111,14 +122,14 @@ struct ProviderCard: View {
                     MeterTrack(
                         usedPercent: snapshot.usedPercent,
                         remaining: snapshot.remainingPercent,
-                        isStale: stale,
-                        paceMark: pace?.elapsedFraction,
+                        isStale: meterStale,
+                        paceMark: awaiting ? nil : pace?.elapsedFraction,
                         height: 6
                     )
                 } else {
                     Spacer(minLength: 0)
                 }
-                if !stale, let pace, pace.verdict == .ahead || pace.verdict == .limitReached {
+                if !meterStale, let pace, pace.verdict == .ahead || pace.verdict == .limitReached {
                     Image(systemName: "arrow.up.right")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(paceColor(pace))
@@ -132,7 +143,7 @@ struct ProviderCard: View {
                 }
                 Text(value)
                     .font(.system(size: 13, weight: .medium).monospacedDigit())
-                    .foregroundStyle(TokenroomTokens.ink(remaining: metered ? snapshot.remainingPercent : 100, isStale: stale))
+                    .foregroundStyle(TokenroomTokens.ink(remaining: metered ? snapshot.remainingPercent : 100, isStale: meterStale))
                     .lineLimit(1)
                     .frame(minWidth: 44, alignment: .trailing)
             }
@@ -146,7 +157,7 @@ struct ProviderCard: View {
                 .fill(Color.primary.opacity(0.045))
         )
         .help("Show details")
-        .accessibilityLabel("\(provider.displayName), \(value)\(note.map { ", \($0.text)" } ?? "")\(pace.map { ", \($0.caption())" } ?? "")")
+        .accessibilityLabel("\(provider.displayName), \(value)\(attention.map { ", \($0)" } ?? "")\(note.map { ", \($0.text)" } ?? "")\((meterStale ? nil : pace).map { ", \($0.caption())" } ?? "")")
         .accessibilityHint("Shows every window and the last 7 days")
     }
 
@@ -223,33 +234,34 @@ struct ProviderCard: View {
 
     @ViewBuilder
     private func snapshotBlock(_ snapshot: QuotaSnapshot, stale: Bool) -> some View {
+        let awaiting = snapshot.windows.first.map { RelayWindow($0).isAwaitingReading(at: date) } ?? false
         if let primary = snapshot.windows.first, !primary.isMetered {
             // A balance with no limit: the amount is the headline, no meter.
             toggleable {
-                header(value: headlineValue(snapshot), remaining: 100, stale: stale)
+                header(value: headlineValue(snapshot), remaining: 100, stale: stale || awaiting)
             }
-            caption(primary.displayTitle)
-            if !stale, let forecast = Forecast.text(for: primary, history: weeks[primary.id], checkedAt: checkedAt ?? snapshot.fetchedAt) {
+            caption(awaiting ? "Reset · awaiting reading" : primary.displayTitle)
+            if !stale, let forecast = Forecast.text(for: primary, history: weeks[primary.id], checkedAt: checkedAt ?? snapshot.fetchedAt, now: date) {
                 caption(forecast)
             }
         } else {
             toggleable {
                 VStack(alignment: .leading, spacing: TokenroomTokens.rhythm) {
-                    header(percent: snapshot.usedPercent, remaining: snapshot.remainingPercent, stale: stale)
+                    header(value: headlineValue(snapshot), remaining: snapshot.remainingPercent, stale: stale || awaiting)
                     MeterTrack(
                         usedPercent: snapshot.usedPercent,
                         remaining: snapshot.remainingPercent,
-                        isStale: stale,
-                        paceMark: pace?.elapsedFraction
+                        isStale: stale || awaiting,
+                        paceMark: awaiting ? nil : pace?.elapsedFraction
                     )
                 }
             }
             caption(primaryCaption(snapshot))
-            if !stale, let primary = snapshot.windows.first, let forecast = Forecast.text(for: primary, history: weeks[primary.id], checkedAt: checkedAt ?? snapshot.fetchedAt) {
+            if !stale, let primary = snapshot.windows.first, let forecast = Forecast.text(for: primary, history: weeks[primary.id], checkedAt: checkedAt ?? snapshot.fetchedAt, now: date) {
                 caption(forecast)
             }
         }
-        if !stale, let pace {
+        if !stale, !awaiting, let pace {
             Text(pace.caption())
                 .font(.system(size: TokenroomTokens.captionSize, weight: pace.needsAttention ? .medium : .regular))
                 .foregroundStyle(paceColor(pace))
@@ -267,7 +279,7 @@ struct ProviderCard: View {
                 caption(others.prefix(3).map { windowSummary($0) }.joined(separator: " · "))
             }
             if let banked = snapshot.banked, banked.available > 0 {
-                caption(Self.bankedText(banked))
+                caption(Self.bankedText(banked, now: date))
             }
             if let extra = snapshot.extra, let text = Self.extraText(extra) {
                 caption(text)
@@ -280,7 +292,7 @@ struct ProviderCard: View {
             caption(plan)
         }
         if stale {
-            caption(Self.lastGoodText(checkedAt ?? snapshot.fetchedAt))
+            caption(Self.lastGoodText(checkedAt ?? snapshot.fetchedAt, now: date))
         }
     }
 
@@ -297,7 +309,7 @@ struct ProviderCard: View {
     @ViewBuilder
     private func expandedDetails(_ snapshot: QuotaSnapshot, stale: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let primary = snapshot.windows.first, let resetsAt = primary.resetsAt, resetsAt > .now {
+            if let primary = snapshot.windows.first, let resetsAt = primary.resetsAt, resetsAt > date {
                 caption("Resets \(resetsAt.formatted(date: .abbreviated, time: .shortened))")
             }
             if let primary = snapshot.windows.first, primary.isMetered, let week = weeks[primary.id], !week.isEmpty {
@@ -318,8 +330,8 @@ struct ProviderCard: View {
                     title: window.displayTitle,
                     headline: windowHeadline(window),
                     usedPercent: window.isMetered ? window.usedPercent : nil,
-                    isStale: stale,
-                    paceMark: windowPaces[window.id]?.elapsedFraction,
+                    isStale: stale || RelayWindow(window).isAwaitingReading(at: date),
+                    paceMark: RelayWindow(window).isAwaitingReading(at: date) ? nil : windowPaces[window.id]?.elapsedFraction,
                     caption: windowDetail(window, stale: stale),
                     titleFont: .system(size: 11),
                     captionFont: .system(size: 10)
@@ -332,7 +344,7 @@ struct ProviderCard: View {
                     Text("Use one in \(provider.toolName) to reset a limit early.")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
-                    ForEach(banked.expiries.filter { $0 > .now }.sorted(), id: \.self) { expiry in
+                    ForEach(banked.expiries.filter { $0 > date }.sorted(), id: \.self) { expiry in
                         Text("Expires \(expiry.formatted(date: .abbreviated, time: .shortened))")
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
@@ -346,7 +358,7 @@ struct ProviderCard: View {
                 caption("Plan: \(plan)")
             }
             if let checked = checkedAt {
-                caption("Checked \(RelativeTime.ago(checked))")
+                caption("Checked \(RelativeTime.ago(checked, now: date))")
             }
             if Self.readsUnofficially(provider, snapshot: snapshot) {
                 caption("Unofficial: read from the same endpoint \(provider.toolName) uses. It can change without notice.")
@@ -393,10 +405,7 @@ struct ProviderCard: View {
 
     private func headlineValue(_ snapshot: QuotaSnapshot) -> String? {
         guard let primary = snapshot.windows.first else { return nil }
-        if !primary.isMetered {
-            return primary.amount.flatMap { Self.amountHeadline($0) }
-        }
-        return "\(QuotaStore.percentText(snapshot.usedPercent))%"
+        return ReadingText.headline(RelayWindow(primary), now: date)
     }
 
     private func header(value: String?, remaining: Double, stale: Bool) -> some View {
@@ -447,12 +456,12 @@ struct ProviderCard: View {
     }
 
     private func primaryCaption(_ snapshot: QuotaSnapshot) -> String {
-        if snapshot.resetsAt.map({ $0 <= .now }) == true { return "Reset · awaiting reading" }
+        if snapshot.resetsAt.map({ $0 <= date }) == true { return "Reset · awaiting reading" }
         let reset: String?
         if snapshot.primaryTitle == "This cycle" {
             reset = RelativeTime.cycleDay(snapshot.resetsAt)
         } else {
-            reset = RelativeTime.resets(snapshot.resetsAt)
+            reset = RelativeTime.resets(snapshot.resetsAt, now: date)
         }
         if let reset {
             return "\(snapshot.primaryTitle) · \(reset)"
@@ -466,21 +475,18 @@ struct ProviderCard: View {
 
     /// "Session 18%", or the amount for a window without a meter.
     private func windowSummary(_ window: QuotaWindow) -> String {
-        "\(window.displayTitle) \(windowHeadline(window))"
+        "\(window.displayTitle) \(RelayWindow(window).isAwaitingReading(at: date) ? "Reset · awaiting reading" : windowHeadline(window))"
     }
 
     private func windowHeadline(_ window: QuotaWindow) -> String {
-        if !window.isMetered, let amount = window.amount, let text = Self.amountHeadline(amount) {
-            return text
-        }
-        return "\(QuotaStore.percentText(window.usedPercent))%"
+        ReadingText.headline(RelayWindow(window), now: date)
     }
 
     /// "resets in 2h 10m · Ahead of pace".
     private func windowDetail(_ window: QuotaWindow, stale: Bool) -> String? {
-        if RelayWindow(window).isAwaitingReading() { return "Reset · awaiting reading" }
+        if RelayWindow(window).isAwaitingReading(at: date) { return "Reset · awaiting reading" }
         var parts: [String] = []
-        if let reset = RelativeTime.resets(window.resetsAt) {
+        if let reset = RelativeTime.resets(window.resetsAt, now: date) {
             parts.append(reset)
         }
         if !stale, let pace = windowPaces[window.id] {

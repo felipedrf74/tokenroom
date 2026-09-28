@@ -29,7 +29,8 @@ final class NewsStore {
     private(set) var cache: NewsCache
     private(set) var isRefreshing = false
     private var visitIsOpen = false
-    private var queuedRefresh: (maxAge: TimeInterval?, preferences: AlertPreferences, notifies: Bool, now: Date)?
+    private typealias RefreshRequest = (maxAge: TimeInterval?, preferences: AlertPreferences, notifies: Bool, now: Date, forcedSources: Set<String>)
+    private var queuedRefresh: RefreshRequest?
     private var lastPreferences = AlertPreferences()
 
     /// Labs whose new models are announced, e.g. `anthropic`.
@@ -45,8 +46,10 @@ final class NewsStore {
         didSet {
             defaults.set(followedSources.sorted(), forKey: Keys.sources)
             defaults.set(FeedSource.catalog.map(\.id).sorted(), forKey: Keys.knownSources)
-            if !followedSources.subtracting(oldValue).isEmpty {
-                Task { await refresh(preferences: lastPreferences, notifies: false) }
+            let added = followedSources.subtracting(oldValue)
+            let uncached = Set(sources.filter { added.contains($0.partOf ?? $0.id) && cache.items[$0.id] == nil }.map(\.id))
+            if !uncached.isEmpty {
+                Task { await refresh(preferences: lastPreferences, notifies: false, forcedSources: uncached) }
             }
         }
     }
@@ -62,18 +65,23 @@ final class NewsStore {
     private let defaults: UserDefaults
     private let directory: URL?
     @ObservationIgnored private let fetch: @Sendable (NewsFetcher.Request) async -> NewsFetcher.Result
+    @ObservationIgnored private let notify: @MainActor ([ModelRelease], AlertPreferences, Date) -> Void
 
     init(
         defaults: UserDefaults = AppGroup.defaults,
         directory: URL? = AppGroup.containerURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
         now: Date = .now,
         fetch: @escaping @Sendable (NewsFetcher.Request) async -> NewsFetcher.Result = {
-            await NewsFetcher.refresh($0.cache, sources: $0.sources, following: $0.vendors, maxAge: $0.maxAge, now: $0.now)
+            await NewsFetcher.refresh($0.cache, sources: $0.sources, following: $0.vendors, maxAge: $0.maxAge, now: $0.now, forcedSources: $0.forcedSources)
+        },
+        notify: @escaping @MainActor ([ModelRelease], AlertPreferences, Date) -> Void = {
+            NewsStore.notify($0, preferences: $1, now: $2)
         }
     ) {
         self.defaults = defaults
         self.directory = directory
         self.fetch = fetch
+        self.notify = notify
         cache = NewsCache.load(from: directory)
         // A saved choice, plus labs added to the defaults since it was saved, as with feeds below.
         let knownVendors = (defaults.array(forKey: Keys.knownVendors) as? [String]).map(Set.init) ?? Self.firstDefaultVendors
@@ -173,33 +181,42 @@ final class NewsStore {
 
     /// Fetches what's due, or anything older than `maxAge`. New models from followed labs get one
     /// notification when `notifies` and the preferences allow it.
-    func refresh(maxAge: TimeInterval? = nil, preferences: AlertPreferences, notifies: Bool = true, now: Date = .now) async {
+    func refresh(maxAge: TimeInterval? = nil, preferences: AlertPreferences, notifies: Bool = true, now: Date = .now, forcedSources: Set<String> = []) async {
         lastPreferences = preferences
         if isRefreshing {
             // Several manual requests during one pass coalesce into a single follow-up pass.
-            if maxAge == 0 || sources.contains(where: { cache.items[$0.id] == nil && cache.sourceChecks?[$0.id] == nil }) {
-                queuedRefresh = (queuedRefresh?.maxAge == 0 ? 0 : maxAge, preferences, notifies, now)
+            if maxAge == 0 || !forcedSources.isEmpty || sources.contains(where: { cache.items[$0.id] == nil && cache.sourceChecks?[$0.id] == nil }) {
+                queuedRefresh = (queuedRefresh?.maxAge == 0 ? 0 : maxAge, preferences, (queuedRefresh?.notifies ?? false) || notifies, now,
+                                 (queuedRefresh?.forcedSources ?? []).union(forcedSources))
             }
             return
         }
         isRefreshing = true
+        // A view can disappear while its request is awaiting a feed. Keep the owning pass and
+        // its queued manual/follow-up requests alive independently of that view's cancellation.
+        let request: RefreshRequest = (maxAge, preferences, notifies, now, forcedSources)
+        let work = Task { await performRefresh(request) }
+        await work.value
+    }
+
+    private func performRefresh(_ initial: RefreshRequest) async {
         defer { isRefreshing = false }
         if cache.modelsFetchedAt == nil, cache.announcementsFetchedAt == nil, !visitIsOpen {
-            seenAt = max(seenAt, now)
+            seenAt = max(seenAt, initial.now)
             visitBaseline = seenAt
         }
-        var request = (age: maxAge, preferences: preferences, notifies: notifies, now: now)
-        repeat {
-            let result = await fetch(.init(cache: cache, sources: sources, vendors: followedVendors, maxAge: request.age, now: request.now))
+        var request = initial
+        while true {
+            let result = await fetch(.init(cache: cache, sources: sources, vendors: followedVendors, maxAge: request.maxAge, now: request.now, forcedSources: request.forcedSources))
             cache = result.cache
             cache.save(to: directory)
             if request.notifies, request.preferences.newModels, !result.newModels.isEmpty {
-                Self.notify(result.newModels, preferences: request.preferences, now: request.now)
+                notify(result.newModels, request.preferences, request.now)
             }
             guard let next = queuedRefresh else { break }
             queuedRefresh = nil
-            request = (next.maxAge, next.preferences, next.notifies, next.now)
-        } while !Task.isCancelled
+            request = next
+        }
     }
 
     func freshness(for section: NewsFilter, now: Date = .now) -> String {

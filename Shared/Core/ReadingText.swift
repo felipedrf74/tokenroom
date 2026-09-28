@@ -59,6 +59,15 @@ enum ReadingText {
         return "\(TokenroomFormat.percentText(window.used))%"
     }
 
+    /// Compact summaries retain the primary headline while explaining urgent secondary
+    /// limits and any elapsed window awaiting its replacement reading.
+    static func attention(_ provider: RelayProvider, now: Date = .now) -> String? {
+        if let warning = UsageRanking.limitWarning(for: provider, now: now) { return warning }
+        guard let window = provider.windows.first(where: { $0.isAwaitingReading(at: now) }) else { return nil }
+        let pending = "Reset · awaiting reading"
+        return window.id == provider.primaryWindow?.id ? pending : "\(window.displayTitle): \(pending)"
+    }
+
     /// "resets in 2d 5h"; billing cycles say the day: "resets Oct 9".
     static func reset(_ window: RelayWindow, now: Date = .now) -> String? {
         if window.isAwaitingReading(at: now) { return "Reset · awaiting reading" }

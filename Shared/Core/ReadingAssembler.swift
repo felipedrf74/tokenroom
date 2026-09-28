@@ -21,7 +21,9 @@ enum ReadingAssembler {
             )
         }
         return Output(
-            connected: UsageRanking.sorted(items.filter { !$0.provider.isDisconnected }, provider: \.provider, now: now) { pace(for: $0, now: now) },
+            connected: UsageRanking.sorted(items.filter { !$0.provider.isDisconnected }, provider: \.provider, now: now, windowPace: { item, window in
+                UsageRanking.pace(for: window, isStale: !item.provider.isLive, history: item.history[window.id], now: now)
+            }),
             disconnected: items.filter(\.provider.isDisconnected).sorted { $0.provider.name.localizedStandardCompare($1.provider.name) == .orderedAscending }
         )
     }

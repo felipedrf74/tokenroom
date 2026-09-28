@@ -1,3 +1,4 @@
+import CloudKit
 import XCTest
 @testable import Tokenroom
 
@@ -43,6 +44,23 @@ final class SettingsCorrectnessTests: XCTestCase {
         }
         settings.setBudget(nil, for: .deepseek)
         XCTAssertNil(settings.budget(for: .deepseek))
+    }
+
+    func testBudgetAcceptsNativeDecimalDigitsWithoutAcceptingOtherNumerals() {
+        let locale = Locale(identifier: "ar_EG@numbers=arab")
+        XCTAssertEqual(BudgetInput.parse("١٬٢٣٤٫٥٦", locale: locale), .amount(1234.56))
+        XCTAssertEqual(BudgetInput.parse("٠", locale: locale), .invalid)
+        XCTAssertEqual(BudgetInput.parse("½", locale: locale), .invalid)
+        XCTAssertEqual(BudgetInput.parse("²", locale: locale), .invalid)
+    }
+
+    func testPreferenceConflictRecognizesCloudKitPartialFailures() {
+        let conflict = CKError(.serverRecordChanged)
+        let wrapped = CKError(.partialFailure, userInfo: [CKPartialErrorsByItemIDKey: [CKRecord.ID(recordName: "prefs"): conflict]])
+        XCTAssertTrue(CloudRelay.isPreferenceConflict(conflict))
+        XCTAssertTrue(CloudRelay.isPreferenceConflict(wrapped))
+        XCTAssertFalse(CloudRelay.isPreferenceConflict(CKError(.networkUnavailable)))
+        XCTAssertFalse(CloudRelay.isPreferenceConflict(CKError(.partialFailure, userInfo: [CKPartialErrorsByItemIDKey: [CKRecord.ID(recordName: "prefs"): CKError(.permissionFailure)]])))
     }
 
     func testConcurrentPreferenceWriteReReadsAndPreservesBothChanges() async throws {

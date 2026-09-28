@@ -5,17 +5,18 @@ import SwiftUI
 /// it resets, or when it runs out if that comes first.
 struct UsageTileView: View {
     var reading: MobileStore.Reading
+    var date: Date = .now
 
     private var provider: RelayProvider { reading.provider }
     private var isStale: Bool { !provider.isLive }
 
     private func pace(_ window: RelayWindow) -> Pace? {
-        UsageRanking.pace(for: window, isStale: isStale, history: reading.history[window.id])
+        UsageRanking.pace(for: window, isStale: isStale, history: reading.history[window.id], now: date)
     }
 
     var body: some View {
         let tile = UsageTiles.tile(for: provider)
-        let isClose = !isStale && [tile.ring, tile.bar].compactMap { $0 }.contains { !$0.isAwaitingReading() && UsageTiles.isClose($0, pace: pace($0)) }
+        let isClose = !isStale && [tile.ring, tile.bar].compactMap { $0 }.contains { !$0.isAwaitingReading(at: date) && UsageTiles.isClose($0, pace: pace($0)) }
         VStack(alignment: .leading, spacing: 10) {
             header(isClose: isClose)
             if let ring = tile.ring {
@@ -31,12 +32,12 @@ struct UsageTileView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
-            if let warning = UsageRanking.limitWarning(for: provider) {
+            if let warning = UsageRanking.limitWarning(for: provider, now: date) {
                 Text(warning).font(.caption.weight(.semibold)).foregroundStyle(TokenroomTokens.usageCritical)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if isStale {
-                Text(provider.message ?? "Last reading \(RelativeTime.ago(provider.fetchedAt)).")
+                Text(provider.message ?? "Last reading \(RelativeTime.ago(provider.fetchedAt, now: date)).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -76,14 +77,14 @@ struct UsageTileView: View {
 
     private func ringRow(_ ring: RelayWindow) -> some View {
         HStack(spacing: 10) {
-            UsageRing(used: ring.used, isStale: isStale || ring.isAwaitingReading(), label: ReadingText.headline(ring), lineWidth: 6, paceMark: pace(ring)?.elapsedFraction)
+            UsageRing(used: ring.used, isStale: isStale || ring.isAwaitingReading(at: date), label: ReadingText.headline(ring, now: date), lineWidth: 6, paceMark: pace(ring)?.elapsedFraction)
                 .frame(width: 58, height: 58)
             VStack(alignment: .leading, spacing: 2) {
                 Text(ring.displayTitle)
                     .font(.footnote.weight(.semibold))
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                WindowStatus(window: ring, pace: pace(ring), isStale: isStale)
+                WindowStatus(window: ring, pace: pace(ring), isStale: isStale, date: date)
             }
         }
     }
@@ -95,24 +96,27 @@ struct UsageTileView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 4)
-                Text(ReadingText.headline(bar))
+                Text(ReadingText.headline(bar, now: date))
                     .font(.system(.body, design: .rounded, weight: .semibold))
                     .monospacedDigit()
                     .foregroundStyle(TokenroomTokens.ink(remaining: 100 - bar.used, isStale: isStale))
             }
-            MeterTrack(usedPercent: bar.used, remaining: 100 - bar.used, isStale: isStale || bar.isAwaitingReading(), paceMark: pace(bar)?.elapsedFraction, height: 6, solid: true)
-            WindowStatus(window: bar, pace: pace(bar), isStale: isStale)
+            MeterTrack(usedPercent: bar.used, remaining: 100 - bar.used, isStale: isStale || bar.isAwaitingReading(at: date), paceMark: pace(bar)?.elapsedFraction, height: 6, solid: true)
+            WindowStatus(window: bar, pace: pace(bar), isStale: isStale, date: date)
         }
     }
 
     private func balanceBlock(_ balance: RelayWindow) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(ReadingText.headline(balance))
+            Text(ReadingText.headline(balance, now: date))
                 .font(.system(.title3, design: .rounded, weight: .semibold))
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-            if !isStale, let forecast = Forecast.text(for: balance, history: reading.history[balance.id], checkedAt: provider.checkedAt ?? provider.fetchedAt) {
+            if balance.isAwaitingReading(at: date) {
+                Text("Reset · awaiting reading").font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if !isStale, let forecast = Forecast.text(for: balance, history: reading.history[balance.id], checkedAt: provider.checkedAt ?? provider.fetchedAt, now: date) {
                 Text(forecast)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -136,6 +140,7 @@ struct WindowStatus: View {
     var window: RelayWindow
     var pace: Pace?
     var isStale: Bool
+    var date: Date = .now
 
     var body: some View {
         if !isStale, let pace, pace.verdict == .limitReached {
@@ -145,12 +150,12 @@ struct WindowStatus: View {
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
         } else if !isStale, let pace, pace.verdict == .ahead, let runsOut = pace.runsOutAt {
-            Text("Runs out \(Pace.shortMoment(runsOut, now: .now, timeZone: .current))")
+            Text("Runs out \(Pace.shortMoment(runsOut, now: date, timeZone: .current))")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(PaceStyle.color(pace.severity))
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
-        } else if let reset = ReadingText.reset(window) {
+        } else if let reset = ReadingText.reset(window, now: date) {
             Text(reset)
                 .font(.caption)
                 .monospacedDigit()

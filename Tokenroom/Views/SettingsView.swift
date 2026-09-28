@@ -590,7 +590,7 @@ private struct AddKeySheet: View {
                     .keyboardShortcut(.cancelAction)
                 if offerSaveAnyway {
                     Button("Save Anyway") { Task { await save() } }
-                        .disabled(working)
+                        .disabled(working || (provider.key?.isAdmin == true && !acknowledgedAdmin))
                 }
                 Button(working ? (saving ? "Saving…" : "Testing…") : (warning == nil ? "Test & Save" : "Save With This Key")) {
                     if warning == nil {

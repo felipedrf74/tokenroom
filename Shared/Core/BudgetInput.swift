@@ -30,7 +30,13 @@ enum BudgetInput {
                   (1...secondary).contains(groups[0].count) else { return .invalid }
             integer = groups.joined()
         }
-        let normalized = integer + (parts.count == 2 ? "." + parts[1] : "")
+        // Decimal keyboards can emit the locale's native digits. Normalize only decimal
+        // numerals; other numeric characters (fractions, superscripts) remain invalid.
+        let normalized = String((integer + (parts.count == 2 ? "." + parts[1] : "")).map { character -> Character in
+            guard character.unicodeScalars.allSatisfy({ CharacterSet.decimalDigits.contains($0) }),
+                  let digit = character.wholeNumberValue, (0...9).contains(digit) else { return character }
+            return Character(String(digit))
+        })
         guard normalized.range(of: #"^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$"#, options: .regularExpression) != nil,
               let amount = Double(normalized), amount.isFinite, amount > 0 else { return .invalid }
         return .amount(amount)

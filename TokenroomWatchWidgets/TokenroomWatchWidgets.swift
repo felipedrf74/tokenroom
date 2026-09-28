@@ -24,7 +24,7 @@ struct ComplicationProvider: TimelineProvider {
     }
 
     func getSnapshot(in context: Context, completion: @escaping @Sendable (ComplicationEntry) -> Void) {
-        let saved = ReadingCache.defaultURL.flatMap(ReadingCache.load)
+        let saved = RelayReadings.cached(at: ReadingCache.defaultURL)
         let cache = context.isPreview && (saved?.items.isEmpty ?? true) ? SampleData.cache() : saved
         completion(ComplicationEntry(date: .now, items: cache?.presented(at: .now).items ?? [], isSample: cache?.isSample ?? false))
     }
@@ -66,7 +66,7 @@ private struct ComplicationView: View {
         content
             .widgetURL(link)
             .opacity(entry.items.first?.provider.isLive == false ? 0.7 : 1)
-            .accessibilityValue(entry.items.first.map { "Last successful check \(RelativeTime.ago($0.provider.checkedAt ?? $0.provider.fetchedAt, now: entry.date))" } ?? "No readings")
+            .accessibilityValue(entry.items.first.map { "Last successful check \(RelativeTime.ago($0.provider.checkedAt ?? $0.provider.fetchedAt, now: entry.date))\($0.provider.isLive ? "" : ", stale")" + (ReadingText.attention($0.provider, now: entry.date).map { ", \($0)" } ?? "") } ?? "No readings")
     }
 
     /// Circular and corner complications show one provider and open it; the rest open the list.
@@ -87,12 +87,14 @@ private struct ComplicationView: View {
             case .accessoryCorner:
                 let balance = window.flatMap { $0.isMetered ? nil : $0.amount }
                 // A balance has nothing to fill: its amount, and the provider's name for a label.
-                Text(balance.map(ReadingText.circleAmount) ?? ReadingText.headline(window, now: entry.date))
+                Text(window?.isAwaitingReading(at: entry.date) == true ? "—" : (balance.map(ReadingText.circleAmount) ?? ReadingText.headline(window, now: entry.date)))
                     .font(.system(size: 14, weight: .semibold, design: .rounded))
                     .widgetCurvesContent()
                     .widgetLabel {
                         if entry.isSample {
                             Text("Sample")
+                        } else if window?.isAwaitingReading(at: entry.date) == true {
+                            Text("\(first.provider.shortName) · Reset · awaiting reading")
                         } else if balance != nil {
                             Text(first.provider.shortName)
                         } else {
@@ -125,13 +127,15 @@ private struct ComplicationView: View {
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.7)
                         }
+                        .opacity(item.provider.isLive && row?.isAwaitingReading(at: entry.date) != true ? 1 : 0.65)
                     }
-                    if let warning = UsageRanking.limitWarning(for: first.provider, now: entry.date) {
-                        Text(warning).font(.caption2.weight(.semibold)).foregroundStyle(TokenroomTokens.usageCritical).lineLimit(1)
-                    } else if window?.isAwaitingReading(at: entry.date) == true {
-                        Text("Reset · awaiting reading").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    let stale = entry.items.filter { !$0.provider.isLive }.count
+                    if let item = entry.items.first(where: { ReadingText.attention($0.provider, now: entry.date) != nil }),
+                       let note = ReadingText.attention(item.provider, now: entry.date) {
+                        Text(note + (stale > 0 ? " · \(stale) stale" : ""))
+                            .font(.caption2.weight(.semibold)).lineLimit(2).minimumScaleFactor(0.7)
+                            .foregroundStyle(UsageRanking.limitWarning(for: item.provider, now: entry.date) == nil ? Color.secondary : TokenroomTokens.usageCritical)
                     } else {
-                        let stale = entry.items.filter { !$0.provider.isLive }.count
                         if stale > 0 { Text("\(stale) stale").font(.caption2).foregroundStyle(.secondary) }
                     }
                     if entry.isSample {
@@ -148,10 +152,10 @@ private struct ComplicationView: View {
                     ZStack {
                         AccessoryWidgetBackground()
                         VStack(spacing: 0) {
-                            Text(ReadingText.circleAmount(amount))
+                            Text(window.isAwaitingReading(at: entry.date) ? "—" : ReadingText.circleAmount(amount))
                                 .font(.system(size: 15, weight: .semibold, design: .rounded))
                                 .minimumScaleFactor(0.5)
-                            Text(entry.isSample ? "Sample" : first.provider.monogram)
+                            Text(entry.isSample ? "Sample" : window.isAwaitingReading(at: entry.date) ? "Reset" : first.provider.monogram)
                                 .font(.system(size: 10, weight: .medium))
                                 .minimumScaleFactor(0.6)
                         }
@@ -160,7 +164,7 @@ private struct ComplicationView: View {
                     }
                 } else {
                     Gauge(value: used, in: 0...100) {
-                        Text(first.provider.monogram)
+                        Text(window?.isAwaitingReading(at: entry.date) == true ? "Reset" : first.provider.monogram)
                     } currentValueLabel: {
                         // Samples say so where the number goes; the ring still shows the level.
                         if entry.isSample {
@@ -184,7 +188,7 @@ private struct ComplicationView: View {
 
     /// "Codex 78% · Claude 64%", after "Sample" for samples.
     private var inlineText: String {
-        let readings = entry.items.prefix(2).map { "\($0.provider.shortName) \(ReadingText.headline($0.provider.primaryWindow, now: entry.date))" + (UsageRanking.limitWarning(for: $0.provider, now: entry.date).map { " · \($0)" } ?? "") + (!$0.provider.isLive ? " · stale" : "") }
+        let readings = entry.items.prefix(2).map { "\($0.provider.shortName) \(ReadingText.headline($0.provider.primaryWindow, now: entry.date))" + (ReadingText.attention($0.provider, now: entry.date).map { " · \($0)" } ?? "") + (!$0.provider.isLive ? " · stale" : "") }
         return ((entry.isSample ? ["Sample"] : []) + readings).joined(separator: " · ")
     }
 
@@ -224,7 +228,7 @@ struct ResetSoonEntry: RelevanceEntry {
 struct ResetSoonProvider: RelevanceEntriesProvider {
     func relevance() async -> WidgetRelevance<WindowIntent> {
         let now = Date.now
-        let items = ReadingCache.defaultURL.flatMap(ReadingCache.load)?.presented(at: now).items ?? []
+        let items = RelayReadings.cached(at: ReadingCache.defaultURL)?.presented(at: now).items ?? []
         let attributes = items.flatMap { item in
             WidgetSchedule.relevance(of: item.provider, now: now).map { relevant in
                 WidgetRelevanceAttribute(
@@ -237,7 +241,7 @@ struct ResetSoonProvider: RelevanceEntriesProvider {
     }
 
     func entry(configuration: WindowIntent, context: Context) async throws -> ResetSoonEntry {
-        let cache = ReadingCache.defaultURL.flatMap(ReadingCache.load)
+        let cache = RelayReadings.cached(at: ReadingCache.defaultURL)
         return ResetSoonEntry(item: cache?.presented(at: .now).items.first { $0.id == configuration.providerID }, windowID: configuration.windowID, isSample: cache?.isSample ?? false)
     }
 
@@ -262,15 +266,18 @@ private struct ResetSoonView: View {
 
     var body: some View {
         if let item = entry.item, let window = item.provider.windows.first(where: { $0.id == entry.windowID }) ?? item.provider.primaryWindow {
+            let date = Date.now
             HStack(spacing: 8) {
                 ProviderMark(provider: item.provider, size: 28)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("\(item.provider.shortName) \(window.displayTitle.lowercased()) \(ReadingText.headline(window))")
+                    Text("\(item.provider.shortName) \(window.displayTitle.lowercased()) \(ReadingText.headline(window, now: date))")
                         .font(.headline)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                     Group {
-                        if let resetsAt = window.resetsAt, resetsAt > .now {
+                        if window.isAwaitingReading(at: date) {
+                            Text("Reset · awaiting reading")
+                        } else if let resetsAt = window.resetsAt, resetsAt > date {
                             Text("Resets in \(Text(resetsAt, style: .relative))")
                         }
                         if entry.isSample {

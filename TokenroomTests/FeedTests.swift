@@ -668,6 +668,21 @@ final class FeedTests: XCTestCase {
         XCTAssertTrue(cache.unreadable?.contains(source.id) == true)
     }
 
+    func testAnExplicitUncachedFollowRetriesOnlyThatSourceBeforeItsFailureCooldown() async {
+        defer { unstubNetwork() }
+        stubNetwork { _ in (200, Self.rss("Recovered", "Thu, 24 Sep 2026 12:00:00 GMT")) }
+        let now = utc(2026, 9, 25, 12)
+        let other = FeedSource(id: "other", name: "Other", url: URL(string: "https://example.com/other.xml")!)
+        var cache = NewsCache()
+        cache.modelsFetchedAt = now
+        cache.sourceChecks = [claudeCode.id: .init(failedAt: now), other.id: .init(failedAt: now)]
+        let result = await NewsFetcher.refresh(cache, sources: [claudeCode, other], following: [], now: now.addingTimeInterval(60), forcedSources: [claudeCode.id]).cache
+        XCTAssertEqual(StubURLProtocol.requests.map(\.url), [claudeCode.url])
+        XCTAssertEqual(result.sourceChecks?[claudeCode.id]?.succeededAt, now.addingTimeInterval(60))
+        XCTAssertNil(result.sourceChecks?[claudeCode.id]?.failedAt)
+        XCTAssertEqual(result.sourceChecks?[other.id]?.failedAt, now)
+    }
+
     func testOldNewsCacheMetadataIsOptional() throws {
         var cache = NewsCache()
         cache.sourceChecks = nil
@@ -731,6 +746,68 @@ final class FeedTests: XCTestCase {
         XCTAssertFalse(news.isRefreshing)
     }
 
+    @MainActor
+    func testQueuedUncachedFollowsSurviveAManualRefreshInOneFollowUp() async {
+        let probe = NewsRefreshProbe()
+        let news = NewsStore(defaults: makeDefaults(), directory: nil, fetch: { await probe.fetch($0) })
+        let first = Task { await news.refresh(preferences: AlertPreferences(), notifies: false) }
+        await probe.waitUntilStarted()
+        await news.refresh(preferences: AlertPreferences(), notifies: false, forcedSources: ["claude-code"])
+        await news.refresh(preferences: AlertPreferences(), notifies: false, forcedSources: ["cursor"])
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false)
+        await probe.release()
+        await first.value
+        let forced = await probe.forcedSources
+        let ages = await probe.ages
+        XCTAssertEqual(forced, [[], ["claude-code", "cursor"]])
+        XCTAssertEqual(ages.count, 2)
+        XCTAssertEqual(ages.last!, 0)
+        XCTAssertFalse(news.isRefreshing)
+    }
+
+    @MainActor
+    func testQueuedFollowKeepsManualNotificationIntentAndLatestPreferences() async {
+        let model = ModelRelease(id: "lab/model", name: "Model", vendor: "lab", created: .now, contextLength: nil, promptPrice: nil, completionPrice: nil, expires: nil)
+        let probe = NewsRefreshProbe(newModels: [model])
+        var notifications: [AlertPreferences] = []
+        let news = NewsStore(defaults: makeDefaults(), directory: nil, fetch: { await probe.fetch($0) },
+                             notify: { _, preferences, _ in notifications.append(preferences) })
+        let first = Task { await news.refresh(preferences: AlertPreferences(), notifies: false) }
+        await probe.waitUntilStarted()
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: true)
+        var latest = AlertPreferences()
+        latest.resets = false
+        await news.refresh(preferences: latest, notifies: false, forcedSources: ["claude-code"])
+        await probe.release()
+        await first.value
+        XCTAssertEqual(notifications.count, 1)
+        XCTAssertEqual(notifications.first?.resets, false, "Follow-up uses the latest preferences")
+        let ages = await probe.ages
+        let forced = await probe.forcedSources
+        XCTAssertEqual(ages.count, 2)
+        XCTAssertEqual(ages[1], 0)
+        XCTAssertEqual(forced[1], ["claude-code"])
+    }
+
+    @MainActor
+    func testCancelledRefreshOwnerStillRunsQueuedManualAndFollowRequest() async {
+        let probe = NewsRefreshProbe()
+        let news = NewsStore(defaults: makeDefaults(), directory: nil, fetch: { await probe.fetch($0) })
+        let first = Task { await news.refresh(preferences: AlertPreferences(), notifies: false) }
+        await probe.waitUntilStarted()
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false)
+        await news.refresh(preferences: AlertPreferences(), notifies: false, forcedSources: ["claude-code"])
+        first.cancel() // A SwiftUI .task can be cancelled when its page disappears.
+        await probe.release()
+        await first.value
+        let ages = await probe.ages
+        let forced = await probe.forcedSources
+        XCTAssertEqual(ages.count, 2, "The queued pass has its own lifetime")
+        XCTAssertEqual(ages.last!, 0)
+        XCTAssertEqual(forced.last!, ["claude-code"])
+        XCTAssertFalse(news.isRefreshing)
+    }
+
     func testNewsSearchAndEmptyStatesExplainTheCurrentSection() {
         XCTAssertTrue(NewsSearch.matches("openai", title: "A new model", source: "OpenAI"))
         XCTAssertTrue(NewsSearch.matches("NEW", title: "A new model", source: "Lab"))
@@ -768,11 +845,15 @@ private final class OfflineFeedProtocol: URLProtocol, @unchecked Sendable {
 }
 
 private actor NewsRefreshProbe {
+    var newModels: [ModelRelease]
+    init(newModels: [ModelRelease] = []) { self.newModels = newModels }
     var ages: [TimeInterval?] = []
+    var forcedSources: [Set<String>] = []
     private var started: CheckedContinuation<Void, Never>?
     private var blocked: CheckedContinuation<Void, Never>?
     func fetch(_ request: NewsFetcher.Request) async -> NewsFetcher.Result {
         ages.append(request.maxAge)
+        forcedSources.append(request.forcedSources)
         if ages.count == 1 {
             await withCheckedContinuation { continuation in
                 blocked = continuation
@@ -780,7 +861,7 @@ private actor NewsRefreshProbe {
                 started = nil
             }
         }
-        return .init(cache: request.cache, newModels: [])
+        return .init(cache: request.cache, newModels: ages.count > 1 ? newModels : [])
     }
     func waitUntilStarted() async {
         if !ages.isEmpty { return }

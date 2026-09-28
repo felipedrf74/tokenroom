@@ -16,9 +16,10 @@ struct SessionLockScreenView: View {
                 ProviderMark(providerID: attributes.providerID, monogram: attributes.monogram, tint: attributes.tint, size: 24)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(attributes.shortName) \(state.percentText)")
+                        .accessibilityLabel("\(attributes.shortName), \(state.accessibilityPercent)")
                         .font(.headline)
                         .monospacedDigit()
-                    Countdown(resetsAt: state.resetsAt)
+                    SessionResetCaption(state: state)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -33,6 +34,7 @@ struct SessionLockScreenView: View {
                             .font(.headline)
                         Spacer()
                         Text(state.percentText)
+                            .accessibilityLabel(state.accessibilityPercent)
                             .font(.system(.title2, design: .rounded, weight: .semibold))
                             .monospacedDigit()
                             .foregroundStyle(color)
@@ -41,7 +43,7 @@ struct SessionLockScreenView: View {
                     HStack {
                         Text(attributes.windowTitle)
                         Spacer()
-                        Countdown(resetsAt: state.resetsAt)
+                        SessionResetCaption(state: state)
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -56,8 +58,21 @@ struct SessionLockScreenView: View {
 extension SessionActivityAttributes {
     /// Where an even pace would be when the view is drawn, from the window's length.
     func paceMark(for state: ContentState) -> Double? {
-        guard let length = windowSeconds, length > 0 else { return nil }
+        guard state.awaitingReading != true, !state.isStale, state.resetsAt > .now,
+              let length = windowSeconds, length > 0 else { return nil }
         return min(max(1 - state.resetsAt.timeIntervalSinceNow / length, 0), 1)
+    }
+}
+
+struct SessionResetCaption: View {
+    var state: SessionActivityAttributes.ContentState
+
+    var body: some View {
+        if state.awaitingReading == true {
+            Text("Reset · awaiting reading")
+        } else {
+            Countdown(resetsAt: state.resetsAt)
+        }
     }
 }
 
@@ -78,8 +93,11 @@ struct Countdown: View {
 }
 
 extension SessionActivityAttributes.ContentState {
+    var accessibilityPercent: String {
+        awaitingReading == true ? "Reset, awaiting reading" : "\(TokenroomFormat.percentText(used)) percent used" + (isStale ? ", stale" : "")
+    }
+
     var percentText: String {
-        "\(TokenroomFormat.percentText(used))%"
+        awaitingReading == true ? "—" : "\(TokenroomFormat.percentText(used))%"
     }
 }
-

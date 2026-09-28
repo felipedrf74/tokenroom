@@ -3,6 +3,16 @@ import Foundation
 /// Readings straight from iCloud, for devices that read no provider themselves: the Watch and
 /// its complications. Every collector's record counts, the iPhone's included.
 enum RelayReadings {
+    #if os(watchOS)
+    static var accountDefaults: UserDefaults? { AppGroup.defaults }
+    #else
+    static var accountDefaults: UserDefaults? { nil }
+    #endif
+
+    static func cached(at url: URL?) -> ReadingCache? {
+        if let defaults = accountDefaults { return WatchCacheAccess.load(at: url, defaults: defaults) }
+        return url.flatMap(ReadingCache.load)
+    }
     enum Outcome: Sendable {
         case readings(ReadingCache)
         /// No iCloud account on this device.
@@ -41,35 +51,45 @@ enum RelayReadings {
 
     /// The cache, or a fresh read when it's older than `maxAge`, within `budget` seconds.
     static func cache(at url: URL?, maxAge: TimeInterval, budget: TimeInterval, now: Date = .now) async -> ReadingCache? {
-        let cached = url.flatMap(ReadingCache.load)
+        await cache(at: url, maxAge: maxAge, budget: budget, now: now,
+                    defaults: accountDefaults, readOutcome: { await read(now: now) })
+    }
+
+    /// Production and regression source share the outcome path, including durable sign-out.
+    static func cache(
+        at url: URL?, maxAge: TimeInterval, budget: TimeInterval, now: Date,
+        defaults: UserDefaults?, readOutcome: @escaping @Sendable () async -> Outcome
+    ) async -> ReadingCache? {
+        let cutoff = defaults?.object(forKey: WatchCacheAccess.cutoffKey) as? Date
+        let cached = if let defaults { WatchCacheAccess.load(at: url, defaults: defaults) } else { url.flatMap(ReadingCache.load) }
         if let cached, isRecent(cached, maxAge: maxAge, now: now) { return cached.presented(at: now) }
-        switch await TimeLimit.run(budget, otherwise: .failed, { await read(now: now) }) {
+        let outcome = await TimeLimit.run(budget, otherwise: .failed, readOutcome)
+        guard defaults == nil || (defaults?.object(forKey: WatchCacheAccess.cutoffKey) as? Date) == cutoff else { return nil }
+        switch outcome {
         case .readings(let fresh):
+            guard cutoff.map({ fresh.savedAt > $0 }) != false else { return nil }
             let merged = cached?.mergingUpdate(fresh) ?? fresh
-            if let url { try? merged.save(to: url) }
+            if let defaults { try? WatchCacheAccess.saveValidated(merged, at: url, defaults: defaults, cutoff: cutoff) }
+            else if let url { try? merged.save(to: url) }
             return merged.presented(at: now)
         case .noAccount:
+            if let defaults { WatchCacheAccess.invalidate(in: defaults, at: now) }
             let empty = ReadingCache(savedAt: now, isSample: false, items: [])
             if let url { try? empty.save(to: url) }
             return empty
-        case .failed, .unavailable: return cached?.presented(at: now)
+        case .failed, .unavailable:
+            let retained = if let defaults { WatchCacheAccess.load(at: url, defaults: defaults) } else { url.flatMap(ReadingCache.load) }
+            return retained?.presented(at: now)
         }
     }
 
-    /// - Parameter read: iCloud's readings; tests stand in for it.
+    /// Optional-reading compatibility for existing regression source.
     static func cache(
         at url: URL?, maxAge: TimeInterval, budget: TimeInterval, now: Date,
         read: @escaping @Sendable () async -> ReadingCache?
     ) async -> ReadingCache? {
-        let cached = url.flatMap(ReadingCache.load)
-        if let cached, isRecent(cached, maxAge: maxAge, now: now) {
-            return cached
-        }
-        let fresh = await TimeLimit.run(budget, otherwise: nil, read)
-        if let fresh, let url {
-            try? fresh.save(to: url)
-        }
-        return fresh ?? cached
+        await cache(at: url, maxAge: maxAge, budget: budget, now: now, defaults: nil,
+                    readOutcome: { (await read()).map(Outcome.readings) ?? .failed })
     }
 
     #if DEBUG

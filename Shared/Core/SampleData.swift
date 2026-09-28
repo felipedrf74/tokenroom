@@ -14,9 +14,9 @@ enum SampleData {
                 history: history(for: snapshot, now: now)
             )
         }
-        let ranked = UsageRanking.sorted(items, provider: \.provider, now: now) { item in
-            ReadingAssembler.pace(for: item, now: now)
-        }
+        let ranked = UsageRanking.sorted(items, provider: \.provider, now: now, windowPace: { item, window in
+            UsageRanking.pace(for: window, isStale: !item.provider.isLive, history: item.history[window.id], now: now)
+        })
         return ReadingCache(savedAt: now, isSample: true, items: ranked)
     }
 

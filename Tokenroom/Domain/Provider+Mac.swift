@@ -107,6 +107,13 @@ struct MenuMeter: Equatable, Identifiable, Sendable {
     var usedPercent: Double
     var isStale: Bool
     var isPlaceholder: Bool
+    var isAwaitingReading = false
+    var attention: String? = nil
+
+    var displayValue: String { isAwaitingReading ? "—" : isPlaceholder ? "–%" : "\(valueText)%" }
+    var accessibilityText: String {
+        "\(provider.displayName) \(displayValue)\(isAwaitingReading || isPlaceholder ? "" : " used")" + (attention.map { ", \($0)" } ?? "")
+    }
 
     var id: Provider { provider }
 }

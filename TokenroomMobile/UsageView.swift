@@ -19,11 +19,11 @@ struct UsageView: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { tick in
-            content.onChange(of: tick.date, initial: true) { _, date in store.ageReadings(at: date) }
+            content(at: tick.date).onChange(of: tick.date, initial: true) { _, date in store.ageReadings(at: date) }
         }
     }
 
-    private var content: some View {
+    private func content(at date: Date) -> some View {
         NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -55,7 +55,7 @@ struct UsageView: View {
                         .padding(.horizontal, -20)
                     }
                     if !store.readings.isEmpty {
-                        tiles
+                        tiles(at: date)
                     }
                     if !store.disconnected.isEmpty {
                         disconnectedSection
@@ -70,7 +70,7 @@ struct UsageView: View {
             .navigationSubtitle(header ?? "")
             .navigationDestination(for: String.self) { id in
                 if let reading = store.reading(id: id) {
-                    ProviderDetailView(reading: reading)
+                    ProviderDetailView(reading: reading, date: date)
                 }
             }
             .overlay {
@@ -107,7 +107,7 @@ struct UsageView: View {
 
     /// Two tiles a row, each row as tall as its taller tile; one a row at the accessibility text
     /// sizes.
-    private var tiles: some View {
+    private func tiles(at date: Date) -> some View {
         let readings = orderedReadings
         let columns = typeSize >= .xxLarge ? 1 : 2
         let rows = stride(from: 0, to: readings.count, by: columns).map { Array(readings[$0..<min($0 + columns, readings.count)]) }
@@ -116,7 +116,7 @@ struct UsageView: View {
                 GridRow {
                     ForEach(row) { reading in
                         NavigationLink(value: reading.id) {
-                            UsageTileView(reading: reading)
+                            UsageTileView(reading: reading, date: date)
                         }
                         .buttonStyle(.plain)
                         .contextMenu {

@@ -235,7 +235,14 @@ extension CloudRelay {
             try await self.preferenceRevision()
         }, write: { preferences, record in
             try await self.savePreferences(preferences, record: record)
-        }, isConflict: { ($0 as? CKError)?.code == .serverRecordChanged })
+        }, isConflict: Self.isPreferenceConflict)
+    }
+
+    static func isPreferenceConflict(_ error: Error) -> Bool {
+        guard let error = error as? CKError else { return false }
+        if error.code == .serverRecordChanged { return true }
+        guard error.code == .partialFailure else { return false }
+        return error.partialErrorsByItemID?.values.contains(where: isPreferenceConflict) == true
     }
 
     private func preferenceRevision() async throws -> AlertPreferencesSync.Versioned<CKRecord> {

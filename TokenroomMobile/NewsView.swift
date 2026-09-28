@@ -228,7 +228,7 @@ struct NewsView: View {
     private var isEmpty: Bool {
         if !search.isEmpty { return matchingModels.isEmpty && matchingAnnouncements.isEmpty }
         switch filter {
-        case .today: return news.models().isEmpty && news.announcements.isEmpty && news.retiring.isEmpty
+        case .today: return edition.isEmpty
         case .models: return matchingModels.isEmpty
         case .announcements: return news.announcements.isEmpty
         case .retiring: return news.retiring.isEmpty

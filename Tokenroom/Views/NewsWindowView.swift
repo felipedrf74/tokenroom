@@ -377,7 +377,7 @@ struct NewsWindowView: View {
     private func isEmpty(_ news: NewsStore) -> Bool {
         guard search.isEmpty else { return false }
         switch page ?? .filter(savedFilter) {
-        case .filter(.today): return news.models().isEmpty && news.announcements.isEmpty && news.retiring.isEmpty
+        case .filter(.today): return edition(news).isEmpty
         case .filter(.models): return news.models(all: showsAllLabs).isEmpty
         case .filter(.announcements): return news.announcements.isEmpty
         case .filter(.retiring): return news.retiring.isEmpty

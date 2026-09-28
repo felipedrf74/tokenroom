@@ -8,8 +8,8 @@ struct TokenroomWatchApp: App {
 
     var body: some Scene {
         WindowGroup {
-            TimelineView(.periodic(from: .now, by: 60)) { _ in
-                WatchRootView(store: store)
+            TimelineView(.periodic(from: .now, by: 60)) { tick in
+                WatchRootView(store: store, date: tick.date)
             }
                 .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)) { _ in store.accountChanged() }
                 .task {

@@ -13,13 +13,13 @@ enum MenuBarLayout {
     /// What the extra draws. "Highest only" keeps the most used provider; the tooltip still lists all.
     static func displayed(_ meters: [MenuMeter], style: MenuBarStyle) -> [MenuMeter] {
         guard style == .highest else { return meters }
-        let readings = meters.filter { !$0.isPlaceholder }
+        let readings = meters.filter { !$0.isPlaceholder && !$0.isAwaitingReading }
         guard let top = readings.max(by: { $0.usedPercent < $1.usedPercent }) ?? meters.first else { return [] }
         return [top]
     }
 
     static func compactText(for meters: [MenuMeter]) -> String {
-        meters.map { "\($0.provider.shortName) \($0.valueText)%" }.joined(separator: "  ")
+        meters.map { "\($0.provider.shortName) \($0.displayValue)" }.joined(separator: "  ")
     }
 
     static func tooltip(for meters: [MenuMeter]) -> String {
@@ -27,8 +27,7 @@ enum MenuBarLayout {
             return "Tokenroom"
         }
         return meters.map { meter in
-            let value = meter.isPlaceholder ? "–%" : "\(meter.valueText)%"
-            return "\(meter.provider.displayName) \(value)"
+            "\(meter.provider.displayName) \(meter.displayValue)" + (meter.attention.map { " · \($0)" } ?? "")
         }.joined(separator: "\n")
     }
 }
@@ -71,7 +70,7 @@ struct MenuBarLabel: View {
     }
 
     private func percentColumn(_ meter: MenuMeter) -> some View {
-        let percent = meter.isPlaceholder ? "–%" : "\(meter.valueText)%"
+        let percent = meter.displayValue
         let faded = meter.isStale ? TokenroomTokens.staleOpacity : 1
         return HStack(alignment: .center, spacing: 3) {
             ProviderGlyph(provider: meter.provider, size: TokenroomTokens.menuIconSize)
@@ -85,11 +84,10 @@ struct MenuBarLabel: View {
         .foregroundStyle(.primary)
         .frame(height: TokenroomTokens.menuRowHeight)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(meter.provider.displayName) \(percent) used")
+        .accessibilityLabel(meter.accessibilityText)
     }
 
     private func meterColumn(_ meter: MenuMeter) -> some View {
-        let percent = meter.isPlaceholder ? "–%" : "\(meter.valueText)%"
         let faded = meter.isStale ? TokenroomTokens.staleOpacity : 1
         return HStack(alignment: .center, spacing: 3) {
             ProviderGlyph(provider: meter.provider, size: TokenroomTokens.menuIconSize)
@@ -103,7 +101,7 @@ struct MenuBarLabel: View {
         .foregroundStyle(.primary)
         .frame(height: TokenroomTokens.menuRowHeight)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(meter.provider.displayName) \(percent) used")
+        .accessibilityLabel(meter.accessibilityText)
     }
 }
 
