@@ -109,7 +109,7 @@ struct RelayProvider: Codable, Equatable, Sendable, Identifiable {
     var tint: String
     /// `live`, `stale`, `expired`, `rateLimited`, `signedOut`, `notEntitled`, `unreachable`, `loading`.
     var state: String
-    /// Short status line for non-live states, e.g. "Session expired. Run claude once to refresh it."
+    /// Short status line for non-live states, e.g. "Session expired. Sign in with claude login again."
     var message: String?
     /// Last successful check.
     var checkedAt: Date?

@@ -4,7 +4,8 @@ import os
 import Security
 
 /// Reads sessions that the official CLIs and apps already keep on this Mac.
-/// Everything here is read-only: Tokenroom never refreshes or rewrites another tool's tokens.
+/// `LoginSession` renews Claude, Grok Build, and Codex in the tool's own login and writes the
+/// new access and refresh tokens back. Every other login is read only.
 /// These calls block (files, SQLite, `/usr/bin/security`); call them through `BlockingIO`.
 enum CredentialReaders {
     static var grokHome: URL {
@@ -53,42 +54,66 @@ enum CredentialReaders {
         var accessToken: String
         var expiresAt: Date?
         var userID: String?
+        var refreshToken: String = ""
+        var clientID: String = ""
+        /// `oidc_issuer` from the file, or `https://auth.x.ai` when the file leaves it out.
+        var issuer: String = ""
+        /// The auth.json entry this login lives under.
+        var mapKey: String = ""
+        var expiresText: String = ""
+        var rawJSON: String = ""
     }
 
     struct CodexAuth: Sendable {
         var accessToken: String
         var accountID: String?
+        var refreshToken: String = ""
+        var idToken: String = ""
+        var expiresAt: Date? = nil
+        var lastRefreshText: String = ""
+        var rawJSON: String = ""
     }
 
-    static func grokAuth() throws -> GrokAuth {
-        let url = grokAuthURL
+    static func grokAuth(at url: URL? = nil) throws -> GrokAuth {
+        let url = url ?? grokAuthURL
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw ProviderError.signedOut(Provider.grok.signInHint)
         }
         let data = try Data(contentsOf: url)
+        guard let raw = String(data: data, encoding: .utf8) else {
+            throw ProviderError.unreachable
+        }
         let root = try JSONFlex.object(from: data)
-        var newest: (entry: [String: Any], created: Date)?
-        for value in root.values {
+        var newest: (key: String, entry: [String: Any], created: Date)?
+        for (key, value) in root {
             guard let entry = JSONFlex.dictionary(value),
                   let access = JSONFlex.string(entry["key"]), !access.isEmpty
             else { continue }
             let created = JSONFlex.parseISO(JSONFlex.string(entry["create_time"]) ?? "") ?? .distantPast
             if newest == nil || created >= newest!.created {
-                newest = (entry, created)
+                newest = (key, entry, created)
             }
         }
         guard let newest else {
             throw ProviderError.signedOut(Provider.grok.signInHint)
         }
+        let issuer = JSONFlex.string(newest.entry["oidc_issuer"])?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let expiresText = JSONFlex.string(newest.entry["expires_at"]) ?? ""
         return GrokAuth(
             accessToken: JSONFlex.string(newest.entry["key"]) ?? "",
-            expiresAt: JSONFlex.parseISO(JSONFlex.string(newest.entry["expires_at"]) ?? ""),
-            userID: JSONFlex.string(newest.entry["user_id"])
+            expiresAt: JSONFlex.parseISO(expiresText),
+            userID: JSONFlex.string(newest.entry["user_id"]),
+            refreshToken: JSONFlex.string(newest.entry["refresh_token"]) ?? "",
+            clientID: JSONFlex.string(newest.entry["oidc_client_id"]) ?? "",
+            issuer: issuer.isEmpty ? "https://auth.x.ai" : issuer,
+            mapKey: newest.key,
+            expiresText: expiresText,
+            rawJSON: raw
         )
     }
 
-    /// The Grok CLI owns its refresh token (and may rotate it), so an expired token stays expired
-    /// until `grok` itself refreshes it.
+    /// An access token inside a minute of expiry is not used as-is. `LoginSession` renews it
+    /// first; this still refuses a caller that skipped that.
     static func usableGrokToken(_ auth: GrokAuth, now: Date = .now) throws -> String {
         guard !auth.accessToken.isEmpty else {
             throw ProviderError.signedOut(Provider.grok.signInHint)
@@ -107,10 +132,13 @@ enum CredentialReaders {
         switch provider {
         case .claude:
             guard let auth = try? claudeAuth() else { return false }
-            return !auth.accessToken.isEmpty && !auth.isExpired
+            return auth.countsAsUsableSession()
         case .grok:
             guard let auth = try? grokAuth() else { return false }
-            return (try? usableGrokToken(auth)) != nil
+            return auth.countsAsUsableSession()
+        case .openai:
+            guard let auth = try? codexAuth() else { return false }
+            return auth.countsAsUsableSession()
         case .cursor, .grokBot:
             return hasUsableCursorSession()
         default:
@@ -173,19 +201,28 @@ enum CredentialReaders {
         LocalSources.fileStamp(url)
     }
 
-    static func codexAuth() throws -> CodexAuth {
-        let url = codexHome.appendingPathComponent("auth.json")
+    static func codexAuth(at url: URL? = nil) throws -> CodexAuth {
+        let url = url ?? codexHome.appendingPathComponent("auth.json")
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw ProviderError.signedOut(Provider.openai.signInHint)
         }
-        let object = try JSONFlex.object(from: Data(contentsOf: url))
+        let data = try Data(contentsOf: url)
+        guard let raw = String(data: data, encoding: .utf8) else {
+            throw ProviderError.unreachable
+        }
+        let object = try JSONFlex.object(from: data)
         let tokens = JSONFlex.dictionary(object["tokens"]) ?? [:]
         guard let access = JSONFlex.string(tokens["access_token"]), !access.isEmpty else {
             throw ProviderError.signedOut(Provider.openai.signInHint)
         }
         return CodexAuth(
             accessToken: access,
-            accountID: JSONFlex.string(tokens["account_id"])
+            accountID: JSONFlex.string(tokens["account_id"]),
+            refreshToken: JSONFlex.string(tokens["refresh_token"]) ?? "",
+            idToken: JSONFlex.string(tokens["id_token"]) ?? "",
+            expiresAt: jwtExpiry(access),
+            lastRefreshText: JSONFlex.string(object["last_refresh"]) ?? "",
+            rawJSON: raw
         )
     }
 
@@ -198,19 +235,31 @@ enum CredentialReaders {
         var account: String
         var service: String
 
-        var isExpired: Bool {
+        func isExpired(at now: Date) -> Bool {
             guard let expiresAtMs else { return false }
-            return Date().timeIntervalSince1970 * 1000 >= expiresAtMs - 60_000
+            return now.timeIntervalSince1970 * 1000 >= expiresAtMs - 60_000
         }
 
-        /// Whether Claude Code can still refresh this session by itself. When it can't,
-        /// Sign In starts a fresh `claude auth login`.
-        var canRefresh: Bool {
+        var isExpired: Bool { isExpired(at: Date()) }
+
+        /// Whether this session can still be renewed. When it can't, Sign In starts a fresh
+        /// `claude auth login`.
+        func canRefresh(at now: Date) -> Bool {
             guard let refreshToken, !refreshToken.isEmpty else { return false }
             if let refreshExpiresAtMs {
-                return Date().timeIntervalSince1970 * 1000 < refreshExpiresAtMs - 60_000
+                return now.timeIntervalSince1970 * 1000 < refreshExpiresAtMs - 60_000
             }
             return true
+        }
+
+        var canRefresh: Bool { canRefresh(at: Date()) }
+
+        func countsAsUsableSession(now: Date = .now) -> Bool {
+            guard !accessToken.isEmpty else { return false }
+            if CredentialReaders.renewalIsRejected(.claude, refreshToken: refreshToken ?? "") {
+                return !isExpired(at: now)
+            }
+            return !isExpired(at: now) || canRefresh(at: now)
         }
     }
 
@@ -409,18 +458,25 @@ enum CredentialReaders {
         return hasher.finalize()
     }
 
-    /// Whether a JWT's `exp` has passed. Nothing else in it is used; a token that isn't a JWT,
-    /// or has no expiry, counts as current and is left to the server to judge.
-    static func tokenHasExpired(_ token: String, now: Date = .now) -> Bool {
+    /// A JWT's `exp`, in seconds. Nothing else in the token is read. Nil when it isn't a JWT
+    /// or the claim can't be read; callers then leave the decision to the server.
+    static func jwtExpiry(_ token: String) -> Date? {
         let parts = token.split(separator: ".", omittingEmptySubsequences: false)
-        guard parts.count == 3 else { return false }
+        guard parts.count == 3 else { return nil }
         var payload = parts[1].replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
         payload += String(repeating: "=", count: (4 - payload.count % 4) % 4)
         guard let data = Data(base64Encoded: payload),
               let claims = try? JSONFlex.object(from: data),
               let expiry = JSONFlex.number(claims["exp"])
-        else { return false }
-        return Date(timeIntervalSince1970: expiry) <= now
+        else { return nil }
+        return Date(timeIntervalSince1970: expiry)
+    }
+
+    /// Whether a JWT's `exp` has passed. A token that isn't a JWT, or has no expiry, counts as
+    /// current and is left to the server to judge.
+    static func tokenHasExpired(_ token: String, now: Date = .now) -> Bool {
+        guard let expiry = jwtExpiry(token) else { return false }
+        return expiry <= now
     }
 
     static let cursorKeychainService = "cursor-access-token"
@@ -492,5 +548,88 @@ enum CredentialReaders {
 
     static func parseClaudeToken(_ raw: String) throws -> String {
         try parseClaudeAuth(raw, account: NSUserName(), service: claudeKeychainService).accessToken
+    }
+
+    /// The last Claude login read, without touching the Keychain. Nil until something has read it.
+    static func cachedClaudeAuth() -> ClaudeAuth? {
+        claudeCache.withLock { $0 }
+    }
+
+    /// The access token just written, so the next read doesn't keep using the one from before
+    /// the renewal. The Keychain itself is also updated.
+    static func rememberClaudeAuth(_ auth: ClaudeAuth) {
+        claudeCache.withLock { $0 = auth }
+    }
+
+    /// Writes `json` back into the Claude Code item it was read from. Tries the Keychain API
+    /// without a prompt, then `security add-generic-password -U`, which Claude Code's item
+    /// already trusts. Returns false when both fail; the caller keeps the new tokens to retry.
+    static func writeClaudeCredential(service: String, account: String, json: String) -> Bool {
+        let data = Data(json.utf8)
+        if updateClaudeCredential(service: service, account: account, data: data) { return true }
+        if updateClaudeCredential(service: service, account: nil, data: data) { return true }
+        return securityRun(["add-generic-password", "-a", account, "-s", service, "-w", json, "-U"]) != nil
+    }
+
+    private static func updateClaudeCredential(service: String, account: String?, data: Data) -> Bool {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecUseAuthenticationContext as String: context,
+        ]
+        if let account {
+            query[kSecAttrAccount as String] = account
+        }
+        let attributes = [kSecValueData as String: data]
+        return SecItemUpdate(query as CFDictionary, attributes as CFDictionary) == errSecSuccess
+    }
+
+    /// A refresh grant these providers already rejected, as a fingerprint of the refresh token
+    /// only. A later login writes a different refresh token, so this stops applying.
+    private static let rejectedRefresh = OSAllocatedUnfairLock<[Provider: Int]>(initialState: [:])
+
+    static func noteRenewalRejected(_ provider: Provider, refreshToken: String) {
+        guard !refreshToken.isEmpty else { return }
+        rejectedRefresh.withLock { $0[provider] = fingerprint(refreshToken) }
+    }
+
+    static func clearRenewalRejection(_ provider: Provider) {
+        rejectedRefresh.withLock { $0[provider] = nil }
+    }
+
+    static func renewalIsRejected(_ provider: Provider, refreshToken: String) -> Bool {
+        guard !refreshToken.isEmpty else { return false }
+        return rejectedRefresh.withLock { $0[provider] == fingerprint(refreshToken) }
+    }
+}
+
+extension CredentialReaders.GrokAuth {
+    /// The CLI login can be exchanged at auth.x.ai. Any other issuer is left alone.
+    var canRenew: Bool {
+        guard !refreshToken.isEmpty, !clientID.isEmpty, !issuer.isEmpty else { return false }
+        return OAuthRefresh.grokTokenURL(issuer: issuer) != nil
+    }
+
+    func countsAsUsableSession(now: Date = .now) -> Bool {
+        let accessOK = (try? CredentialReaders.usableGrokToken(self, now: now)) != nil
+        if CredentialReaders.renewalIsRejected(.grok, refreshToken: refreshToken) {
+            return accessOK
+        }
+        return accessOK || canRenew
+    }
+}
+
+extension CredentialReaders.CodexAuth {
+    var canRenew: Bool { !refreshToken.isEmpty }
+
+    func countsAsUsableSession(now: Date = .now) -> Bool {
+        guard !accessToken.isEmpty else { return false }
+        let expired = CredentialReaders.tokenHasExpired(accessToken, now: now)
+        if CredentialReaders.renewalIsRejected(.openai, refreshToken: refreshToken) {
+            return !expired
+        }
+        return !expired || canRenew
     }
 }

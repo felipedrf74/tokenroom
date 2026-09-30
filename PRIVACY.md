@@ -1,6 +1,6 @@
 # Privacy
 
-Last updated: September 26, 2026. Questions: [open an issue](https://github.com/felipedrf74/tokenroom/issues).
+Last updated: September 30, 2026. Questions: [open an issue](https://github.com/felipedrf74/tokenroom/issues).
 
 Tokenroom runs on your Mac, iPhone, and Apple Watch. There is no Tokenroom account and no Tokenroom server. Syncing between your devices goes through your own iCloud account.
 
@@ -24,7 +24,7 @@ Only for the providers you turn on.
 | Kimi Code | `~/.kimi-code/credentials/kimi-code.json` while its access token is valid, or the key in `~/.claude/settings.json` | `api.kimi.com` or `api.kimi.ai` |
 | OpenCode Go | `~/.local/share/opencode/auth.json` | `opencode.ai` |
 
-Those files and Keychain items stay where their tools put them. Tokenroom only reads them: it never refreshes or rewrites another tool’s login, and keeps no copy of it. It also checks when those files last changed, to notice a new sign-in. When Cursor’s or Devin’s database is locked, Tokenroom reads a temporary copy and deletes it right away. When a login expires, run that tool once to renew it. Most of these providers are read from the same endpoints their own apps use, which aren't public APIs and can change; Z.ai, MiniMax, Kimi Code, and OpenCode Go are read as described under Keys you add.
+Those files and Keychain items stay where their tools put them. Tokenroom reads them in place. For Claude, Grok Build, and Codex, when an access token is about to expire, Tokenroom exchanges that tool's refresh token and writes the new access and refresh tokens back into the same login, so the tool stays signed in. The new tokens sit in Tokenroom's own Keychain only until that write succeeds, then they are removed. They are not copied anywhere else and are not synced. Every other login is read only. Tokenroom also checks when those files last changed, to notice a new sign-in. When Cursor's or Devin's database is locked, Tokenroom reads a temporary copy and deletes it right away. If a refresh token is no longer accepted, that provider's card asks you to sign in to the tool. Most of these providers are read from the same endpoints their own apps use, which aren't public APIs and can change; Z.ai, MiniMax, Kimi Code, and OpenCode Go are read as described under Keys you add.
 
 If you turn on the Claude Code status-line bridge, Tokenroom also reads `~/.claude.json` for the list of your Claude Code projects, and each project's `.claude/settings.json` and `.claude/settings.local.json`, only to tell you which projects set their own status line. It never changes project settings.
 
@@ -81,13 +81,13 @@ News reads public pages only, with no account and nothing about you in the reque
 
 ## What Tokenroom does not store or send
 
-- access tokens, refresh tokens, or another tool’s login
+- another tool's login, beyond the short-lived Claude, Grok Build, and Codex recovery described above
 - email addresses, display names, account IDs, or organization names
 - prompts, chats, or file contents
 - payment details
 
-Tokenroom never calls sign-in or token hosts and does not send traffic through a third party. Its requests identify themselves as Tokenroom, except two that must look like the tool whose login they use: Claude’s usage call sends Claude Code’s client name, and Devin’s sends the Devin app’s client details with its key.
+Tokenroom does not send traffic through a third party. Its usage requests identify themselves as Tokenroom, except two that must look like the tool whose login they use: Claude's usage call sends Claude Code's client name, and Devin's sends the Devin app's client details with its key. Renewing Claude, Grok Build, or Codex calls that tool's own token host with the refresh token already on this Mac.
 
 ## Sign out
 
-Turning a provider off, or quitting Tokenroom, stops Tokenroom from reading that login. It does not sign you out of the provider. Removing a key in Settings deletes it from the Keychain.
+Turning a provider off, or quitting Tokenroom, stops Tokenroom from reading that login. It does not sign you out of the provider. Renewing Claude, Grok Build, or Codex writes the new tokens into that tool's login and does not sign the tool out. Removing a key in Settings deletes it from the Keychain.

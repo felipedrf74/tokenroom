@@ -18,7 +18,7 @@ DerivedData must stay local (`~/Library/Developer/Xcode/DerivedData/Tokenroom`).
 
 Build settings live in `Config/*.xcconfig`, not in `project.pbxproj`. Never add `DEVELOPMENT_TEAM` or `CODE_SIGN_*` to the project file: they would override `Config/Local.xcconfig` (git-ignored; team ID and `TOKENROOM_MAC_SIGNING`). `TOKENROOM_FORCE_SWIFTC=1 ./scripts/build.sh` checks the Command Line Tools fallback.
 
-Tokenroom only reads other tools' sessions. Never refresh, rewrite, or copy their tokens.
+Tokenroom renews Claude, Grok Build, and Codex access tokens in each tool's own login and writes the new tokens back. It does not keep a separate copy, and it does not refresh any other provider.
 
 ## Test
 

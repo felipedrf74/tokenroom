@@ -79,7 +79,7 @@ At 80% and 95% of a limit, set apart for 5-hour limits and for weekly and monthl
 Each of those tools already knows how much quota you have left. None of them put it next to the clock. Tokenroom does, as tiny percents or iStat-style meters, then gets out of the way.
 
 - **Local-first.** No Tokenroom account, no Tokenroom server, no telemetry.
-- **Your logins.** Sessions stay where each tool keeps them. Tokenroom only reads them.
+- **Your logins.** Sessions stay where each tool keeps them. Claude, Grok Build, and Codex are renewed there; every other login is only read.
 - **Independent meters.** One provider failing never blanks the others.
 - **Three looks.** Percents, vertical used-bars, or only the highest, for the providers you pick. Refresh every 5, 10, 15, or 30 minutes. Launch at login if you want.
 
@@ -106,7 +106,7 @@ Tokenroom for iPhone and Apple Watch is on its way to the App Store. It has a sa
 
 ## Install
 
-Download `Tokenroom-2.2.0.zip` from the [latest release](https://github.com/felipedrf74/tokenroom/releases/latest), unzip it, and move Tokenroom.app to Applications. It's signed with a Developer ID and notarized by Apple, so it opens without warnings, and it's the build that can sync with the iPhone and Apple Watch apps.
+Download `Tokenroom-2.2.1.zip` from the [latest release](https://github.com/felipedrf74/tokenroom/releases/latest), unzip it, and move Tokenroom.app to Applications. It's signed with a Developer ID and notarized by Apple, so it opens without warnings, and it's the build that can sync with the iPhone and Apple Watch apps.
 
 Or build it on the Mac that will run it (a build signed on your Mac works, but can't sync with iPhone):
 
@@ -132,7 +132,7 @@ The build is ad-hoc signed and **not sandboxed** — it has to read CLI credenti
 
 The same controls live in **Settings → Providers**. Turning a provider off hides it from Tokenroom; it does not log you out of that provider.
 
-Tokenroom only reads sessions. It never refreshes or rewrites another tool’s tokens. Claude and Grok sessions expire after a few hours; until you use `claude` or `grok` again (which refreshes them), Tokenroom keeps showing the last reading, faded, for up to a day.
+Tokenroom uses the login you already have. Claude, Grok Build, and Codex access tokens expire after a few hours; Tokenroom renews them in that tool’s own login and writes the new tokens back, so you stay signed in and the tool does too. It doesn’t keep a copy. Other logins are read only. A session whose refresh token is no longer accepted keeps its last reading, faded, for up to a day.
 
 ## Privacy
 

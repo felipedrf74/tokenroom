@@ -196,4 +196,112 @@ enum JSONTextEdit {
             return position > index ? position : nil
         }
     }
+
+    // MARK: Nested values
+
+    /// A JSON literal for `string`, including quotes and escaping, or nil when it can't be encoded.
+    static func literal(_ string: String) -> String? {
+        compact(string)
+    }
+
+    /// Every raw value of `key`, anywhere in objects nested in the text. Nil when the text isn't
+    /// one JSON value these edits can handle. A key written inside a string is not one of these.
+    static func literals(of key: String, in text: String) -> [String]? {
+        guard let found = valueRanges(of: key, in: text) else { return nil }
+        let bytes = Array(text.utf8)
+        return found.ranges.map { String(decoding: bytes[$0], as: UTF8.self) }
+    }
+
+    /// Replaces each value of `key` that is exactly `oldLiteral` with `newLiteral`. Nested objects
+    /// and arrays are walked; text inside strings is not. Nil when nothing matched or the text
+    /// isn't one JSON value these edits can handle, so a caller can rewrite the whole value
+    /// instead of saving a half-applied edit.
+    static func replaceValue(of key: String, equalTo oldLiteral: String, with newLiteral: String, in text: String) -> String? {
+        guard let found = valueRanges(of: key, in: text) else { return nil }
+        var bytes = found.bytes
+        let old = Array(oldLiteral.utf8)
+        let matches = found.ranges.filter { Array(bytes[$0]) == old }
+        guard !matches.isEmpty else { return nil }
+        let replacement = Array(newLiteral.utf8)
+        for range in matches.sorted(by: { $0.lowerBound > $1.lowerBound }) {
+            bytes.replaceSubrange(range, with: replacement)
+        }
+        return String(decoding: bytes, as: UTF8.self)
+    }
+
+    private struct ValueRanges {
+        var bytes: [UInt8]
+        var ranges: [Range<Int>]
+    }
+
+    private static func valueRanges(of key: String, in text: String) -> ValueRanges? {
+        let bytes = Array(text.utf8)
+        var ranges: [Range<Int>] = []
+        let start = skipWhitespace(bytes, skipBOM(bytes))
+        guard start < bytes.count, let end = walkValue(bytes, index: start, key: key, ranges: &ranges) else { return nil }
+        guard skipWhitespace(bytes, end) == bytes.count else { return nil }
+        return ValueRanges(bytes: bytes, ranges: ranges)
+    }
+
+    private static func skipBOM(_ bytes: [UInt8]) -> Int {
+        bytes.starts(with: [0xEF, 0xBB, 0xBF]) ? 3 : 0
+    }
+
+    /// One past the value at `index`. Records values of `key` in objects along the way.
+    private static func walkValue(_ bytes: [UInt8], index: Int, key: String, ranges: inout [Range<Int>]) -> Int? {
+        guard index < bytes.count else { return nil }
+        switch bytes[index] {
+        case UInt8(ascii: "\""):
+            return endOfString(bytes, index)
+        case UInt8(ascii: "{"):
+            return walkContainer(bytes, index: index, key: key, ranges: &ranges, close: UInt8(ascii: "}"), pairs: true)
+        case UInt8(ascii: "["):
+            return walkContainer(bytes, index: index, key: key, ranges: &ranges, close: UInt8(ascii: "]"), pairs: false)
+        default:
+            return endOfValue(bytes, index)
+        }
+    }
+
+    private static func walkContainer(
+        _ bytes: [UInt8],
+        index: Int,
+        key: String,
+        ranges: inout [Range<Int>],
+        close: UInt8,
+        pairs: Bool
+    ) -> Int? {
+        var index = skipWhitespace(bytes, index + 1)
+        if index < bytes.count, bytes[index] == close { return index + 1 }
+        while index < bytes.count {
+            let valueStart: Int
+            if pairs {
+                index = skipWhitespace(bytes, index)
+                guard index < bytes.count, bytes[index] == UInt8(ascii: "\""), let keyEnd = endOfString(bytes, index) else { return nil }
+                guard let memberKey = try? JSONSerialization.jsonObject(with: Data(bytes[index..<keyEnd]), options: .fragmentsAllowed) as? String else { return nil }
+                index = skipWhitespace(bytes, keyEnd)
+                guard index < bytes.count, bytes[index] == UInt8(ascii: ":") else { return nil }
+                index = skipWhitespace(bytes, index + 1)
+                valueStart = index
+                guard let valueEnd = walkValue(bytes, index: index, key: key, ranges: &ranges) else { return nil }
+                if memberKey == key {
+                    ranges.append(valueStart..<valueEnd)
+                }
+                index = valueEnd
+            } else {
+                index = skipWhitespace(bytes, index)
+                guard let valueEnd = walkValue(bytes, index: index, key: key, ranges: &ranges) else { return nil }
+                index = valueEnd
+            }
+            index = skipWhitespace(bytes, index)
+            guard index < bytes.count else { return nil }
+            if bytes[index] == UInt8(ascii: ",") {
+                index += 1
+            } else if bytes[index] == close {
+                return index + 1
+            } else {
+                return nil
+            }
+        }
+        return nil
+    }
 }

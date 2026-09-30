@@ -245,11 +245,14 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var requests: [URLRequest] = []
     /// Extra response headers, e.g. `Retry-After`.
     nonisolated(unsafe) static var headers: [String: String] = [:]
+    /// When set, the request fails before `handler` runs.
+    nonisolated(unsafe) static var failure: URLError?
 
     static func reset() {
         handler = nil
         requests = []
         headers = [:]
+        failure = nil
     }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -257,6 +260,10 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
 
     override func startLoading() {
         Self.requests.append(request)
+        if let failure = Self.failure {
+            client?.urlProtocol(self, didFailWithError: failure)
+            return
+        }
         let (status, data) = Self.handler?(request) ?? (404, Data())
         let fields = ["Content-Type": "application/json"].merging(Self.headers) { $1 }
         let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: fields)!

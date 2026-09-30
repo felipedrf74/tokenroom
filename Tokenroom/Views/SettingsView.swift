@@ -126,7 +126,7 @@ private struct ProvidersSettings: View {
                 } header: {
                     Text("Enabled")
                 } footer: {
-                    Text("Tokenroom reuses the login you already have for each tool and never refreshes it. Tokens, names, and emails are never stored or sent anywhere. Tools you sign in to are read from the same endpoints their own apps use: unofficial, and they can change without notice.")
+                    Text("Tokenroom uses the login you already have. Claude, Grok Build, and Codex access tokens expire after a few hours; Tokenroom renews them in that tool's own login, so you stay signed in. It doesn't keep a copy of the token. Names and emails are never stored or sent anywhere. Tools you sign in to are read from the same endpoints their own apps use: unofficial, and they can change without notice.")
                 }
             }
             if !detectedOff.isEmpty {

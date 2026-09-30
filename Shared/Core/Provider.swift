@@ -133,8 +133,8 @@ extension Provider {
                 assetName: "ProviderBuild",
                 menuGlyphName: "GlyphBuild",
                 signInHint: "Sign in with grok login to see usage.",
-                // The Grok CLI owns its session; Tokenroom never refreshes it.
-                expiredHint: "Session expired. Run grok once to refresh it."
+                // Renewed in the CLI's own login until that refresh token is rejected.
+                expiredHint: "Session expired. Sign in with grok login again."
             )
         case .grokBot:
             ProviderDescriptor(
@@ -159,8 +159,8 @@ extension Provider {
                 enabledByDefault: true,
                 assetName: "ProviderClaude",
                 signInHint: "Sign in with claude login to see usage.",
-                // Claude Code owns its session; Tokenroom never refreshes it.
-                expiredHint: "Session expired. Run claude once to refresh it.",
+                // Renewed in Claude Code's own login until that refresh token is rejected.
+                expiredHint: "Session expired. Sign in with claude login again.",
                 // The usage endpoint answers 429 to more than about one call every few minutes.
                 minimumInterval: 5 * 60
             )

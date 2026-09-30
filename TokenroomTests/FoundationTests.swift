@@ -242,9 +242,9 @@ final class FoundationTests: XCTestCase {
         XCTAssertEqual(defaults.array(forKey: "enabledProviders") as? [String], ["cursor"])
     }
 
-    // MARK: Read-only sessions
+    // MARK: Sessions
 
-    func testGrokTokenIsNeverRefreshed() throws {
+    func testExpiredGrokAccessIsNotUsedWithoutRefresh() throws {
         let now = Date(timeIntervalSince1970: 1_000_000)
         let live = CredentialReaders.GrokAuth(accessToken: "tok", expiresAt: now.addingTimeInterval(3600), userID: nil)
         XCTAssertEqual(try CredentialReaders.usableGrokToken(live, now: now), "tok")

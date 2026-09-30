@@ -229,14 +229,13 @@ struct ClaudeClient: ProviderClient {
     }
 
     private func directUsage() async throws -> QuotaSnapshot {
-        let auth = try await BlockingIO.run { try CredentialReaders.claudeAuth() }
+        let auth = try await LoginSession.shared.claude()
         do {
             return try await usage(with: auth)
         } catch ProviderError.expired {
-            // Claude Code may have replaced the token since it was cached. Read the
-            // Keychain again once; never refresh the session ourselves.
-            CredentialReaders.invalidateCaches()
-            let fresh = try await BlockingIO.run { try CredentialReaders.claudeAuth() }
+            // The server refused this access token. Renew once when the Keychain still
+            // has it; a token Claude Code already replaced is used as it is.
+            let fresh = try await LoginSession.shared.claude(replacing: auth.accessToken)
             guard fresh.accessToken != auth.accessToken else {
                 throw ProviderError.expired(Provider.claude.expiredHint)
             }
