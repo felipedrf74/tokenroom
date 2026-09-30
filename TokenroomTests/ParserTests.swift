@@ -164,6 +164,122 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(try CredentialReaders.parseClaudeToken(json), "tok-123")
     }
 
+    func testClaudePartitionListReadsTheHexPlist() {
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict><key>Partitions</key><array><string>teamid:EXAMPLE</string><string>apple-tool:</string></array></dict></plist>
+        """
+        let hex = xml.utf8.map { String(format: "%02x", $0) }.joined()
+        XCTAssertEqual(
+            CredentialReaders.partitions(inACLDescription: hex),
+            ["teamid:EXAMPLE", "apple-tool:"]
+        )
+        XCTAssertEqual(CredentialReaders.partitions(inACLDescription: "not a plist"), [])
+        XCTAssertTrue(CredentialReaders.isSecurityToolPartition("apple-tool:"))
+        XCTAssertFalse(CredentialReaders.isSecurityToolPartition("teamid:EXAMPLE"))
+        XCTAssertTrue(CredentialReaders.ClaudeKeyAccess(partitions: ["apple-tool:"], hasPartitionList: true).trustsSecurityTool)
+        XCTAssertTrue(CredentialReaders.ClaudeKeyAccess(trustedPaths: ["/usr/bin/security"]).trustsSecurityTool)
+        XCTAssertFalse(CredentialReaders.ClaudeKeyAccess(partitions: ["teamid:EXAMPLE"], hasPartitionList: true).trustsSecurityTool)
+        XCTAssertFalse(
+            CredentialReaders.ClaudeKeyAccess(
+                partitions: ["teamid:EXAMPLE"],
+                hasPartitionList: true,
+                trustedPaths: ["/usr/bin/security"]
+            ).trustsSecurityTool
+        )
+        var padded = Data("/usr/bin/security".utf8)
+        padded.append(contentsOf: [0, 0])
+        XCTAssertEqual(CredentialReaders.trustedApplicationPath(from: padded), "/usr/bin/security")
+    }
+
+    func testClaudeReadDoesNotUseSecItemForTheSecret() {
+        var silentCalls = 0
+        var securityCalls = 0
+        let secret = CredentialReaders.readClaudeSecret(
+            service: "Claude Code-credentials",
+            account: "tester",
+            access: { _ in
+                CredentialReaders.ClaudeKeyAccess(
+                    partitions: ["apple-tool:"],
+                    hasPartitionList: true,
+                    trustsThisApp: true
+                )
+            },
+            silent: { _, _ in
+                silentCalls += 1
+                return " {\"ok\":true} "
+            },
+            security: { _, _ in
+                securityCalls += 1
+                return .value(" {\"ok\":true} ")
+            }
+        )
+        XCTAssertEqual(secret, "{\"ok\":true}")
+        XCTAssertEqual(silentCalls, 0)
+        XCTAssertEqual(securityCalls, 1)
+        XCTAssertFalse(CredentialReaders.claudeLoginCanBeRenewedInPlace())
+        XCTAssertFalse(CredentialReaders.writeClaudeCredential(service: "svc", account: "tester", json: "{}"))
+    }
+
+    func testClaudeReadDoesNotAskWhenNothingTrustsTheCaller() {
+        var silentCalls = 0
+        var securityCalls = 0
+        let secret = CredentialReaders.readClaudeSecret(
+            service: "Claude Code-credentials",
+            account: "tester",
+            access: { _ in CredentialReaders.ClaudeKeyAccess(hasPartitionList: true) },
+            silent: { _, _ in
+                silentCalls += 1
+                return "secret"
+            },
+            security: { _, _ in
+                securityCalls += 1
+                return .value("secret")
+            }
+        )
+        XCTAssertNil(secret)
+        XCTAssertEqual(silentCalls, 0)
+        XCTAssertEqual(securityCalls, 0)
+    }
+
+    func testClaudeReadCallsSecurityOnceWhenOnlyThatToolIsTrusted() {
+        var silentCalls = 0
+        var accounts: [String?] = []
+        let secret = CredentialReaders.readClaudeSecret(
+            service: "Claude Code-credentials",
+            account: "tester",
+            access: { _ in CredentialReaders.ClaudeKeyAccess(partitions: ["apple-tool:"], hasPartitionList: true) },
+            silent: { _, _ in
+                silentCalls += 1
+                return "should-not-read"
+            },
+            security: { _, account in
+                accounts.append(account)
+                return .unavailable
+            }
+        )
+        XCTAssertNil(secret)
+        XCTAssertEqual(silentCalls, 0)
+        XCTAssertEqual(accounts, ["tester"])
+    }
+
+    func testClaudeReadRetriesSecurityOnlyWhenTheAccountIsMissing() {
+        var accounts: [String?] = []
+        let secret = CredentialReaders.readClaudeSecret(
+            service: "Claude Code-credentials",
+            account: "tester",
+            access: { _ in CredentialReaders.ClaudeKeyAccess(trustedPaths: ["/usr/bin/security"]) },
+            silent: { _, _ in "no" },
+            security: { _, account in
+                accounts.append(account)
+                return account == nil ? .value("token") : .missing
+            }
+        )
+        XCTAssertEqual(secret, "token")
+        XCTAssertEqual(accounts, ["tester", nil])
+    }
+
     func testClaudeRefreshTokenExpiry() throws {
         let nowMs = Date().timeIntervalSince1970 * 1000
         let live = """

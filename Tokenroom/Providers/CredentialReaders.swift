@@ -320,17 +320,201 @@ enum CredentialReaders {
     private static func readBestClaudeCredential(account: String) -> (raw: String, auth: ClaudeAuth)? {
         var best: (raw: String, auth: ClaudeAuth)?
         for service in claudeCredentialServices() {
-            guard let raw = securityPassword(service: service, account: account)
-                ?? securityPassword(service: service, account: nil)
-                ?? keychainPassword(service: service, account: account)
-                ?? keychainPassword(service: service)
-            else { continue }
+            guard let raw = readClaudeSecret(service: service, account: account) else { continue }
             guard let auth = try? parseClaudeAuth(raw, account: account, service: service) else { continue }
             if best == nil || claudeAuthIsBetter(auth, than: best!.auth) {
                 best = (raw, auth)
             }
         }
         return best
+    }
+
+    /// What one call to `/usr/bin/security` found. A missing account is not a refusal:
+    /// the login-password dialog is the refusal, and that must not be tried again.
+    enum SecurityPasswordResult: Equatable {
+        case value(String)
+        case missing
+        case unavailable
+    }
+
+    /// A quiet read of one Claude item. The access list is checked before the secret.
+    /// The secret is never read with SecItem: that call waits in securityd when this
+    /// build is not the trusted-application entry, even if the partition list names
+    /// this app, and the wait holds every later keychain call. `/usr/bin/security`
+    /// is already trusted by these items and returns without asking. It runs once,
+    /// plus one retry when the account attribute is absent. Anything it is not
+    /// trusted to read is left unread. A read the caller is not allowed to open is
+    /// what showed the login-password dialog, and the five-second process limit
+    /// then replaced it with another.
+    static func readClaudeSecret(
+        service: String,
+        account: String,
+        access: (String) -> ClaudeKeyAccess = { claudeKeyAccess(service: $0) },
+        silent: (String, String?) -> String? = { keychainPassword(service: $0, account: $1, promptAllowed: false) },
+        security: (String, String?) -> SecurityPasswordResult = { securityPassword(service: $0, account: $1) }
+    ) -> String? {
+        _ = silent
+        let policy = access(service)
+        guard policy.trustsSecurityTool else { return nil }
+        switch security(service, account) {
+        case .value(let value):
+            return present(value)
+        case .missing:
+            guard !account.isEmpty else { return nil }
+            if case .value(let value) = security(service, nil) {
+                return present(value)
+            }
+            return nil
+        case .unavailable:
+            return nil
+        }
+    }
+
+    private static func present(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// `apple-tool:` is `/usr/bin/security`. A team id is not.
+    static func isSecurityToolPartition(_ partition: String) -> Bool {
+        partition == "apple-tool:" || partition.hasPrefix("apple-tool:")
+    }
+
+    /// Who may read one keychain item, without reading or prompting for the secret.
+    /// A partition list is checked before the trusted-application list. A caller whose
+    /// partition is missing from that list gets the login-password dialog, so a path
+    /// entry is used only when the item has no partition list.
+    struct ClaudeKeyAccess: Equatable {
+        var partitions: [String] = []
+        var hasPartitionList: Bool = false
+        var trustedPaths: [String] = []
+        var trustsThisApp: Bool = false
+
+        var trustsSecurityTool: Bool {
+            if hasPartitionList {
+                return partitions.contains(where: CredentialReaders.isSecurityToolPartition)
+            }
+            return trustedPaths.contains("/usr/bin/security")
+        }
+    }
+
+    static func claudeKeyAccess(service: String) -> ClaudeKeyAccess {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecReturnRef as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
+            kSecUseAuthenticationContext as String: context,
+        ]
+        let (status, item) = KeychainGate.copyMatching(query)
+        guard status == errSecSuccess, let item, CFGetTypeID(item) == SecKeychainItemGetTypeID() else {
+            return ClaudeKeyAccess()
+        }
+        var access: SecAccess?
+        guard SecKeychainItemCopyAccess(item as! SecKeychainItem, &access) == errSecSuccess, let access else {
+            return ClaudeKeyAccess()
+        }
+        var list: CFArray?
+        guard SecAccessCopyACLList(access, &list) == errSecSuccess, let acls = list as? [SecACL] else {
+            return ClaudeKeyAccess()
+        }
+        var found = ClaudeKeyAccess()
+        for acl in acls {
+            let authorizations = SecACLCopyAuthorizations(acl) as? [String] ?? []
+            let isPartition = authorizations.contains(kSecACLAuthorizationPartitionID as String)
+            let allowsRead = authorizations.contains(kSecACLAuthorizationDecrypt as String)
+                || authorizations.contains(kSecACLAuthorizationAny as String)
+                || authorizations.contains(kSecACLAuthorizationKeychainItemRead as String)
+            var apps: CFArray?
+            var description: CFString?
+            var prompt = SecKeychainPromptSelector()
+            guard SecACLCopyContents(acl, &apps, &description, &prompt) == errSecSuccess else { continue }
+            if isPartition, let text = description as String? {
+                found.hasPartitionList = true
+                found.partitions.append(contentsOf: partitions(inACLDescription: text))
+            }
+            guard allowsRead, let apps else { continue }
+            for index in 0..<CFArrayGetCount(apps) {
+                guard let raw = CFArrayGetValueAtIndex(apps, index) else { continue }
+                let app = Unmanaged<SecTrustedApplication>.fromOpaque(raw).takeUnretainedValue()
+                var data: CFData?
+                guard SecTrustedApplicationCopyData(app, &data) == errSecSuccess, let data = data as Data?,
+                      let path = trustedApplicationPath(from: data)
+                else { continue }
+                found.trustedPaths.append(path)
+            }
+        }
+        if found.hasPartitionList {
+            if let team = signingTeamID {
+                found.trustsThisApp = found.partitions.contains("teamid:\(team)")
+            }
+        } else {
+            found.trustsThisApp = found.trustedPaths.contains(where: pathTrustsThisApp)
+        }
+        return found
+    }
+
+    /// Trusted-application entries are paths, sometimes with trailing NUL bytes.
+    static func trustedApplicationPath(from data: Data) -> String? {
+        let bytes = data.prefix { $0 != 0 }
+        guard let path = String(data: bytes, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !path.isEmpty
+        else { return nil }
+        return path
+    }
+
+    private static func pathTrustsThisApp(_ path: String) -> Bool {
+        let trusted = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+        let bundle = Bundle.main.bundleURL.standardizedFileURL.resolvingSymlinksInPath().path
+        return trusted == bundle || trusted.hasPrefix(bundle + "/")
+    }
+
+    private static let signingTeamID: String? = {
+        var staticCode: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(Bundle.main.bundleURL as CFURL, [], &staticCode) == errSecSuccess,
+              let staticCode
+        else { return nil }
+        var information: CFDictionary?
+        guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
+              let info = information as? [String: Any],
+              let team = info[kSecCodeInfoTeamIdentifier as String] as? String,
+              !team.isEmpty
+        else { return nil }
+        return team
+    }()
+
+    /// The partition plist is sometimes the ACL description itself, and sometimes that plist in hex.
+    static func partitions(inACLDescription description: String) -> [String] {
+        var texts = [description]
+        if let decoded = hexDecoded(description) {
+            texts.append(decoded)
+        }
+        for text in texts {
+            guard let data = text.data(using: .utf8),
+                  let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+                  let parts = plist["Partitions"] as? [String]
+            else { continue }
+            return parts
+        }
+        return []
+    }
+
+    private static func hexDecoded(_ hex: String) -> String? {
+        let cleaned = hex.filter { !$0.isWhitespace }
+        guard cleaned.count >= 8, cleaned.count.isMultiple(of: 2), cleaned.allSatisfy(\.isHexDigit) else { return nil }
+        var data = Data(capacity: cleaned.count / 2)
+        var index = cleaned.startIndex
+        while index < cleaned.endIndex {
+            let next = cleaned.index(index, offsetBy: 2)
+            guard let byte = UInt8(cleaned[index..<next], radix: 16) else { return nil }
+            data.append(byte)
+            index = next
+        }
+        return String(data: data, encoding: .utf8)
     }
 
     private static func claudeAuthIsBetter(_ candidate: ClaudeAuth, than current: ClaudeAuth) -> Bool {
@@ -359,6 +543,7 @@ enum CredentialReaders {
             kSecClass as String: kSecClassGenericPassword,
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: true,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
             kSecUseAuthenticationContext as String: context,
         ]
         let (status, result) = KeychainGate.copyMatching(query)
@@ -378,27 +563,25 @@ enum CredentialReaders {
     /// A generic password through `/usr/bin/security`, for items another CLI created with it (gh
     /// through go-keyring, Claude Code): their access lists trust that tool, so no prompt.
     static func securityGenericPassword(service: String, account: String?) -> String? {
-        securityPassword(service: service, account: account)
+        guard case .value(let value) = securityPassword(service: service, account: account) else { return nil }
+        return value
     }
 
-    private static func securityPassword(service: String, account: String?) -> String? {
+    private static func securityPassword(service: String, account: String?) -> SecurityPasswordResult {
         var args = ["find-generic-password", "-s", service, "-w"]
         if let account {
             args.insert(contentsOf: ["-a", account], at: 3)
         }
-        guard let output = securityRun(args) else { return nil }
-        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
-
-    private static func securityRun(_ args: [String]) -> String? {
         // Same gate as SecItem. The `security` tool talks to securityd too, and running
         // it beside a keychain call in this process is the same deadlock.
         let output = KeychainGate.sync {
             BlockingIO.runProcess(URL(fileURLWithPath: "/usr/bin/security"), arguments: args)
         }
-        guard output.succeeded else { return nil }
-        return String(data: output.stdout, encoding: .utf8)
+        // 44 is errSecItemNotFound once the status is truncated to a process exit code.
+        if !output.timedOut, output.status == 44 { return .missing }
+        guard output.succeeded, let text = String(data: output.stdout, encoding: .utf8) else { return .unavailable }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? .unavailable : .value(trimmed)
     }
 
     /// A token Cursor already refused isn't a session to finish signing in with.
@@ -506,6 +689,9 @@ enum CredentialReaders {
         if !promptAllowed {
             let context = LAContext()
             context.interactionNotAllowed = true
+            // The context alone does not stop a legacy keychain ACL from showing the
+            // login-password dialog. Fail instead of asking.
+            query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail
             query[kSecUseAuthenticationContext as String] = context
         }
         if let account {
@@ -566,29 +752,15 @@ enum CredentialReaders {
         claudeCache.withLock { $0 = auth }
     }
 
-    /// Writes `json` back into the Claude Code item it was read from. Tries the Keychain API
-    /// without a prompt, then `security add-generic-password -U`, which Claude Code's item
-    /// already trusts. Returns false when both fail; the caller keeps the new tokens to retry.
-    static func writeClaudeCredential(service: String, account: String, json: String) -> Bool {
-        let data = Data(json.utf8)
-        if updateClaudeCredential(service: service, account: account, data: data) { return true }
-        if updateClaudeCredential(service: service, account: nil, data: data) { return true }
-        return securityRun(["add-generic-password", "-a", account, "-s", service, "-w", json, "-U"]) != nil
-    }
+    /// SecItem cannot update this item quietly. The same decrypt entry that blocks a
+    /// secret read blocks an update, and `security add-generic-password -U` would put
+    /// the login on the process arguments and can replace the access list. Renewal
+    /// therefore does not exchange a new login it could not store.
+    static func claudeLoginCanBeRenewedInPlace() -> Bool { false }
 
-    private static func updateClaudeCredential(service: String, account: String?, data: Data) -> Bool {
-        let context = LAContext()
-        context.interactionNotAllowed = true
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecUseAuthenticationContext as String: context,
-        ]
-        if let account {
-            query[kSecAttrAccount as String] = account
-        }
-        let attributes = [kSecValueData as String: data]
-        return KeychainGate.update(query, attributes) == errSecSuccess
+    static func writeClaudeCredential(service: String, account: String, json: String) -> Bool {
+        _ = (service, account, json)
+        return false
     }
 
     /// A refresh grant these providers already rejected, as a fingerprint of the refresh token

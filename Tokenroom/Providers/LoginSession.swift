@@ -535,7 +535,10 @@ actor LoginSession {
             read: read,
             facts: { auth in
                 let expiry = auth.expiresAtMs.map { Date(timeIntervalSince1970: $0 / 1000) }
-                return Facts(accessToken: auth.accessToken, refreshToken: auth.refreshToken ?? "", expiresAt: expiry, canRefresh: auth.canRefresh(at: now))
+                // Don't exchange a refresh token that cannot be written back. Claude Code
+                // keeps the login, and the next read picks up whatever it stored.
+                let canRefresh = auth.canRefresh(at: now) && CredentialReaders.claudeLoginCanBeRenewedInPlace()
+                return Facts(accessToken: auth.accessToken, refreshToken: auth.refreshToken ?? "", expiresAt: expiry, canRefresh: canRefresh)
             },
             post: { auth in
                 let userAgent = await BlockingIO.run { CredentialReaders.claudeUserAgent() }
