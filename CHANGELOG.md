@@ -2,7 +2,7 @@
 
 ## 2.2.3 — 2026-09-30
 
-Tokenroom for Mac 2.2.3. The iPhone and Apple Watch app stays 1.0.1.
+Tokenroom for Mac 2.2.3. The iPhone and Apple Watch app stays 1.0.1, build 3.
 
 - Claude's usage check no longer asks for the login keychain password. Tokenroom reads that login with the `security` tool only when the item already allows it, once. It does not open the item itself, because that call waits on the keychain and the check never finishes. The login is left for Claude Code to renew, so Tokenroom does not replace its access list.
 

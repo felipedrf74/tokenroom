@@ -5,4 +5,4 @@ TOKENROOM_MAC_BUILD = 6
 
 // iPhone app, widgets, and Watch app share one version.
 TOKENROOM_MOBILE_VERSION = 1.0.1
-TOKENROOM_MOBILE_BUILD = 2
+TOKENROOM_MOBILE_BUILD = 3
