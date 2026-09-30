@@ -58,8 +58,8 @@ struct AntigravityClient: ProviderClient {
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecUseAuthenticationContext as String: context,
         ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess else { return nil }
+        let (status, item) = KeychainGate.copyMatching(query)
+        guard status == errSecSuccess else { return nil }
         return item as? [String: Any]
     }
 

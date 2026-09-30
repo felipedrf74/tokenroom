@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.2 — 2026-09-30
+
+Tokenroom for Mac 2.2.2. The iPhone and Apple Watch app stays 1.0.1, build 2.
+
+- The Mac menu no longer stays on “Updating…”. Keychain reads run one at a time, and a usage check that doesn't come back still ends, so the last reading stays and the menu moves on. Claude, Grok Build, and Codex stay signed in.
+
 ## 2.2.1 — 2026-09-30
 
 Tokenroom for Mac 2.2.1, and the iPhone and Apple Watch app, 1.0.1.

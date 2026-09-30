@@ -64,8 +64,8 @@ struct APIKeyStore: Sendable {
         var query = base
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+        let (status, item) = KeychainGate.copyMatching(query)
+        guard status == errSecSuccess,
               let data = item as? Data,
               let key = String(data: data, encoding: .utf8), !key.isEmpty
         else { return nil }
@@ -76,8 +76,8 @@ struct APIKeyStore: Sendable {
         var query = base
         query[kSecReturnAttributes as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+        let (status, item) = KeychainGate.copyMatching(query)
+        guard status == errSecSuccess,
               let attributes = item as? [String: Any],
               let data = attributes[kSecAttrGeneric as String] as? Data
         else { return nil }
@@ -99,8 +99,8 @@ struct APIKeyStore: Sendable {
         query[kSecReturnData as String] = true
         query[kSecReturnAttributes as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+        let (status, item) = KeychainGate.copyMatching(query)
+        guard status == errSecSuccess,
               let attributes = item as? [String: Any],
               let data = attributes[kSecValueData as String] as? Data,
               let key = String(data: data, encoding: .utf8), !key.isEmpty
@@ -116,7 +116,7 @@ struct APIKeyStore: Sendable {
     /// with an add too, so the key is never left in neither keychain.
     private func migrate(_ provider: Provider, key: String, saved: Metadata?) {
         let metadata = Metadata(last4: String(key.suffix(4)), addedAt: saved?.addedAt ?? .now, region: saved?.region, warning: saved?.warning)
-        SecItemDelete(legacyQuery(provider) as CFDictionary)
+        _ = KeychainGate.delete(legacyQuery(provider))
         let status = (try? add(key, metadata: metadata, to: baseQuery(provider), for: provider)) ?? errSecParam
         guard status == errSecSuccess || status == errSecDuplicateItem else {
             // Back where it was; moved on a later read.
@@ -138,10 +138,10 @@ struct APIKeyStore: Sendable {
         if usesDataProtection {
             // A key replaced before it moved over would otherwise stay in the login keychain.
             // Before the add: this query also matches the data-protection copy.
-            SecItemDelete(legacyQuery(provider) as CFDictionary)
+            _ = KeychainGate.delete(legacyQuery(provider))
         }
         #endif
-        SecItemDelete(baseQuery(provider) as CFDictionary)
+        _ = KeychainGate.delete(baseQuery(provider))
         let status = try add(trimmed, metadata: metadata, to: baseQuery(provider), for: provider)
         guard status == errSecSuccess else { throw KeyError.keychain(status) }
     }
@@ -155,14 +155,14 @@ struct APIKeyStore: Sendable {
         // Readable by widgets and background refresh once the phone has been unlocked; stays on this device.
         attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         #endif
-        return SecItemAdd(attributes as CFDictionary, nil)
+        return KeychainGate.add(attributes)
     }
 
     func remove(for provider: Provider) throws {
-        let status = SecItemDelete(baseQuery(provider) as CFDictionary)
+        let status = KeychainGate.delete(baseQuery(provider))
         #if os(macOS)
         if usesDataProtection {
-            SecItemDelete(legacyQuery(provider) as CFDictionary)
+            _ = KeychainGate.delete(legacyQuery(provider))
         }
         #endif
         guard status == errSecSuccess || status == errSecItemNotFound else { throw KeyError.keychain(status) }

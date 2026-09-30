@@ -158,11 +158,15 @@ enum TimeLimit {
     /// `work`'s answer, or `fallback` once `seconds` pass or the caller is cancelled. `work` is
     /// then cancelled but not waited for: a task group would wait, and some calls (iCloud's
     /// account status) carry on regardless.
+    ///
+    /// The deadline is queued on the main thread. A stuck legacy keychain call blocks the
+    /// dispatch workers Swift's `Task.sleep` uses, so a timer on that pool would never fire
+    /// and the menu would stay on "Updating…". The main thread keeps running.
     static func run<T: Sendable>(_ seconds: TimeInterval, otherwise fallback: T, _ work: @escaping @Sendable () async -> T) async -> T {
         let answer = FirstAnswer<T>()
-        let worker = Task { answer.give(await work()) }
-        let timer = Task {
-            try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
+        let worker = Task.detached(priority: .userInitiated) { answer.give(await work()) }
+        // A late fire is ignored. Cancelling the block would capture a non-Sendable work item.
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, seconds)) {
             answer.give(fallback)
         }
         let result = await withTaskCancellationHandler {
@@ -171,7 +175,6 @@ enum TimeLimit {
             answer.give(fallback)
         }
         worker.cancel()
-        timer.cancel()
         return result
     }
 }

@@ -106,7 +106,7 @@ Tokenroom for iPhone and Apple Watch is on its way to the App Store. It has a sa
 
 ## Install
 
-Download `Tokenroom-2.2.1.zip` from the [latest release](https://github.com/felipedrf74/tokenroom/releases/latest), unzip it, and move Tokenroom.app to Applications. It's signed with a Developer ID and notarized by Apple, so it opens without warnings, and it's the build that can sync with the iPhone and Apple Watch apps.
+Download `Tokenroom-2.2.2.zip` from the [latest release](https://github.com/felipedrf74/tokenroom/releases/latest), unzip it, and move Tokenroom.app to Applications. It's signed with a Developer ID and notarized by Apple, so it opens without warnings, and it's the build that can sync with the iPhone and Apple Watch apps.
 
 Or build it on the Mac that will run it (a build signed on your Mac works, but can't sync with iPhone):
 

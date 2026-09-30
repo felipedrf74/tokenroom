@@ -353,15 +353,20 @@ final class QuotaStore {
         }
         guard !Task.isCancelled else { return }
         for provider in resting {
+            guard !Task.isCancelled else { return }
             // The kept reading dates from when its values first appeared; a between-calls
             // reading has to be newer than the last check.
             var previous = statuses[provider]?.snapshot
             if let kept = previous?.fetchedAt, let checked = checkedAt[provider], checked > kept {
                 previous?.fetchedAt = checked
             }
-            guard let client = clients[provider],
-                  let snapshot = await client.fetchBetweenCalls(previous: previous)
-            else { continue }
+            guard let client = clients[provider] else { continue }
+            let baseline = previous
+            // Same budget as a full check. This read is local and usually instant; if it
+            // doesn't return, the last reading stays and the menu leaves "Updating…".
+            guard let snapshot = await TimeLimit.run(client.fetchBudget, otherwise: nil, {
+                await client.fetchBetweenCalls(previous: baseline)
+            }) else { continue }
             apply(provider: provider, result: .success(snapshot))
         }
         persistLiveSnapshots()

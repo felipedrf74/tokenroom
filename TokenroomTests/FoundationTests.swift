@@ -303,6 +303,43 @@ final class FoundationTests: XCTestCase {
         XCTAssertEqual(client.calls, 1, "Claude's usage endpoint allows about one call every few minutes")
     }
 
+    /// The menu stays on "Updating…" for as long as this check runs. A local read that never
+    /// returns (the keychain deadlock did this) still has to let the check finish.
+    @MainActor
+    func testARestingReadThatHangsStillFinishesTheCheck() async throws {
+        let client = HungBetweenClient(snapshot: snapshot(.claude))
+        let store = QuotaStore(
+            settings: AppSettings(defaults: makeDefaults()),
+            clients: [client],
+            cache: SnapshotCache(directory: try makeFolder())
+        )
+        await store.refresh(force: true)
+        let started = Date()
+        await store.refresh(force: true)
+        XCTAssertFalse(store.isRefreshing)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+        XCTAssertEqual(store.statuses[.claude]?.snapshot?.usedPercent, 40)
+    }
+
+    func testKeychainWorkRunsOneAtATime() {
+        let counts = OverlapCounts()
+        DispatchQueue.concurrentPerform(iterations: 8) { _ in
+            KeychainGate.sync {
+                counts.enter()
+                Thread.sleep(forTimeInterval: 0.02)
+                counts.leave()
+            }
+        }
+        XCTAssertEqual(counts.peak, 1)
+    }
+
+    func testKeychainWorkCanReenter() {
+        let value = DispatchQueue.global(qos: .utility).sync {
+            KeychainGate.sync { KeychainGate.sync { 7 } }
+        }
+        XCTAssertEqual(value, 7)
+    }
+
     @MainActor
     func testRateLimitedProviderWaitsForRetryAfter() async throws {
         let client = ScriptedClient(provider: .claude, results: [
@@ -699,6 +736,47 @@ final class FoundationTests: XCTestCase {
 
 /// Returns queued results in order, then repeats the last one. Between calls it answers with
 /// `between`, like Claude's status line.
+private final class OverlapCounts: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current = 0
+    private(set) var peak = 0
+
+    func enter() {
+        lock.lock()
+        current += 1
+        peak = max(peak, current)
+        lock.unlock()
+    }
+
+    func leave() {
+        lock.lock()
+        current -= 1
+        lock.unlock()
+    }
+}
+
+/// Claude's second check reads locally. This one never answers until the check gives up.
+private final class HungBetweenClient: ProviderClient, @unchecked Sendable {
+    let provider: Provider = .claude
+    let snapshot: QuotaSnapshot
+    var fetchBudget: TimeInterval { 0.25 }
+
+    init(snapshot: QuotaSnapshot) {
+        self.snapshot = snapshot
+    }
+
+    func fetch() async -> Result<QuotaSnapshot, ProviderError> {
+        .success(snapshot)
+    }
+
+    func fetchBetweenCalls(previous: QuotaSnapshot?) async -> QuotaSnapshot? {
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return nil
+    }
+}
+
 /// A client whose calls wait until `release()`, to hold a check in flight.
 private final class GatedClient: ProviderClient, @unchecked Sendable {
     let provider: Provider

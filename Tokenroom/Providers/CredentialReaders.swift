@@ -353,13 +353,15 @@ enum CredentialReaders {
             return cached.names
         }
         var names = Set<String>([claudeKeychainService])
+        let context = LAContext()
+        context.interactionNotAllowed = true
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: true,
+            kSecUseAuthenticationContext as String: context,
         ]
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let (status, result) = KeychainGate.copyMatching(query)
         if status == errSecSuccess, let items = result as? [[String: Any]] {
             for item in items {
                 guard let service = item[kSecAttrService as String] as? String else { continue }
@@ -390,7 +392,11 @@ enum CredentialReaders {
     }
 
     private static func securityRun(_ args: [String]) -> String? {
-        let output = BlockingIO.runProcess(URL(fileURLWithPath: "/usr/bin/security"), arguments: args)
+        // Same gate as SecItem. The `security` tool talks to securityd too, and running
+        // it beside a keychain call in this process is the same deadlock.
+        let output = KeychainGate.sync {
+            BlockingIO.runProcess(URL(fileURLWithPath: "/usr/bin/security"), arguments: args)
+        }
         guard output.succeeded else { return nil }
         return String(data: output.stdout, encoding: .utf8)
     }
@@ -505,8 +511,7 @@ enum CredentialReaders {
         if let account {
             query[kSecAttrAccount as String] = account
         }
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        let (status, item) = KeychainGate.copyMatching(query)
         guard status == errSecSuccess, let data = item as? Data else { return nil }
         return String(data: data, encoding: .utf8)
     }
@@ -583,7 +588,7 @@ enum CredentialReaders {
             query[kSecAttrAccount as String] = account
         }
         let attributes = [kSecValueData as String: data]
-        return SecItemUpdate(query as CFDictionary, attributes as CFDictionary) == errSecSuccess
+        return KeychainGate.update(query, attributes) == errSecSuccess
     }
 
     /// A refresh grant these providers already rejected, as a fingerprint of the refresh token

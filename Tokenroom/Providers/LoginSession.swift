@@ -914,45 +914,71 @@ actor LoginSession {
 }
 
 /// Tokenroom's own Keychain item. It is not synced, and it is deleted once the CLI file is updated.
+/// A team-signed build keeps it in the data-protection keychain, off the legacy lock. An item
+/// 2.2.1 saved in the login keychain is still read. The login-keychain query is never used to
+/// delete after the data-protection write: that query can match the item just added.
 private enum LoginRecovery {
     static let service = "app.tokenroom.mac.login-recovery"
 
     static func load(account: String) -> LoginRecoveryPending? {
-        let query = base(account: account).merging([
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationContext as String: quietContext(),
-        ]) { _, new in new }
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data
-        else { return nil }
-        return try? JSONDecoder().decode(LoginRecoveryPending.self, from: data)
+        if KeychainAvailability.dataProtection, let pending = read(account: account, dataProtection: true) {
+            return pending
+        }
+        return read(account: account, dataProtection: false)
     }
 
     static func save(account: String, pending: LoginRecoveryPending) -> Bool {
         guard let data = try? JSONEncoder().encode(pending) else { return false }
-        let query = base(account: account)
-        if SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecSuccess {
+        if KeychainAvailability.dataProtection, write(account: account, data: data, dataProtection: true) {
+            return true
+        }
+        return write(account: account, data: data, dataProtection: false)
+    }
+
+    static func delete(account: String) {
+        if KeychainAvailability.dataProtection {
+            _ = KeychainGate.delete(quiet(base(account: account, dataProtection: true)))
+        }
+        _ = KeychainGate.delete(quiet(base(account: account, dataProtection: false)))
+    }
+
+    private static func read(account: String, dataProtection: Bool) -> LoginRecoveryPending? {
+        var query = quiet(base(account: account, dataProtection: dataProtection))
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        let (status, item) = KeychainGate.copyMatching(query)
+        guard status == errSecSuccess, let data = item as? Data else { return nil }
+        return try? JSONDecoder().decode(LoginRecoveryPending.self, from: data)
+    }
+
+    private static func write(account: String, data: Data, dataProtection: Bool) -> Bool {
+        let query = quiet(base(account: account, dataProtection: dataProtection))
+        if KeychainGate.update(query, [kSecValueData as String: data]) == errSecSuccess {
             return true
         }
         var add = query
         add[kSecValueData as String] = data
         add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+        return KeychainGate.add(add) == errSecSuccess
     }
 
-    static func delete(account: String) {
-        SecItemDelete(base(account: account) as CFDictionary)
-    }
-
-    private static func base(account: String) -> [String: Any] {
-        [
+    private static func base(account: String, dataProtection: Bool) -> [String: Any] {
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
         ]
+        if dataProtection {
+            query[kSecUseDataProtectionKeychain as String] = true
+        }
+        return query
+    }
+
+    private static func quiet(_ query: [String: Any]) -> [String: Any] {
+        var query = query
+        query[kSecUseAuthenticationContext as String] = quietContext()
+        return query
     }
 
     private static func quietContext() -> LAContext {
