@@ -2,7 +2,7 @@
 
 A draft for App Store Connect. Provider names appear only in the description, as facts, never in the name, subtitle, or keywords. Tokenroom isn't affiliated with any provider.
 
-## What's New — 1.0.0 build 6
+## What's New — 1.0.1
 
 Usage readings now show when each provider was last checked and flag stale data. Secondary limits get clearer warnings, and reset windows wait for a confirmed new reading. Settings protects key validation and shared alert preferences during edits. News retries feeds independently and adds search and Show More. Apple Watch, widgets, and Live Activities present the same freshness and reset states. Tokenroom for Mac 2.2.1 keeps Claude, Grok Build, and Codex signed in, so the readings it sends keep updating without a fresh login.
 

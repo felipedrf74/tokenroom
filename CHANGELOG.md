@@ -2,7 +2,7 @@
 
 ## 2.2.1 — 2026-09-30
 
-Tokenroom for Mac 2.2.1, and the iPhone and Apple Watch app, build 6.
+Tokenroom for Mac 2.2.1, and the iPhone and Apple Watch app, 1.0.1.
 
 - Claude, Grok Build, and Codex stay signed in. Tokenroom renews an access token in that tool's own login before it expires and writes the new access and refresh tokens back, so a check no longer asks you to sign in every few hours. Turning a provider off still does not sign the tool out. Other providers are unchanged.
 
