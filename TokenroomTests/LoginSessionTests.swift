@@ -248,40 +248,10 @@ final class LoginSessionTests: XCTestCase {
         XCTAssertTrue(saved.contains("access-old"), saved)
     }
 
-    func testClaudeRenewalWritesTheNewTokensAndKeepsTheRest() async throws {
-        let box = AuthBox(claudeJSON)
-        stub { request in
-            request.url?.host == "platform.claude.com"
-                ? (500, Data())
-                : (200, Data(#"{"access_token":"access-new","refresh_token":"refresh-new","expires_in":28800}"#.utf8))
-        }
-        let session = LoginSession()
-        let auth = try await session.claude(now: now, persistsRecovery: false, load: {
-            try CredentialReaders.parseClaudeAuth(box.raw, account: "tester", service: "svc")
-        }, save: { updated in
-            box.raw = updated.rawJSON
-        })
-        XCTAssertEqual(auth.accessToken, "access-new")
-        XCTAssertEqual(grantRequests().map { $0.url?.host }, ["platform.claude.com", "console.anthropic.com"])
-        let request = try XCTUnwrap(grantRequests().last)
-        XCTAssertTrue(request.value(forHTTPHeaderField: "User-Agent")?.hasPrefix("claude-cli") == true)
-        XCTAssertEqual(request.value(forHTTPHeaderField: "x-app"), "cli")
-        let body = bodyText(request)
-        XCTAssertTrue(body.contains("\"grant_type\":\"refresh_token\""), body)
-        XCTAssertTrue(body.contains(OAuthRefresh.claudeClientID), body)
-        XCTAssertTrue(body.contains("refresh-old"), body)
-        XCTAssertTrue(box.raw.contains("\"accessToken\": \"other\""), box.raw)
-        XCTAssertTrue(box.raw.contains("access-new"), box.raw)
-        XCTAssertTrue(box.raw.contains("refresh-new"), box.raw)
-        XCTAssertTrue(box.raw.contains("\"note\": \"keep me\""), box.raw)
-        XCTAssertTrue(box.raw.contains("1800028800000"), box.raw)
-        XCTAssertFalse(box.raw.contains("access-old"), box.raw)
-    }
-
-    func testARejectedClaudeGrantDoesNotTryTheLegacyHost() async throws {
+    func testAnExpiredClaudeLoginIsLeftForClaudeCode() async throws {
         let box = AuthBox(claudeJSON)
         let original = box.raw
-        stub { _ in (400, Data(#"{"error":"invalid_grant"}"#.utf8)) }
+        stub { _ in (200, Data(#"{"access_token":"access-new","refresh_token":"refresh-new","expires_in":28800}"#.utf8)) }
         let session = LoginSession()
         do {
             _ = try await session.claude(now: now, persistsRecovery: false, load: {
@@ -293,8 +263,48 @@ final class LoginSessionTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? ProviderError, .expired(Provider.claude.expiredHint))
         }
-        XCTAssertEqual(grantRequests().map { $0.url?.host }, ["platform.claude.com"])
+        XCTAssertTrue(grantRequests().isEmpty, "A login that cannot be stored is not exchanged")
         XCTAssertEqual(box.raw, original)
+        XCTAssertFalse(CredentialReaders.claudeLoginCanBeRenewedInPlace())
+    }
+
+    func testACurrentClaudeLoginIsReadWithoutAGrant() async throws {
+        let raw = """
+        {
+          "mcpOAuth": {"accessToken": "other"},
+          "claudeAiOauth": {"accessToken": "access-old", "refreshToken": "refresh-old", "expiresAt": 1800028800000},
+          "note": "keep me"
+        }
+        """
+        let box = AuthBox(raw)
+        stub { _ in (500, Data()) }
+        let session = LoginSession()
+        let auth = try await session.claude(now: now, persistsRecovery: false, load: {
+            try CredentialReaders.parseClaudeAuth(box.raw, account: "tester", service: "svc")
+        }, save: { updated in
+            box.raw = updated.rawJSON
+        })
+        XCTAssertEqual(auth.accessToken, "access-old")
+        XCTAssertTrue(grantRequests().isEmpty)
+        XCTAssertEqual(box.raw, raw)
+    }
+
+    func testPatchClaudeKeepsTheRestOfTheLogin() throws {
+        let patched = try XCTUnwrap(OAuthRefresh.patchClaude(
+            raw: claudeJSON,
+            accessToken: "access-new",
+            refreshToken: "refresh-new",
+            expiresAtMs: 1_800_028_800_000,
+            previousAccess: "access-old",
+            previousRefresh: "refresh-old",
+            previousExpiresAtMs: 1
+        ))
+        XCTAssertTrue(patched.contains("\"accessToken\": \"other\""), patched)
+        XCTAssertTrue(patched.contains("access-new"), patched)
+        XCTAssertTrue(patched.contains("refresh-new"), patched)
+        XCTAssertTrue(patched.contains("\"note\": \"keep me\""), patched)
+        XCTAssertTrue(patched.contains("1800028800000"), patched)
+        XCTAssertFalse(patched.contains("access-old"), patched)
     }
 
     func testCodexRenewalLeavesTheAPIKeyAlone() async throws {
