@@ -322,14 +322,21 @@ final class FoundationTests: XCTestCase {
     }
 
     func testKeychainWorkRunsOneAtATime() {
+        // A refresh calls the gate from BlockingIO, never the main thread. The main thread
+        // runs a call itself so SecItem cannot deadlock, and XCTest is on that thread.
         let counts = OverlapCounts()
-        DispatchQueue.concurrentPerform(iterations: 8) { _ in
-            KeychainGate.sync {
-                counts.enter()
-                Thread.sleep(forTimeInterval: 0.02)
-                counts.leave()
+        let finished = expectation(description: "background keychain calls finished")
+        DispatchQueue.global(qos: .userInitiated).async {
+            DispatchQueue.concurrentPerform(iterations: 8) { _ in
+                KeychainGate.sync {
+                    counts.enter()
+                    Thread.sleep(forTimeInterval: 0.02)
+                    counts.leave()
+                }
             }
+            finished.fulfill()
         }
+        wait(for: [finished], timeout: 15)
         XCTAssertEqual(counts.peak, 1)
     }
 
