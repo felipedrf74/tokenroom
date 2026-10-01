@@ -7,12 +7,16 @@ enum RelayMerge {
         var id: String
         var label: String
         var envelope: RelayEnvelope
+        /// What kind of device published it, when the reader knows: a record's `kind` after
+        /// iCloud answered, or the origin a cached reading kept.
+        var kind: CollectorKind? = nil
     }
 
     struct Entry: Identifiable, Equatable, Sendable {
         var provider: RelayProvider
         var sourceID: String
         var sourceLabel: String
+        var origin: CollectorKind? = nil
         var id: String { provider.id }
     }
 
@@ -28,7 +32,7 @@ enum RelayMerge {
                 guard let provider = ReadingFreshness.present(saved, fallback: source.envelope.checkedAt, now: now) else { continue }
                 let live = provider.state == "live"
                 let checked = provider.checkedAt ?? provider.fetchedAt ?? source.envelope.checkedAt
-                let candidate = (Entry(provider: provider, sourceID: source.id, sourceLabel: source.label), live, checked)
+                let candidate = (Entry(provider: provider, sourceID: source.id, sourceLabel: source.label, origin: source.kind), live, checked)
                 guard let current = best[provider.id] else {
                     best[provider.id] = candidate
                     continue
@@ -63,7 +67,10 @@ extension ReadingCache {
             }
             let checkedAt = items.compactMap { $0.provider.checkedAt ?? $0.provider.fetchedAt }.max() ?? savedAt
             let envelope = RelayEnvelope(producer: "cache", appVersion: TokenroomIdentity.version, checkedAt: checkedAt, providers: items.map(\.provider))
-            return (RelayMerge.Source(id: "previous-" + label, label: label, envelope: envelope), RelayHistory(series: series))
+            // The producer is "cache" here, so the kind comes from what the cache kept, or, for a
+            // cache from before readings kept it, from the label.
+            let kind = items.lazy.compactMap(\.origin).first ?? CollectorKind(legacyLabel: label, localLabel: localLabel)
+            return (RelayMerge.Source(id: "previous-" + label, label: label, envelope: envelope, kind: kind), RelayHistory(series: series))
         }
     }
 }

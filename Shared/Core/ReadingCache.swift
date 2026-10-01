@@ -12,8 +12,16 @@ struct ReadingCache: Codable, Equatable, Sendable {
         var source: String
         /// A week of hourly usage per window ID, when the collector sent it.
         var history: [String: UsageHistory] = [:]
+        /// Which device the reading came from, as the iPhone that saved this saw it. Nil in a
+        /// cache saved before readings kept it: `CollectorKind(legacyLabel:)` stands in.
+        var origin: CollectorKind? = nil
 
         var id: String { provider.id }
+
+        /// The origin, or the label's best guess for an older cache.
+        var resolvedOrigin: CollectorKind {
+            origin ?? CollectorKind(legacyLabel: source)
+        }
     }
 
     var v: Int = ReadingCache.version
