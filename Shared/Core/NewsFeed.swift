@@ -100,8 +100,12 @@ struct NewsCache: Codable, Equatable, Sendable {
 enum NewsFetcher {
     static let modelInterval: TimeInterval = 6 * 3600
     static let announcementInterval: TimeInterval = 12 * 3600
-    /// Opening the News tab refreshes anything older than this.
-    static let openInterval: TimeInterval = 3600
+    /// Opening News (the iPhone tab or the app coming forward, the Mac window) refreshes
+    /// anything older than this.
+    static let openInterval: TimeInterval = 15 * 60
+    /// While News is on screen it checks again this often by itself, so nobody has to pull or
+    /// press Check Now to catch up. Conditional GETs keep an unchanged feed to a 304.
+    static let liveInterval: TimeInterval = 15 * 60
     /// A failed check waits this long before the next, unless asked for (pulling to refresh,
     /// Check now), so a server that's down isn't asked on every refresh.
     static let retryInterval: TimeInterval = 3600
@@ -253,11 +257,12 @@ enum NewsFetcher {
         fetchedAt.map { now.timeIntervalSince($0) >= interval } ?? true
     }
 
-    /// Due by `interval`, and, after a failed check, once `retryInterval` has passed (or
-    /// `interval`, when that's shorter: asking with a `maxAge` of 0 always goes out).
+    /// Due by `interval`, and, after a failed check, once `retryInterval` has passed, however
+    /// often News is open or on screen; asking with a `maxAge` of 0 (pulling to refresh, Check
+    /// Now) always goes out.
     static func isDue(_ fetchedAt: Date?, failedAt: Date?, interval: TimeInterval, now: Date) -> Bool {
         if let failedAt, fetchedAt == nil || failedAt >= fetchedAt! {
-            return isDue(failedAt, interval: min(interval, retryInterval), now: now)
+            return isDue(failedAt, interval: interval <= 0 ? 0 : retryInterval, now: now)
         }
         return isDue(fetchedAt, interval: interval, now: now)
     }

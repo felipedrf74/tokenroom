@@ -45,9 +45,11 @@ struct NewsView: View {
             .refreshable {
                 await news.refresh(maxAge: 0, preferences: store.alertPreferences)
             }
+            // Current on open, and kept current while the tab is on screen: no pull needed.
             .task {
-                await news.refresh(maxAge: NewsFetcher.openInterval, preferences: store.alertPreferences)
+                await news.keepCurrent(preferences: { store.alertPreferences })
             }
+            .animation(.smooth, value: news.cache.models.count + news.announcements.count)
             .searchable(text: $search, prompt: "Search titles and sources")
             .onChange(of: search) { _, _ in modelLimit = 50 }
             .onChange(of: showsAllLabs) { _, _ in modelLimit = 50 }

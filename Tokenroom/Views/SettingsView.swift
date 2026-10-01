@@ -826,7 +826,7 @@ private struct NewsSettings: View {
                     }
                 ))
             } footer: {
-                Text("Reads OpenRouter's public model list every 6 hours and official changelogs and blogs every 12. No account, key, or usage is sent. Open News from the popover.")
+                Text("Reads OpenRouter's public model list every 6 hours and official changelogs and blogs every 12, and every 15 minutes while the News window is open. No account, key, or usage is sent. Open News from the popover.")
             }
             if store.settings.newsEnabled, let news = store.news {
                 TextField("Search labs and sources", text: $search)
