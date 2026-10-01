@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.4 — 2026-10-01
+
+Tokenroom for Mac 2.2.4. The iPhone and Apple Watch app stays 1.0.1, build 3.
+
+- Claude's usage check renews an expired access token again and writes the new login back with the `security` tool, which that item already trusts. It does not open the item itself and does not ask for the login password. iPhone and Apple Watch show that reading again once the Mac has refreshed it.
+
 ## 2.2.3 — 2026-09-30
 
 Tokenroom for Mac 2.2.3. The iPhone and Apple Watch app stays 1.0.1, build 3.

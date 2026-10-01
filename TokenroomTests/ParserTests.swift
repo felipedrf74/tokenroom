@@ -218,8 +218,61 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(secret, "{\"ok\":true}")
         XCTAssertEqual(silentCalls, 0)
         XCTAssertEqual(securityCalls, 1)
-        XCTAssertFalse(CredentialReaders.claudeLoginCanBeRenewedInPlace())
-        XCTAssertFalse(CredentialReaders.writeClaudeCredential(service: "svc", account: "tester", json: "{}"))
+        XCTAssertTrue(CredentialReaders.claudeLoginCanBeRenewedInPlace())
+    }
+
+    func testClaudeUpdateKeepsTheAccessListAndStaysOffTheArgumentsWhenItFits() {
+        let update = CredentialReaders.claudeSecurityUpdate(service: "Claude Code-credentials", account: "tester", json: "{\"ok\":true}")
+        XCTAssertEqual(update.arguments, ["-i"])
+        let line = String(data: update.stdin ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(line.hasPrefix("add-generic-password -U "))
+        XCTAssertTrue(line.contains("-s \"Claude Code-credentials\""))
+        XCTAssertTrue(line.contains("-X 7b226f6b223a747275657d"))
+        XCTAssertFalse(line.contains("-T"))
+        XCTAssertFalse(update.arguments.contains("-T"))
+        XCTAssertFalse(update.arguments.contains("-X"))
+    }
+
+    func testClaudeUpdateUsesArgumentsOnlyWhenTheLineWouldBeTruncated() {
+        let json = String(repeating: "a", count: 3000)
+        let update = CredentialReaders.claudeSecurityUpdate(service: "svc", account: "tester", json: json)
+        XCTAssertNil(update.stdin)
+        XCTAssertEqual(update.arguments.prefix(6), ["add-generic-password", "-U", "-a", "tester", "-s", "svc"])
+        XCTAssertEqual(update.arguments[6], "-X")
+        XCTAssertEqual(update.arguments[7], Data(json.utf8).map { String(format: "%02x", $0) }.joined())
+        XCTAssertFalse(update.arguments.contains("-T"))
+    }
+
+    func testClaudeWriteRoundTripsWithoutReplacingTrustedApps() throws {
+        let keychain = FileManager.default.temporaryDirectory.appendingPathComponent("tokenroom-claude-write-\(UUID().uuidString).keychain-db")
+        let password = UUID().uuidString
+        defer {
+            _ = BlockingIO.runProcess(URL(fileURLWithPath: "/usr/bin/security"), arguments: ["delete-keychain", keychain.path])
+        }
+        let created = BlockingIO.runProcess(
+            URL(fileURLWithPath: "/usr/bin/security"),
+            arguments: ["create-keychain", "-p", password, keychain.path]
+        )
+        XCTAssertTrue(created.succeeded)
+        XCTAssertTrue(BlockingIO.runProcess(
+            URL(fileURLWithPath: "/usr/bin/security"),
+            arguments: ["unlock-keychain", "-p", password, keychain.path]
+        ).succeeded)
+        XCTAssertTrue(BlockingIO.runProcess(
+            URL(fileURLWithPath: "/usr/bin/security"),
+            arguments: ["set-keychain-settings", keychain.path]
+        ).succeeded)
+        XCTAssertTrue(BlockingIO.runProcess(
+            URL(fileURLWithPath: "/usr/bin/security"),
+            arguments: [
+                "add-generic-password", "-a", "tester", "-s", "svc", "-w", "first",
+                "-T", "/usr/bin/security", "-T", "/bin/ls", keychain.path,
+            ]
+        ).succeeded)
+        let json = #"{"note":"keep","n":"\#(String(repeating: "a", count: 3000))"}"#
+        XCTAssertTrue(CredentialReaders.writeClaudeCredential(service: "svc", account: "tester", json: json, keychain: keychain.path))
+        let update = CredentialReaders.claudeSecurityUpdate(service: "svc", account: "tester", json: json, keychain: keychain.path)
+        XCTAssertNil(update.stdin, "A Claude-sized login does not go through the 4096-byte stdin line")
     }
 
     func testClaudeReadDoesNotAskWhenNothingTrustsTheCaller() {
