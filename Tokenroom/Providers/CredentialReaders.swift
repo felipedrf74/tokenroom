@@ -567,10 +567,13 @@ enum CredentialReaders {
         return value
     }
 
-    private static func securityPassword(service: String, account: String?) -> SecurityPasswordResult {
+    private static func securityPassword(service: String, account: String?, keychain: String? = nil) -> SecurityPasswordResult {
         var args = ["find-generic-password", "-s", service, "-w"]
         if let account {
             args.insert(contentsOf: ["-a", account], at: 3)
+        }
+        if let keychain {
+            args.append(keychain)
         }
         // Same gate as SecItem. The `security` tool talks to securityd too, and running
         // it beside a keychain call in this process is the same deadlock.
@@ -752,15 +755,63 @@ enum CredentialReaders {
         claudeCache.withLock { $0 = auth }
     }
 
-    /// SecItem cannot update this item quietly. The same decrypt entry that blocks a
-    /// secret read blocks an update, and `security add-generic-password -U` would put
-    /// the login on the process arguments and can replace the access list. Renewal
-    /// therefore does not exchange a new login it could not store.
-    static func claudeLoginCanBeRenewedInPlace() -> Bool { false }
+    /// Whether Tokenroom can exchange a Claude refresh token and store the result in the
+    /// same item. SecItem cannot: a new build is not the trusted-application entry, so the
+    /// update waits in securityd. `/usr/bin/security` is already trusted. An update with
+    /// `-U` and no `-T` keeps that tool and the trusted-application paths, which is what
+    /// the read uses. Passing `-T` can replace those paths. Setting a partition list asks
+    /// for the keychain password, so this write does not.
+    static func claudeLoginCanBeRenewedInPlace() -> Bool { true }
 
-    static func writeClaudeCredential(service: String, account: String, json: String) -> Bool {
-        _ = (service, account, json)
-        return false
+    /// `security -i` reads one line with a 4096-byte buffer. A longer line is truncated
+    /// and must not be sent. A Claude login is larger than that, so it uses the same
+    /// argv fallback Claude Code uses.
+    static let securityInteractiveLineLimit = 4096 - 64
+
+    struct ClaudeSecurityUpdate: Equatable {
+        var arguments: [String]
+        var stdin: Data?
+    }
+
+    /// One quiet update of a generic password. The secret is hex, so the command needs no
+    /// extra quoting. Stdin keeps a short value off the process arguments. No `-T`.
+    static func claudeSecurityUpdate(service: String, account: String, json: String, keychain: String? = nil) -> ClaudeSecurityUpdate {
+        let hex = Data(json.utf8).map { String(format: "%02x", $0) }.joined()
+        var line = "add-generic-password -U -a \(securityInteractiveQuoted(account)) -s \(securityInteractiveQuoted(service)) -X \(hex)"
+        if let keychain {
+            line += " \(securityInteractiveQuoted(keychain))"
+        }
+        line += "\n"
+        if line.utf8.count <= securityInteractiveLineLimit {
+            return ClaudeSecurityUpdate(arguments: ["-i"], stdin: Data(line.utf8))
+        }
+        var arguments = ["add-generic-password", "-U", "-a", account, "-s", service, "-X", hex]
+        if let keychain {
+            arguments.append(keychain)
+        }
+        return ClaudeSecurityUpdate(arguments: arguments, stdin: nil)
+    }
+
+    static func securityInteractiveQuoted(_ value: String) -> String {
+        let escaped = value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
+    }
+
+    static func writeClaudeCredential(service: String, account: String, json: String, keychain: String? = nil) -> Bool {
+        guard !json.isEmpty else { return false }
+        let update = claudeSecurityUpdate(service: service, account: account, json: json, keychain: keychain)
+        let output = KeychainGate.sync {
+            BlockingIO.runProcess(
+                URL(fileURLWithPath: "/usr/bin/security"),
+                arguments: update.arguments,
+                input: update.stdin
+            )
+        }
+        guard output.succeeded else { return false }
+        guard case .value(let stored) = securityPassword(service: service, account: account, keychain: keychain) else {
+            return false
+        }
+        return stored == json
     }
 
     /// A refresh grant these providers already rejected, as a fingerprint of the refresh token

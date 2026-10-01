@@ -22,6 +22,7 @@ extension BlockingIO {
         timeout: TimeInterval = 5,
         currentDirectory: URL? = nil,
         environment: [String: String]? = nil,
+        input: Data? = nil,
         maxOutput: Int = 16 * 1024 * 1024
     ) -> ProcessOutput {
         let process = Process()
@@ -36,7 +37,8 @@ extension BlockingIO {
         let stdout = Pipe()
         process.standardOutput = stdout
         process.standardError = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
+        let stdin = input.map { _ in Pipe() }
+        process.standardInput = stdin ?? FileHandle.nullDevice
 
         let exited = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in exited.signal() }
@@ -62,6 +64,11 @@ extension BlockingIO {
             }
             collected.set(data)
             drained.signal()
+        }
+        if let input, let stdin {
+            let writer = stdin.fileHandleForWriting
+            writer.write(input)
+            try? writer.close()
         }
 
         let timedOut = exited.wait(timeout: .now() + timeout) == .timedOut
