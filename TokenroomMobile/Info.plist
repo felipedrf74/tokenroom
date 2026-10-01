@@ -8,6 +8,8 @@
 	<string>$(TOKENROOM_APP_GROUP)</string>
 	<key>TokenroomKeychainGroup</key>
 	<string>$(AppIdentifierPrefix)$(TOKENROOM_KEYCHAIN_GROUP)</string>
+	<key>TokenroomApplicationIdentifier</key>
+	<string>$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
