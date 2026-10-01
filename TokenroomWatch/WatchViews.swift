@@ -44,6 +44,12 @@ struct WatchRootView: View {
             .navigationDestination(for: String.self) { id in
                 if let item = store.item(id: id, at: date) {
                     WatchDetailView(item: item, date: date)
+                } else {
+                    // Gone since it was opened (signed out of iCloud, aged out): say so, not a blank page.
+                    Text("Couldn't find a reading for this provider.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                 }
             }
         }
@@ -190,7 +196,27 @@ struct WatchDetailView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            ForEach(provider.windows) { window in
+            if let lead = provider.primaryWindow, lead.isMetered {
+                let pace = UsageRanking.pace(for: lead, isStale: !provider.isLive, history: item.history[lead.id], now: date)
+                HStack(spacing: 10) {
+                    UsageRing(used: lead.used, isStale: !provider.isLive || lead.isAwaitingReading(at: date),
+                              label: ReadingText.headline(lead, now: date), lineWidth: 6, paceMark: pace?.elapsedFraction)
+                        .frame(width: 58, height: 58)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(lead.displayTitle)
+                            .font(.footnote.weight(.semibold))
+                        if let detail = detail(lead, pace: pace) {
+                            Text(detail)
+                                .font(.caption2)
+                                .foregroundStyle(pace?.needsAttention == true ? TokenroomTokens.accentText : .secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+                .accessibilityElement(children: .combine)
+            }
+            ForEach(provider.windows.filter { !($0.id == provider.primaryWindow?.id && $0.isMetered) }) { window in
                 let pace = window.isMetered ? UsageRanking.pace(for: window, isStale: !provider.isLive, history: item.history[window.id], now: date) : nil
                 WindowRow(
                     title: window.displayTitle,
@@ -215,7 +241,7 @@ struct WatchDetailView: View {
             if let checked = provider.checkedAt ?? provider.fetchedAt {
                 Text("Last successful check \(RelativeTime.ago(checked, now: date))").font(.footnote).foregroundStyle(.secondary)
             }
-            Text(item.resolvedOrigin.watchPhrase)
+            Text(item.watchOriginLine)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

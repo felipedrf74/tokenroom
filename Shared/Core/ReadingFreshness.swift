@@ -80,6 +80,14 @@ extension ReadingCache {
     }
 }
 
+extension ReadingCache.Item {
+    /// The Watch's line saying where a reading came from. The Watch never collects, so the
+    /// iPhone's readings are "your iPhone" there, never "This iPhone".
+    var watchOriginLine: String {
+        source == SampleData.sourceLabel ? "Sample data" : resolvedOrigin.watchPhrase
+    }
+}
+
 /// A durable local gate shared by the Watch app and complications. The gate stays closed if
 /// clearing or replacing the disk cache fails, and opens only after a validated read is saved.
 enum WatchCacheAccess {
@@ -89,6 +97,13 @@ enum WatchCacheAccess {
     static func invalidate(in defaults: UserDefaults, at date: Date) {
         defaults.set(true, forKey: validationKey)
         defaults.set(date, forKey: cutoffKey)
+    }
+
+    /// Whether something read later (iCloud, the iPhone, the saved cache) may replace `current`.
+    /// A launch showing sample readings (`-sampleMode YES`) keeps them for the whole launch, so a
+    /// simulator without an iCloud account doesn't swap them for an empty account's.
+    static func mayReplace(_ current: ReadingCache?, showsSample: Bool) -> Bool {
+        !(showsSample && current?.isSample == true)
     }
 
     static func load(at url: URL?, defaults: UserDefaults) -> ReadingCache? {

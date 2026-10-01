@@ -220,4 +220,29 @@ final class ReadingReliabilityTests: XCTestCase {
         XCTAssertTrue(cache.resetDates(after: now.addingTimeInterval(600), through: now.addingTimeInterval(1200)).isEmpty)
     }
 
+    /// A Watch launched with sample readings keeps them: a simulator with no iCloud account
+    /// answered "no account", which replaced them with an empty cache and left the opened
+    /// provider's page blank.
+    func testSampleReadingsOnTheWatchAreNotReplacedForTheLaunch() {
+        let sample = SampleData.cache()
+        XCTAssertFalse(WatchCacheAccess.mayReplace(sample, showsSample: true))
+        XCTAssertTrue(WatchCacheAccess.mayReplace(sample, showsSample: false))
+        XCTAssertTrue(WatchCacheAccess.mayReplace(nil, showsSample: true))
+        XCTAssertTrue(WatchCacheAccess.mayReplace(ReadingCache(savedAt: .now, isSample: false, items: []), showsSample: true))
+        XCTAssertNotNil(sample.items.first { $0.id == "openai" }, "The provider the screenshot opens is in the sample")
+    }
+
+    func testTheWatchNamesWhereAReadingCameFrom() throws {
+        let item = try XCTUnwrap(SampleData.cache().items.first)
+        XCTAssertEqual(item.watchOriginLine, "Sample data")
+        var phone = item, mac = item
+        phone.source = "This iPhone"
+        mac.source = "Studio"
+        mac.origin = .mac
+        XCTAssertEqual(phone.watchOriginLine, "From your iPhone")
+        XCTAssertEqual(mac.watchOriginLine, "From your Mac")
+        for line in [item, phone, mac].map(\.watchOriginLine) {
+            XCTAssertFalse(line.localizedCaseInsensitiveContains("this iPhone"), line)
+        }
+    }
 }

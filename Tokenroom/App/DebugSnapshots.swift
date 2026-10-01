@@ -62,7 +62,7 @@ enum DebugSnapshots {
         for tab in [SettingsTab.general, .providers, .keys, .alerts, .news, .menuBar] {
             let request = SettingsTabRequest()
             request.tab = tab
-            render(SettingsView(store: store, request: request), width: 600, height: 640, appearance: .aqua, to: output.appendingPathComponent("settings-\(tab.rawValue).png"))
+            renderWindow(SettingsView(store: store, request: request), size: NSSize(width: 820, height: 620), to: output.appendingPathComponent("settings-\(tab.rawValue).png"))
         }
         render(NewsWindowView(store: store, onOpenSettings: {}, page: .filter(.today)), width: 920, height: 660, appearance: .aqua, to: output.appendingPathComponent("news.png"))
         render(NewsWindowView(store: store, onOpenSettings: {}, page: .filter(.today)), width: 920, height: 660, appearance: .darkAqua, to: output.appendingPathComponent("news-dark.png"))
@@ -103,6 +103,27 @@ enum DebugSnapshots {
             }
             .padding(16)
         }
+    }
+
+    /// A view in a real titled window with a unified toolbar, as Settings opens: a split view's
+    /// sidebar, its search field, and the toolbar only lay out there.
+    private static func renderWindow<Content: View>(_ view: Content, size: NSSize, appearance: NSAppearance.Name = .aqua, to url: URL) {
+        let hosting = NSHostingController(rootView: view)
+        hosting.sceneBridgingOptions = [.toolbars, .title]
+        let window = NSWindow(contentViewController: hosting)
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        window.toolbarStyle = .unified
+        window.appearance = NSAppearance(named: appearance)
+        window.setContentSize(size)
+        window.alphaValue = 0
+        window.center()
+        window.orderFrontRegardless()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+        guard let frame = window.contentView?.superview,
+              let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) else { return }
+        frame.cacheDisplay(in: frame.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: url)
+        window.orderOut(nil)
     }
 
     private static func render<Content: View>(_ view: Content, width: CGFloat?, height: CGFloat? = nil, appearance: NSAppearance.Name, to url: URL) {

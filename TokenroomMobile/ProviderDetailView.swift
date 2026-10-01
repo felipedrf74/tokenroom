@@ -7,6 +7,7 @@ struct ProviderDetailView: View {
     /// The connect screen is on: the footer names the device the reading came from.
     var showsOrigin = false
     @State private var followError: String?
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     private var provider: RelayProvider { reading.provider }
 
@@ -29,7 +30,9 @@ struct ProviderDetailView: View {
                         checkedAt: provider.checkedAt ?? provider.fetchedAt,
                         isStale: !provider.isLive || window.isAwaitingReading(at: date),
                         tint: Color(hex: provider.tint),
-                        date: date
+                        date: date,
+                        // The hero above already shows the first metered window's number and facts.
+                        isLead: index == 0 && heroWindow?.id == window.id
                     )
                 }
                 if index == 0, let candidate = LiveActivities.candidate(in: provider) {
@@ -75,29 +78,80 @@ struct ProviderDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
+    /// The window the hero ring shows: the lead window, when it has a meter.
+    private var heroWindow: RelayWindow? {
+        orderedWindows.first.flatMap { $0.isMetered ? $0 : nil }
+    }
+
+    private var heroPace: Pace? {
+        heroWindow.flatMap { UsageRanking.pace(for: $0, isStale: !provider.isLive, history: reading.history[$0.id], now: date) }
+    }
+
+    @ViewBuilder
     private var header: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            nameRow
+            if let window = heroWindow {
+                let stale = !provider.isLive || window.isAwaitingReading(at: date)
+                HStack(spacing: 16) {
+                    UsageRing(used: window.used, isStale: stale, label: ReadingText.headline(window, now: date), lineWidth: 10, paceMark: heroPace?.elapsedFraction)
+                        .frame(width: 104, height: 104)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(window.displayTitle)
+                            .font(.headline)
+                        Text(window.isAwaitingReading(at: date) ? "Reset · awaiting reading" : "\(TokenroomFormat.percentText(100 - window.used))% left")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        if let amount = window.amount, let detail = ReadingText.amountDetail(amount) {
+                            Text(detail)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        if !stale, let forecast = Forecast.text(for: window, history: reading.history[window.id], checkedAt: provider.checkedAt ?? provider.fetchedAt, now: date) {
+                            Text(forecast)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            }
+            // The last check is at the bottom, with where the reading came from.
+            let facts = UsageFacts.facts(for: heroWindow, pace: heroPace, plan: provider.plan, checkedAt: nil, isStale: !provider.isLive, now: date)
+            if !facts.isEmpty {
+                UsageFactsGrid(facts: facts, columns: facts.count == 3 && typeSize < .xxLarge ? 3 : 2)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    /// The provider and, when the reading isn't current, why. Plan and last check are facts below.
+    private var nameRow: some View {
         HStack(spacing: 14) {
             ProviderMark(provider: provider, size: 44)
             VStack(alignment: .leading, spacing: 3) {
-                if let plan = provider.plan {
-                    Text(plan)
-                        .font(.headline)
-                } else {
-                    Text(provider.name)
-                        .font(.headline)
-                }
+                Text(provider.name)
+                    .font(.title3.weight(.semibold))
                 if !provider.isLive, let message = provider.message {
                     Text(message)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-                } else if let checked = provider.checkedAt ?? provider.fetchedAt {
-                    Text("Checked \(RelativeTime.ago(checked, now: date))")
+                } else if let category = categoryLine {
+                    Text(category)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             }
         }
-        .padding(.vertical, 2)
+    }
+
+    private var categoryLine: String? {
+        switch provider.category {
+        case "subscription": "Subscription"
+        case "apiBalance": "Pay as you go"
+        case "orgSpend": "Organization billing"
+        default: nil
+        }
     }
 }
 
@@ -109,12 +163,35 @@ private struct WindowDetail: View {
     var isStale: Bool
     var tint: Color
     var date: Date
+    /// Shown in the hero above: only the week's chart is left to show here.
+    var isLead = false
 
     private var pace: Pace? {
         window.isMetered ? UsageRanking.pace(for: window, isStale: isStale, history: history, now: date) : nil
     }
 
     var body: some View {
+        if !isLead {
+            summary
+        }
+        if let history, !history.isEmpty, window.isMetered {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Last 7 days")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HistoryChart(history: history, tint: tint)
+                    .frame(height: 120)
+            }
+            .padding(.vertical, 4)
+        } else if isLead {
+            Text(ReadingText.reset(window, now: date) ?? window.displayTitle)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var summary: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 Text(ReadingText.headline(window, now: date))
@@ -162,16 +239,6 @@ private struct WindowDetail: View {
                     }
                 }
             }
-        }
-        if let history, !history.isEmpty, window.isMetered {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Last 7 days")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                HistoryChart(history: history, tint: tint)
-                    .frame(height: 120)
-            }
-            .padding(.vertical, 4)
         }
     }
 }

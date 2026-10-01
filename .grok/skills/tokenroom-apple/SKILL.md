@@ -67,6 +67,10 @@ Spec: `docs/iphone-login-without-a-mac.md`. `PhoneConnect` (Shared/APIKeys, pure
 
 Opening News checks feeds older than `NewsFetcher.openInterval` (15 minutes); while the tab (or the Mac's News window, via `QuotaStore.newsBecameVisible`/`newsHidden`) is on screen, `NewsStore.keepCurrent` checks again every `liveInterval` (15 minutes) without notifying, so nobody has to pull or press Check Now. What arrives during a visit stays marked New for it and moves `seenAt`, so it doesn't come back as a badge.
 
+## Meters and details
+
+`MeterTrack` is a Canvas: rounded track, fill coloured by the usage gradient across the whole track, the even pace as a notch cut through the bar with a slim marker, and light stripes over the stretch past the pace when use runs ahead. `UsageRing` cuts the same notch. `UsageFacts` (Shared/Core) turns a window into Resets / Pace / Plan / Checked facts; `UsageFactsGrid` (Shared/UI) shows them on the iPhone detail's hero (ring, "N% left", facts) and in the Mac's expanded card. Settings rows on iPhone use `SettingsRowLabel` tiles and open with a `ReadingsStatusCard`; strings are unchanged.
+
 ## Checking UI without taps
 
 Debug builds take launch arguments (they land in the standard defaults' argument domain):

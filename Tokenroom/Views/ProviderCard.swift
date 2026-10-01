@@ -113,6 +113,10 @@ struct ProviderCard: View {
                         Text(attention).font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(limitWarning == nil ? Color.secondary : TokenroomTokens.usageCritical)
                             .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    } else if let reset = compactReset(snapshot) {
+                        Text(reset).font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
                     }
                 }
                     .foregroundStyle(stale ? Color.secondary : Color.primary)
@@ -159,6 +163,12 @@ struct ProviderCard: View {
         .help("Show details")
         .accessibilityLabel("\(provider.displayName), \(value)\(attention.map { ", \($0)" } ?? "")\(note.map { ", \($0.text)" } ?? "")\((meterStale ? nil : pace).map { ", \($0.caption())" } ?? "")")
         .accessibilityHint("Shows every window and the last 7 days")
+    }
+
+    /// "Weekly · 3d 1h": the window and how long until it starts over, under a one-line name.
+    private func compactReset(_ snapshot: QuotaSnapshot) -> String? {
+        guard let primary = snapshot.windows.first, let resetsAt = primary.resetsAt, resetsAt > date else { return nil }
+        return "\(primary.displayTitle) · \(UsageFacts.countdown(to: resetsAt, now: date))"
     }
 
     /// What a one-line row says about a reading that isn't current, besides graying it: a symbol
@@ -261,7 +271,7 @@ struct ProviderCard: View {
                 caption(forecast)
             }
         }
-        if !stale, !awaiting, let pace {
+        if !isExpanded, !stale, !awaiting, let pace {
             Text(pace.caption())
                 .font(.system(size: TokenroomTokens.captionSize, weight: pace.needsAttention ? .medium : .regular))
                 .foregroundStyle(paceColor(pace))
@@ -309,9 +319,23 @@ struct ProviderCard: View {
     @ViewBuilder
     private func expandedDetails(_ snapshot: QuotaSnapshot, stale: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let primary = snapshot.windows.first, let resetsAt = primary.resetsAt, resetsAt > date {
-                caption("Resets \(resetsAt.formatted(date: .abbreviated, time: .shortened))")
-            }
+            // Reset, pace against an even spread, plan, and last check, as a grid.
+            UsageFactsGrid(
+                facts: UsageFacts.facts(
+                    for: snapshot.windows.first.map(RelayWindow.init),
+                    pace: pace,
+                    plan: snapshot.planLabel.flatMap { $0 == snapshot.primaryTitle ? nil : $0 },
+                    checkedAt: checkedAt,
+                    isStale: stale,
+                    now: date
+                ),
+                columns: 2,
+                labelFont: .system(size: 9, weight: .medium),
+                valueFont: .system(size: 12, weight: .semibold),
+                detailFont: .system(size: 10),
+                spacing: 6,
+                cornerRadius: 7
+            )
             if let primary = snapshot.windows.first, primary.isMetered, let week = weeks[primary.id], !week.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Last 7 days")
@@ -354,13 +378,8 @@ struct ProviderCard: View {
             if let extra = snapshot.extra, let text = Self.extraText(extra) {
                 caption(text)
             }
-            if let plan = snapshot.planLabel, plan != snapshot.primaryTitle {
-                caption("Plan: \(plan)")
-            }
-            if let checked = checkedAt {
-                caption("Checked \(RelativeTime.ago(checked, now: date))")
-            }
             if Self.readsUnofficially(provider, snapshot: snapshot) {
+                Divider().opacity(0.5)
                 caption("Unofficial: read from the same endpoint \(provider.toolName) uses. It can change without notice.")
             }
         }

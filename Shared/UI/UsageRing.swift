@@ -15,19 +15,32 @@ struct UsageRing: View {
         GeometryReader { geometry in
             let side = min(geometry.size.width, geometry.size.height)
             let width = lineWidth ?? max(3, side * 0.11)
+            let pace = paceMark.map { min(max($0, 0), 1) }.flatMap { isStale ? nil : $0 }
             ZStack {
-                Circle()
-                    .stroke(TokenroomTokens.track, lineWidth: width)
-                Circle()
-                    .trim(from: 0, to: fraction)
-                    .stroke(fill, style: StrokeStyle(lineWidth: width, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                if let paceMark, !isStale {
+                ZStack {
+                    Circle()
+                        .stroke(TokenroomTokens.track, lineWidth: width)
+                    Circle()
+                        .trim(from: 0, to: fraction)
+                        .stroke(fill, style: StrokeStyle(lineWidth: width, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                    if let pace {
+                        // A notch cut through the ring where an even pace would be.
+                        Capsule()
+                            .fill(.black)
+                            .frame(width: 4, height: width + 2)
+                            .offset(y: -side / 2)
+                            .rotationEffect(.degrees(360 * pace))
+                            .blendMode(.destinationOut)
+                    }
+                }
+                .compositingGroup()
+                if let pace {
                     Capsule()
-                        .fill(Color.primary.opacity(0.7))
-                        .frame(width: 2, height: width + 4)
+                        .fill(Color.primary.opacity(0.8))
+                        .frame(width: 2, height: width + 5)
                         .offset(y: -side / 2)
-                        .rotationEffect(.degrees(360 * min(max(paceMark, 0), 1)))
+                        .rotationEffect(.degrees(360 * pace))
                 }
                 Text(label)
                     .font(.system(size: side * 0.3, weight: .semibold, design: .rounded))
