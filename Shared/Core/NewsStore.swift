@@ -164,6 +164,28 @@ final class NewsStore {
 
     func endVisit() { visitIsOpen = false }
 
+    /// While News is on screen: checks what's older than `interval` now and every `interval`
+    /// after, until the caller's task is cancelled (the screen goes away). New items arrive
+    /// marked New for the visit; they don't notify, since News is open. `isAllowed` is asked
+    /// before each check (the Mac's News can be turned off meanwhile).
+    func keepCurrent(
+        interval: TimeInterval = NewsFetcher.liveInterval,
+        preferences: @escaping @MainActor () -> AlertPreferences,
+        isAllowed: @escaping @MainActor () -> Bool = { true },
+        sleep: @escaping @Sendable (TimeInterval) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }
+    ) async {
+        while !Task.isCancelled {
+            if isAllowed() {
+                await refresh(maxAge: interval, preferences: preferences(), notifies: false)
+            }
+            do {
+                try await sleep(interval)
+            } catch {
+                return
+            }
+        }
+    }
+
     /// Compatibility for callers opening a new visit; internal navigation uses beginVisit.
     func markSeen(now: Date = .now) { beginVisit(now: now) }
 
@@ -210,6 +232,11 @@ final class NewsStore {
             let result = await fetch(.init(cache: cache, sources: sources, vendors: followedVendors, maxAge: request.maxAge, now: request.now, forcedSources: request.forcedSources))
             cache = result.cache
             cache.save(to: directory)
+            // Seen as they arrive while News is open, so they don't come back as a badge. They
+            // stay marked New for the rest of this visit (`visitBaseline`).
+            if visitIsOpen {
+                seenAt = max(seenAt, request.now)
+            }
             if request.notifies, request.preferences.newModels, !result.newModels.isEmpty {
                 notify(result.newModels, request.preferences, request.now)
             }

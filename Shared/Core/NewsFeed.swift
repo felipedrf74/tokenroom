@@ -100,8 +100,12 @@ struct NewsCache: Codable, Equatable, Sendable {
 enum NewsFetcher {
     static let modelInterval: TimeInterval = 6 * 3600
     static let announcementInterval: TimeInterval = 12 * 3600
-    /// Opening the News tab refreshes anything older than this.
-    static let openInterval: TimeInterval = 3600
+    /// Opening News (the iPhone tab or the app coming forward, the Mac window) refreshes
+    /// anything older than this.
+    static let openInterval: TimeInterval = 15 * 60
+    /// While News is on screen it checks again this often by itself, so nobody has to pull or
+    /// press Check Now to catch up. Conditional GETs keep an unchanged feed to a 304.
+    static let liveInterval: TimeInterval = 15 * 60
     /// A failed check waits this long before the next, unless asked for (pulling to refresh,
     /// Check now), so a server that's down isn't asked on every refresh.
     static let retryInterval: TimeInterval = 3600

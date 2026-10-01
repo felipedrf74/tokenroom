@@ -148,12 +148,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             newsWindow = window
         }
         if newsWindow?.isVisible != true { store.news?.beginVisit() }
+        store.newsBecameVisible()
         newsWindow?.makeKeyAndOrderFront(nil)
     }
 
     func windowWillClose(_ notification: Notification) {
         guard let closing = notification.object as? NSWindow, closing === settingsWindow || closing === newsWindow else { return }
-        if closing === newsWindow { store.news?.endVisit() }
+        if closing === newsWindow {
+            store.news?.endVisit()
+            store.newsHidden()
+        }
         // Back to a menu-bar extra once no window is left.
         let others = [settingsWindow, newsWindow].compactMap { $0 }.filter { $0 !== closing && $0.isVisible }
         if others.isEmpty {

@@ -45,6 +45,8 @@ final class QuotaStore {
     private var followUpProviders: Set<Provider>? = []
     /// Sending readings, history, and alerts to iCloud, and checking News, after a check.
     private var sharing: Task<Void, Never>?
+    /// Keeps News current while its window is open.
+    private var liveNews: Task<Void, Never>?
     private var shareAgain = false
     private var snapshotsDirty = false
     private let logger = Logger(subsystem: TokenroomIdentity.bundleID, category: "refresh")
@@ -372,6 +374,23 @@ final class QuotaStore {
         persistLiveSnapshots()
         cache.saveChecked(checkedAt)
         history.saveIfNeeded()
+    }
+
+    /// While the News window is open: current on open, then checked every 15 minutes by itself,
+    /// as long as News stays on.
+    func newsBecameVisible() {
+        guard liveNews == nil, let news else { return }
+        liveNews = Task { [weak self] in
+            await news.keepCurrent(
+                preferences: { self?.settings.alertPreferences ?? AlertPreferences() },
+                isAllowed: { self?.settings.newsEnabled == true }
+            )
+        }
+    }
+
+    func newsHidden() {
+        liveNews?.cancel()
+        liveNews = nil
     }
 
     /// Checks News when it's turned on; the fetcher only goes out when a feed is due.
