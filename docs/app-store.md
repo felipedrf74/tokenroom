@@ -84,6 +84,13 @@ Tokenroom isn't affiliated with any of the providers it shows. Their names are u
 
 `ai,usage,quota,limit,tokens,coding,assistant,meter,reset,pace,widget,api,credits,balance,llm,spend`
 
+## For a later listing
+
+Not for the 1.0.1 version in review; leave its listing and notes as submitted.
+
+- "Logins never leave your Mac, and keys never leave your iPhone" stays true while the iPhone has no plan login (`PhoneConnect.productionAllowlist` is empty). Before a version that adds one is submitted, replace it with: "A login you add on your iPhone stays on that iPhone. A login on your Mac stays on your Mac. Only usage, reset times, and plan names sync, through your iCloud."
+- A later description can say the iPhone works without a Mac for every provider read with a key, Copilot's fine-grained token included, and lists the plans that need Tokenroom for Mac.
+
 ## Review notes
 
 Tokenroom works without an account. To look around quickly: Settings › Sample Data (or "Try sample data" on the welcome screen) turns on realistic sample readings for every screen, widget, and the Live Activity.

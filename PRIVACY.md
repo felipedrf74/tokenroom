@@ -67,13 +67,15 @@ On iPhone, Tokenroom keeps:
 - its alert ledger, like the Mac's `alerts.json` (the last reading of each provider it reads with a key, alert IDs sent, and the text of alerts waiting for quiet hours), alerts it showed before it could tell iCloud, the alert choices as last shared, and the time zone it last gave them
 - API keys you add there in the iPhone’s Keychain, readable only by Tokenroom and its widgets, never synced
 
+No plan login can be added on the iPhone yet: Claude, Codex, Grok Build, Grok Bot, Cursor, Antigravity, and Devin are read by Tokenroom for Mac, from the login on that Mac. If a provider later documents a way for other apps to read plan usage, a login you add on the iPhone will stay in that iPhone’s Keychain, in Tokenroom’s own item that its widgets, the Watch, and your other devices can’t read, and only usage will sync. A login on your Mac stays on your Mac.
+
 When you add keys on the iPhone, it writes its own readings (never the keys) to the same iCloud database, so your other devices can show them. **Settings → Delete Tokenroom Data from iCloud** removes every Tokenroom record there, from all your devices. A Mac with iPhone sync on writes its readings and history again within the hour, and alert choices you changed within half an hour; turn sync off on that Mac first to keep them out.
 
 The records carry readings only: used percents, reset times, window names, plan names, amounts (and whether a limit is a budget you set), a provider's category, and the Mac's pace forecast for each window. They never contain tokens, API keys, email addresses, names, account or organization IDs, or file paths.
 
 Alerts travel the same way. When a window crosses 80% or 95%, resets after heavy use, a banked reset arrives or is about to expire, or a balance or budget runs low, a Mac saves a short alert record (provider, kind, level, and the text you see) that your iPhone shows as a notification. Your alert choices and quiet hours, with the time zone of the device that last changed them (your iPhone updates it when its own time zone changes, so a Mac holds alerts for the same night), are one more record, which the iPhone and your Macs both read and update, so a change on either applies to both. Your iPhone, and Macs while iPhone sync is on, delete alert records older than two weeks.
 
-On Apple Watch, Tokenroom reads the same iCloud records and keeps the latest readings on the Watch, for its app and complications, and when its complications last refreshed. When the iPhone is near, it also hands the Watch its latest readings directly (WatchConnectivity), sooner than iCloud would. The Watch never has your API keys.
+On Apple Watch, Tokenroom reads the same iCloud records and keeps the latest readings on the Watch, for its app and complications, and when its complications last refreshed. When the iPhone is near, it also hands the Watch its latest readings directly (WatchConnectivity), sooner than iCloud would, and whether the iPhone can show its list of plans that need a Mac; the Watch can ask the iPhone to open that list. The Watch never has your API keys or a login.
 
 ## News
 
@@ -81,7 +83,7 @@ News reads public pages only, with no account and nothing about you in the reque
 
 ## What Tokenroom does not store or send
 
-- another tool's login, beyond the short-lived Claude, Grok Build, and Codex recovery described above
+- another tool's login, beyond the short-lived Claude, Grok Build, and Codex recovery described above (on the iPhone, a future phone login would be Tokenroom’s own item on that iPhone, not a copy of another tool’s login and not the Mac’s recovery item)
 - email addresses, display names, account IDs, or organization names
 - prompts, chats, or file contents
 - payment details
