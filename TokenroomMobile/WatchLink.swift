@@ -2,15 +2,26 @@ import Foundation
 import WatchConnectivity
 
 /// Hands the latest readings to the Watch app while it's near, sooner than iCloud. The Watch
-/// reads iCloud itself too, so nothing depends on this.
+/// reads iCloud itself too, so nothing depends on this. While the connect screen is on, the same
+/// dictionary says so (`connectAvailable`), and the Watch may ask this iPhone to open it.
 final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
     static let shared = WatchLink()
-    static let readingsKey = "readings"
+    static let readingsKey = WatchHandoff.readingsKey
+    /// Posted on the main queue when the Watch asks to open the connect screen; `RootView`
+    /// opens `tokenroom://connect`.
+    static let openConnectRequest = Notification.Name("app.tokenroom.watch.openConnect")
 
     private let lock = NSLock()
     /// The newest readings, kept until the session can take them: activation finishes after
     /// the first refresh, and the Watch app may be installed later.
     private var latest: Data?
+    private var connectFlag = false
+
+    /// Whether the connect screen is on (`MobileStore.connectOnIPhone`). Set before activation.
+    var connectAvailable: Bool {
+        get { lock.withLock { connectFlag } }
+        set { lock.withLock { connectFlag = newValue } }
+    }
 
     func activate() {
         guard WCSession.isSupported() else { return }
@@ -30,7 +41,26 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
         guard session.activationState == .activated, session.isPaired, session.isWatchAppInstalled,
               let data = lock.withLock({ latest }) ?? Self.savedReadings()
         else { return }
-        try? session.updateApplicationContext([Self.readingsKey: data])
+        // One dictionary: the context is replaced whole, so the flag never goes without readings.
+        try? session.updateApplicationContext(WatchHandoff.context(readings: data, connectAvailable: connectAvailable))
+    }
+
+    /// The Watch's only request: open the connect screen. Honoured only while it's on. Nothing
+    /// here reads the Keychain, and the reply is empty.
+    func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
+        handle(message)
+        replyHandler([:])
+    }
+
+    func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
+        handle(message)
+    }
+
+    private func handle(_ message: [String: Any]) {
+        guard connectAvailable, WatchHandoff.asksToOpenConnect(message) else { return }
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: Self.openConnectRequest, object: nil)
+        }
     }
 
     /// The readings saved for widgets, for when this launch hasn't sent any: it only sends when

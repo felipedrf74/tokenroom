@@ -125,6 +125,17 @@ final class PhoneConnectTests: XCTestCase {
         XCTAssertEqual(CollectorKind(recordKind: "mac"), .mac)
     }
 
+    func testTheWatchNeverCallsTheIPhoneThisIPhone() {
+        // The iPhone hands its cache to the Watch: its own readings carry "This iPhone".
+        let item = ReadingCache.Item(provider: reading(.openrouter, checkedAt: now), source: "This iPhone")
+        XCTAssertEqual(item.resolvedOrigin, .thisPhone)
+        XCTAssertEqual(item.resolvedOrigin.watchPhrase, "From your iPhone")
+        for kind in CollectorKind.allCases {
+            XCTAssertFalse(kind.watchPhrase.contains("this iPhone"), kind.rawValue)
+            XCTAssertFalse(kind.watchPhrase.contains("This iPhone"), kind.rawValue)
+        }
+    }
+
     func testTheMergeKeepsEachReadingsOrigin() throws {
         let mac = RelayMerge.Source(id: "mac", label: "Studio", envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: now, providers: [reading(.claude, checkedAt: now)]), kind: .mac)
         let phone = RelayMerge.Source(id: "me", label: "This iPhone", envelope: RelayEnvelope(producer: "iphone", appVersion: "1", checkedAt: now, providers: [reading(.openrouter, checkedAt: now)]), kind: .thisPhone)
@@ -152,6 +163,27 @@ final class PhoneConnectTests: XCTestCase {
         XCTAssertFalse(PhoneConnect.isEnabled(in: defaults))
         defaults.set(true, forKey: PhoneConnect.flagKey)
         XCTAssertTrue(PhoneConnect.isEnabled(in: defaults))
+    }
+
+    // MARK: Watch handoff
+
+    func testTheWatchContextCarriesReadingsAndOnlyTheFlag() {
+        let data = Data("{}".utf8)
+        let off = WatchHandoff.context(readings: data, connectAvailable: false)
+        XCTAssertEqual(Set(off.keys), ["readings"])
+        XCTAssertFalse(WatchHandoff.connectAvailable(in: off))
+        let on = WatchHandoff.context(readings: data, connectAvailable: true)
+        XCTAssertEqual(Set(on.keys), ["readings", "connectAvailable"])
+        XCTAssertEqual(on["connectAvailable"] as? Bool, true)
+        XCTAssertTrue(WatchHandoff.connectAvailable(in: on))
+    }
+
+    func testTheWatchAsksOnlyToOpenTheConnectScreen() {
+        XCTAssertEqual(WatchHandoff.openConnectMessage as? [String: String], ["open": "connect"])
+        XCTAssertTrue(WatchHandoff.asksToOpenConnect(["open": "connect"]))
+        XCTAssertFalse(WatchHandoff.asksToOpenConnect(["open": "keys"]))
+        XCTAssertFalse(WatchHandoff.asksToOpenConnect(["open": "connect", "provider": "claude"]))
+        XCTAssertFalse(WatchHandoff.asksToOpenConnect([:]))
     }
 
     // MARK: Deep links

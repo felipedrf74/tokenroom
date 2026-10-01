@@ -30,6 +30,15 @@ final class WatchStore {
     private(set) var problem: Problem?
     /// Opened from a complication or the Smart Stack: the provider to show.
     var openedProvider: String?
+    /// The iPhone said its connect screen is on, in its last handover.
+    private(set) var phoneOffersConnect = false
+    /// The iPhone app is running and can take a message now.
+    private(set) var phoneReachable = false
+
+    /// "Set up on iPhone" shows only when the iPhone offers its connect screen and can be asked.
+    var canOpenConnectOnPhone: Bool {
+        phoneOffersConnect && phoneReachable
+    }
     private var lastRefresh: Date?
     private var accountGate = WatchAccountGate(signedOutAt: AppGroup.defaults.object(forKey: "watchSignedOutAt") as? Date)
     private var pendingPhone: ReadingCache?
@@ -52,6 +61,12 @@ final class WatchStore {
         #endif
         link.onCache = { [weak self] cache in
             self?.receivePhone(cache)
+        }
+        link.onConnectAvailable = { [weak self] available in
+            self?.phoneOffersConnect = available
+        }
+        link.onReachability = { [weak self] reachable in
+            self?.phoneReachable = reachable
         }
         link.activate()
     }
@@ -181,6 +196,13 @@ final class WatchStore {
         Task { await refresh(force: true) }
     }
 
+    /// Asks the iPhone to open its connect screen. Only a request: the Watch never collects a
+    /// password, a key, or a session.
+    func openConnectOnPhone() {
+        guard canOpenConnectOnPhone else { return }
+        link.requestOpenConnect()
+    }
+
     func scheduleBackgroundRefresh(now: Date = .now) {
         let usual = now.addingTimeInterval(Self.backgroundInterval)
         let preferred = cache?.resetDates(after: now, through: usual).first.map { $0.addingTimeInterval(1) } ?? usual
@@ -191,10 +213,15 @@ final class WatchStore {
     }
 }
 
-/// Readings the iPhone hands over while it's near.
+/// Readings the iPhone hands over while it's near, and the one request the Watch sends back.
 final class PhoneLink: NSObject, WCSessionDelegate, @unchecked Sendable {
+    static let openKey = WatchHandoff.openKey
+    static let openConnect = WatchHandoff.openConnect
+
     /// Set once, before activation.
     var onCache: (@MainActor (ReadingCache) -> Void)?
+    var onConnectAvailable: (@MainActor (Bool) -> Void)?
+    var onReachability: (@MainActor (Bool) -> Void)?
 
     func activate() {
         guard WCSession.isSupported() else { return }
@@ -205,6 +232,25 @@ final class PhoneLink: NSObject, WCSessionDelegate, @unchecked Sendable {
     func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
         // What the iPhone sent while this app wasn't running.
         deliver(session.receivedApplicationContext)
+        report(reachable: session.isReachable)
+    }
+
+    func sessionReachabilityDidChange(_ session: WCSession) {
+        report(reachable: session.isReachable)
+    }
+
+    private func report(reachable: Bool) {
+        guard let handler = onReachability else { return }
+        Task { @MainActor in handler(reachable) }
+    }
+
+    /// `[open: connect]`, nothing else. Sent only while the iPhone app is reachable.
+    func requestOpenConnect() {
+        let session = WCSession.default
+        guard session.activationState == .activated, session.isReachable else { return }
+        session.sendMessage(WatchHandoff.openConnectMessage, replyHandler: { _ in }, errorHandler: { error in
+            Self.logger.error("open on iPhone failed: \(String(describing: error), privacy: .public)")
+        })
     }
 
     func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
@@ -220,11 +266,16 @@ final class PhoneLink: NSObject, WCSessionDelegate, @unchecked Sendable {
             Self.logger.error("readings from iPhone unreadable: \(String(describing: error), privacy: .public)")
             return
         }
+        // Absent from an iPhone with the connect screen off: false.
+        let offersConnect = WatchHandoff.connectAvailable(in: context)
+        if let connectHandler = onConnectAvailable {
+            Task { @MainActor in connectHandler(offersConnect) }
+        }
         guard let handler = onCache else { return }
         Task { @MainActor in handler(cache) }
     }
 
     private static let logger = Logger(subsystem: "app.tokenroom.watch", category: "phone-link")
 
-    static let readingsKey = "readings"
+    static let readingsKey = WatchHandoff.readingsKey
 }

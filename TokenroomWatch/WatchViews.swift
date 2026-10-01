@@ -87,10 +87,18 @@ private struct WatchEmptyView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
+                    if offersConnect {
+                        Button("Set up on iPhone", systemImage: "iphone") { store.openConnectOnPhone() }
+                    }
                     Button("Retry", systemImage: "arrow.clockwise") { Task { await store.refresh(force: true) } }
                 }
             }
         }
+    }
+
+    /// Only on the plain empty state, while the iPhone offers its connect screen and is reachable.
+    private var offersConnect: Bool {
+        store.problem == nil && store.canOpenConnectOnPhone
     }
 
     private var symbol: String {
@@ -113,6 +121,7 @@ private struct WatchEmptyView: View {
         switch store.problem {
         case .noAccount: "Use the same Apple Account on this Watch as on your iPhone and Mac."
         case .unreachable: "The Watch shows what your iPhone and Mac send through iCloud. It tries again soon."
+        case nil where offersConnect: "Open Tokenroom on your iPhone."
         case nil: "Open Tokenroom on your iPhone or Mac. The Watch shows what they send through your iCloud."
         }
     }
@@ -206,7 +215,7 @@ struct WatchDetailView: View {
             if let checked = provider.checkedAt ?? provider.fetchedAt {
                 Text("Last successful check \(RelativeTime.ago(checked, now: date))").font(.footnote).foregroundStyle(.secondary)
             }
-            Text("From \(item.source)")
+            Text(item.resolvedOrigin.watchPhrase)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
