@@ -91,7 +91,7 @@ Numbers in the screenshots are sample data.
   <img src="docs/images/iphone.png" width="860" alt="Tokenroom for iPhone: the Usage tab, a provider's detail with a week of history, and Lock Screen widgets with the Live Activity">
 </p>
 
-Tokenroom for iPhone shows the same meters, pace, and a week of history. They come from your Mac through your own iCloud. The iPhone also reads coding plans (including GitHub Copilot with a fine-grained token), pay-as-you-go balances, and organization spend itself, with keys you add there. It adds:
+Tokenroom for iPhone shows the same meters, pace, and a week of history. They come from your Mac through your own iCloud. The iPhone also reads coding plans (including GitHub Copilot with a fine-grained token), pay-as-you-go balances, and organization spend itself, with keys you add there, so it's useful without a Mac. Plans whose only login lives in a tool on a Mac (Claude, Codex, Grok Build, Grok Bot, Cursor, Antigravity, Devin) need Tokenroom for Mac; the iPhone doesn't sign in to them. A login on your Mac stays on your Mac, keys stay on your iPhone, and only usage syncs. It adds:
 
 - a tile for every plan: its weekly (or monthly) limit as a ring and its 5-hour limit as a bar, each with the even-pace mark and when it resets or runs out
 - **Close to a limit**: every limit at 80% or more, or on course to run out before it resets, most urgent first, with Follow on Lock Screen
