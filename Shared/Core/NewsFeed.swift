@@ -257,11 +257,12 @@ enum NewsFetcher {
         fetchedAt.map { now.timeIntervalSince($0) >= interval } ?? true
     }
 
-    /// Due by `interval`, and, after a failed check, once `retryInterval` has passed (or
-    /// `interval`, when that's shorter: asking with a `maxAge` of 0 always goes out).
+    /// Due by `interval`, and, after a failed check, once `retryInterval` has passed, however
+    /// often News is open or on screen; asking with a `maxAge` of 0 (pulling to refresh, Check
+    /// Now) always goes out.
     static func isDue(_ fetchedAt: Date?, failedAt: Date?, interval: TimeInterval, now: Date) -> Bool {
         if let failedAt, fetchedAt == nil || failedAt >= fetchedAt! {
-            return isDue(failedAt, interval: min(interval, retryInterval), now: now)
+            return isDue(failedAt, interval: interval <= 0 ? 0 : retryInterval, now: now)
         }
         return isDue(fetchedAt, interval: interval, now: now)
     }

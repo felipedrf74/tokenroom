@@ -29,8 +29,12 @@ final class NewsStore {
     private(set) var cache: NewsCache
     private(set) var isRefreshing = false
     private var visitIsOpen = false
-    private typealias RefreshRequest = (maxAge: TimeInterval?, preferences: AlertPreferences, notifies: Bool, now: Date, forcedSources: Set<String>)
+    /// `isAllowed`, when set, is asked again before a queued pass runs (the Mac's News can be
+    /// turned off while the pass before it is out).
+    private typealias RefreshRequest = (maxAge: TimeInterval?, preferences: AlertPreferences, notifies: Bool, now: Date, forcedSources: Set<String>, isAllowed: (@MainActor () -> Bool)?)
     private var queuedRefresh: RefreshRequest?
+    /// The maxAge of the pass under way, so a request for fresher feeds is queued behind it.
+    private var runningMaxAge: TimeInterval??
     private var lastPreferences = AlertPreferences()
 
     /// Labs whose new models are announced, e.g. `anthropic`.
@@ -176,7 +180,7 @@ final class NewsStore {
     ) async {
         while !Task.isCancelled {
             if isAllowed() {
-                await refresh(maxAge: interval, preferences: preferences(), notifies: false)
+                await refresh(maxAge: interval, preferences: preferences(), notifies: false, isAllowed: isAllowed)
             }
             do {
                 try await sleep(interval)
@@ -203,45 +207,80 @@ final class NewsStore {
 
     /// Fetches what's due, or anything older than `maxAge`. New models from followed labs get one
     /// notification when `notifies` and the preferences allow it.
-    func refresh(maxAge: TimeInterval? = nil, preferences: AlertPreferences, notifies: Bool = true, now: Date = .now, forcedSources: Set<String> = []) async {
+    func refresh(maxAge: TimeInterval? = nil, preferences: AlertPreferences, notifies: Bool = true, now: Date = .now, forcedSources: Set<String> = [], isAllowed: (@MainActor () -> Bool)? = nil) async {
         lastPreferences = preferences
         if isRefreshing {
-            // Several manual requests during one pass coalesce into a single follow-up pass.
-            if maxAge == 0 || !forcedSources.isEmpty || sources.contains(where: { cache.items[$0.id] == nil && cache.sourceChecks?[$0.id] == nil }) {
-                queuedRefresh = (queuedRefresh?.maxAge == 0 ? 0 : maxAge, preferences, (queuedRefresh?.notifies ?? false) || notifies, now,
-                                 (queuedRefresh?.forcedSources ?? []).union(forcedSources))
+            // Requests during one pass coalesce into a single follow-up pass: a manual one, a new
+            // feed, or one asking for fresher feeds than the pass under way (News opened meanwhile).
+            let fresher = runningMaxAge.map { Self.isShorter(maxAge, than: $0) } ?? false
+            if maxAge == 0 || !forcedSources.isEmpty || fresher || sources.contains(where: { cache.items[$0.id] == nil && cache.sourceChecks?[$0.id] == nil }) {
+                let queued = queuedRefresh
+                queuedRefresh = (queued.map { Self.shorter($0.maxAge, maxAge) } ?? maxAge, preferences,
+                                 (queued?.notifies ?? false) || notifies, now,
+                                 (queued?.forcedSources ?? []).union(forcedSources), isAllowed ?? queued?.isAllowed)
             }
             return
         }
         isRefreshing = true
         // A view can disappear while its request is awaiting a feed. Keep the owning pass and
         // its queued manual/follow-up requests alive independently of that view's cancellation.
-        let request: RefreshRequest = (maxAge, preferences, notifies, now, forcedSources)
+        let request: RefreshRequest = (maxAge, preferences, notifies, now, forcedSources, isAllowed)
         let work = Task { await performRefresh(request) }
         await work.value
     }
 
+    /// Whether `maxAge` asks for fresher feeds than `other`: 0 is freshest, nil (each feed's own
+    /// interval) the least fresh.
+    private static func isShorter(_ maxAge: TimeInterval?, than other: TimeInterval?) -> Bool {
+        guard let maxAge else { return false }
+        guard let other else { return true }
+        return maxAge < other
+    }
+
+    private static func shorter(_ a: TimeInterval?, _ b: TimeInterval?) -> TimeInterval? {
+        isShorter(b, than: a) ? b : a
+    }
+
+    /// When the newest item that arrived in this pass was dated, no later than the check.
+    private static func newestArrival(in result: NewsCache, since previous: NewsCache, checkedAt: Date) -> Date? {
+        let knownModels = Set(previous.models.map(\.id))
+        let knownItems = Set(previous.items.flatMap { source, items in items.map { source + "|" + $0.id } })
+        let models = result.models.filter { !knownModels.contains($0.id) }.map(\.created)
+        let items = result.items.flatMap { source, items in
+            items.filter { !knownItems.contains(source + "|" + $0.id) }.compactMap(\.published)
+        }
+        return (models + items).max().map { min($0, checkedAt) }
+    }
+
     private func performRefresh(_ initial: RefreshRequest) async {
-        defer { isRefreshing = false }
+        defer {
+            isRefreshing = false
+            runningMaxAge = nil
+        }
         if cache.modelsFetchedAt == nil, cache.announcementsFetchedAt == nil, !visitIsOpen {
             seenAt = max(seenAt, initial.now)
             visitBaseline = seenAt
         }
         var request = initial
         while true {
+            runningMaxAge = .some(request.maxAge)
+            let previous = cache
             let result = await fetch(.init(cache: cache, sources: sources, vendors: followedVendors, maxAge: request.maxAge, now: request.now, forcedSources: request.forcedSources))
             cache = result.cache
             cache.save(to: directory)
-            // Seen as they arrive while News is open, so they don't come back as a badge. They
-            // stay marked New for the rest of this visit (`visitBaseline`).
-            if visitIsOpen {
-                seenAt = max(seenAt, request.now)
+            // What arrived while News is open is seen, so it doesn't come back as a badge; it
+            // stays marked New for the rest of this visit (`visitBaseline`). Only what this
+            // pass brought: a check that found nothing doesn't mark later arrivals seen.
+            if visitIsOpen, let arrival = Self.newestArrival(in: result.cache, since: previous, checkedAt: request.now) {
+                seenAt = max(seenAt, arrival)
             }
             if request.notifies, request.preferences.newModels, !result.newModels.isEmpty {
                 notify(result.newModels, request.preferences, request.now)
             }
             guard let next = queuedRefresh else { break }
             queuedRefresh = nil
+            // News turned off meanwhile (on the Mac): the follow-up doesn't go out.
+            if let isAllowed = next.isAllowed, !isAllowed() { break }
             request = next
         }
     }

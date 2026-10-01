@@ -99,4 +99,89 @@ final class NewsLiveTests: XCTestCase {
         await closed.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: later)
         XCTAssertEqual(closed.unseenModelCount, 1)
     }
+
+    // MARK: QA regressions
+
+    /// A visit check that didn't bring an item doesn't mark it seen: one created during the
+    /// visit that only arrives afterwards still counts.
+    @MainActor
+    func testAVisitCheckThatBroughtNothingDoesNotMarkLaterArrivalsSeen() async throws {
+        let opened = Date(timeIntervalSince1970: 1_800_000_000)
+        let defaults = makeDefaults()
+        defaults.set(opened.addingTimeInterval(-86_400).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt)
+        let folder = try makeFolder()
+        var checked = NewsCache()
+        checked.modelsFetchedAt = opened.addingTimeInterval(-3600)
+        checked.save(to: folder)
+        let news = NewsStore(defaults: defaults, directory: folder, fetch: { request in
+            NewsFetcher.Result(cache: request.cache, newModels: [])
+        }, notify: { _, _, _ in })
+        news.beginVisit(now: opened)
+        let liveCheck = opened.addingTimeInterval(NewsFetcher.liveInterval)
+        await news.refresh(maxAge: NewsFetcher.liveInterval, preferences: AlertPreferences(), notifies: false, now: liveCheck)
+        news.endVisit()
+
+        let later = NewsStore(defaults: defaults, directory: folder, fetch: { request in
+            var cache = request.cache
+            cache.models.append(Self.release("anthropic/claude-missed", created: opened.addingTimeInterval(60)))
+            return NewsFetcher.Result(cache: cache, newModels: [])
+        }, notify: { _, _, _ in })
+        await later.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: liveCheck.addingTimeInterval(60))
+        XCTAssertEqual(later.unseenModelCount, 1, "Created during the visit, but never on screen")
+    }
+
+    /// News opened while another check runs still gets its 15-minute check right after it,
+    /// without turning notifications on, and without losing an asked-for check of everything.
+    @MainActor
+    func testALiveCheckAskedForDuringAnotherPassFollowsIt() async throws {
+        let folder = try makeFolder()
+        var checked = NewsCache()
+        checked.modelsFetchedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        checked.sourceChecks = Dictionary(uniqueKeysWithValues: FeedSource.catalog.map { ($0.id, NewsCache.SourceCheck(succeededAt: checked.modelsFetchedAt)) })
+        checked.save(to: folder)
+        let ages = LockedBox<[TimeInterval?]>([])
+        let held = LockedBox(true)
+        let entered = LockedBox(false)
+        let notified = LockedBox(0)
+        let news = NewsStore(defaults: makeDefaults(), directory: folder, fetch: { request in
+            ages.value.append(request.maxAge)
+            if ages.value.count == 1 {
+                entered.value = true
+                while held.value { try? await Task.sleep(for: .milliseconds(5)) }
+                return NewsFetcher.Result(cache: request.cache, newModels: [])
+            }
+            return NewsFetcher.Result(cache: request.cache, newModels: [Self.release("anthropic/claude-new", created: request.now)])
+        }, notify: { _, _, _ in notified.value += 1 })
+
+        let background = Task { await news.refresh(preferences: { var p = AlertPreferences(); p.newModels = true; return p }()) }
+        while !entered.value { try await Task.sleep(for: .milliseconds(5)) }
+        await news.refresh(maxAge: NewsFetcher.liveInterval, preferences: { var p = AlertPreferences(); p.newModels = true; return p }(), notifies: false)
+        held.value = false
+        await background.value
+        XCTAssertEqual(ages.value, [nil, NewsFetcher.liveInterval])
+        XCTAssertEqual(notified.value, 0, "The live check doesn't notify")
+
+        // A check of everything asked for meanwhile isn't shortened to the live interval.
+        ages.value = []
+        held.value = true
+        entered.value = false
+        let again = Task { await news.refresh(preferences: AlertPreferences()) }
+        while !entered.value { try await Task.sleep(for: .milliseconds(5)) }
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false)
+        await news.refresh(maxAge: NewsFetcher.liveInterval, preferences: AlertPreferences(), notifies: false)
+        held.value = false
+        await again.value
+        XCTAssertEqual(ages.value, [nil, 0])
+    }
+
+    /// A feed that failed waits out the hour during a visit, as it does in the background; a
+    /// pull or Check Now still goes out at once.
+    func testAFailedFeedWaitsTheHourDuringAVisit() {
+        let failedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertFalse(NewsFetcher.isDue(nil, failedAt: failedAt, interval: NewsFetcher.liveInterval, now: failedAt.addingTimeInterval(NewsFetcher.liveInterval)))
+        XCTAssertTrue(NewsFetcher.isDue(nil, failedAt: failedAt, interval: NewsFetcher.liveInterval, now: failedAt.addingTimeInterval(NewsFetcher.retryInterval)))
+        XCTAssertTrue(NewsFetcher.isDue(nil, failedAt: failedAt, interval: 0, now: failedAt), "Pull to refresh and Check Now")
+        XCTAssertFalse(NewsFetcher.isDue(nil, failedAt: failedAt, interval: NewsFetcher.modelInterval, now: failedAt.addingTimeInterval(1800)))
+        XCTAssertTrue(NewsFetcher.isDue(nil, failedAt: failedAt, interval: NewsFetcher.modelInterval, now: failedAt.addingTimeInterval(NewsFetcher.retryInterval)))
+    }
 }
