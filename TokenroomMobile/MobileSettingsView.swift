@@ -17,11 +17,17 @@ struct MobileSettingsView: View {
         NavigationStack(path: $path) {
             Form {
                 Section {
-                    LabeledContent("iCloud", value: store.relayStatusText)
+                    ReadingsStatusCard(store: store)
                     ForEach(store.relaySources) { source in
-                        LabeledContent(source.label, value: source.envelope.map { RelativeTime.ago($0.checkedAt) } ?? "Needs a newer Tokenroom")
+                        LabeledContent {
+                            Text(source.envelope.map { RelativeTime.ago($0.checkedAt) } ?? "Needs a newer Tokenroom")
+                        } label: {
+                            SettingsRowLabel(source.label, symbol: source.kind == "iphone" ? "iphone" : "laptopcomputer", tint: .gray)
+                        }
                     }
-                    Toggle("Sample Data", isOn: $store.sampleMode)
+                    Toggle(isOn: $store.sampleMode) {
+                        SettingsRowLabel("Sample Data", symbol: "sparkles", tint: .purple)
+                    }
                 } header: {
                     Text("Readings")
                 } footer: {
@@ -50,18 +56,24 @@ struct MobileSettingsView: View {
 
                 Section {
                     NavigationLink(value: SettingsRoute.alerts) {
-                        Label("Alerts", systemImage: "bell.badge")
+                        SettingsRowLabel("Alerts", symbol: "bell.badge.fill", tint: .red)
                     }
                     if store.connectOnIPhone {
                         NavigationLink(value: SettingsRoute.connect) {
-                            Label("Plans that need a Mac", systemImage: "laptopcomputer")
+                            SettingsRowLabel("Plans that need a Mac", symbol: "laptopcomputer", tint: .indigo)
                         }
                     }
                     NavigationLink(value: SettingsRoute.keys) {
-                        Label("API Keys", systemImage: "key")
+                        LabeledContent {
+                            if !store.keyedProviders.isEmpty {
+                                Text("\(store.keyedProviders.count)")
+                            }
+                        } label: {
+                            SettingsRowLabel("API Keys", symbol: "key.fill", tint: TokenroomTokens.tight)
+                        }
                     }
                     NavigationLink(value: SettingsRoute.widgets) {
-                        Label("Widgets, Live Activity & Watch", systemImage: "rectangle.stack")
+                        SettingsRowLabel("Widgets, Live Activity & Watch", symbol: "rectangle.stack.fill", tint: .blue)
                     }
                 } footer: {
                     Text("Read providers right from this iPhone with API keys. Keys stay in its Keychain; they're never synced or sent to your other devices.")
@@ -80,8 +92,14 @@ struct MobileSettingsView: View {
                     LabeledContent("Version", value: TokenroomIdentity.version)
                     // WidgetKit's budget is per widget, so the busiest one is what counts.
                     LabeledContent("Busiest widget's updates, last 24 hours", value: "\(WidgetReloadLog.count())")
-                    Link("Privacy", destination: TokenroomIdentity.privacyURL)
-                    Link("Source Code", destination: TokenroomIdentity.repositoryURL)
+                    Link(destination: TokenroomIdentity.privacyURL) {
+                        SettingsRowLabel("Privacy", symbol: "hand.raised.fill", tint: .blue)
+                    }
+                    .foregroundStyle(.primary)
+                    Link(destination: TokenroomIdentity.repositoryURL) {
+                        SettingsRowLabel("Source Code", symbol: "chevron.left.forwardslash.chevron.right", tint: .gray)
+                    }
+                    .foregroundStyle(.primary)
                     Text("Tokenroom isn't affiliated with any of the providers it shows.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -111,6 +129,84 @@ struct MobileSettingsView: View {
                 Text("Macs with iPhone sync on send fresh readings on their next check.")
             }
         }
+    }
+}
+
+/// A row's title beside a white symbol on a tinted tile, as the Settings app draws them.
+struct SettingsRowLabel: View {
+    var title: String
+    var symbol: String
+    var tint: Color
+
+    init(_ title: String, symbol: String, tint: Color) {
+        self.title = title
+        self.symbol = symbol
+        self.tint = tint
+    }
+
+    var body: some View {
+        Label {
+            Text(title)
+        } icon: {
+            SettingsTile(symbol: symbol, tint: tint)
+        }
+    }
+}
+
+struct SettingsTile: View {
+    var symbol: String
+    var tint: Color
+    var size: CGFloat = 29
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: size * 0.5, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous).fill(tint.gradient))
+            .accessibilityHidden(true)
+    }
+}
+
+/// The top of Settings: whether readings are coming in, and from how many devices.
+private struct ReadingsStatusCard: View {
+    var store: MobileStore
+
+    var body: some View {
+        HStack(spacing: 14) {
+            SettingsTile(symbol: "icloud.fill", tint: tint, size: 44)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("iCloud")
+                    .font(.headline)
+                Text(store.relayStatusText)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                if let detail {
+                    Text(detail)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var tint: Color {
+        switch store.relayPhase {
+        case .ready: .blue
+        case .failed, .noAccount: TokenroomTokens.tight
+        default: .gray
+        }
+    }
+
+    /// "12 providers · checked 2m ago".
+    private var detail: String? {
+        guard !store.readings.isEmpty else { return nil }
+        let count = store.readings.count == 1 ? "1 provider" : "\(store.readings.count) providers"
+        guard let checked = store.lastChecked else { return count }
+        return "\(count) · checked \(RelativeTime.ago(checked))"
     }
 }
 

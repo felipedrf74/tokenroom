@@ -88,6 +88,10 @@ Cards show the meter with a pace tick (`paceMark`), the pace line for every verd
 
 A debug build renders the popover, Settings tabs, the News window, and the menu bar from sample data: `Tokenroom.app/Contents/MacOS/Tokenroom -TokenroomSnapshots <folder>` (add `-AppleLocale en_US` for README images).
 
+## Settings window
+
+Settings is a `NavigationSplitView`: a sidebar with "Search settings" (matches page titles, descriptions, and provider names, and jumps to the first match), sections Essentials (General, Menu Bar), Usage (Providers, API Keys, Alerts), and More (News, iPhone & Watch), each page a System Settings tile (`SettingsIcon`). Each page's form starts with `SettingsHeaderSection` (tile, title, one line, a `SettingsTag` count such as "11 of 16 on"). Provider rows carry tags: Unofficial, Key, Admin key, Login or token, Detected. The window opens at 820 × 620 with a unified toolbar; snapshots render it in a titled window (`renderWindow`).
+
 ## Test host
 
 Under XCTest (`LaunchEnvironment.isUnitTestHost`) the app builds an empty store and starts nothing: no status item, no checks, no Keychain, no iCloud. Tests make their own stores with stubbed readers, so `xcodebuild test` never reads or renews this Mac's logins.

@@ -109,10 +109,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if settingsWindow == nil {
             let hosting = NSHostingController(rootView: SettingsView(store: store, request: settingsTab))
+            // The sidebar's toolbar and each page's title come from SwiftUI, as in the News window.
+            hosting.sceneBridgingOptions = [.toolbars, .title]
             let window = NSWindow(contentViewController: hosting)
             window.title = "Tokenroom Settings"
-            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            window.setContentSize(NSSize(width: 600, height: 640))
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+            window.toolbarStyle = .unified
+            window.setContentSize(NSSize(width: 820, height: 620))
             window.isReleasedWhenClosed = false
             window.hidesOnDeactivate = false
             window.delegate = self

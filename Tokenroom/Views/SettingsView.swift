@@ -21,43 +21,227 @@ final class SettingsTabRequest {
 struct SettingsView: View {
     @Bindable var store: QuotaStore
     @Bindable var request: SettingsTabRequest
+    @State private var search = ""
 
     var body: some View {
-        TabView(selection: $request.tab) {
-            GeneralSettings(store: store)
-                .tabItem { Label("General", systemImage: "gearshape") }
-                .tag(SettingsTab.general)
-            ProvidersSettings(store: store) { request.tab = .keys }
-                .tabItem { Label("Providers", systemImage: "square.stack.3d.up") }
-                .tag(SettingsTab.providers)
-            KeysSettings(store: store)
-                .tabItem { Label("API Keys", systemImage: "key") }
-                .tag(SettingsTab.keys)
-            AlertsSettings(store: store)
-                .tabItem { Label("Alerts", systemImage: "bell.badge") }
-                .tag(SettingsTab.alerts)
-            NewsSettings(store: store)
-                .tabItem { Label("News", systemImage: "newspaper") }
-                .tag(SettingsTab.news)
-            MenuBarSettings(store: store)
-                .tabItem { Label("Menu Bar", systemImage: "menubar.rectangle") }
-                .tag(SettingsTab.menuBar)
-            if let relay = store.relay {
-                Form {
-                    RelaySettingsSection(relay: relay)
+        NavigationSplitView {
+            List(selection: Binding(get: { request.tab }, set: { if let tab = $0 { request.tab = tab } })) {
+                ForEach(SettingsPage.groups, id: \.title) { group in
+                    let pages = group.pages.filter { $0.tab != .iPhone || store.relay != nil }.filter { $0.matches(search) }
+                    if !pages.isEmpty {
+                        Section(group.title) {
+                            ForEach(pages) { page in
+                                Label {
+                                    Text(page.title)
+                                } icon: {
+                                    SettingsIcon(symbol: page.symbol, tint: page.tint)
+                                }
+                                .tag(page.tab)
+                            }
+                        }
+                    }
                 }
-                .formStyle(.grouped)
-                .tabItem { Label("iPhone & Watch", systemImage: "iphone.gen3") }
-                .tag(SettingsTab.iPhone)
             }
+            .listStyle(.sidebar)
+            .searchable(text: $search, placement: .sidebar, prompt: "Search settings")
+            .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
+        } detail: {
+            let page = SettingsPage.page(for: request.tab)
+            content(for: request.tab)
+                .environment(\.settingsHeader, SettingsHeaderInfo(page: page, summary: summary(for: request.tab)))
         }
-        .frame(minWidth: 580, idealWidth: 600, minHeight: 560)
-        .navigationTitle("Settings")
+        .frame(minWidth: 760, idealWidth: 820, minHeight: 560)
+        .navigationTitle(SettingsPage.page(for: request.tab).title)
         .onChange(of: store.pendingKeyProvider, initial: true) { _, provider in
             if provider != nil {
                 request.tab = .keys
             }
         }
+        .onChange(of: search) { _, text in
+            // Jump to the first page that matches, as System Settings does.
+            if !text.isEmpty, let first = SettingsPage.groups.flatMap(\.pages).first(where: { $0.matches(text) && ($0.tab != .iPhone || store.relay != nil) }) {
+                request.tab = first.tab
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func content(for tab: SettingsTab) -> some View {
+        switch tab {
+        case .general: GeneralSettings(store: store)
+        case .providers: ProvidersSettings(store: store) { request.tab = .keys }
+        case .keys: KeysSettings(store: store)
+        case .alerts: AlertsSettings(store: store)
+        case .news: NewsSettings(store: store)
+        case .menuBar: MenuBarSettings(store: store)
+        case .iPhone:
+            if let relay = store.relay {
+                Form {
+                    SettingsHeaderSection()
+                    RelaySettingsSection(relay: relay)
+                }
+                .formStyle(.grouped)
+            }
+        }
+    }
+
+    /// A short count on the page's header card, like "9 of 17 on".
+    private func summary(for tab: SettingsTab) -> String? {
+        switch tab {
+        case .providers:
+            let personal = Provider.allCases.filter { $0.category != .orgSpend }
+            return "\(personal.filter { store.settings.isEnabled($0) }.count) of \(personal.count) on"
+        case .news:
+            return store.settings.newsEnabled ? "On" : "Off"
+        case .menuBar:
+            return store.settings.menuStyle.title
+        case .iPhone:
+            return store.relay.map { $0.isEnabled ? "Sending" : "Off" }
+        case .alerts:
+            return store.settings.showsAlertsOnMac ? "On this Mac and iPhone" : "On iPhone"
+        case .general, .keys:
+            return nil
+        }
+    }
+}
+
+/// One page in the Settings sidebar: its symbol tile, title, the line under the header, and the
+/// words search finds it by.
+struct SettingsPage: Identifiable {
+    var tab: SettingsTab
+    var title: String
+    var symbol: String
+    var tint: Color
+    var text: String
+    var keywords: [String] = []
+
+    var id: SettingsTab { tab }
+
+    func matches(_ search: String) -> Bool {
+        let query = search.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return true }
+        return ([title, text] + keywords).contains { $0.localizedCaseInsensitiveContains(query) }
+    }
+
+    static let groups: [(title: String, pages: [SettingsPage])] = [
+        ("Essentials", [
+            SettingsPage(tab: .general, title: "General", symbol: "gearshape.fill", tint: .gray,
+                         text: "Start with your Mac, and about Tokenroom.", keywords: ["launch", "login", "version", "privacy", "headroom"]),
+            SettingsPage(tab: .menuBar, title: "Menu Bar", symbol: "menubar.rectangle", tint: .blue,
+                         text: "How usage looks in the menu bar, how often it's checked, and which providers show there.", keywords: ["meters", "percents", "refresh", "style"]),
+        ]),
+        ("Usage", [
+            SettingsPage(tab: .providers, title: "Providers", symbol: "square.stack.3d.up.fill", tint: .indigo,
+                         text: "The plans and tools Tokenroom reads, with the logins already on this Mac.",
+                         keywords: Provider.allCases.map(\.displayName) + ["sign in", "enable"]),
+            SettingsPage(tab: .keys, title: "API Keys", symbol: "key.fill", tint: TokenroomTokens.tight,
+                         text: "Coding plans, balances, and organization spend, read with keys that stay in this Mac's Keychain.",
+                         keywords: Provider.allCases.filter(\.readsWithKey).map(\.displayName) + ["token", "budget", "reference"]),
+            SettingsPage(tab: .alerts, title: "Alerts", symbol: "bell.badge.fill", tint: .red,
+                         text: "When to hear about a limit, a reset, or a balance. Shared with your iPhone.", keywords: ["notifications", "quiet hours", "threshold"]),
+        ]),
+        ("More", [
+            SettingsPage(tab: .news, title: "News", symbol: "newspaper.fill", tint: .pink,
+                         text: "New models and official announcements from the labs and tools you follow.", keywords: ["models", "labs", "feeds", "changelog"]),
+            SettingsPage(tab: .iPhone, title: "iPhone & Watch", symbol: "iphone.gen3", tint: .green,
+                         text: "Readings for Tokenroom on your iPhone and Apple Watch, through your iCloud.", keywords: ["icloud", "sync", "watch", "relay"]),
+        ]),
+    ]
+
+    static func page(for tab: SettingsTab) -> SettingsPage {
+        groups.flatMap(\.pages).first { $0.tab == tab } ?? groups[0].pages[0]
+    }
+}
+
+/// A white symbol on a rounded tile, as System Settings draws its sidebar.
+struct SettingsIcon: View {
+    var symbol: String
+    var tint: Color
+    var size: CGFloat = 20
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: size * 0.55, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(RoundedRectangle(cornerRadius: size * 0.26, style: .continuous).fill(tint.gradient))
+            .accessibilityHidden(true)
+    }
+}
+
+/// The card at the top of a Settings page: its tile, title, what it's for, and a short count.
+private struct SettingsPageHeader: View {
+    var page: SettingsPage
+    var summary: String?
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            SettingsIcon(symbol: page.symbol, tint: page.tint, size: 34)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(page.title)
+                    .font(.system(size: 15, weight: .semibold))
+                Text(page.text)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            if let summary {
+                SettingsTag(text: summary)
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.primary.opacity(0.06)))
+    }
+}
+
+struct SettingsHeaderInfo {
+    var page: SettingsPage
+    var summary: String?
+}
+
+private struct SettingsHeaderKey: EnvironmentKey {
+    static let defaultValue: SettingsHeaderInfo? = nil
+}
+
+extension EnvironmentValues {
+    /// The page header the Settings window puts at the top of each page's form.
+    var settingsHeader: SettingsHeaderInfo? {
+        get { self[SettingsHeaderKey.self] }
+        set { self[SettingsHeaderKey.self] = newValue }
+    }
+}
+
+/// The first section of every Settings page: its header card, scrolling with the page.
+struct SettingsHeaderSection: View {
+    @Environment(\.settingsHeader) private var header
+
+    var body: some View {
+        if let header {
+            Section {
+                EmptyView()
+            } header: {
+                SettingsPageHeader(page: header.page, summary: header.summary)
+                    .padding(.bottom, 4)
+            }
+        }
+    }
+}
+
+/// A small capsule beside a name: "Unofficial", "Detected", "Key".
+struct SettingsTag: View {
+    var text: String
+    var tint: Color? = nil
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(tint ?? .secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill((tint ?? .primary).opacity(0.1)))
+            .fixedSize()
     }
 }
 
@@ -68,6 +252,7 @@ private struct GeneralSettings: View {
 
     var body: some View {
         Form {
+            SettingsHeaderSection()
             Section {
                 Toggle("Launch at login", isOn: $store.settings.launchAtLogin)
             }
@@ -114,6 +299,7 @@ private struct ProvidersSettings: View {
 
     var body: some View {
         Form {
+            SettingsHeaderSection()
             TextField("Search providers", text: $search)
             let personal = Provider.allCases.filter { $0.category != .orgSpend && matches($0.displayName) }
             let connected = personal.filter { store.settings.isEnabled($0) }
@@ -206,7 +392,10 @@ private struct ProvidersSettings: View {
             HStack(spacing: 8) {
                 ProviderIcon(provider: provider, size: 20)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(provider.displayName)
+                    HStack(spacing: 6) {
+                        Text(provider.displayName)
+                        ForEach(tags(provider), id: \.self) { SettingsTag(text: $0) }
+                    }
                     Text(caption(provider))
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
@@ -215,6 +404,18 @@ private struct ProvidersSettings: View {
         }
         .accessibilityLabel(provider.displayName)
         .accessibilityValue(caption(provider))
+    }
+
+    /// What kind of connection it is, at a glance.
+    private func tags(_ provider: Provider) -> [String] {
+        var tags: [String] = []
+        if detected.contains(provider), !store.settings.isEnabled(provider) { tags.append("Detected") }
+        switch provider.access {
+        case .localLogin: tags.append(provider.descriptor.fallbackKey == nil ? "Unofficial" : "Login or token")
+        case .codingPlanKey: tags.append("Key")
+        case .pastedKey: tags.append(provider.category == .orgSpend ? "Admin key" : "Key")
+        }
+        return tags
     }
 
     private func caption(_ provider: Provider) -> String {
@@ -287,6 +488,7 @@ private struct KeysSettings: View {
 
     var body: some View {
         Form {
+            SettingsHeaderSection()
             Section {
                 ForEach(Provider.allCases.filter { $0.access == .codingPlanKey }) { provider in
                     VStack(alignment: .leading, spacing: 8) {
@@ -701,6 +903,7 @@ private struct AlertsSettings: View {
 
     var body: some View {
         Form {
+            SettingsHeaderSection()
             Section {
                 Toggle("Show alerts on this Mac", isOn: Binding(
                     get: { store.settings.showsAlertsOnMac },
@@ -815,6 +1018,7 @@ private struct NewsSettings: View {
 
     var body: some View {
         Form {
+            SettingsHeaderSection()
             Section {
                 Toggle("Check for new models and announcements", isOn: Binding(
                     get: { store.settings.newsEnabled },
@@ -867,6 +1071,7 @@ private struct MenuBarSettings: View {
 
     var body: some View {
         Form {
+            SettingsHeaderSection()
             Section {
                 Picker("Style", selection: $store.settings.menuStyle) {
                     ForEach(MenuBarStyle.allCases) { style in
