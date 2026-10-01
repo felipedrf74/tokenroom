@@ -136,6 +136,14 @@
 			);
 			target = F20000000000000000000010 /* TokenroomWatchWidgets */;
 		};
+		5A0000000000000000000014 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				PhoneSessionClient.swift,
+				PhoneSessionStore.swift,
+			);
+			target = E10000000000000000000010 /* TokenroomWidgets */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -171,6 +179,9 @@
 		};
 		5A0000000000000000000004 /* APIKeys */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				5A0000000000000000000014 /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
+			);
 			path = APIKeys;
 			sourceTree = "<group>";
 		};
