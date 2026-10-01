@@ -2,6 +2,10 @@
 
 A draft for App Store Connect. Provider names appear only in the description, as facts, never in the name, subtitle, or keywords. Tokenroom isn't affiliated with any provider.
 
+## What's New — 1.0.2
+
+Meters show the even pace as a notch, and the part past it is striped when you're using a limit faster than it lasts. Each provider's page opens with a ring, when it resets, how the pace looks, and your plan. Settings shows iCloud's status at the top. The News tab keeps itself current while it's open. On Apple Watch, a provider's page leads with a ring, and readings from your iPhone say so.
+
 ## What's New — 1.0.1
 
 Usage readings now show when each provider was last checked and flag stale data. Secondary limits get clearer warnings, and reset windows wait for a confirmed new reading. Settings protects key validation and shared alert preferences during edits. News retries feeds independently and adds search and Show More. Apple Watch, widgets, and Live Activities present the same freshness and reset states. Tokenroom for Mac 2.2.1 keeps Claude, Grok Build, and Codex signed in, so the readings it sends keep updating without a fresh login.
@@ -86,7 +90,7 @@ Tokenroom isn't affiliated with any of the providers it shows. Their names are u
 
 ## For a later listing
 
-Not for the 1.0.1 version in review; leave its listing and notes as submitted.
+Not for 1.0.1 or 1.0.2; leave their listings and notes as submitted.
 
 - "Logins never leave your Mac, and keys never leave your iPhone" stays true while the iPhone has no plan login (`PhoneConnect.productionAllowlist` is empty). Before a version that adds one is submitted, replace it with: "A login you add on your iPhone stays on that iPhone. A login on your Mac stays on your Mac. Only usage, reset times, and plan names sync, through your iCloud."
 - A later description can say the iPhone works without a Mac for every provider read with a key, Copilot's fine-grained token included, and lists the plans that need Tokenroom for Mac.
