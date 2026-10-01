@@ -80,7 +80,7 @@ enum WidgetRefresher {
 
         var sources = (contents?.sources ?? []).compactMap { source -> RelayMerge.Source? in
             guard source.id != ownID, let envelope = source.envelope else { return nil }
-            return RelayMerge.Source(id: source.id, label: source.label, envelope: envelope)
+            return RelayMerge.Source(id: source.id, label: source.label, envelope: envelope, kind: CollectorKind(recordKind: source.kind))
         }
         var histories = contents?.histories ?? [:]
         if contents == nil, !signedOut, let previous {
@@ -95,7 +95,8 @@ enum WidgetRefresher {
             sources.append(RelayMerge.Source(
                 id: ownID,
                 label: localLabel,
-                envelope: RelayEnvelope(producer: "iphone", appVersion: TokenroomIdentity.version, checkedAt: now, providers: own)
+                envelope: RelayEnvelope(producer: "iphone", appVersion: TokenroomIdentity.version, checkedAt: now, providers: own),
+                kind: .thisPhone
             ))
             histories[ownID] = RelayHistory(series: HistoryStore.loadWithPending(from: AppGroup.containerURL, now: now))
         }

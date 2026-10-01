@@ -17,7 +17,8 @@ enum ReadingAssembler {
             ReadingCache.Item(
                 provider: entry.provider,
                 source: entry.sourceLabel,
-                history: history(for: entry.provider.id, in: histories[entry.sourceID])
+                history: history(for: entry.provider.id, in: histories[entry.sourceID]),
+                origin: entry.origin
             )
         }
         return Output(

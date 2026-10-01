@@ -43,7 +43,7 @@ enum RelayReadings {
 
     static func cache(from contents: CloudRelay.Contents, now: Date = .now) -> ReadingCache {
         let sources = contents.sources.compactMap { source in
-            source.envelope.map { RelayMerge.Source(id: source.id, label: source.label, envelope: $0) }
+            source.envelope.map { RelayMerge.Source(id: source.id, label: source.label, envelope: $0, kind: CollectorKind(recordKind: source.kind)) }
         }
         let output = ReadingAssembler.assemble(sources: sources, histories: contents.histories, now: now)
         return ReadingCache(savedAt: now, isSample: false, items: output.connected)
