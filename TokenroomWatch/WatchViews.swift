@@ -44,6 +44,12 @@ struct WatchRootView: View {
             .navigationDestination(for: String.self) { id in
                 if let item = store.item(id: id, at: date) {
                     WatchDetailView(item: item, date: date)
+                } else {
+                    // Gone since it was opened (signed out of iCloud, aged out): say so, not a blank page.
+                    Text("Couldn't find a reading for this provider.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                 }
             }
         }
@@ -235,7 +241,7 @@ struct WatchDetailView: View {
             if let checked = provider.checkedAt ?? provider.fetchedAt {
                 Text("Last successful check \(RelativeTime.ago(checked, now: date))").font(.footnote).foregroundStyle(.secondary)
             }
-            Text(item.resolvedOrigin.watchPhrase)
+            Text(item.watchOriginLine)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

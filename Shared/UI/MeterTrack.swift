@@ -25,22 +25,24 @@ struct MeterTrack: View {
             let track = Path(roundedRect: trackRect, cornerRadius: radius, style: .continuous)
             context.fill(track, with: .color(TokenroomTokens.track))
 
-            let fillWidth = MeterLayout.fillLength(usedPercent: usedPercent, total: size.width)
-            if fillWidth > 0 {
-                // At least a dot, so a sliver of use still shows as a rounded end.
-                let width = max(fillWidth, min(height, size.width))
-                let fillRect = CGRect(x: 0, y: overhang, width: width, height: height)
-                let fill = Path(roundedRect: fillRect, cornerRadius: min(radius, width / 2), style: .continuous)
-                context.fill(fill, with: shading(trackWidth: size.width))
+            let width = MeterLayout.drawnFillEnd(usedPercent: usedPercent, total: size.width, height: height)
+            if width > 0 {
+                // Ends at the fraction. It starts under the track's left cap, which clips it, so a
+                // sliver shows as a rounded end without being drawn wider than it is.
+                var bar = context
+                bar.clip(to: track)
+                let fillRect = CGRect(x: -radius, y: overhang, width: width + radius, height: height)
+                let fill = Path(roundedRect: fillRect, cornerRadius: min(radius, (width + radius) / 2), style: .continuous)
+                bar.fill(fill, with: shading(trackWidth: size.width))
                 // A soft highlight along the top keeps the bar from looking flat.
-                var shine = context
+                var shine = bar
                 shine.clip(to: fill)
                 shine.fill(Path(CGRect(x: 0, y: overhang, width: width, height: height * 0.42)),
                            with: .color(.white.opacity(isStale ? 0 : 0.16)))
 
                 if let pace, used > pace + 0.015 {
                     // Past the even pace: stripes over that stretch of the fill.
-                    var ahead = context
+                    var ahead = bar
                     ahead.clip(to: fill)
                     ahead.clip(to: Path(CGRect(x: size.width * pace, y: overhang, width: width - size.width * pace, height: height)))
                     var stripes = Path()

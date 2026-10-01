@@ -78,6 +78,19 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(MeterLayout.usedFraction(25), 0.25, accuracy: 0.0001)
     }
 
+    /// The drawn fill ends where the fraction does: a sliver isn't drawn as a dot several times
+    /// its size. The rounded end comes from the track's own cap.
+    func testTheDrawnFillEndsAtTheFraction() {
+        for height: CGFloat in [5, 6, 8, 10] {
+            XCTAssertEqual(MeterLayout.drawnFillEnd(usedPercent: 0, total: 200, height: height), 0)
+            XCTAssertEqual(MeterLayout.drawnFillEnd(usedPercent: 0.5, total: 200, height: height), 1, accuracy: 0.001)
+            XCTAssertEqual(MeterLayout.drawnFillEnd(usedPercent: 2, total: 200, height: height), 4, accuracy: 0.001)
+            XCTAssertEqual(MeterLayout.drawnFillEnd(usedPercent: 99.5, total: 200, height: height), 199, accuracy: 0.001)
+            XCTAssertEqual(MeterLayout.drawnFillEnd(usedPercent: 100, total: 200, height: height), 200)
+            XCTAssertEqual(MeterLayout.drawnFillEnd(usedPercent: 140, total: 200, height: height), 200)
+        }
+    }
+
     func testCursorTokenFromTempDatabase() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

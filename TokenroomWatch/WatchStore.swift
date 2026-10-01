@@ -45,6 +45,8 @@ final class WatchStore {
     private var accountRevision = 0
     private let cacheURL = ReadingCache.defaultURL
     private let link = PhoneLink()
+    /// Launched with `-sampleMode YES` (debug builds): the sample readings stay for the launch.
+    private var showsSample = false
 
     init() {
         cache = WatchCacheAccess.load(at: cacheURL, defaults: AppGroup.defaults)
@@ -52,6 +54,7 @@ final class WatchStore {
         // Screenshots and simulator checks: `-sampleMode YES` shows sample readings.
         if UserDefaults.standard.bool(forKey: "sampleMode") {
             cache = SampleData.cache()
+            showsSample = true
         }
         // `-TokenroomOpen tokenroom://provider/claude` opens a provider, for screenshots.
         if let link = UserDefaults.standard.string(forKey: "TokenroomOpen").flatMap(URL.init(string:)),
@@ -85,6 +88,8 @@ final class WatchStore {
     }
 
     func refresh(force: Bool = false, now: Date = .now) async {
+        // Sample readings aren't replaced by what iCloud says this launch.
+        guard WatchCacheAccess.mayReplace(cache, showsSample: showsSample) else { return }
         _ = synchronizeAccountCutoff()
         adoptValidatedDiskCache()
         guard !isRefreshing else { return }
@@ -134,6 +139,7 @@ final class WatchStore {
     }
 
     private func adoptValidatedDiskCache() {
+        guard WatchCacheAccess.mayReplace(cache, showsSample: showsSample) else { return }
         let recovered = WatchCacheRecovery.recover(cache, at: cacheURL, defaults: AppGroup.defaults)
         guard recovered != cache else { return }
         cache = recovered
@@ -163,7 +169,7 @@ final class WatchStore {
     }
 
     private func receivePhone(_ fresh: ReadingCache) {
-        guard fresh.v <= ReadingCache.version else { return }
+        guard fresh.v <= ReadingCache.version, WatchCacheAccess.mayReplace(cache, showsSample: showsSample) else { return }
         if synchronizeAccountCutoff() { Task { await refresh(force: true) } }
         if accountGate.accepts(fresh) { apply(fresh) }
         else if accountGate.signedOutAt.map({ fresh.savedAt > $0 }) != false {
@@ -184,6 +190,7 @@ final class WatchStore {
     }
 
     func accountChanged(now: Date = .now) {
+        guard WatchCacheAccess.mayReplace(cache, showsSample: showsSample) else { return }
         accountRevision += 1
         accountGate.signOut(at: now)
         WatchCacheAccess.invalidate(in: AppGroup.defaults, at: now)
