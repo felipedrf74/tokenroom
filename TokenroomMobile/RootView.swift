@@ -71,6 +71,10 @@ struct RootView: View {
             #endif
         }
         .onOpenURL(perform: open)
+        // The Watch asked for the connect screen (only sent while it's on).
+        .onReceive(NotificationCenter.default.publisher(for: WatchLink.openConnectRequest)) { _ in
+            open(DeepLink.connect.url)
+        }
         .onChange(of: tab, initial: true) { _, tab in
             if tab == .news { news.beginVisit() } else { news.endVisit() }
         }

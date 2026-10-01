@@ -418,7 +418,7 @@ final class PhoneSessionTests: XCTestCase {
 
     // MARK: Nothing secret leaves the store
 
-    func testSessionMaterialNeverReachesARecord() async throws {
+    func testSessionMaterialNeverReachesARecordOrTheWatch() async throws {
         let accessMarker = "TRSESSIONACCESSQ7"
         let refreshMarker = "TRSESSIONREFRESHQ7"
         let keychain = FakeKeychain()
@@ -442,7 +442,7 @@ final class PhoneSessionTests: XCTestCase {
         }
         let provider = RelayProvider(provider: fixture, status: .live(snapshot), checkedAt: now)
         let envelope = RelayEnvelope(producer: "iphone", appVersion: "1", checkedAt: now, providers: [provider])
-        let cache = ReadingCache(savedAt: now, isSample: false, items: [ReadingCache.Item(provider: provider, source: "This iPhone", history: history.series)])
+        let cache = ReadingCache(savedAt: now, isSample: false, items: [ReadingCache.Item(provider: provider, source: "This iPhone", history: history.series, origin: .thisPhone)])
         var calm = provider, busy = provider
         calm.windows[0].used = 10
         busy.windows[0].used = 85
@@ -450,8 +450,15 @@ final class PhoneSessionTests: XCTestCase {
         XCTAssertFalse(alerts.isEmpty)
         let events = alerts.map { [$0.id, $0.provider, $0.title, $0.body, $0.key, $0.shownKey].joined(separator: "|") }
         let cacheData = try RelayEnvelope.encoder.encode(cache)
+        let context = WatchHandoff.context(readings: cacheData, connectAvailable: true)
+        XCTAssertEqual(Set(context.keys), [WatchHandoff.readingsKey, WatchHandoff.connectAvailableKey])
+        XCTAssertEqual(context[WatchHandoff.connectAvailableKey] as? Bool, true)
+        let contextValues = context.values.map { value -> String in
+            if let data = value as? Data { return String(decoding: data, as: UTF8.self) }
+            return String(describing: value)
+        }
         let payloads = [try envelope.encoded(), try history.encoded(), cacheData, try RelayEnvelope.encoder.encode(AlertPreferences())]
-            .map { String(decoding: $0, as: UTF8.self) } + events
+            .map { String(decoding: $0, as: UTF8.self) } + events + contextValues
         for payload in payloads {
             XCTAssertFalse(payload.contains(accessMarker), "No access token")
             XCTAssertFalse(payload.contains(refreshMarker), "No refresh token")
@@ -459,7 +466,7 @@ final class PhoneSessionTests: XCTestCase {
             XCTAssertFalse(payload.contains("public-test-client"), "No client id")
             XCTAssertFalse(payload.localizedCaseInsensitiveContains("bearer"))
         }
-        XCTAssertTrue(payloads[0].contains(Self.fixture.rawValue), "The reading itself is there")
+        XCTAssertTrue(payloads[2].contains("thisPhone"), "The origin is the only addition to the cache")
     }
 }
 

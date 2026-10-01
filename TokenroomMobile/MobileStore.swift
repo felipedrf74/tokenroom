@@ -206,6 +206,8 @@ final class MobileStore {
     ) {
         self.defaults = defaults
         self.connectOnIPhone = connectOnIPhone
+        // Before the first handover, so the flag travels with the first readings.
+        WatchLink.shared.connectAvailable = connectOnIPhone
         self.keys = keys
         keyGate = KeyFetchGate(defaults: defaults)
         if let existing = defaults.string(forKey: Keys.sourceID) {

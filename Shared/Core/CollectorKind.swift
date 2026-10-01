@@ -32,4 +32,13 @@ enum CollectorKind: String, Codable, Sendable, CaseIterable {
         case .mac: "From your Mac"
         }
     }
+
+    /// The same origin seen from the Apple Watch, which never collects: this iPhone's readings
+    /// are "your iPhone" there, and it can't tell which of several iPhones handed one over.
+    var watchPhrase: String {
+        switch self {
+        case .thisPhone, .otherPhone: "From your iPhone"
+        case .mac: "From your Mac"
+        }
+    }
 }
