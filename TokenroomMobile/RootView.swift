@@ -94,6 +94,10 @@ struct RootView: View {
         case .alerts:
             tab = .settings
             settingsPath = [.alerts]
+        case .connect:
+            // Only while the connect screen is on; otherwise Settings, as for an unknown screen.
+            tab = .settings
+            settingsPath = store.connectOnIPhone ? [.connect] : []
         }
     }
 }

@@ -70,7 +70,7 @@ struct UsageView: View {
             .navigationSubtitle(header ?? "")
             .navigationDestination(for: String.self) { id in
                 if let reading = store.reading(id: id) {
-                    ProviderDetailView(reading: reading, date: date)
+                    ProviderDetailView(reading: reading, date: date, showsOrigin: store.connectOnIPhone)
                 }
             }
             .overlay {
@@ -140,7 +140,7 @@ struct UsageView: View {
             DisclosureGroup(isExpanded: $showsDisconnected) {
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(store.disconnected) { reading in
-                        DisconnectedRow(reading: reading)
+                        DisconnectedRow(reading: reading, reason: connectReason(for: reading))
                     }
                 }
                 .padding(.top, 10)
@@ -205,8 +205,22 @@ struct UsageView: View {
         return "From \(source) · checked \(RelativeTime.ago(checked))" + (stale > 0 ? " · \(stale) stale" : "")
     }
 
+    /// With the connect screen on: why a plan isn't here, when its status doesn't say.
+    private func connectReason(for reading: MobileStore.Reading) -> String? {
+        guard store.connectOnIPhone, reading.provider.message == nil,
+              let provider = Provider(rawValue: reading.id),
+              case .needsMac(let reason) = store.connectAction(for: provider)
+        else { return nil }
+        return reason
+    }
+
     /// Mac providers wait for a sign-in there; this iPhone's key providers for their key to work.
     private var disconnectedFooter: String {
+        if store.connectOnIPhone {
+            return PhoneConnect.disconnectedFooter(store.disconnected.map { reading in
+                Provider(rawValue: reading.id).map { store.connectAction(for: $0) } ?? .needsMac(reason: "")
+            })
+        }
         let fromKeys = store.disconnected.contains { store.keyedProviders.map(\.rawValue).contains($0.id) }
         let fromMac = store.disconnected.contains { !store.keyedProviders.map(\.rawValue).contains($0.id) }
         switch (fromMac, fromKeys) {
@@ -219,6 +233,8 @@ struct UsageView: View {
 
 private struct DisconnectedRow: View {
     var reading: MobileStore.Reading
+    /// The connect screen's reason, when the status has no message of its own.
+    var reason: String? = nil
 
     var body: some View {
         HStack(spacing: 12) {
@@ -226,7 +242,7 @@ private struct DisconnectedRow: View {
                 .opacity(0.6)
             VStack(alignment: .leading, spacing: 2) {
                 Text(reading.provider.name)
-                if let message = reading.provider.message {
+                if let message = reading.provider.message ?? reason {
                     Text(message)
                         .font(.caption)
                         .foregroundStyle(.secondary)
