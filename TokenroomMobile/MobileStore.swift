@@ -31,6 +31,8 @@ final class MobileStore {
         /// A week of hourly usage per window ID, when the source sent it.
         var history: [String: UsageHistory]
         var pace: Pace?
+        /// Which device the reading came from: this iPhone, another iPhone, or a Mac.
+        var origin: CollectorKind
 
         var id: String { provider.id }
 
@@ -39,6 +41,7 @@ final class MobileStore {
             source = item.source
             history = item.history
             pace = ReadingAssembler.pace(for: item, now: now)
+            origin = item.resolvedOrigin
         }
     }
 
@@ -81,7 +84,7 @@ final class MobileStore {
             guard let provider = ReadingFreshness.present(reading.provider, fallback: lastRefresh ?? .distantPast, now: presentationNow) else { return nil }
             var result = reading
             result.provider = provider
-            result.pace = ReadingAssembler.pace(for: .init(provider: provider, source: reading.source, history: reading.history), now: presentationNow)
+            result.pace = ReadingAssembler.pace(for: .init(provider: provider, source: reading.source, history: reading.history, origin: reading.origin), now: presentationNow)
             return result
         }
     }
@@ -91,6 +94,12 @@ final class MobileStore {
     private(set) var isRefreshing = false
     /// Providers with a key on this iPhone.
     private(set) var keyedProviders: [Provider] = []
+    /// Other devices' envelopes and what kind of device each is: iCloud's records once read this
+    /// launch, the saved cache's until then. Decides which plans a Mac covers now.
+    private(set) var coverage: [PhoneConnect.CoveringSource] = []
+    /// The connect screen and its copy (`PhoneConnect.flagKey`). Off by default; off leaves
+    /// onboarding, Usage, Settings, and the Watch as they were.
+    let connectOnIPhone: Bool
 
     var sampleMode: Bool {
         didSet {
@@ -192,9 +201,11 @@ final class MobileStore {
         defaults: UserDefaults = AppGroup.defaults,
         containerIdentifier: String? = RelayAvailability.containerIdentifier,
         keys: APIKeyStore = APIKeyStore(accessGroup: AppGroup.keychainGroup),
-        directory: URL? = AppGroup.containerURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        directory: URL? = AppGroup.containerURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
+        connectOnIPhone: Bool = PhoneConnect.isEnabled()
     ) {
         self.defaults = defaults
+        self.connectOnIPhone = connectOnIPhone
         self.keys = keys
         keyGate = KeyFetchGate(defaults: defaults)
         if let existing = defaults.string(forKey: Keys.sourceID) {
@@ -579,6 +590,7 @@ final class MobileStore {
         }
         guard let cacheURL, let cache = ReadingCache.load(from: cacheURL), !cache.isSample else { return }
         storedReadings = cache.items.map { Reading($0) }
+        coverage = cache.carriedSources(excluding: Self.localLabel).map(\.source).covering
         lastCacheHash = cache.materialHash
         lastReloadSignature = cache.reloadSignature
         lastHandoverRunOuts = cache.runOuts
@@ -592,12 +604,13 @@ final class MobileStore {
             let cache = SampleData.cache(now: now)
             storedReadings = cache.items.map { Reading($0, now: now) }
             disconnected = []
+            coverage = []
             saveCache(cache)
             return
         }
 
         var sources = relaySources.compactMap { source in
-            source.envelope.map { RelayMerge.Source(id: source.id, label: source.label, envelope: $0) }
+            source.envelope.map { RelayMerge.Source(id: source.id, label: source.label, envelope: $0, kind: CollectorKind(recordKind: source.kind)) }
         }
         var histories = relayHistories
         if !relayReadOnce, let previous = cacheURL.flatMap({ ReadingCache.load(from: $0) }) {
@@ -609,9 +622,10 @@ final class MobileStore {
                 histories[carried.source.id] = carried.history
             }
         }
+        coverage = sources.covering
         let own = localEnvelope(now: now)
         if !own.providers.isEmpty {
-            sources.append(RelayMerge.Source(id: sourceID, label: Self.localLabel, envelope: own))
+            sources.append(RelayMerge.Source(id: sourceID, label: Self.localLabel, envelope: own, kind: .thisPhone))
             histories[sourceID] = RelayHistory(series: history.weeks)
         }
         let output = ReadingAssembler.assemble(sources: sources, histories: histories, now: now)
@@ -709,6 +723,16 @@ final class MobileStore {
         case 1: return labels[0]
         default: return labels.dropLast().joined(separator: ", ") + " and " + labels[labels.count - 1]
         }
+    }
+
+    /// What the iPhone offers for a provider now: a key, a Mac's reading, or a reason.
+    func connectAction(for provider: Provider, now: Date = .now) -> PhoneConnect.Action {
+        PhoneConnect.action(for: provider, sources: coverage, now: now)
+    }
+
+    /// The plans the connect screen lists: those that need a Mac, and those a Mac covers now.
+    func connectList(now: Date = .now) -> [(provider: Provider, action: PhoneConnect.Action)] {
+        PhoneConnect.connectList(sources: coverage, now: now)
     }
 
     var needsNewerApp: Bool {

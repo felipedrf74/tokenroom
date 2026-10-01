@@ -39,7 +39,20 @@ struct OnboardingView: View {
                     NavigationLink {
                         KeysView(store: store)
                     } label: {
-                        OptionCard(symbol: "key", title: "Add an API key", text: "OpenRouter, DeepSeek, Kimi Code, Z.ai, and more, read right from this iPhone.")
+                        if store.connectOnIPhone {
+                            // The path someone without a Mac can finish. Copilot is named: it's the
+                            // subscription people expect to sign in to, and its token works here.
+                            OptionCard(symbol: "key", title: "Add a key on this iPhone", text: "Copilot, OpenRouter, DeepSeek, Kimi Code, Z.ai, and more. Read from this iPhone. The key stays here.")
+                        } else {
+                            OptionCard(symbol: "key", title: "Add an API key", text: "OpenRouter, DeepSeek, Kimi Code, Z.ai, and more, read right from this iPhone.")
+                        }
+                    }
+                    if store.connectOnIPhone {
+                        NavigationLink {
+                            ConnectView(store: store)
+                        } label: {
+                            OptionCard(symbol: "laptopcomputer", title: "Plans that need a Mac", text: "Claude, Codex, Cursor, Grok, and others keep their login on a Mac. See which, and why.")
+                        }
                     }
                     Button {
                         store.sampleMode = true

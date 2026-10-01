@@ -1,6 +1,7 @@
 import SwiftUI
 
 enum SettingsRoute: Hashable {
+    case connect
     case keys
     case alerts
     case widgets
@@ -27,9 +28,34 @@ struct MobileSettingsView: View {
                     Text("Your Mac sends its readings through your iCloud. Only usage, reset times, and plan names are sent, never logins or keys.")
                 }
 
+                if store.connectOnIPhone, !store.sampleMode, !store.readings.isEmpty {
+                    Section {
+                        ForEach(store.readings) { reading in
+                            LabeledContent {
+                                Text(reading.origin.phrase)
+                            } label: {
+                                Label {
+                                    Text(reading.provider.name)
+                                } icon: {
+                                    ProviderMark(provider: reading.provider, size: 24)
+                                }
+                            }
+                        }
+                    } header: {
+                        Text("Where readings come from")
+                    } footer: {
+                        Text("A login you add on this iPhone stays on this iPhone. A login on your Mac stays on your Mac. Only usage syncs.")
+                    }
+                }
+
                 Section {
                     NavigationLink(value: SettingsRoute.alerts) {
                         Label("Alerts", systemImage: "bell.badge")
+                    }
+                    if store.connectOnIPhone {
+                        NavigationLink(value: SettingsRoute.connect) {
+                            Label("Plans that need a Mac", systemImage: "laptopcomputer")
+                        }
                     }
                     NavigationLink(value: SettingsRoute.keys) {
                         Label("API Keys", systemImage: "key")
@@ -64,6 +90,7 @@ struct MobileSettingsView: View {
             .navigationTitle("Settings")
             .navigationDestination(for: SettingsRoute.self) { route in
                 switch route {
+                case .connect: ConnectView(store: store)
                 case .keys: KeysView(store: store)
                 case .alerts: AlertsSettingsView(store: store)
                 case .widgets: WidgetsHelpView()

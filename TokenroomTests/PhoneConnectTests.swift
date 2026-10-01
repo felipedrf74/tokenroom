@@ -153,4 +153,17 @@ final class PhoneConnectTests: XCTestCase {
         defaults.set(true, forKey: PhoneConnect.flagKey)
         XCTAssertTrue(PhoneConnect.isEnabled(in: defaults))
     }
+
+    // MARK: Deep links
+
+    func testTheConnectLinkParsesAndTheOthersStillDo() {
+        for host in ["news", "settings", "keys", "alerts", "connect"] {
+            XCTAssertNotNil(DeepLink(URL(string: "tokenroom://\(host)")!), host)
+        }
+        XCTAssertEqual(DeepLink(URL(string: "tokenroom://connect")!), .connect)
+        XCTAssertEqual(DeepLink.connect.url.absoluteString, "tokenroom://connect")
+        XCTAssertEqual(DeepLink(URL(string: "tokenroom://provider/claude")!), .provider("claude"))
+        XCTAssertNil(DeepLink(URL(string: "tokenroom://oauth/claude?code=abc")!), "Reserved for a future sign-in")
+        XCTAssertNil(DeepLink(URL(string: "tokenroom://unknown")!))
+    }
 }

@@ -4,6 +4,8 @@ import SwiftUI
 struct ProviderDetailView: View {
     var reading: MobileStore.Reading
     var date: Date = .now
+    /// The connect screen is on: the footer names the device the reading came from.
+    var showsOrigin = false
     @State private var followError: String?
 
     private var provider: RelayProvider { reading.provider }
@@ -61,7 +63,12 @@ struct ProviderDetailView: View {
                     LabeledContent("Last successful check", value: RelativeTime.ago(checked, now: date))
                 }
             } footer: {
-                Text("The line on each meter marks an even pace: where usage would be if spread evenly across the window. Tokenroom isn't affiliated with \(provider.name).")
+                VStack(alignment: .leading, spacing: 6) {
+                    if showsOrigin {
+                        Text(reading.origin.phrase)
+                    }
+                    Text("The line on each meter marks an even pace: where usage would be if spread evenly across the window. Tokenroom isn't affiliated with \(provider.name).")
+                }
             }
         }
         .navigationTitle(provider.name)
