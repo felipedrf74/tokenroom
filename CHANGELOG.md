@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.3.0 — 2026-10-01
+
+Tokenroom for Mac 2.3.0. It includes the 2.2.4 Claude fix below; 2.2.4 was not published on its own. The iPhone and Apple Watch app 1.0.2, build 1, has the same changes and goes to the App Store after 1.0.1, which is in review.
+
+On the Mac:
+
+- Meters show the even pace as a notch through the bar, and the stretch past it is striped when use runs ahead of pace. A sliver of use is drawn at its size.
+- A provider's details show when it resets, how the pace looks, the plan, and the last check as a small grid. One-line rows say when each limit resets.
+- Settings is one window with a sidebar: search, then Essentials, Usage, and More. Each page opens with a short summary, and providers carry tags such as Unofficial, Key, Admin key, and Detected.
+- News keeps itself current while its window is open, every 15 minutes, so Check Now is optional. A feed that fails waits an hour before it's tried again.
+- Running the tests no longer starts the app's own checks of this Mac's logins.
+
+On iPhone and Apple Watch (1.0.2, not yet submitted):
+
+- The same meters. A provider's page opens with a ring and when it resets, how the pace looks, and the plan.
+- Settings shows iCloud's status at the top, and how many keys this iPhone has.
+- The News tab keeps itself current while it's open. What arrives while you read isn't counted as new again afterwards.
+- On the Watch, a provider's page leads with a ring, and readings from the iPhone say "From your iPhone".
+- Groundwork for using Tokenroom without a Mac is in and switched off. The iPhone still has no plan sign-in.
+
 ## 2.2.4 — 2026-10-01
 
 Tokenroom for Mac 2.2.4. The iPhone and Apple Watch app stays 1.0.1, build 3.
