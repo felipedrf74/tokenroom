@@ -88,6 +88,10 @@ Cards show the meter with a pace tick (`paceMark`), the pace line for every verd
 
 A debug build renders the popover, Settings tabs, the News window, and the menu bar from sample data: `Tokenroom.app/Contents/MacOS/Tokenroom -TokenroomSnapshots <folder>` (add `-AppleLocale en_US` for README images).
 
+## Test host
+
+Under XCTest (`LaunchEnvironment.isUnitTestHost`) the app builds an empty store and starts nothing: no status item, no checks, no Keychain, no iCloud. Tests make their own stores with stubbed readers, so `xcodebuild test` never reads or renews this Mac's logins.
+
 ## Copy
 
 No apologies. Errors start with “Couldn't…”. Sign-in lines name the real command (`grok login`, `claude login`, `codex login`, “Sign in to Grok Bot”, “Sign in to Cursor”).

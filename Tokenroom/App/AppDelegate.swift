@@ -25,6 +25,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
         #endif
+        if LaunchEnvironment.isUnitTestHost {
+            // Tests build their own stores with stubbed readers. This one reads nothing real:
+            // no logins, no Keychain, no iCloud, no migrations of the real settings.
+            let name = "TokenroomTestHost"
+            let defaults = UserDefaults(suiteName: name)!
+            defaults.removePersistentDomain(forName: name)
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+            store = QuotaStore(settings: AppSettings(defaults: defaults), clients: [], cache: SnapshotCache(directory: directory))
+            super.init()
+            return
+        }
         // Headroom 1.x settings and cache must be in place before the store reads them.
         LegacyMigration.runIfNeeded()
         // Sessions for providers new to this install are looked for after launch, off the main
@@ -45,6 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
         #endif
+        // The test host stays idle: no status item, no session detection, no checks.
+        if LaunchEnvironment.isUnitTestHost { return }
         store.signIn.onAddKey = { [weak self] provider in
             self?.store.pendingKeyProvider = provider
             self?.openSettings()
