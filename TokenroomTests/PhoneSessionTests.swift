@@ -209,6 +209,37 @@ final class PhoneSessionTests: XCTestCase {
 
     // MARK: Items
 
+    func testAnExchangingSessionDoesNotSendUsageWithTheOldAccessToken() async throws {
+        let keychain = FakeKeychain()
+        let store = makeStore(keychain)
+        try store.save(session("old", expiresIn: 3600), for: fixture, now: now)
+        XCTAssertTrue(store.setState(.exchanging, for: fixture))
+        let sends = Counter()
+        let client = PhoneSessionClient(provider: fixture, usageURL: URL(string: "https://example.invalid/usage")!, store: store, allowlist: [fixture]) { _ in
+            sends.increment()
+            return .failure(.parse)
+        }
+        let result = await client.fetch(now: now)
+        XCTAssertEqual(result, .failure(.signedOut(PhoneSessionClient.needsSignIn)))
+        XCTAssertEqual(sends.count, 0)
+    }
+
+    func testAnInsecurePhoneUsageEndpointCannotReceiveASessionToken() async throws {
+        let keychain = FakeKeychain()
+        let store = makeStore(keychain)
+        try store.save(session("old", expiresIn: 3600), for: fixture, now: now)
+        keychain.forgetCalls()
+        let sends = Counter()
+        let client = PhoneSessionClient(provider: fixture, usageURL: URL(string: "http://example.invalid/usage")!, store: store, allowlist: [fixture]) { _ in
+            sends.increment()
+            return .failure(.parse)
+        }
+        let result = await client.fetch(now: now)
+        XCTAssertEqual(result, .failure(.unreachable))
+        XCTAssertEqual(sends.count, 0)
+        XCTAssertTrue(keychain.calls.isEmpty, "No credential read is needed for an unsafe endpoint")
+    }
+
     func testASessionAndItsMetadataAreSeparate() throws {
         let keychain = FakeKeychain()
         let store = makeStore(keychain)
@@ -394,15 +425,33 @@ final class PhoneSessionTests: XCTestCase {
         XCTAssertNil(store.takeRecovery(for: fixture))
     }
 
-    func testAnUnreachableTokenHostLeavesTheSessionReady() async throws {
+    func testAProvenUndispatchedRequestLeavesTheSessionReady() async throws {
         let keychain = FakeKeychain()
         let store = makeStore(keychain)
         try store.save(session("old", expiresIn: 90), for: fixture, now: now)
-        let refresher = PhoneSessionRefresher(store: store, allowlist: [fixture]) { _, _ in .unavailable }
+        let refresher = PhoneSessionRefresher(store: store, allowlist: [fixture]) { _, _ in .notDispatched }
         let outcome = await refresher.renewIfNeeded(fixture, now: now)
         XCTAssertEqual(outcome, .unavailable)
         XCTAssertEqual(store.session(for: fixture)?.refreshToken, "refresh-old")
         XCTAssertEqual(store.metadata(for: fixture)?.state, .ready)
+    }
+
+    func testAnAmbiguousTokenResponseCannotReplayThePreviousRefreshToken() async throws {
+        let keychain = FakeKeychain()
+        let store = makeStore(keychain)
+        try store.save(session("old", expiresIn: 90), for: fixture, now: now)
+        let posts = Counter()
+        let refresher = PhoneSessionRefresher(store: store, allowlist: [fixture]) { _, _ in
+            posts.increment()
+            return .unavailable
+        }
+        let first = await refresher.renewIfNeeded(fixture, now: now)
+        XCTAssertEqual(first, .unavailable)
+        XCTAssertEqual(store.metadata(for: fixture)?.state, .exchanging)
+        let second = await refresher.renewIfNeeded(fixture, now: now)
+        XCTAssertEqual(second, .rejected)
+        XCTAssertEqual(posts.count, 1, "A lost grant response may already have rotated the old token")
+        XCTAssertNil(store.session(for: fixture))
     }
 
     func testAnInvalidGrantMarksTheSessionRejected() async throws {

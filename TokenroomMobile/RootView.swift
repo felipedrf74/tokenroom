@@ -17,7 +17,7 @@ struct RootView: View {
     var body: some View {
         #if DEBUG
         if let page = UserDefaults.standard.string(forKey: "TokenroomGallery") {
-            WidgetGalleryView(cache: ReadingCache.defaultURL.flatMap(ReadingCache.load) ?? SampleData.cache(), page: page)
+            WidgetGalleryView(cache: PhoneCacheAccess.load(at: ReadingCache.defaultURL, defaults: AppGroup.defaults) ?? SampleData.cache(), page: page)
         } else {
             tabs
         }

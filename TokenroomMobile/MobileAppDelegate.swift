@@ -1,3 +1,4 @@
+import CloudKit
 import UIKit
 import UserNotifications
 
@@ -6,7 +7,8 @@ import UserNotifications
 /// has one to refresh.
 @MainActor
 final class MobileAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
-    let store = MobileStore()
+    private var accountObserver: RelayAccountObserver?
+    let store = MobileStore(containerIdentifier: LaunchEnvironment.isUnitTestHost ? nil : RelayAvailability.containerIdentifier)
     let news: NewsStore = {
         #if DEBUG
         if let path = UserDefaults.standard.string(forKey: "TokenroomSnapshotNews") {
@@ -22,8 +24,22 @@ final class MobileAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificati
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        guard !LaunchEnvironment.isUnitTestHost else { return true }
+        accountObserver = RelayAccountObserver(name: .CKAccountChanged) { [weak store] in
+            PhoneCacheAccess.invalidate(in: AppGroup.defaults)
+            Task { @MainActor in
+                guard let store else { return }
+                store.accountChanged()
+                await store.refresh(force: true, includeKeys: UIApplication.shared.applicationState != .background)
+            }
+        }
         UNUserNotificationCenter.current().delegate = self
         application.registerForRemoteNotifications()
+        WatchLink.shared.refreshReadings = { @MainActor [weak store] in
+            guard let store else { return nil }
+            await store.refresh(force: true)
+            return store.watchReadings
+        }
         WatchLink.shared.activate()
         return true
     }

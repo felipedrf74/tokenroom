@@ -42,6 +42,14 @@ struct UsageTileView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
+            Text(reading.source == SampleData.sourceLabel ? "Sample data" : reading.origin.phrase)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            if let checked = provider.checkedAt ?? provider.fetchedAt {
+                Text("Checked \(RelativeTime.ago(checked, now: date))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -60,9 +68,12 @@ struct UsageTileView: View {
     private func header(isClose: Bool) -> some View {
         HStack(spacing: 8) {
             ProviderMark(provider: provider, size: 24)
-            Text(provider.name)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(1)
+            ViewThatFits(in: .horizontal) {
+                Text(provider.name).fixedSize(horizontal: true, vertical: false)
+                Text(provider.shortName).lineLimit(1)
+            }
+            .font(.subheadline.weight(.semibold))
+            .accessibilityLabel(provider.name)
             Spacer(minLength: 0)
             if isClose {
                 Image(systemName: "bell.fill")
@@ -144,7 +155,7 @@ struct WindowStatus: View {
 
     var body: some View {
         if !isStale, let pace, pace.verdict == .limitReached {
-            Text(pace.caption())
+            Text(pace.caption(now: date))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(PaceStyle.color(pace.severity))
                 .lineLimit(2)
@@ -170,6 +181,7 @@ struct WindowStatus: View {
 /// before its reset, most urgent first. Follow starts the Live Activity for the first.
 struct CloseToLimitCard: View {
     var windows: [CloseWindow]
+    var date: Date = .now
     var open: (String) -> Void
     @State private var followError: String?
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -215,7 +227,7 @@ struct CloseToLimitCard: View {
 
     private func row(_ item: CloseWindow, isFirst: Bool) -> some View {
         let window = item.window
-        let followable = isFirst && LiveActivities.candidate(in: item.provider, preferring: window.id)?.id == window.id
+        let followable = isFirst && LiveActivities.candidate(in: item.provider, preferring: window.id, now: date)?.id == window.id
         return HStack(spacing: 12) {
             Button {
                 open(item.provider.id)
@@ -238,7 +250,7 @@ struct CloseToLimitCard: View {
                                     .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
                             }
                             Spacer(minLength: 4)
-                            Text(ReadingText.headline(window))
+                            Text(ReadingText.headline(window, now: date))
                                 .font(.system(.body, design: .rounded, weight: .semibold))
                                 .monospacedDigit()
                                 .foregroundStyle(TokenroomTokens.ink(remaining: 100 - window.used, isStale: false))
@@ -267,18 +279,18 @@ struct CloseToLimitCard: View {
     /// "Past 80% · resets Oct 1".
     private func caption(_ item: CloseWindow) -> Text {
         if let pace = item.pace, pace.verdict == .limitReached {
-            return Text(pace.caption())
+            return Text(pace.caption(now: date))
                 .fontWeight(.semibold)
                 .foregroundStyle(PaceStyle.color(pace.severity))
         }
         if let pace = item.pace, pace.verdict == .ahead, let runsOut = pace.runsOutAt {
-            let moment = Text("Runs out \(Pace.shortMoment(runsOut, now: .now, timeZone: .current))")
+            let moment = Text("Runs out \(Pace.shortMoment(runsOut, now: date, timeZone: .current))")
                 .fontWeight(.semibold)
                 .foregroundStyle(PaceStyle.color(pace.severity))
             return Text("\(moment) · \(UsageTiles.lead(runsOut: runsOut, resetsAt: pace.resetsAt))").foregroundStyle(.secondary)
         }
         let level = AlertPreferences.supportedThresholds.filter { Double($0) <= item.window.used }.max() ?? Int(UsageTiles.closeUse)
-        let reset = ReadingText.reset(item.window).map { " · \($0)" } ?? ""
+        let reset = ReadingText.reset(item.window, now: date).map { " · \($0)" } ?? ""
         return Text("Past \(level)%\(reset)").foregroundStyle(.secondary)
     }
 }

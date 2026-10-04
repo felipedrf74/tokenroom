@@ -21,9 +21,13 @@ struct PhoneSessionClient: Sendable {
 
     func fetch(now: Date = .now) async -> Result<QuotaSnapshot, ProviderError> {
         guard allowlist.contains(provider) else { return .failure(.signedOut(Self.notAllowed)) }
+        guard TokenroomRedirectPolicy.isSecureEndpoint(usageURL) else { return .failure(.unreachable) }
         let store = store
         let provider = provider
-        guard let session = await BlockingIO.run({ store.session(for: provider) }) else {
+        guard let session = await BlockingIO.run({
+            guard store.metadata(for: provider)?.state == .ready else { return nil as PhoneSession? }
+            return store.session(for: provider)
+        }) else {
             return .failure(.signedOut(Self.needsSignIn))
         }
         // Inside its last minute an access token isn't sent; the refresher renews it first.
@@ -52,7 +56,10 @@ actor PhoneSessionRefresher {
         case granted(PhoneSession)
         /// `invalid_grant`: the refresh token is no good.
         case rejected
-        /// Unreachable, or an answer without a grant.
+        /// The sender can prove that no request was dispatched. Safe to retry the old token.
+        case notDispatched
+        /// An unreachable/invalid answer after a request may have rotated the token. Never
+        /// implies the old refresh token is safe to send again.
         case unavailable
     }
 
@@ -127,8 +134,12 @@ actor PhoneSessionRefresher {
         case .rejected:
             await BlockingIO.run { store.markRejected(for: provider, now: now) }
             return .rejected
-        case .unavailable:
+        case .notDispatched:
             await BlockingIO.run { _ = store.setState(.ready, for: provider) }
+            return .unavailable
+        case .unavailable:
+            // Preserve exchanging: a later call recovers a durable grant, or rejects this
+            // session without replaying the old refresh token after an ambiguous response.
             return .unavailable
         case .granted(let grant):
             pending[provider] = grant

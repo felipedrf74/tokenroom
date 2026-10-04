@@ -4,8 +4,6 @@ import SwiftUI
 struct ProviderDetailView: View {
     var reading: MobileStore.Reading
     var date: Date = .now
-    /// The connect screen is on: the footer names the device the reading came from.
-    var showsOrigin = false
     @State private var followError: String?
     @Environment(\.dynamicTypeSize) private var typeSize
 
@@ -35,7 +33,7 @@ struct ProviderDetailView: View {
                         isLead: index == 0 && heroWindow?.id == window.id
                     )
                 }
-                if index == 0, let candidate = LiveActivities.candidate(in: provider) {
+                if index == 0, let candidate = LiveActivities.candidate(in: provider, now: date) {
                     Section {
                         FollowButton(provider: provider) { followError = $0 }
                     } footer: {
@@ -67,9 +65,7 @@ struct ProviderDetailView: View {
                 }
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
-                    if showsOrigin {
-                        Text(reading.origin.phrase)
-                    }
+                    Text(reading.source == SampleData.sourceLabel ? "Sample data" : reading.origin.phrase)
                     Text("The line on each meter marks an even pace: where usage would be if spread evenly across the window. Tokenroom isn't affiliated with \(provider.name).")
                 }
             }
@@ -213,7 +209,7 @@ private struct WindowDetail: View {
                 MeterTrack(usedPercent: window.used, remaining: 100 - window.used, isStale: isStale || window.isAwaitingReading(at: date), paceMark: pace?.elapsedFraction, height: 10)
             }
             if let pace {
-                Text(pace.caption())
+                Text(pace.caption(now: date))
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(PaceStyle.color(pace.severity))
             }

@@ -30,22 +30,6 @@ struct PhoneSessionMetadata: Codable, Equatable, Sendable {
     var state: State
 }
 
-/// The Keychain calls the store makes, so tests can watch every query and fail any of them
-/// without touching a real Keychain.
-struct KeychainOperations: Sendable {
-    var copy: @Sendable ([String: Any]) -> (status: OSStatus, item: CFTypeRef?)
-    var add: @Sendable ([String: Any]) -> OSStatus
-    var update: @Sendable (_ query: [String: Any], _ attributes: [String: Any]) -> OSStatus
-    var delete: @Sendable ([String: Any]) -> OSStatus
-
-    static let system = KeychainOperations(
-        copy: { KeychainGate.copyMatching($0) },
-        add: { KeychainGate.add($0) },
-        update: { KeychainGate.update($0, $1) },
-        delete: { KeychainGate.delete($0) }
-    )
-}
-
 /// Phone sessions, one Keychain item per provider, in the iPhone app's own access group.
 ///
 /// Nothing writes here yet: `PhoneConnect.productionAllowlist` is empty. Same accessibility and

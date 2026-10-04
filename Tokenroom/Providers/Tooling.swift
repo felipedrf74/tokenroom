@@ -24,17 +24,17 @@ enum Tooling {
         return parts.joined(separator: ":")
     }
 
-    static func resolveProviderCLI(_ provider: Provider, extraDirectories: [URL] = [], claudeVersionRoots: [URL]? = nil) -> URL? {
+    static func resolveProviderCLI(_ provider: Provider, extraDirectories: [URL] = [], claudeVersionRoots: [URL]? = nil, searchDirectories: [URL]? = nil) -> URL? {
         switch provider {
         case .claude:
-            resolveClaude(extraDirectories: extraDirectories, versionRoots: claudeVersionRoots)
+            resolveClaude(extraDirectories: extraDirectories, versionRoots: claudeVersionRoots, searchDirectories: searchDirectories)
         default:
-            provider.cliExecutable.flatMap { resolve($0, extraDirectories: extraDirectories) }
+            provider.cliExecutable.flatMap { resolve($0, extraDirectories: extraDirectories, searchDirectories: searchDirectories) }
         }
     }
 
-    static func resolveClaude(extraDirectories: [URL] = [], versionRoots: [URL]? = nil) -> URL? {
-        if let direct = resolve("claude", extraDirectories: extraDirectories) {
+    static func resolveClaude(extraDirectories: [URL] = [], versionRoots: [URL]? = nil, searchDirectories: [URL]? = nil) -> URL? {
+        if let direct = resolve("claude", extraDirectories: extraDirectories, searchDirectories: searchDirectories) {
             return direct
         }
         let roots = versionRoots ?? defaultClaudeVersionRoots()
@@ -64,10 +64,12 @@ enum Tooling {
         return best?.url
     }
 
-    static func resolve(_ name: String, extraDirectories: [URL] = []) -> URL? {
+    /// An explicit search list replaces machine-specific defaults; tests pass [] to use only
+    /// their fixtures. Production omits it and keeps its installed-tool discovery.
+    static func resolve(_ name: String, extraDirectories: [URL] = [], searchDirectories: [URL]? = nil) -> URL? {
         let home = FileManager.default.homeDirectoryForCurrentUser
         var directories = extraDirectories
-        directories.append(contentsOf: [
+        directories.append(contentsOf: searchDirectories ?? [
             home.appendingPathComponent(".grok/bin", isDirectory: true),
             home.appendingPathComponent(".local/bin", isDirectory: true),
             URL(fileURLWithPath: "/opt/homebrew/bin", isDirectory: true),

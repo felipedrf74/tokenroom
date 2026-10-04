@@ -1,4 +1,6 @@
 import SwiftUI
+import Synchronization
+import UserNotifications
 import XCTest
 @testable import TokenroomMobile
 
@@ -46,6 +48,36 @@ final class MobileStoreTests: XCTestCase {
     }
 
     // MARK: Store
+
+    @MainActor
+    func testSharedAccountInvalidationCannotStampOldMemoryWithTheNewGeneration() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let url = folder.appendingPathComponent(ReadingCache.fileName)
+        let provider = RelayProvider(id: "claude", name: "Claude", shortName: "Claude", monogram: "C", tint: "#D97757",
+            state: "live", checkedAt: now, primaryWindowID: "weekly",
+            windows: [.init(id: "weekly", kind: "weekly", title: "Weekly", used: 42)])
+        try ReadingCache(savedAt: now, isSample: false, items: [.init(provider: provider, source: "Mac")]).save(to: url)
+        let store = makeStore(defaults: defaults, folder: folder)
+        await store.refresh(force: true, now: now)
+        XCTAssertEqual(store.readings.map(\.id), ["claude"])
+
+        // A widget/account observer closes the shared gate before this store's queued main
+        // actor accountChanged callback. A local UI rebuild must not reopen that gate.
+        PhoneCacheAccess.invalidate(in: defaults)
+        store.setBudget(50, for: .deepseek)
+        XCTAssertTrue(store.readings.isEmpty)
+        XCTAssertEqual(PhoneCacheAccess.load(at: url, defaults: defaults)?.items, [])
+
+        store.accountChanged()
+        XCTAssertTrue(store.readings.isEmpty)
+        XCTAssertEqual(PhoneCacheAccess.load(at: url, defaults: defaults)?.items, [])
+        // A second process may observe the same event after the store. It must recover on its
+        // next rebuild, with cleared membership, rather than permanently failing every save.
+        PhoneCacheAccess.invalidate(in: defaults)
+        store.setBudget(60, for: .deepseek)
+        XCTAssertEqual(PhoneCacheAccess.load(at: url, defaults: defaults)?.items, [])
+    }
 
     @MainActor
     func testSampleModeShowsLabelledSamplesAndSavesThemForWidgets() throws {
@@ -236,6 +268,48 @@ final class MobileStoreTests: XCTestCase {
         XCTAssertTrue(ReadingsEntry.make(cache, choice: .openai, date: now).items.isEmpty)
     }
 
+    @MainActor
+    func testAccountChangePurgesRemoteCacheAndRetainsDeviceLocalReadings() throws {
+        let defaults = makeDefaults()
+        defaults.set([Provider.openrouter.rawValue], forKey: MobileStore.Keys.keyedProviders)
+        let folder = try makeFolder()
+        func item(_ provider: Provider, source: String) -> ReadingCache.Item {
+            .init(provider: RelayProvider(id: provider.rawValue, name: provider.rawValue, shortName: provider.rawValue,
+                monogram: "X", tint: "#000000", state: "live", checkedAt: .now, primaryWindowID: "weekly",
+                windows: [.init(id: "weekly", kind: "weekly", title: "Weekly", used: 42)]), source: source)
+        }
+        let url = folder.appendingPathComponent(ReadingCache.fileName)
+        try ReadingCache(savedAt: .now, isSample: false,
+            items: [item(.claude, source: "Mac"), item(.openrouter, source: MobileStore.localLabel)]).save(to: url)
+        let store = makeStore(defaults: defaults, folder: folder)
+        XCTAssertEqual(store.readings.count, 2)
+        store.accountChanged()
+        XCTAssertEqual(store.readings.map(\.id), [Provider.openrouter.rawValue])
+        XCTAssertEqual(PhoneCacheAccess.load(at: url, defaults: defaults)?.items.map(\.id), [Provider.openrouter.rawValue])
+        XCTAssertEqual(makeStore(defaults: defaults, folder: folder).readings.map(\.id), [Provider.openrouter.rawValue])
+    }
+
+    @MainActor
+    func testFailedNotificationSchedulingRemainsRetryableAndIsNotClaimedAsShown() async throws {
+        let defaults = makeDefaults()
+        let calls = Mutex(0)
+        let store = MobileStore(defaults: defaults, containerIdentifier: nil,
+            keys: APIKeyStore(servicePrefix: "app.tokenroom.tests." + UUID().uuidString), directory: try makeFolder(),
+            notificationScheduler: { _ in
+                let attempt = calls.withLock { count in count += 1; return count }
+                if attempt == 1 { throw NSError(domain: "mock.notification", code: 1) }
+            })
+        let alert = UsageAlert(id: "test-alert", provider: "openrouter", kind: .threshold, level: 80,
+            title: "Usage", body: "Limit", resetsAt: nil, isUrgent: false)
+        let failed = await store.deliverAlerts([alert], now: now)
+        XCTAssertTrue(failed.isEmpty, "The ledger must not mark a rejected notification as sent")
+        XCTAssertNil(defaults.data(forKey: MobileStore.Keys.unclaimedAlerts), "No notification was shown to claim later")
+        let retried = await store.deliverAlerts([alert], now: now.addingTimeInterval(60))
+        XCTAssertEqual(retried, [alert.id])
+        XCTAssertNotNil(defaults.data(forKey: MobileStore.Keys.unclaimedAlerts))
+        XCTAssertEqual(calls.withLock { $0 }, 2)
+    }
+
     // MARK: Shared with the widgets
 
     func testWidgetsSeeTheAppsCallsThroughTheSharedGate() {
@@ -257,5 +331,82 @@ final class MobileStoreTests: XCTestCase {
         let ticking = ResetCountdown.text(resetsAt: now.addingTimeInterval(2 * 3600 + 13 * 60), date: now)
         XCTAssertNotEqual(ticking, Text("now"))
         XCTAssertNotEqual(ticking, Text(String("2h 13m")), "Within a day the clock counts down by itself, without reloads")
+    }
+
+    @MainActor
+    func testAcceptedNotificationSurvivesCancellationAndIsNotReplayedAfterRelaunch() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let alert = UsageAlert(id: "accepted-before-cancellation", provider: "openrouter", kind: .threshold,
+            level: 80, title: "Usage", body: "Limit", resetsAt: nil, isUrgent: false)
+        var ledger = AlertLedger()
+        ledger.pending = [.init(alert: alert, raisedAt: now)]
+        ledger.save(to: folder)
+        let calls = Mutex(0)
+        let store = MobileStore(defaults: defaults, containerIdentifier: nil,
+            keys: APIKeyStore(servicePrefix: "app.tokenroom.tests." + UUID().uuidString), directory: folder,
+            notificationScheduler: { _ in
+                calls.withLock { $0 += 1 }
+                // The scheduler accepted the request as the background deadline expired.
+                withUnsafeCurrentTask { $0?.cancel() }
+            })
+        let delivery = Task { @MainActor in await store.deliverAlerts([alert], now: now) }
+        let accepted = await delivery.value
+        XCTAssertTrue(delivery.isCancelled)
+        XCTAssertEqual(accepted, [alert.id])
+        let saved = AlertLedger.load(from: folder)
+        XCTAssertEqual(saved.sent[alert.id], now)
+        XCTAssertTrue(saved.pending.isEmpty)
+        let shown = try XCTUnwrap(defaults.data(forKey: MobileStore.Keys.unclaimedAlerts))
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: shown) as? [Any])?.count, 1,
+                       "A successful offline schedule must still be claimed when iCloud returns")
+        let ledgerURL = folder.appendingPathComponent(AlertLedger.fileName)
+        let acknowledged = try Data(contentsOf: ledgerURL)
+
+        let relaunched = MobileStore(defaults: defaults, containerIdentifier: nil,
+            keys: APIKeyStore(servicePrefix: "app.tokenroom.tests." + UUID().uuidString), directory: folder,
+            notificationScheduler: { _ in calls.withLock { $0 += 1 } })
+        let replay = await relaunched.deliverAlerts([alert], now: now.addingTimeInterval(60))
+        XCTAssertTrue(replay.isEmpty, "Already persisted incoming alert IDs are skipped")
+        XCTAssertEqual(calls.withLock { $0 }, 1)
+        XCTAssertEqual(try Data(contentsOf: ledgerURL), acknowledged, "A retry must not rewrite an existing acknowledgement")
+    }
+
+    @MainActor
+    func testCancellationAfterFirstScheduleLeavesSecondAlertPendingUntilNextPass() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        func alert(_ id: String) -> UsageAlert {
+            .init(id: id, provider: "openrouter", kind: .threshold, level: 80,
+                  title: "Usage", body: "Limit", resetsAt: nil, isUrgent: false)
+        }
+        let first = alert("first-accepted")
+        let second = alert("second-pending")
+        var ledger = AlertLedger()
+        ledger.pending = [first, second].map { .init(alert: $0, raisedAt: now) }
+        ledger.save(to: folder)
+        let calls = Mutex<[String]>([])
+        let store = MobileStore(defaults: defaults, containerIdentifier: nil,
+            keys: APIKeyStore(servicePrefix: "app.tokenroom.tests." + UUID().uuidString), directory: folder,
+            notificationScheduler: { request in
+                let count = calls.withLock { calls in calls.append(request.identifier); return calls.count }
+                if count == 1 { withUnsafeCurrentTask { $0?.cancel() } }
+            })
+        let delivery = Task { @MainActor in await store.deliverAlerts([first, second], now: now) }
+        let accepted = await delivery.value
+        XCTAssertEqual(accepted, [first.id])
+        XCTAssertEqual(calls.withLock { $0 }, [first.id], "Cancellation prevents the second physical schedule")
+        let interrupted = AlertLedger.load(from: folder)
+        XCTAssertEqual(interrupted.sent[first.id], now)
+        XCTAssertNil(interrupted.sent[second.id])
+        XCTAssertEqual(interrupted.pending.map(\.alert.id), [second.id])
+
+        let retried = await store.deliverAlerts([first, second], now: now.addingTimeInterval(60))
+        XCTAssertEqual(retried, [second.id])
+        XCTAssertEqual(calls.withLock { $0 }, [first.id, second.id])
+        let completed = AlertLedger.load(from: folder)
+        XCTAssertTrue(completed.pending.isEmpty)
+        XCTAssertEqual(completed.sent[first.id], now)
+        XCTAssertEqual(completed.sent[second.id], now.addingTimeInterval(60))
     }
 }

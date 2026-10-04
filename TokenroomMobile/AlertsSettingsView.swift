@@ -4,6 +4,8 @@ import UserNotifications
 struct AlertsSettingsView: View {
     @Bindable var store: MobileStore
     @State private var permission: UNAuthorizationStatus?
+    @State private var permissionError: String?
+    @State private var requestingPermission = false
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
 
@@ -18,14 +20,12 @@ struct AlertsSettingsView: View {
                                 openURL(url)
                             }
                         } else {
-                            Task {
-                                _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
-                                await checkPermission()
-                            }
+                            requestPermission()
                         }
                     }
+                    .disabled(requestingPermission)
                 } footer: {
-                    Text("Tokenroom can't alert you until notifications are allowed.")
+                    Text(permissionError ?? "Tokenroom can't alert you until notifications are allowed.")
                 }
             }
 
@@ -90,6 +90,24 @@ struct AlertsSettingsView: View {
 
     private func checkPermission() async {
         permission = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        if permission == .authorized || permission == .provisional || permission == .ephemeral {
+            permissionError = nil
+        }
+    }
+
+    private func requestPermission() {
+        guard !requestingPermission else { return }
+        requestingPermission = true
+        permissionError = nil
+        Task {
+            defer { requestingPermission = false }
+            do {
+                _ = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+            } catch {
+                permissionError = "Couldn't turn on notifications. Try again or allow notifications for Tokenroom in Settings."
+            }
+            await checkPermission()
+        }
     }
 
     private func threshold(_ level: Int, _ keyPath: WritableKeyPath<AlertPreferences, [Int]>) -> Binding<Bool> {

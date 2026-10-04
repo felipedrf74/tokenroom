@@ -233,7 +233,7 @@ struct PopoverView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text("Tokenroom")
                     .font(.system(size: 15, weight: .semibold))
-                Text(store.isRefreshing ? "Updating…" : "Updated \(RelativeTime.ago(store.lastAttempt, now: store.presentationNow))")
+                Text(store.isRefreshing ? "Checking…" : "Checked \(RelativeTime.ago(store.lastAttempt, now: store.presentationNow))")
                     .font(.system(size: TokenroomTokens.captionSize))
                     .foregroundStyle(.secondary)
             }

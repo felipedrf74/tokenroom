@@ -137,10 +137,13 @@ enum OAuthRefresh {
                 case .rejected:
                     return .rejected
                 case .unavailable:
-                    continue
+                    // Only an explicit route rejection permits trying the legacy endpoint.
+                    // A timeout, 429, 5xx, or malformed grant may follow a completed rotation:
+                    // sending the same refresh token again can invalidate the tool's login.
+                    guard [404, 405, 410].contains(response.statusCode) else { return .unavailable }
                 }
             } catch {
-                continue
+                return .unavailable
             }
         }
         return .unavailable

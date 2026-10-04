@@ -31,5 +31,8 @@ struct TokenroomWatchApp: App {
             await store.scheduleBackgroundRefresh()
             await store.refresh(force: true)
         }
+        .backgroundTask(.watchConnectivity) {
+            await store.receiveBackgroundHandoff()
+        }
     }
 }

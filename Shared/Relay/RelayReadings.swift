@@ -25,12 +25,13 @@ enum RelayReadings {
 
     static func read(now: Date = .now) async -> Outcome {
         guard let container = RelayAvailability.containerIdentifier else { return .unavailable }
-        let relay = CloudRelay(containerIdentifier: container)
+        let relay = CloudRelay.shared(containerIdentifier: container)
         guard let status = try? await relay.accountStatus() else { return .failed }
         if status == .noAccount { return .noAccount }
         guard status == .available else { return .failed }
         guard let contents = try? await relay.contents() else { return .failed }
-        return .readings(cache(from: contents, now: now))
+        // Complete membership is authoritative as of completion, not the time the read began.
+        return .readings(cache(from: contents, now: .now))
     }
 
     /// Nil when this build has no iCloud container, there's no account, or iCloud didn't answer.
@@ -46,7 +47,8 @@ enum RelayReadings {
             source.envelope.map { RelayMerge.Source(id: source.id, label: source.label, envelope: $0, kind: CollectorKind(recordKind: source.kind)) }
         }
         let output = ReadingAssembler.assemble(sources: sources, histories: contents.histories, now: now)
-        return ReadingCache(savedAt: now, isSample: false, items: output.connected)
+        return ReadingCache(savedAt: now, isSample: false, items: output.connected,
+                            relaySnapshot: .init(checkedAt: now, sources: sources.map(ReadingCache.SourceSnapshot.init)))
     }
 
     /// The cache, or a fresh read when it's older than `maxAge`, within `budget` seconds.
@@ -103,6 +105,6 @@ enum RelayReadings {
     /// Whether `cached` can be shown without reading iCloud first. Outside debug builds a sample
     /// cache ages like any other, so it doesn't outlive sample mode.
     static func isRecent(_ cached: ReadingCache, maxAge: TimeInterval, now: Date, keepsSamples: Bool = RelayReadings.keepsSamples) -> Bool {
-        (keepsSamples && cached.isSample) || now.timeIntervalSince(cached.savedAt) < maxAge
+        (keepsSamples && cached.isSample) || (0..<maxAge).contains(now.timeIntervalSince(cached.savedAt))
     }
 }

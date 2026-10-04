@@ -32,9 +32,12 @@ struct UsageView: View {
                             .padding(16)
                             .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color(.secondarySystemGroupedBackground)))
                     }
-                    let close = closeWindows
+                    if !store.sampleMode, !store.readings.isEmpty || !store.disconnected.isEmpty {
+                        RelayStatusNotice(store: store)
+                    }
+                    let close = closeWindows(at: date)
                     if !close.isEmpty {
-                        CloseToLimitCard(windows: close) { id in path = [id] }
+                        CloseToLimitCard(windows: close, date: date) { id in path = [id] }
                     }
                     if !highlights.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -70,7 +73,7 @@ struct UsageView: View {
             .navigationSubtitle(header ?? "")
             .navigationDestination(for: String.self) { id in
                 if let reading = store.reading(id: id) {
-                    ProviderDetailView(reading: reading, date: date, showsOrigin: store.connectOnIPhone)
+                    ProviderDetailView(reading: reading, date: date)
                 }
             }
             .overlay {
@@ -164,8 +167,8 @@ struct UsageView: View {
         order = store.readings.map(\.id)
     }
 
-    private var closeWindows: [CloseWindow] {
-        UsageTiles.closeWindows(store.readings.map { (provider: $0.provider, history: $0.history) })
+    private func closeWindows(at date: Date) -> [CloseWindow] {
+        UsageTiles.closeWindows(store.readings.map { (provider: $0.provider, history: $0.history) }, now: date)
     }
 
     private struct Highlight: Identifiable {
@@ -231,6 +234,47 @@ struct UsageView: View {
     }
 }
 
+/// A failed relay still leaves usable readings on screen. Make the missing sync visible beside
+/// those readings rather than making users discover it in Settings or an empty state.
+private struct RelayStatusNotice: View {
+    var store: MobileStore
+
+    var body: some View {
+        if let notice {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(notice.title, systemImage: "exclamationmark.icloud")
+                    .font(.subheadline.weight(.semibold))
+                Text(notice.detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if notice.canRetry {
+                    Button("Retry iCloud") { Task { await store.refresh(force: true) } }
+                        .disabled(store.isRefreshing)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color(.secondarySystemGroupedBackground)))
+        }
+    }
+
+    private var notice: (title: String, detail: String, canRetry: Bool)? {
+        switch store.relayPhase {
+        case .failed(let message):
+            return (message, "Couldn't sync readings with your other devices. Available readings stay below; check each provider's last successful check.", true)
+        case .noAccount:
+            return ("Sign in to iCloud", "Use the same Apple Account on your devices to sync usage. Providers added with keys can still check on this iPhone.", true)
+        case .unavailable:
+            return ("iCloud isn't available in this build", "Readings can't sync to your other devices. Providers added with keys can still check on this iPhone.", false)
+        case .ready where store.needsNewerApp:
+            return ("Update Tokenroom", "Some readings from your other devices need a newer version of this app. Available readings stay below.", false)
+        default:
+            return nil
+        }
+    }
+}
+
 private struct DisconnectedRow: View {
     var reading: MobileStore.Reading
     /// The connect screen's reason, when the status has no message of its own.
@@ -291,6 +335,10 @@ struct UsageEmptyState: View {
                 } description: {
                     Text(content.description)
                 } actions: {
+                    if store.relayPhase != .unavailable {
+                        Button("Refresh") { Task { await store.refresh(force: true) } }
+                            .disabled(store.isRefreshing)
+                    }
                     Button("Add an API Key") { addsKey = true }
                         .buttonStyle(.borderedProminent)
                     Button("Try Sample Data") {

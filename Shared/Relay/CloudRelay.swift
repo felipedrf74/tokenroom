@@ -1,6 +1,7 @@
 import CloudKit
 import CryptoKit
 import Foundation
+import Synchronization
 
 /// Tokenroom's records in the user's private CloudKit database, zone "Tokenroom".
 ///
@@ -14,6 +15,18 @@ import Foundation
 /// Widgets and the Watch only read; their builds leave the write methods out
 /// (`TOKENROOM_RELAY_READONLY`).
 actor CloudRelay {
+    private static let readers = Mutex<[String: CloudRelay]>([:])
+
+    /// Reuse the zone cursor while a widget/Watch process remains alive, as the app does.
+    static func shared(containerIdentifier: String) -> CloudRelay {
+        readers.withLock { readers in
+            if let reader = readers[containerIdentifier] { return reader }
+            let reader = CloudRelay(containerIdentifier: containerIdentifier)
+            readers[containerIdentifier] = reader
+            return reader
+        }
+    }
+
     enum RecordType {
         static let source = "Source"
         static let history = "History"
@@ -71,6 +84,11 @@ actor CloudRelay {
     let containerIdentifier: String
     private let container: CKContainer
     private var zoneReady = false
+    private var zoneEpoch: UUID?
+    private let accountEpoch: RelayAccountEpoch
+    private var subscriptionsWrite: Task<Bool, any Error>?
+    private let zoneReader: RelayZoneReader<CKRecord.ID, CKRecord, CKServerChangeToken>
+    private let accountObserver: RelayAccountObserver
 
     private var database: CKDatabase {
         container.privateCloudDatabase
@@ -79,11 +97,36 @@ actor CloudRelay {
     /// Only call when `RelayAvailability` reports the container; CloudKit traps without the entitlement.
     init(containerIdentifier: String) {
         self.containerIdentifier = containerIdentifier
-        container = CKContainer(identifier: containerIdentifier)
+        let container = CKContainer(identifier: containerIdentifier)
+        self.container = container
+        let database = container.privateCloudDatabase
+        let epoch = RelayAccountEpoch()
+        accountEpoch = epoch
+        let reader = RelayZoneReader<CKRecord.ID, CKRecord, CKServerChangeToken>(fetch: { token in
+            let changes = try await database.recordZoneChanges(inZoneWith: Self.zoneID, since: token)
+            return .init(
+                modifications: changes.modificationResultsByID.mapValues { $0.map(\.record) },
+                deletions: changes.deletions.map(\.recordID),
+                token: changes.changeToken,
+                moreComing: changes.moreComing
+            )
+        }, recovery: { error in
+            switch (error as? CKError)?.code {
+            case .changeTokenExpired: .retryFromStart
+            case .zoneNotFound: .emptyZone
+            default: .fail
+            }
+        })
+        zoneReader = reader
+        accountObserver = RelayAccountObserver(name: .CKAccountChanged) {
+            epoch.invalidate()
+        }
     }
 
     func accountStatus() async throws -> CKAccountStatus {
-        try await container.accountStatus()
+        let status = try await container.accountStatus()
+        if status == .noAccount { accountEpoch.invalidate(); await zoneReader.invalidate(); zoneReady = false }
+        return status
     }
 
     /// Short, one-way fingerprint of this container's anonymous user ID. Two devices on the same
@@ -107,44 +150,36 @@ actor CloudRelay {
         }
     }
 
-    /// Every source and history in the zone. A handful of small records, so no change tokens are kept.
+    /// Read a complete snapshot, then only the zone's deltas on later reads. Alert records no
+    /// longer make every foreground refresh download the whole retained notification history.
     func contents() async throws -> Contents {
+        let epoch = accountEpoch.value
+        let records = try await zoneReader.contents(scope: epoch)
+        guard epoch == accountEpoch.value, !Task.isCancelled else { throw CancellationError() }
         var sources: [Source] = []
         var histories: [String: RelayHistory] = [:]
         var preferences: AlertPreferences?
         var events: [(id: String, createdAt: Date?)] = []
-        var token: CKServerChangeToken?
-        do {
-            while true {
-                let changes = try await database.recordZoneChanges(inZoneWith: Self.zoneID, since: token)
-                for (_, modification) in changes.modificationResultsByID {
-                    guard case .success(let change) = modification else { continue }
-                    let record = change.record
-                    switch record.recordType {
-                    case RecordType.source:
-                        sources.append(Self.source(from: record))
-                    case RecordType.history:
-                        let name = record.recordID.recordName
-                        guard name.hasPrefix("hist-"),
-                              let data = record[Field.payload] as? Data,
-                              let history = try? RelayHistory.decode(data)
-                        else { continue }
-                        histories[String(name.dropFirst("hist-".count))] = history
-                    case RecordType.prefs where record.recordID.recordName == Self.alertPreferencesRecord:
-                        preferences = (record[Field.payload] as? Data).flatMap { try? RelayEnvelope.decoder.decode(AlertPreferences.self, from: $0) }
-                    case RecordType.event:
-                        events.append((record.recordID.recordName, record.creationDate))
-                    default:
-                        continue
-                    }
-                }
-                token = changes.changeToken
-                if !changes.moreComing { break }
+        for record in records.values {
+            switch record.recordType {
+            case RecordType.source:
+                sources.append(Self.source(from: record))
+            case RecordType.history:
+                let name = record.recordID.recordName
+                guard name.hasPrefix("hist-"),
+                      let data = record[Field.payload] as? Data,
+                      let history = try? RelayHistory.decode(data)
+                else { continue }
+                histories[String(name.dropFirst("hist-".count))] = history
+            case RecordType.prefs where record.recordID.recordName == Self.alertPreferencesRecord:
+                preferences = (record[Field.payload] as? Data).flatMap { try? RelayEnvelope.decoder.decode(AlertPreferences.self, from: $0) }
+            case RecordType.event:
+                events.append((record.recordID.recordName, record.creationDate))
+            default:
+                continue
             }
-        } catch let error as CKError where error.code == .zoneNotFound {
-            return Contents(sources: [], histories: [:])
         }
-        return Contents(sources: sources, histories: histories, alertPreferences: preferences, events: events)
+        return Contents(sources: sources.sorted { $0.id < $1.id }, histories: histories, alertPreferences: preferences, events: events)
     }
 
     func sources() async throws -> [Source] {
@@ -267,12 +302,16 @@ extension CloudRelay {
     func deleteRecords(named names: [String]) async throws {
         for start in stride(from: 0, to: names.count, by: Self.batchLimit) {
             let batch = names[start..<min(start + Self.batchLimit, names.count)]
-            _ = try await database.modifyRecords(
+            try Task.checkCancellation()
+            let results = try await database.modifyRecords(
                 saving: [],
                 deleting: batch.map { CKRecord.ID(recordName: $0, zoneID: Self.zoneID) },
                 savePolicy: .changedKeys,
                 atomically: false
             )
+            for (_, result) in results.deleteResults {
+                if case .failure(let error) = result, (error as? CKError)?.code != .unknownItem { throw error }
+            }
         }
     }
 
@@ -327,6 +366,7 @@ extension CloudRelay {
                 throw error
             }
         }
+        await zoneReader.invalidate()
     }
 
     /// Makes the next save create the zone again. For after the user deleted Tokenroom's iCloud
@@ -363,14 +403,17 @@ extension CloudRelay {
     }
 
     private func ensureZone() async throws {
-        guard !zoneReady else { return }
+        let epoch = accountEpoch.value
+        guard !zoneReady || zoneEpoch != epoch else { return }
         let results = try await database.modifyRecordZones(saving: [CKRecordZone(zoneID: Self.zoneID)], deleting: [])
         for (_, result) in results.saveResults {
             if case .failure(let error) = result {
                 throw error
             }
         }
+        guard accountEpoch.value == epoch, !Task.isCancelled else { throw CancellationError() }
         zoneReady = true
+        zoneEpoch = epoch
     }
 }
 #endif
@@ -386,7 +429,29 @@ extension CloudRelay {
     /// alert subscription filters by kind (false while `alertKey` isn't queryable yet).
     @discardableResult
     func ensureSubscriptions(alertKeys: [String]) async throws -> Bool {
+        let previous = subscriptionsWrite
+        let epoch = accountEpoch.value
+        let task = Task {
+            // Even an API call that ignores cancellation must finish before another writer can
+            // replace its filter; older requests can never overtake newer choices.
+            if let previous { _ = try? await previous.value }
+            try checkSubscriptionWrite(epoch: epoch)
+            return try await installSubscriptions(alertKeys: alertKeys, epoch: epoch)
+        }
+        subscriptionsWrite = task
+        defer { if subscriptionsWrite == task { subscriptionsWrite = nil } }
+        return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+    }
+
+    private func checkSubscriptionWrite(epoch: UUID) throws {
+        try Task.checkCancellation()
+        guard accountEpoch.value == epoch else { throw CancellationError() }
+    }
+
+    private func installSubscriptions(alertKeys: [String], epoch: UUID) async throws -> Bool {
+        try checkSubscriptionWrite(epoch: epoch)
         try await ensureZone()
+        try checkSubscriptionWrite(epoch: epoch)
 
         let changes = CKRecordZoneSubscription(zoneID: Self.zoneID, subscriptionID: Self.changesSubscriptionID)
         changes.recordType = RecordType.source
@@ -394,16 +459,20 @@ extension CloudRelay {
         silent.shouldSendContentAvailable = true
         changes.notificationInfo = silent
         try await saveSubscriptions([changes])
+        try checkSubscriptionWrite(epoch: epoch)
 
         // Filtering needs `alertKey` to be queryable in the schema. Until it is, every alert
         // comes through and the sending device filters by the same preferences.
         do {
             try await saveSubscriptions([alertSubscription(NSPredicate(format: "%K IN %@", Field.alertKey, alertKeys))])
+            try checkSubscriptionWrite(epoch: epoch)
             return true
         } catch let error as CKError where error.code == .invalidArguments || error.code == .serverRejectedRequest {
             // What CloudKit says when the schema can't query `alertKey` yet. Other errors
             // (offline, busy) are thrown, to be retried with the filter.
+            try checkSubscriptionWrite(epoch: epoch)
             try await saveSubscriptions([alertSubscription(NSPredicate(value: true))])
+            try checkSubscriptionWrite(epoch: epoch)
             return false
         }
     }

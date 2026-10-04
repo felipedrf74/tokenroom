@@ -14,8 +14,16 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
     private let lock = NSLock()
     /// The newest readings, kept until the session can take them: activation finishes after
     /// the first refresh, and the Watch app may be installed later.
-    private var latest: Data?
+    private var latest: ReadingCache?
     private var connectFlag = false
+    private var refreshHandler: (@MainActor @Sendable () async -> ReadingCache?)?
+    /// Registered by the app's owner of MobileStore. A reachable Watch can ask its iPhone to
+    /// collect readings, with the same provider spacing and cooldowns as an app refresh.
+    var refreshReadings: (@MainActor @Sendable () async -> ReadingCache?)? {
+        get { lock.withLock { refreshHandler } }
+        set { lock.withLock { refreshHandler = newValue } }
+    }
+    static let refreshBudget: TimeInterval = 15
 
     /// Whether the connect screen is on (`MobileStore.connectOnIPhone`). Set before activation.
     var connectAvailable: Bool {
@@ -31,23 +39,48 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
 
     /// Replaces what the Watch last got; only the newest readings matter.
     func send(_ cache: ReadingCache) {
-        guard WCSession.isSupported(), let data = try? RelayEnvelope.encoder.encode(cache) else { return }
-        lock.withLock { latest = data }
+        guard WCSession.isSupported(), !cache.isSample, cache.v <= ReadingCache.version,
+              PhoneCacheAccess.accepts(cache, defaults: AppGroup.defaults) else { return }
+        lock.withLock { latest = cache }
         flush()
     }
 
     private func flush() {
         let session = WCSession.default
         guard session.activationState == .activated, session.isPaired, session.isWatchAppInstalled,
-              let data = lock.withLock({ latest }) ?? Self.savedReadings()
+              let context = currentContext()
         else { return }
         // One dictionary: the context is replaced whole, so the flag never goes without readings.
-        try? session.updateApplicationContext(WatchHandoff.context(readings: data, connectAvailable: connectAvailable))
+        try? session.updateApplicationContext(context)
     }
 
-    /// The Watch's only request: open the connect screen. Honoured only while it's on. Nothing
-    /// here reads the Keychain, and the reply is empty.
+    private func currentContext(checked: ReadingCache? = nil) -> [String: Any]? {
+        let defaults = AppGroup.defaults
+        let retained = lock.withLock { () -> ReadingCache? in
+            if let latest, !PhoneCacheAccess.accepts(latest, defaults: defaults) { self.latest = nil }
+            return latest
+        }
+        let cache = WatchHandoff.cacheToSend(retained: checked ?? retained, saved: Self.savedReadings(),
+                                             accountGeneration: PhoneCacheAccess.generation(in: defaults))
+        guard let cache, let data = try? RelayEnvelope.encoder.encode(cache),
+              PhoneCacheAccess.accepts(cache, defaults: defaults) else { return nil }
+        return WatchHandoff.context(readings: data, connectAvailable: connectAvailable)
+    }
+
+    /// Refresh requests use the app's normal collector. Replies contain only the same readings
+    /// as the context, and stay bounded when a provider or iCloud doesn't answer.
     func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
+        if WatchHandoff.asksToRefreshReadings(message) {
+            let reply = HandoffReply(replyHandler)
+            let refresh = refreshReadings
+            Task { [weak self] in
+                let checked = await WatchHandoff.collectForReply(budget: Self.refreshBudget) {
+                    await refresh?()
+                }
+                reply.send(self?.currentContext(checked: checked) ?? [:])
+            }
+            return
+        }
         handle(message)
         replyHandler([:])
     }
@@ -66,9 +99,9 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
     /// The readings saved for widgets, for when this launch hasn't sent any: it only sends when
     /// they change, and a Watch app installed since would otherwise get nothing until then.
     /// Sample readings stay on the iPhone.
-    private static func savedReadings() -> Data? {
-        guard let url = ReadingCache.defaultURL, let cache = ReadingCache.load(from: url), !cache.isSample else { return nil }
-        return try? RelayEnvelope.encoder.encode(cache)
+    private static func savedReadings() -> ReadingCache? {
+        guard let cache = PhoneCacheAccess.load(at: ReadingCache.defaultURL, defaults: AppGroup.defaults), !cache.isSample else { return nil }
+        return cache
     }
 
     func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
@@ -86,4 +119,12 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
         // After switching watches, talk to the new one.
         session.activate()
     }
+}
+
+/// WatchConnectivity supplies a reply on its delegate queue; keep that callback together when
+/// the readings are collected asynchronously. Each message gets exactly one reply.
+private final class HandoffReply: @unchecked Sendable {
+    private let callback: ([String: Any]) -> Void
+    init(_ callback: @escaping ([String: Any]) -> Void) { self.callback = callback }
+    func send(_ context: [String: Any]) { callback(context) }
 }
