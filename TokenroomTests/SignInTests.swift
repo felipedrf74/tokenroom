@@ -15,10 +15,11 @@ final class SignInTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            Tooling.resolve("tokenroom-fake-cli", extraDirectories: [directory])?.resolvingSymlinksInPath().path,
+            Tooling.resolve("tokenroom-fake-cli", extraDirectories: [directory], searchDirectories: [])?.resolvingSymlinksInPath().path,
             binary.resolvingSymlinksInPath().path
         )
-        XCTAssertNil(Tooling.resolve("tokenroom-missing-cli-\(UUID().uuidString)", extraDirectories: [directory]))
+        XCTAssertNil(Tooling.resolve("tokenroom-missing-cli-\(UUID().uuidString)", extraDirectories: [directory], searchDirectories: []))
+        XCTAssertNil(Tooling.resolve("tokenroom-fake-cli", searchDirectories: []), "An empty explicit search never examines installed tools")
     }
 
     func testSessionStampMissingFiles() {
@@ -71,7 +72,8 @@ final class SignInTests: XCTestCase {
 
         let resolved = Tooling.resolveClaude(
             extraDirectories: [root],
-            versionRoots: [versions, desktop]
+            versionRoots: [versions, desktop],
+            searchDirectories: []
         )
         XCTAssertEqual(resolved?.resolvingSymlinksInPath().path, newer.resolvingSymlinksInPath().path)
     }

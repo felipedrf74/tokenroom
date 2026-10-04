@@ -140,6 +140,7 @@ private struct ConnectMacView: View {
                 Link("Get Tokenroom for Mac", destination: TokenroomIdentity.repositoryURL.appendingPathComponent("releases"))
                 Step(number: 2, text: "Open it. It sends its readings to your iCloud on its own (Settings › iPhone & Watch).")
                 Step(number: 3, text: "Use the same Apple Account on your Mac and this iPhone.")
+                Step(number: 4, text: "Keep Tokenroom running on your Mac to keep these providers' usage current. API keys added on this iPhone can check here directly.")
             } footer: {
                 Text("Your Mac sends only usage, reset times, and plan names. Logins and keys never leave it.")
             }

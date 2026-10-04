@@ -14,9 +14,11 @@ struct TokenroomMobileApp: App {
                 .task {
                     // Also saves the push subscriptions, once iCloud answers. Not forced: when
                     // coming forward already started one, this is that refresh.
+                    guard !LaunchEnvironment.isUnitTestHost else { return }
                     await store.refresh()
                 }
                 .onChange(of: scenePhase) { _, phase in
+                    guard !LaunchEnvironment.isUnitTestHost else { return }
                     switch phase {
                     case .active:
                         store.becameActive()
@@ -33,7 +35,7 @@ struct TokenroomMobileApp: App {
                 }
                 .onChange(of: store.hasOnboarded, initial: true) { _, onboarded in
                     // Ask once the person has chosen how to use Tokenroom, not on first sight.
-                    guard onboarded, !store.sampleMode else { return }
+                    guard !LaunchEnvironment.isUnitTestHost, onboarded, !store.sampleMode else { return }
                     Task { _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) }
                 }
         }

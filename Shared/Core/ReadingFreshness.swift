@@ -43,6 +43,7 @@ extension ReadingCache {
     /// but cannot reintroduce removed providers or remove newly added ones.
     func mergingUpdate(_ incoming: ReadingCache) -> ReadingCache {
         guard !isSample, !incoming.isSample else { return incoming }
+        if let reconciled = reconcilingSourceUpdate(incoming) { return reconciled }
         let newer = incoming.savedAt >= savedAt ? incoming : self
         let older = incoming.savedAt >= savedAt ? self : incoming
         let other = Dictionary(older.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })

@@ -80,7 +80,7 @@ enum LiveActivities {
 
     /// Follows the most urgent window that qualifies, from the readings saved for widgets.
     static func startMostUrgent(now: Date = .now) async throws -> Bool {
-        let items = ReadingCache.defaultURL.flatMap(ReadingCache.load)?.presented(at: now).items ?? []
+        let items = PhoneCacheAccess.load(at: ReadingCache.defaultURL, defaults: AppGroup.defaults)?.presented(at: now).items ?? []
         for item in items {
             if let window = candidate(in: item.provider, now: now) {
                 return try await start(item.provider, window: window)

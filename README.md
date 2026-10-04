@@ -100,7 +100,7 @@ Tokenroom for iPhone shows the same meters, pace, and a week of history. They co
 - the alerts above, as notifications, even when the app isn't running
 - News as a short daily paper about your tools: what's new since you looked, one top story, each tool's own changelog, and models retiring soon, with a badge for what's new
 
-The Apple Watch app and its complications read the same iCloud records, so they keep working with the iPhone away. The Smart Stack shows a limit as it nears its reset or passes 80%. The signed download of Tokenroom for Mac sends its readings on its own (**Settings → iPhone & Watch** turns that off). A copy you build and sign yourself can't use iCloud.
+The Apple Watch app and its complications read the same iCloud records, so they keep working with the iPhone away. Refresh on the Watch also asks a reachable paired iPhone to check its own providers and share its newest readings. Provider tiles identify the collecting device and its last successful check; sync failures remain visible beside saved readings. Plans collected only on a Mac still need that Mac running to obtain new usage. The Smart Stack shows a limit as it nears its reset or passes 80%. The signed download of Tokenroom for Mac sends its readings on its own (**Settings → iPhone & Watch** turns that off). A copy you build and sign yourself can't use iCloud.
 
 Tokenroom for iPhone and Apple Watch is on its way to the App Store. It has a sample mode for looking around first.
 
@@ -161,10 +161,12 @@ Tests: `TokenroomTests` (on the Mac, including all the shared logic) and `Tokenr
 
 The app icons come from one drawing in `scripts/make-icons.py`: it writes the Icon Composer files for the iPhone, Watch, and Mac, and the Mac PNGs the Command Line Tools build needs. Change the script and run it, rather than editing the icons.
 
-Build settings live in `Config/*.xcconfig`. Builds are ad-hoc signed by default. To sign with your own team, copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig` (git-ignored) and set `TOKENROOM_TEAM_ID` and `TOKENROOM_MAC_SIGNING = team`. `TOKENROOM_FORCE_SWIFTC=1 ./scripts/build.sh` exercises the Command Line Tools fallback.
+Build settings live in `Config/*.xcconfig`. Builds are ad-hoc signed by default. To sign with your own team, copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig` (git-ignored) and set `TOKENROOM_TEAM_ID` and `TOKENROOM_MAC_SIGNING = team`. `TOKENROOM_SKIP_INSTALL=1 TOKENROOM_FORCE_SWIFTC=1 ./scripts/build.sh` exercises the Command Line Tools fallback.
 
 `main` is protected. Send a change as a pull request from a fork; the maintainer has to approve it. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
 [MIT](LICENSE). Tokenroom isn't affiliated with any of the providers it shows. Their names are used only to identify the services you connect.
+
+The [cross-platform assessment](docs/cross-platform-assessment-20261004.md) records the reliability changes, current architecture, verification, and remaining device and provider constraints.

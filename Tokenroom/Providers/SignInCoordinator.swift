@@ -15,9 +15,25 @@ final class SignInCoordinator {
     var phase: Phase = .idle
 
     private var job: Task<Void, Never>?
+    private var attemptID: UUID?
+    private let readStamp: @Sendable (Provider) async -> String?
+    private let readUsable: @Sendable (Provider) async -> Bool
     var onConnected: ((Provider) -> Void)?
     /// API-key providers are connected in Settings, not by signing in.
     var onAddKey: ((Provider) -> Void)?
+
+    /// Tests supply readers so cancelled and overlapping attempts never touch a real login.
+    init(
+        readStamp: @escaping @Sendable (Provider) async -> String? = { provider in
+            await BlockingIO.run { CredentialReaders.sessionStamp(provider) }
+        },
+        readUsable: @escaping @Sendable (Provider) async -> Bool = { provider in
+            await BlockingIO.run { CredentialReaders.hasUsableSession(provider) }
+        }
+    ) {
+        self.readStamp = readStamp
+        self.readUsable = readUsable
+    }
 
     func isWorking(_ provider: Provider) -> Bool {
         if case .running(let active) = phase {
@@ -26,15 +42,20 @@ final class SignInCoordinator {
         return false
     }
 
-    func signIn(_ provider: Provider) {
+    @discardableResult
+    func signIn(_ provider: Provider) -> Task<Void, Never>? {
         cancel()
         if provider.usesAPIKey {
             onAddKey?(provider)
-            return
+            return nil
         }
-        job = Task { [weak self] in
-            await self?.run(provider)
+        let attempt = UUID()
+        attemptID = attempt
+        let task = Task<Void, Never> { [weak self] in
+            await self?.run(provider, attempt: attempt)
         }
+        job = task
+        return task
     }
 
     func openInstallPage(_ provider: Provider) {
@@ -48,16 +69,25 @@ final class SignInCoordinator {
     func cancel() {
         job?.cancel()
         job = nil
+        attemptID = nil
         phase = .idle
     }
 
-    private func run(_ provider: Provider) async {
+    private func ownsAttempt(_ attempt: UUID) -> Bool {
+        !Task.isCancelled && attemptID == attempt
+    }
+
+    private func run(_ provider: Provider, attempt: UUID) async {
+        guard ownsAttempt(attempt) else { return }
         phase = .running(provider)
         CredentialReaders.invalidateCaches()
         CredentialReaders.invalidateKeychainServices()
-        let baseline = await BlockingIO.run { CredentialReaders.sessionStamp(provider) }
-        if await BlockingIO.run({ CredentialReaders.hasUsableSession(provider) }) {
-            finishSuccess(provider)
+        let baseline = await readStamp(provider)
+        guard ownsAttempt(attempt) else { return }
+        let usable = await readUsable(provider)
+        guard ownsAttempt(attempt) else { return }
+        if usable {
+            finishSuccess(provider, attempt: attempt)
             return
         }
 
@@ -69,6 +99,7 @@ final class SignInCoordinator {
             var resetDeadSession = false
             if provider == .claude {
                 resetDeadSession = await BlockingIO.run { !((try? CredentialReaders.claudeAuth())?.canRefresh ?? false) }
+                guard ownsAttempt(attempt) else { return }
             }
             launchInTerminal(
                 executable: executable,
@@ -91,47 +122,49 @@ final class SignInCoordinator {
 
         let deadline = Date().addingTimeInterval(180)
         var polls = 0
-        while !Task.isCancelled, Date() < deadline {
+        while ownsAttempt(attempt), Date() < deadline {
             CredentialReaders.invalidateCaches()
             polls += 1
             if polls % 10 == 0 {
                 // A new login can land in a new `Claude Code-credentials-…` item.
                 CredentialReaders.invalidateKeychainServices()
             }
-            if await sessionBecameUsable(provider, baseline: baseline) {
-                finishSuccess(provider)
+            let connected = await sessionBecameUsable(provider, baseline: baseline)
+            guard ownsAttempt(attempt) else { return }
+            if connected {
+                finishSuccess(provider, attempt: attempt)
                 return
             }
             try? await Task.sleep(nanoseconds: 800_000_000)
         }
 
-        if Task.isCancelled {
-            phase = .idle
-            return
-        }
+        guard ownsAttempt(attempt) else { return }
         CredentialReaders.invalidateCaches()
         CredentialReaders.invalidateKeychainServices()
-        if await sessionBecameUsable(provider, baseline: baseline) {
-            finishSuccess(provider)
+        let connected = await sessionBecameUsable(provider, baseline: baseline)
+        guard ownsAttempt(attempt) else { return }
+        if connected {
+            finishSuccess(provider, attempt: attempt)
         } else {
             phase = .failed(provider, "Couldn't finish \(provider.displayName) sign-in.")
         }
     }
 
     private func sessionBecameUsable(_ provider: Provider, baseline: String?) async -> Bool {
-        await BlockingIO.run {
-            guard CredentialReaders.hasUsableSession(provider) else { return false }
-            let stamp = CredentialReaders.sessionStamp(provider)
-            if baseline == nil {
-                return stamp != nil
-            }
-            return stamp != baseline
+        guard await readUsable(provider), !Task.isCancelled else { return false }
+        let stamp = await readStamp(provider)
+        if baseline == nil {
+            return stamp != nil
         }
+        return stamp != baseline
     }
 
-    private func finishSuccess(_ provider: Provider) {
+    private func finishSuccess(_ provider: Provider, attempt: UUID) {
+        guard ownsAttempt(attempt) else { return }
         CredentialReaders.invalidateCaches()
         phase = .idle
+        attemptID = nil
+        job = nil
         onConnected?(provider)
     }
 

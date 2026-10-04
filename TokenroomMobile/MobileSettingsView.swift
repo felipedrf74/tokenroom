@@ -12,6 +12,7 @@ struct MobileSettingsView: View {
     @Binding var path: [SettingsRoute]
     @State private var confirmsDelete = false
     @State private var deleteError: String?
+    @State private var deleting = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -31,10 +32,10 @@ struct MobileSettingsView: View {
                 } header: {
                     Text("Readings")
                 } footer: {
-                    Text("Your Mac sends its readings through your iCloud. Only usage, reset times, and plan names are sent, never logins or keys.")
+                    Text("Your devices share readings through your iCloud. Providers added with keys can check on this iPhone; other providers check while Tokenroom runs on your Mac. Only usage, reset times, and plan names are sent, never logins or keys.")
                 }
 
-                if store.connectOnIPhone, !store.sampleMode, !store.readings.isEmpty {
+                if !store.sampleMode, !store.readings.isEmpty {
                     Section {
                         ForEach(store.readings) { reading in
                             LabeledContent {
@@ -50,7 +51,7 @@ struct MobileSettingsView: View {
                     } header: {
                         Text("Where readings come from")
                     } footer: {
-                        Text("A login you add on this iPhone stays on this iPhone. A login on your Mac stays on your Mac. Only usage syncs.")
+                        Text("Keys and logins stay on the device that reads them. Only usage syncs.")
                     }
                 }
 
@@ -80,10 +81,10 @@ struct MobileSettingsView: View {
                 }
 
                 Section {
-                    Button("Delete Tokenroom Data from iCloud", role: .destructive) {
+                    Button(deleting ? "Deleting…" : "Delete Tokenroom Data from iCloud", role: .destructive) {
                         confirmsDelete = true
                     }
-                    .disabled(store.relayPhase == .unavailable)
+                    .disabled(deleting || store.relayPhase == .unavailable || store.relayPhase == .noAccount)
                 } footer: {
                     Text(deleteError ?? "Removes every Tokenroom reading and history from your iCloud, for all your devices. Keys on this iPhone stay.")
                 }
@@ -116,7 +117,11 @@ struct MobileSettingsView: View {
             }
             .confirmationDialog("Delete Tokenroom data from iCloud?", isPresented: $confirmsDelete, titleVisibility: .visible) {
                 Button("Delete", role: .destructive) {
+                    guard !deleting else { return }
+                    deleting = true
+                    deleteError = nil
                     Task {
+                        defer { deleting = false }
                         do {
                             try await store.deleteICloudData()
                             deleteError = nil
@@ -126,7 +131,7 @@ struct MobileSettingsView: View {
                     }
                 }
             } message: {
-                Text("Macs with iPhone sync on send fresh readings on their next check.")
+                Text("Devices that collect usage send fresh readings on their next check.")
             }
         }
     }
@@ -298,10 +303,15 @@ struct KeyEditorView: View {
                             .font(.footnote)
                             .foregroundStyle(TokenroomTokens.accentText)
                     }
-                    Button("Replace Key") { replacing = true }
-                    Button("Remove Key", role: .destructive) { remove() }
+                    Button("Replace Key") {
+                        invalidateValidation()
+                        replacing = true
+                    }
+                    .disabled(working)
+                    Button(working ? "Removing…" : "Remove Key", role: .destructive) { remove() }
+                        .disabled(working)
                 } footer: {
-                    Text("Added \(metadata.addedAt.formatted(date: .abbreviated, time: .omitted)).")
+                    Text(message ?? "Added \(metadata.addedAt.formatted(date: .abbreviated, time: .omitted)).")
                 }
             } else {
                 Section {
@@ -445,11 +455,16 @@ struct KeyEditorView: View {
         }
     }
     private func remove() {
+        guard !working else { return }
+        working = true
+        message = nil
         Task {
+            defer { working = false }
             do {
                 try await store.removeKey(for: provider)
                 metadata = nil
                 key = ""
+                invalidateValidation()
             } catch {
                 message = "Couldn't remove the key from the Keychain."
             }

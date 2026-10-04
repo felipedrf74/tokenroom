@@ -18,7 +18,8 @@ enum ReadingAssembler {
                 provider: entry.provider,
                 source: entry.sourceLabel,
                 history: history(for: entry.provider.id, in: histories[entry.sourceID]),
-                origin: entry.origin
+                origin: entry.origin,
+                sourceID: entry.sourceID
             )
         }
         return Output(

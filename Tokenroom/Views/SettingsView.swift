@@ -608,6 +608,7 @@ private struct KeyRow: View {
     @State private var metadata: APIKeyStore.Metadata?
     @State private var localKey: String?
     @State private var message: String?
+    @State private var removing = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -624,11 +625,13 @@ private struct KeyRow: View {
                     Button("Replace…", action: onAdd)
                         .buttonStyle(.plain)
                         .font(.system(size: 11, weight: .medium))
-                    Button("Remove", role: .destructive) {
+                        .disabled(removing)
+                    Button(removing ? "Removing…" : "Remove", role: .destructive) {
                         remove()
                     }
                     .buttonStyle(.plain)
                     .font(.system(size: 11, weight: .medium))
+                    .disabled(removing)
                 } else {
                     Button("Add Key…", action: onAdd)
                         .buttonStyle(.bordered)
@@ -660,9 +663,13 @@ private struct KeyRow: View {
     }
 
     private func remove() {
+        guard !removing else { return }
+        removing = true
+        message = nil
         let keys = self.keys
         let provider = self.provider
         Task {
+            defer { removing = false }
             do {
                 try await BlockingIO.run { try keys.remove(for: provider) }
                 metadata = nil

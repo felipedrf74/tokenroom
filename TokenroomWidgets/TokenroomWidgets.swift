@@ -32,7 +32,7 @@ struct ReadingsTimelineProvider: AppIntentTimelineProvider {
 
     func snapshot(for configuration: SelectProviderIntent, in context: Context) async -> ReadingsEntry {
         // The widget gallery shows samples until there are real readings.
-        let cache = ReadingCache.defaultURL.flatMap(ReadingCache.load)
+        let cache = PhoneCacheAccess.load(at: ReadingCache.defaultURL, defaults: AppGroup.defaults)
         return ReadingsEntry.make(context.isPreview && (cache?.items.isEmpty ?? true) ? SampleData.cache() : cache, choice: configuration.provider, date: .now)
     }
 

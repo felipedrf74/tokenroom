@@ -30,15 +30,22 @@ enum TokenroomHTTP {
         configuration.httpShouldSetCookies = false
         configuration.httpMaximumConnectionsPerHost = 5
         configuration.httpAdditionalHeaders = ["User-Agent": TokenroomIdentity.userAgent]
-        return URLSession(configuration: configuration)
+        return URLSession(configuration: configuration, delegate: redirectDelegate, delegateQueue: nil)
     }()
+
+    private static let redirectDelegate = TokenroomRedirectDelegate()
 
     static func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         var request = request
+        // Secrets may be in a custom header or the body, not only Authorization. Never start
+        // a provider or token request over cleartext, or accept credentials embedded in a URL.
+        guard TokenroomRedirectPolicy.isSecureEndpoint(request.url) else { throw ProviderError.unreachable }
         request.timeoutInterval = timeout
         request.cachePolicy = .reloadIgnoringLocalCacheData
         do {
-            let (data, response) = try await session.data(for: request)
+            // A task delegate also protects calls through a test/injected session. The default
+            // session's delegate applies the same rules to streamed, unauthenticated news feeds.
+            let (data, response) = try await session.data(for: request, delegate: redirectDelegate)
             guard let http = response as? HTTPURLResponse else {
                 throw ProviderError.unreachable
             }
@@ -120,6 +127,52 @@ enum TokenroomHTTP {
         let (data, response) = try await data(for: request)
         try check(response, provider: provider)
         return data
+    }
+}
+
+/// A redirect can't choose where a credential is sent. Check the original request too: URLSession
+/// can remove Authorization or turn a POST into GET before handing the delegate the next request.
+enum TokenroomRedirectPolicy {
+    static func isSecureEndpoint(_ url: URL?) -> Bool {
+        guard let url, url.scheme?.lowercased() == "https",
+              let host = url.host, !host.isEmpty,
+              url.user == nil, url.password == nil
+        else { return false }
+        return true
+    }
+
+    static func allows(original: URLRequest?, current: URLRequest?, redirected: URLRequest) -> Bool {
+        guard let original, isSecureEndpoint(original.url), isSecureEndpoint(redirected.url) else { return false }
+        if sameOrigin(original.url, redirected.url) { return true }
+        // Public feeds may move to another HTTPS host. Provider calls carrying a bearer, an
+        // API key, cookies, or any POST/body stay on their original origin, including 307/308.
+        return [original, current, redirected].compactMap { $0 }.allSatisfy { !mayCarryCredentials($0) }
+    }
+
+    private static func sameOrigin(_ first: URL?, _ second: URL?) -> Bool {
+        guard let first, let second else { return false }
+        return first.host?.lowercased() == second.host?.lowercased()
+            && (first.port ?? 443) == (second.port ?? 443)
+    }
+
+    private static func mayCarryCredentials(_ request: URLRequest) -> Bool {
+        let method = (request.httpMethod ?? "GET").uppercased()
+        if method != "GET" && method != "HEAD" { return true }
+        if request.httpBody != nil || request.httpBodyStream != nil { return true }
+        let secretHeaders: Set<String> = ["authorization", "proxy-authorization", "x-api-key", "api-key", "cookie"]
+        return (request.allHTTPHeaderFields ?? [:]).contains { secretHeaders.contains($0.key.lowercased()) && !$0.value.isEmpty }
+    }
+}
+
+private final class TokenroomRedirectDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        completionHandler(TokenroomRedirectPolicy.allows(original: task.originalRequest, current: task.currentRequest, redirected: request) ? request : nil)
     }
 }
 

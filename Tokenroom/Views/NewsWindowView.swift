@@ -312,7 +312,7 @@ struct NewsWindowView: View {
     @ViewBuilder
     private func searchResults(_ news: NewsStore) -> some View {
         let models = news.models(all: true).filter { NewsSearch.matches(search, title: $0.name, source: $0.vendorName) }
-        let items = news.announcements.filter { $0.displayTitle.localizedCaseInsensitiveContains(search) || $0.source.localizedCaseInsensitiveContains(search) }
+        let items = news.announcements.filter { NewsSearch.matches(search, title: $0.displayTitle, source: $0.source) }
         if !models.isEmpty {
             self.models(news, models, header: "Models", toggle: false)
         }

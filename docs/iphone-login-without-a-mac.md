@@ -10,6 +10,8 @@
 
 ## Overview
 
+The 4 October 2026 [session security assessment](session-security-assessment-20261004.md) supersedes this draft's GitHub App billing-token assumption and the unavailable-refresh handling below. The production phone OAuth allowlist remains empty.
+
 A person with Tokenroom on iPhone and Apple Watch, and no Mac, can already read every provider that has a key or a documented billing API: they paste the key in `KeysView`, `MobileStore.publish` writes a CloudKit `Source` of kind `iphone`, and the Watch shows that reading. They cannot sign in to Claude, Codex, Grok Build, Grok Bot, Cursor, Antigravity, or Devin. Those logins exist only inside another tool on a Mac. `SignInCoordinator` is AppKit. It opens Terminal or a Mac app. It does not speak OAuth, and the iPhone has no `ASWebAuthenticationSession`, device-code sheet, or PKCE flow.
 
 The plan is not to grow a second copy of those CLI logins on the phone. The CLI client ids, user-agents, and usage hosts are the vendor’s, they are unofficial, and Anthropic has said subscription OAuth is not for third-party apps. The iPhone becomes a complete collector for the providers it can already read honestly, and it tells the truth about the rest: no Sign In button that cannot finish. A `PhoneSessionStore` is the slot for a later session whose vendor documents a public client and a usage read, with no client secret and no identity stored. It uses the same accessibility and not-synchronizable flags as `APIKeyStore`, but the access group is the iPhone app’s own application identifier, not the widget-shared group and not an omitted attribute. Nothing in that slot is wired to a provider in this design. `PhoneConnect.productionAllowlist` starts empty.
@@ -337,9 +339,12 @@ sequenceDiagram
     alt invalid_grant
       Token-->>App: rejected
       App->>KC: markRejected, token bytes become the word rejected
-    else unavailable, no grant
-      Token-->>App: no rotation
+    else proven not dispatched
+      Token-->>App: no request sent
       App->>KC: setState ready, old token bytes unchanged
+    else unavailable or ambiguous answer
+      Token-->>App: rotation unknown
+      App-->>App: Keep exchanging; recover or reject before any next POST
     else grant
       Token-->>App: new tokens, kept in memory
       App->>KC: saveRecovery of the new grant only
@@ -361,7 +366,7 @@ On the next launch, before any POST:
 - `state == exchanging` and no recovery item: the process died after the server may have rotated and before the new refresh was stored. `markRejected`. Do not POST the old refresh. The row asks to sign in again instead of looping on a dead token.
 - `state == rejected`: `session(for:)` is nil. Do not POST.
 
-`invalid_grant` calls `markRejected` for that provider only: `kSecValueData` becomes the ASCII word `rejected`, `kSecAttrGeneric` keeps `addedAt` and sets `state` to `rejected`. The item is not deleted. It does not call `APIKeyStore.remove`, and it does not touch another provider’s session. An unreachable token host, with no grant in hand, sets `state` back to `ready` and leaves a still-usable access token in place, matching `OAuthRefresh.stillUsable`.
+`invalid_grant` calls `markRejected` for that provider only: `kSecValueData` becomes the ASCII word `rejected`, `kSecAttrGeneric` keeps `addedAt` and sets `state` to `rejected`. The item is not deleted. It does not call `APIKeyStore.remove`, and it does not touch another provider’s session. Only a sender-proven `notDispatched` failure sets `state` back to `ready`. An unreachable host or other ambiguous answer does not prove that the refresh token was not rotated: `state` stays `exchanging`, and the next pass recovers a durable grant or marks the session rejected without sending the old refresh token again. Usage reads require `ready` and an HTTPS endpoint without URL credentials.
 
 There is no token endpoint to call while `productionAllowlist` is empty. `PhoneSessionClient` is the only type allowed to POST, and its `fetch` returns `.signedOut("Couldn't start a session for this provider.")` for every provider not on the allowlist argument without building a request. That is what keeps `ClaudeClient` from being pointed at the store later by accident.
 

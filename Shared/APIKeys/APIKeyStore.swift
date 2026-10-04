@@ -24,10 +24,11 @@ struct APIKeyStore: Sendable {
     var accessGroup: String? = nil
     /// Tests use their own prefix so they never touch real keys.
     var servicePrefix = "app.tokenroom.key."
+    var keychain: KeychainOperations = .system
     #if os(macOS)
     /// Team-signed Mac builds keep keys in the data-protection keychain, tied to the team and
-    /// free of prompts. Ad-hoc builds can't, and use the login keychain; keys saved there move
-    /// over the first time a team build reads them.
+    /// free of prompts. Ad-hoc builds can't, and use the login keychain; keys saved there are
+    /// copied to protected storage the first time a team build reads them.
     var usesDataProtection = KeychainAvailability.dataProtection
     #endif
 
@@ -64,7 +65,7 @@ struct APIKeyStore: Sendable {
         var query = base
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
-        let (status, item) = KeychainGate.copyMatching(query)
+        let (status, item) = keychain.copy(query)
         guard status == errSecSuccess,
               let data = item as? Data,
               let key = String(data: data, encoding: .utf8), !key.isEmpty
@@ -76,7 +77,7 @@ struct APIKeyStore: Sendable {
         var query = base
         query[kSecReturnAttributes as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
-        let (status, item) = KeychainGate.copyMatching(query)
+        let (status, item) = keychain.copy(query)
         guard status == errSecSuccess,
               let attributes = item as? [String: Any],
               let data = attributes[kSecAttrGeneric as String] as? Data
@@ -99,7 +100,7 @@ struct APIKeyStore: Sendable {
         query[kSecReturnData as String] = true
         query[kSecReturnAttributes as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
-        let (status, item) = KeychainGate.copyMatching(query)
+        let (status, item) = keychain.copy(query)
         guard status == errSecSuccess,
               let attributes = item as? [String: Any],
               let data = attributes[kSecValueData as String] as? Data,
@@ -109,20 +110,13 @@ struct APIKeyStore: Sendable {
         return (key, metadata)
     }
 
-    /// Moves a login-keychain key into the data-protection keychain, keeping its metadata. A
-    /// delete with the login-keychain query can match the data-protection copy too (a key saved
-    /// and then deleted that way reads back as nothing), so the old item goes first and the new
-    /// one is added last; if it can't be, the old one comes back. A read racing this one ends
-    /// with an add too, so the key is never left in neither keychain.
+    /// Copies a legacy key into the data-protection keychain, keeping its metadata. The old
+    /// query can also match the protected item, so deleting it after the copy is unsafe; deleting
+    /// before it is durable can lose the only key if both the new add and restoration fail.
+    /// Keep the existing legacy copy until an explicit Remove clears both locations.
     private func migrate(_ provider: Provider, key: String, saved: Metadata?) {
         let metadata = Metadata(last4: String(key.suffix(4)), addedAt: saved?.addedAt ?? .now, region: saved?.region, warning: saved?.warning)
-        _ = KeychainGate.delete(legacyQuery(provider))
-        let status = (try? add(key, metadata: metadata, to: baseQuery(provider), for: provider)) ?? errSecParam
-        guard status == errSecSuccess || status == errSecDuplicateItem else {
-            // Back where it was; moved on a later read.
-            _ = try? add(key, metadata: metadata, to: legacyQuery(provider), for: provider)
-            return
-        }
+        _ = try? add(key, metadata: metadata, to: baseQuery(provider), for: provider)
     }
     #endif
 
@@ -134,15 +128,19 @@ struct APIKeyStore: Sendable {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw KeyError.empty }
         let metadata = Metadata(last4: String(trimmed.suffix(4)), addedAt: now, region: region, warning: warning)
-        #if os(macOS)
-        if usesDataProtection {
-            // A key replaced before it moved over would otherwise stay in the login keychain.
-            // Before the add: this query also matches the data-protection copy.
-            _ = KeychainGate.delete(legacyQuery(provider))
+        let query = baseQuery(provider)
+        let attributes: [String: Any] = [
+            kSecValueData as String: Data(trimmed.utf8),
+            kSecAttrGeneric as String: try JSONEncoder().encode(metadata),
+            kSecAttrLabel as String: "Tokenroom · \(provider.displayName) key",
+        ]
+        // Replace atomically in place: a failed save must leave the last working key and its
+        // metadata intact. Add only when absent, and handle a concurrent first add with update.
+        var status = keychain.update(query, attributes)
+        if status == errSecItemNotFound {
+            status = try add(trimmed, metadata: metadata, to: query, for: provider)
+            if status == errSecDuplicateItem { status = keychain.update(query, attributes) }
         }
-        #endif
-        _ = KeychainGate.delete(baseQuery(provider))
-        let status = try add(trimmed, metadata: metadata, to: baseQuery(provider), for: provider)
         guard status == errSecSuccess else { throw KeyError.keychain(status) }
     }
 
@@ -155,17 +153,19 @@ struct APIKeyStore: Sendable {
         // Readable by widgets and background refresh once the phone has been unlocked; stays on this device.
         attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         #endif
-        return KeychainGate.add(attributes)
+        return keychain.add(attributes)
     }
 
     func remove(for provider: Provider) throws {
-        let status = KeychainGate.delete(baseQuery(provider))
+        var statuses = [keychain.delete(baseQuery(provider))]
         #if os(macOS)
         if usesDataProtection {
-            _ = KeychainGate.delete(legacyQuery(provider))
+            statuses.append(keychain.delete(legacyQuery(provider)))
         }
         #endif
-        guard status == errSecSuccess || status == errSecItemNotFound else { throw KeyError.keychain(status) }
+        if let failed = statuses.first(where: { $0 != errSecSuccess && $0 != errSecItemNotFound }) {
+            throw KeyError.keychain(failed)
+        }
     }
 
     private func baseQuery(_ provider: Provider) -> [String: Any] {

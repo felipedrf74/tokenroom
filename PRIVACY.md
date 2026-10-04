@@ -32,7 +32,7 @@ If you turn on the Claude Code status-line bridge, Tokenroom also reads `~/.clau
 
 For pay-as-you-go and organization providers (OpenRouter, DeepSeek, Moonshot, Vercel AI Gateway, OpenAI, Anthropic, and xAI organization billing), optionally for coding plans, and for GitHub Copilot through GitHub's billing API, you paste an API key or token in Settings. Tokenroom:
 
-- keeps it in this device’s Keychain only, never synced to iCloud or sent to your other devices. Signed Mac builds use the data-protection keychain and move keys saved by an earlier build there.
+- keeps it in this device’s Keychain only, never synced to iCloud or sent to your other devices. Signed Mac builds use the data-protection keychain and copy keys saved by an earlier build there. The existing legacy copy stays until you remove the key; Tokenroom reports an error if either location could not be cleared. A failed replacement keeps your previous key.
 - shows only its last four characters
 - uses it only to read usage, balance, or cost (`openrouter.ai`, `api.deepseek.com`, `api.moonshot.ai` or `.cn`, `ai-gateway.vercel.sh`, `api.openai.com`, `api.anthropic.com`, `management-api.x.ai`, `api.github.com`, and the coding-plan hosts above)
 

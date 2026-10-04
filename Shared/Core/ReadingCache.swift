@@ -15,6 +15,8 @@ struct ReadingCache: Codable, Equatable, Sendable {
         /// Which device the reading came from, as the iPhone that saved this saw it. Nil in a
         /// cache saved before readings kept it: `CollectorKind(legacyLabel:)` stands in.
         var origin: CollectorKind? = nil
+        /// Anonymous collector record ID, distinct from any provider or Apple Account identity.
+        var sourceID: String? = nil
 
         var id: String { provider.id }
 
@@ -29,6 +31,113 @@ struct ReadingCache: Codable, Equatable, Sendable {
     var isSample: Bool
     /// Most urgent first.
     var items: [Item]
+    /// A device-local random cache generation, never an account identifier or relay field.
+    /// iPhone widgets use it to reject caches written before an Apple Account change.
+    var accountGeneration: String? = nil
+    /// Complete cloud membership, captured only after the whole read succeeds.
+    var relaySnapshot: RelaySnapshot? = nil
+    /// The paired phone's own authoritative membership, including an empty provider list.
+    /// Unlike merged rows, this retains a phone reading even when a Mac wins that row.
+    var localSource: SourceSnapshot? = nil
+
+    struct SourceSnapshot: Codable, Equatable, Sendable {
+        var id: String
+        var label: String
+        var kind: CollectorKind?
+        var envelope: RelayEnvelope
+        /// Only the phone-local snapshot carries its device-local cache generation.
+        var accountGeneration: String? = nil
+
+        init(_ source: RelayMerge.Source) {
+            id = source.id
+            label = source.label
+            kind = source.kind
+            envelope = source.envelope
+        }
+
+        var source: RelayMerge.Source {
+            .init(id: id, label: label, envelope: envelope, kind: kind)
+        }
+    }
+
+    struct RelaySnapshot: Codable, Equatable, Sendable {
+        var checkedAt: Date
+        var sources: [SourceSnapshot]
+    }
+
+    /// Nil leaves the established legacy-cache policy in place when exact provenance is absent.
+    func reconcilingSourceUpdate(_ incoming: ReadingCache) -> ReadingCache? {
+        // A legacy handover cannot claim exact source membership from its displayed rows.
+        guard relaySnapshot != nil || localSource != nil,
+              incoming.relaySnapshot != nil || incoming.localSource != nil else { return nil }
+
+        var local: SourceSnapshot?
+        switch (localSource, incoming.localSource) {
+        case (nil, var candidate):
+            let generation = candidate?.accountGeneration ?? incoming.accountGeneration
+            candidate?.accountGeneration = generation
+            local = candidate
+        case (var retained, nil):
+            let generation = retained?.accountGeneration ?? accountGeneration
+            retained?.accountGeneration = generation
+            local = retained
+        case (let retained?, let candidate?):
+            let retainedGeneration = retained.accountGeneration ?? accountGeneration
+            let candidateGeneration = candidate.accountGeneration ?? incoming.accountGeneration
+            if retained.id != candidate.id || retainedGeneration != candidateGeneration {
+                // Exact local provenance belongs to one paired phone and one validated cache
+                // generation. A new scope must not inherit the previous scope's cloud sources.
+                return incoming.savedAt >= savedAt ? incoming : self
+            }
+            local = candidate.envelope.checkedAt > retained.envelope.checkedAt ? candidate : retained
+            local?.accountGeneration = candidateGeneration
+        }
+
+        let relay: RelaySnapshot?
+        switch (relaySnapshot, incoming.relaySnapshot) {
+        case (nil, let candidate): relay = candidate
+        case (let retained, nil): relay = retained
+        case (let retained?, let candidate?):
+            relay = candidate.checkedAt > retained.checkedAt ? candidate : retained
+        }
+        guard let relay, var local, local.envelope.isReadable else { return nil }
+
+        var sources = Dictionary(relay.sources.filter { $0.envelope.isReadable }.map { ($0.id, $0) },
+                                 uniquingKeysWith: { first, second in
+            second.envelope.checkedAt > first.envelope.checkedAt ? second : first
+        })
+        if let published = sources[local.id], published.envelope.checkedAt > local.envelope.checkedAt {
+            // A newer published snapshot can remove a provider too. Keep the paired source's
+            // local scope and wording, but use the source's actual published membership.
+            local.envelope = published.envelope
+        }
+        sources[local.id] = local
+
+        // Histories are already stored with displayed items. Carry only ones belonging to the
+        // exact winning collector; raw snapshots need no duplicate week of hourly samples.
+        var histories: [String: RelayHistory] = [:]
+        var historyChecks: [String: Date] = [:]
+        for cache in [self, incoming] {
+            for item in cache.items {
+                guard let sourceID = item.sourceID, sources[sourceID] != nil, !item.history.isEmpty else { continue }
+                let key = RelayHistory.key(provider: sourceID, window: item.id)
+                let checked = item.provider.checkedAt ?? item.provider.fetchedAt ?? cache.savedAt
+                guard historyChecks[key].map({ checked >= $0 }) != false else { continue }
+                historyChecks[key] = checked
+                for (window, week) in item.history {
+                    histories[sourceID, default: RelayHistory(series: [:])].series[RelayHistory.key(provider: item.id, window: window)] = week
+                }
+            }
+        }
+
+        var result = incoming.savedAt >= savedAt ? incoming : self
+        result.savedAt = max(result.savedAt, relay.checkedAt)
+        result.relaySnapshot = relay
+        result.localSource = local
+        result.items = ReadingAssembler.assemble(sources: sources.values.sorted { $0.id < $1.id }.map(\.source),
+                                               histories: histories, now: result.savedAt).connected
+        return result
+    }
 
     /// The oldest last-success time, so one fresh provider never dates older readings as current.
     var checkedAt: Date? {

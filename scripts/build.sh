@@ -24,6 +24,10 @@ xcconfig_value() {
 
 install_app() {
   local app="$1"
+  if [[ "${TOKENROOM_SKIP_INSTALL:-0}" == "1" ]]; then
+    echo "Built $app (installation skipped)"
+    return
+  fi
   local user_dest="$HOME/Applications/$APP_NAME.app"
   local system_dest="/Applications/$APP_NAME.app"
 

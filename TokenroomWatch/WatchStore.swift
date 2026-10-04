@@ -18,6 +18,7 @@ final class WatchStore {
     /// How long a refresh waits for iCloud before it counts as unreachable, so one that never
     /// answers can't hold off every later refresh.
     static let readBudget: TimeInterval = 10
+    static let phoneBudget: TimeInterval = 16
 
     enum Problem: Equatable {
         case noAccount
@@ -25,7 +26,7 @@ final class WatchStore {
     }
 
     private(set) var cache: ReadingCache?
-    private(set) var isRefreshing = false
+    var isRefreshing: Bool { refreshGate.isRefreshing }
     /// Why there's nothing to show, when there isn't.
     private(set) var problem: Problem?
     /// Opened from a complication or the Smart Stack: the provider to show.
@@ -39,7 +40,7 @@ final class WatchStore {
     var canOpenConnectOnPhone: Bool {
         phoneOffersConnect && phoneReachable
     }
-    private var lastRefresh: Date?
+    private var refreshGate = WatchRefreshGate()
     private var accountGate = WatchAccountGate(signedOutAt: AppGroup.defaults.object(forKey: "watchSignedOutAt") as? Date)
     private var pendingPhone: ReadingCache?
     private var accountRevision = 0
@@ -92,18 +93,36 @@ final class WatchStore {
         guard WatchCacheAccess.mayReplace(cache, showsSample: showsSample) else { return }
         _ = synchronizeAccountCutoff()
         adoptValidatedDiskCache()
-        guard !isRefreshing else { return }
-        if !force, let lastRefresh, now.timeIntervalSince(lastRefresh) < 60 { return }
-        isRefreshing = true
-        defer { isRefreshing = false }
-        let previousRefresh = lastRefresh
-        lastRefresh = now
+        let previousRefresh = refreshGate.lastRefresh
+        guard refreshGate.begin(force: force, now: now) else { return }
+        defer {
+            if refreshGate.finish() {
+                Task { await refresh(force: true) }
+            }
+        }
         let revision = accountRevision
         let cutoff = AppGroup.defaults.object(forKey: WatchCacheAccess.cutoffKey) as? Date
+        // A Watch refresh asks its reachable iPhone to collect too. The cloud read runs beside
+        // it and continues to work when the phone is away. Neither source can hold this pass.
+        let link = self.link
+        async let phone = TimeLimit.run(Self.phoneBudget, otherwise: Optional<ReadingCache>.none) {
+            await link.refreshReadings()
+        }
         let outcome = await TimeLimit.run(Self.readBudget, otherwise: .failed) { await RelayReadings.read(now: now) }
+        if case .noAccount = outcome,
+           revision == accountRevision,
+           (AppGroup.defaults.object(forKey: WatchCacheAccess.cutoffKey) as? Date) == cutoff {
+            // Confirmed sign-out closes the cache gate now. An unrelated phone request may
+            // still be waiting for its reply and must not delay hiding the old account.
+            clearSignedOutAccount(at: now)
+            return
+        }
+        let phoneCache = await phone
         guard revision == accountRevision,
               (AppGroup.defaults.object(forKey: WatchCacheAccess.cutoffKey) as? Date) == cutoff else {
-            Task { await refresh(force: true) }
+            // Coalesce with the account change's request; scheduling another task here could
+            // start a second follow-up while the first is already running.
+            _ = refreshGate.begin(force: true, now: .now)
             return
         }
         switch outcome {
@@ -112,20 +131,15 @@ final class WatchStore {
             accountGate.confirmAvailable()
             problem = nil
             apply(fresh)
+            if let phoneCache { receivePhone(phoneCache) }
             if let pendingPhone, accountGate.accepts(pendingPhone) { apply(pendingPhone) }
             pendingPhone = nil
         case .noAccount:
-            accountGate.signOut(at: now)
-            WatchCacheAccess.invalidate(in: AppGroup.defaults, at: now)
-            pendingPhone = nil
-            problem = .noAccount
-            cache = ReadingCache(savedAt: now, isSample: false, items: [])
-            if let cacheURL, let cache { try? cache.save(to: cacheURL) }
-            WidgetCenter.shared.reloadAllTimelines()
-            WidgetCenter.shared.invalidateRelevance(ofKind: Self.resetSoonKind)
+            clearSignedOutAccount(at: now)
         case .failed:
             adoptValidatedDiskCache()
             problem = .unreachable
+            if let phoneCache { receivePhone(phoneCache) }
         case .unavailable:
             // A build without iCloud (no team): sample readings, clearly marked.
             if cache == nil {
@@ -136,6 +150,17 @@ final class WatchStore {
         if let previousRefresh, cache?.resetDates(after: previousRefresh, through: now).isEmpty == false {
             WidgetCenter.shared.reloadTimelines(ofKind: Self.resetSoonKind)
         }
+    }
+
+    private func clearSignedOutAccount(at date: Date) {
+        accountGate.signOut(at: date)
+        WatchCacheAccess.invalidate(in: AppGroup.defaults, at: date)
+        pendingPhone = nil
+        problem = .noAccount
+        cache = ReadingCache(savedAt: date, isSample: false, items: [])
+        if let cacheURL, let cache { try? cache.save(to: cacheURL) }
+        WidgetCenter.shared.reloadAllTimelines()
+        WidgetCenter.shared.invalidateRelevance(ofKind: Self.resetSoonKind)
     }
 
     private func adoptValidatedDiskCache() {
@@ -169,7 +194,7 @@ final class WatchStore {
     }
 
     private func receivePhone(_ fresh: ReadingCache) {
-        guard fresh.v <= ReadingCache.version, WatchCacheAccess.mayReplace(cache, showsSample: showsSample) else { return }
+        guard !fresh.isSample, fresh.v <= ReadingCache.version, WatchCacheAccess.mayReplace(cache, showsSample: showsSample) else { return }
         if synchronizeAccountCutoff() { Task { await refresh(force: true) } }
         if accountGate.accepts(fresh) { apply(fresh) }
         else if accountGate.signedOutAt.map({ fresh.savedAt > $0 }) != false {
@@ -199,8 +224,15 @@ final class WatchStore {
         WidgetCenter.shared.reloadAllTimelines()
         WidgetCenter.shared.invalidateRelevance(ofKind: Self.resetSoonKind)
         pendingPhone = nil
-        lastRefresh = nil
+        refreshGate.accountChanged()
         Task { await refresh(force: true) }
+    }
+
+    /// Finish the WatchConnectivity background delivery after its latest whole context has
+    /// reached the store, then keep normal cloud refreshes scheduled.
+    func receiveBackgroundHandoff() async {
+        await link.receiveApplicationContext()
+        scheduleBackgroundRefresh()
     }
 
     /// Asks the iPhone to open its connect screen. Only a request: the Watch never collects a
@@ -220,7 +252,7 @@ final class WatchStore {
     }
 }
 
-/// Readings the iPhone hands over while it's near, and the one request the Watch sends back.
+/// Readings the iPhone hands over while it's near, and requests the Watch sends back.
 final class PhoneLink: NSObject, WCSessionDelegate, @unchecked Sendable {
     static let openKey = WatchHandoff.openKey
     static let openConnect = WatchHandoff.openConnect
@@ -260,26 +292,37 @@ final class PhoneLink: NSObject, WCSessionDelegate, @unchecked Sendable {
         })
     }
 
+    func refreshReadings() async -> ReadingCache? {
+        let session = WCSession.default
+        guard session.activationState == .activated, session.isReachable else { return nil }
+        return await withCheckedContinuation { continuation in
+            session.sendMessage(WatchHandoff.refreshReadingsMessage, replyHandler: { context in
+                continuation.resume(returning: WatchHandoff.payload(in: context)?.cache)
+            }, errorHandler: { _ in
+                continuation.resume(returning: nil)
+            })
+        }
+    }
+
+    func receiveApplicationContext() async {
+        guard let payload = WatchHandoff.payload(in: WCSession.default.receivedApplicationContext) else { return }
+        await MainActor.run {
+            onConnectAvailable?(payload.connectAvailable)
+            onCache?(payload.cache)
+        }
+    }
+
     func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
         deliver(applicationContext)
     }
 
     private func deliver(_ context: [String: Any]) {
-        guard let data = context[PhoneLink.readingsKey] as? Data else { return }
-        let cache: ReadingCache
-        do {
-            cache = try RelayEnvelope.decoder.decode(ReadingCache.self, from: data)
-        } catch {
-            Self.logger.error("readings from iPhone unreadable: \(String(describing: error), privacy: .public)")
-            return
-        }
+        guard let payload = WatchHandoff.payload(in: context) else { return }
         // Absent from an iPhone with the connect screen off: false.
-        let offersConnect = WatchHandoff.connectAvailable(in: context)
-        if let connectHandler = onConnectAvailable {
-            Task { @MainActor in connectHandler(offersConnect) }
+        Task { @MainActor in
+            onConnectAvailable?(payload.connectAvailable)
+            onCache?(payload.cache)
         }
-        guard let handler = onCache else { return }
-        Task { @MainActor in handler(cache) }
     }
 
     private static let logger = Logger(subsystem: "app.tokenroom.watch", category: "phone-link")

@@ -60,6 +60,51 @@ final class LoginSessionTests: XCTestCase {
         )
     }
 
+    func testAmbiguousRefreshResponsesDoNotTryTheLegacyEndpoint() async {
+        for status in [200, 400, 401, 403, 429, 500, 503] {
+            StubURLProtocol.reset()
+            stub { request in
+                request.url?.host == "current.example.invalid"
+                    ? (status, Data("{}".utf8))
+                    : (200, Data(#"{"access_token":"access-new","refresh_token":"refresh-new"}"#.utf8))
+            }
+            let outcome = await OAuthRefresh.post(
+                urls: [URL(string: "https://current.example.invalid/token")!, URL(string: "https://legacy.example.invalid/token")!],
+                body: Data("refresh_token=refresh-old".utf8), contentType: "application/x-www-form-urlencoded", headers: [:]
+            )
+            guard case .unavailable = outcome else { return XCTFail("\(status) must not be retried with the old refresh token") }
+            XCTAssertEqual(grantRequests().count, 1, "\(status) does not establish that rotation did not occur")
+        }
+    }
+
+    func testARefreshTimeoutDoesNotTryTheLegacyEndpoint() async {
+        stub { _ in (200, Data(#"{"access_token":"access-new"}"#.utf8)) }
+        StubURLProtocol.failure = URLError(.timedOut)
+        let outcome = await OAuthRefresh.post(
+            urls: [URL(string: "https://current.example.invalid/token")!, URL(string: "https://legacy.example.invalid/token")!],
+            body: Data("refresh_token=refresh-old".utf8), contentType: "application/x-www-form-urlencoded", headers: [:]
+        )
+        guard case .unavailable = outcome else { return XCTFail("A lost response must not send the old token to another endpoint") }
+        XCTAssertEqual(grantRequests().count, 1)
+    }
+
+    func testAnExplicitlyRemovedRefreshRouteCanTryTheLegacyEndpoint() async {
+        for status in [404, 405, 410] {
+            StubURLProtocol.reset()
+            stub { request in
+                request.url?.host == "current.example.invalid"
+                    ? (status, Data())
+                    : (200, Data(#"{"access_token":"access-new","refresh_token":"refresh-new"}"#.utf8))
+            }
+            let outcome = await OAuthRefresh.post(
+                urls: [URL(string: "https://current.example.invalid/token")!, URL(string: "https://legacy.example.invalid/token")!],
+                body: Data("refresh_token=refresh-old".utf8), contentType: "application/x-www-form-urlencoded", headers: [:]
+            )
+            guard case .grant = outcome else { return XCTFail("\(status) rejects the route before a grant") }
+            XCTAssertEqual(grantRequests().count, 2)
+        }
+    }
+
     func testARefreshableGrokLoginCountsUntilTheGrantIsRejected() {
         let auth = CredentialReaders.GrokAuth(
             accessToken: "access-old",
@@ -252,7 +297,7 @@ final class LoginSessionTests: XCTestCase {
         let box = AuthBox(claudeJSON)
         stub { request in
             request.url?.host == "platform.claude.com"
-                ? (500, Data())
+                ? (404, Data())
                 : (200, Data(#"{"access_token":"access-new","refresh_token":"refresh-new","expires_in":28800}"#.utf8))
         }
         let session = LoginSession()
@@ -357,7 +402,7 @@ final class LoginSessionTests: XCTestCase {
         let fresh = Self.jwt(expiringAt: now.addingTimeInterval(86_400))
         stub { request in
             request.url?.host == "auth.openai.com"
-                ? (500, Data())
+                ? (404, Data())
                 : (200, Data("""
                 {"access_token":"\(fresh)","refresh_token":"refresh-new","id_token":"id-new","expires_in":86400}
                 """.utf8))
