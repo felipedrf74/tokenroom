@@ -116,6 +116,21 @@ actor CloudRelay {
             case .zoneNotFound: .emptyZone
             default: .fail
             }
+        }, retry: { ids in
+            var retried: [CKRecord.ID: Result<CKRecord?, any Error>] = [:]
+            for start in stride(from: 0, to: ids.count, by: Self.batchLimit) {
+                try Task.checkCancellation()
+                let batch = Array(ids[start..<min(start + Self.batchLimit, ids.count)])
+                let results = try await database.records(for: batch)
+                for (id, result) in results {
+                    if case .failure(let error) = result, (error as? CKError)?.code == .unknownItem {
+                        retried[id] = .success(nil)
+                    } else {
+                        retried[id] = result.map { Optional($0) }
+                    }
+                }
+            }
+            return retried
         })
         zoneReader = reader
         accountObserver = RelayAccountObserver(name: .CKAccountChanged) {

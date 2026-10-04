@@ -228,12 +228,18 @@ struct PopoverView: View {
         )
     }
 
+    var checkedHeaderText: String {
+        if store.isRefreshing { return "Checking…" }
+        let oldestCheck = store.popoverProviders.compactMap { store.lastChecked($0) }.min()
+        return "Checked \(RelativeTime.ago(oldestCheck, now: store.presentationNow))"
+    }
+
     private var header: some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 1) {
                 Text("Tokenroom")
                     .font(.system(size: 15, weight: .semibold))
-                Text(store.isRefreshing ? "Checking…" : "Checked \(RelativeTime.ago(store.lastAttempt, now: store.presentationNow))")
+                Text(checkedHeaderText)
                     .font(.system(size: TokenroomTokens.captionSize))
                     .foregroundStyle(.secondary)
             }

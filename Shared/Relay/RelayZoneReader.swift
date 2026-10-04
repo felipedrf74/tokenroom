@@ -1,8 +1,8 @@
 import Foundation
 import Synchronization
 
-/// An in-memory zone snapshot. Each successful read applies only changes since the last one;
-/// failed pages never advance the token or replace a complete snapshot with a partial one.
+/// An in-memory zone snapshot. Failed operations roll back the entire read. Individual record
+/// failures can be quarantined so they do not repeatedly hide successful siblings.
 actor RelayZoneReader<ID: Hashable & Sendable, Record: Sendable, Token: Sendable> {
     struct Page: Sendable {
         var modifications: [ID: Result<Record, any Error>]
@@ -19,16 +19,22 @@ actor RelayZoneReader<ID: Hashable & Sendable, Record: Sendable, Token: Sendable
 
     private let fetch: @Sendable (Token?) async throws -> Page
     private let recovery: @Sendable (any Error) -> Recovery
+    /// A successful nil result means the record was deleted; a per-ID failure keeps it absent.
+    /// An operation-level throw, unlike a per-ID failure, rolls back the staged zone read.
+    private let retry: (@Sendable ([ID]) async throws -> [ID: Result<Record?, any Error>])?
     private var records: [ID: Record] = [:]
+    private var quarantined: Set<ID> = []
     private var token: Token?
     private var generation = UUID()
     private var scope: UUID?
     private var running: Task<[ID: Record], any Error>?
 
     init(fetch: @escaping @Sendable (Token?) async throws -> Page,
-         recovery: @escaping @Sendable (any Error) -> Recovery) {
+         recovery: @escaping @Sendable (any Error) -> Recovery,
+         retry: (@Sendable ([ID]) async throws -> [ID: Result<Record?, any Error>])? = nil) {
         self.fetch = fetch
         self.recovery = recovery
+        self.retry = retry
     }
 
     func contents(scope: UUID? = nil) async throws -> [ID: Record] {
@@ -68,6 +74,7 @@ actor RelayZoneReader<ID: Hashable & Sendable, Record: Sendable, Token: Sendable
         generation = UUID()
         scope = nil
         records = [:]
+        quarantined = []
         token = nil
         running?.cancel()
         running = nil
@@ -76,8 +83,13 @@ actor RelayZoneReader<ID: Hashable & Sendable, Record: Sendable, Token: Sendable
     private func read() async throws -> [ID: Record] {
         let started = generation
         var staged = records
+        var stagedQuarantine = quarantined
+        // Newly failed IDs wait until a later read; retries are not a same-pass retry loop.
+        let retryIDs = quarantined
         var cursor = token
         var restarted = false
+        var madeProgress = false
+        var newRecordFailure: (any Error)?
         while true {
             try Task.checkCancellation()
             guard generation == started else { throw CancellationError() }
@@ -89,11 +101,15 @@ actor RelayZoneReader<ID: Hashable & Sendable, Record: Sendable, Token: Sendable
                 switch recovery(error) {
                 case .retryFromStart where !restarted && cursor != nil:
                     staged = [:]
+                    stagedQuarantine = []
                     cursor = nil
                     restarted = true
+                    madeProgress = false
+                    newRecordFailure = nil
                     continue
                 case .emptyZone:
                     records = [:]
+                    quarantined = []
                     token = nil
                     return [:]
                 default:
@@ -102,11 +118,42 @@ actor RelayZoneReader<ID: Hashable & Sendable, Record: Sendable, Token: Sendable
             }
             try Task.checkCancellation()
             guard generation == started else { throw CancellationError() }
-            for (id, result) in page.modifications { staged[id] = try result.get() }
-            for id in page.deletions { staged[id] = nil }
+            for (id, result) in page.modifications {
+                switch result {
+                case .success(let record):
+                    staged[id] = record
+                    stagedQuarantine.remove(id)
+                    madeProgress = true
+                case .failure(let error):
+                    if !quarantined.contains(id), newRecordFailure == nil { newRecordFailure = error }
+                    staged[id] = nil
+                    stagedQuarantine.insert(id)
+                }
+            }
+            for id in page.deletions {
+                staged[id] = nil
+                stagedQuarantine.remove(id)
+                madeProgress = true
+            }
             cursor = page.token
             if !page.moreComing {
+                let pending = retryIDs.intersection(stagedQuarantine)
+                if let retry, !pending.isEmpty {
+                    let results = try await retry(Array(pending))
+                    try Task.checkCancellation()
+                    guard generation == started else { throw CancellationError() }
+                    for id in pending {
+                        guard case .success(let record) = results[id] else { continue }
+                        staged[id] = record
+                        stagedQuarantine.remove(id)
+                        madeProgress = true
+                    }
+                }
+                // A successful established retry also makes progress, even when the new page
+                // holds only another failed ID. A lone new failure still rolls back as before.
+                if !madeProgress, let newRecordFailure { throw newRecordFailure }
                 records = staged
+                quarantined = stagedQuarantine
                 token = cursor
                 return records
             }

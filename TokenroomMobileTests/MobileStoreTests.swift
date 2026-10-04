@@ -1,4 +1,5 @@
 import SwiftUI
+import Security
 import Synchronization
 import UserNotifications
 import XCTest
@@ -408,5 +409,175 @@ final class MobileStoreTests: XCTestCase {
         XCTAssertTrue(completed.pending.isEmpty)
         XCTAssertEqual(completed.sent[first.id], now)
         XCTAssertEqual(completed.sent[second.id], now.addingTimeInterval(60))
+    }
+
+    @MainActor
+    private final class AccountChangingStore {
+        weak var store: MobileStore?
+    }
+
+    private func mockNotificationKeys() -> APIKeyStore {
+        APIKeyStore(servicePrefix: "app.tokenroom.tests." + UUID().uuidString, keychain: .init(
+            copy: { _ in (errSecItemNotFound, nil) },
+            add: { _ in errSecInteractionNotAllowed },
+            update: { _, _ in errSecInteractionNotAllowed },
+            delete: { _ in errSecItemNotFound }
+        ))
+    }
+
+    @MainActor
+    func testAcceptedScheduleIsNotReplayedWhenTheAccountChangesDuringTheAwait() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let alert = UsageAlert(id: "accepted-before-account-change", provider: "openrouter", kind: .threshold,
+            level: 80, title: "Usage", body: "Limit", resetsAt: nil, isUrgent: false)
+        var ledger = AlertLedger()
+        ledger.pending = [.init(alert: alert, raisedAt: now)]
+        ledger.save(to: folder)
+        let changing = AccountChangingStore()
+        let calls = Mutex(0)
+        let store = MobileStore(defaults: defaults, containerIdentifier: nil,
+            keys: mockNotificationKeys(), directory: folder,
+            notificationScheduler: { _ in
+                let count = calls.withLock { calls in calls += 1; return calls }
+                await Task.yield()
+                if count == 1 { changing.store?.accountChanged() }
+                // iOS accepted the request even though the account changed while awaiting it.
+            })
+        changing.store = store
+        let accepted = await store.deliverAlerts([alert], now: now)
+        XCTAssertEqual(accepted, [alert.id])
+        let saved = AlertLedger.load(from: folder)
+        XCTAssertEqual(saved.sent[alert.id], now)
+        XCTAssertTrue(saved.pending.isEmpty)
+        let shown = defaults.data(forKey: MobileStore.Keys.unclaimedAlerts)
+        XCTAssertNotNil(shown, "The physically scheduled alert remains claimable in the new account")
+        if let shown {
+            XCTAssertEqual((try JSONSerialization.jsonObject(with: shown) as? [Any])?.count, 1)
+        }
+        let generation = try XCTUnwrap(PhoneCacheAccess.generation(in: defaults))
+        XCTAssertEqual(PhoneCacheAccess.load(at: folder.appendingPathComponent(ReadingCache.fileName), defaults: defaults)?.accountGeneration,
+                       generation, "Acknowledgement must not restore the previous account's cache marker")
+
+        let nextPass = await store.deliverAlerts([alert], now: now.addingTimeInterval(60))
+        XCTAssertTrue(nextPass.isEmpty)
+        let relaunched = MobileStore(defaults: defaults, containerIdentifier: nil,
+            keys: mockNotificationKeys(), directory: folder,
+            notificationScheduler: { _ in calls.withLock { $0 += 1 } })
+        let replay = await relaunched.deliverAlerts([alert], now: now.addingTimeInterval(120))
+        XCTAssertTrue(replay.isEmpty)
+        XCTAssertEqual(calls.withLock { $0 }, 1, "One accepted physical schedule remains one schedule across retries and relaunch")
+    }
+
+    @MainActor
+    func testAccountChangeAfterAcceptedOwnClaimKeepsSecondAlertPending() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        func alert(_ id: String) -> UsageAlert {
+            .init(id: id, provider: "openrouter", kind: .threshold, level: 80,
+                  title: "Usage", body: "Limit", resetsAt: nil, isUrgent: false)
+        }
+        let first = alert("own-claim-accepted")
+        let second = alert("own-claim-not-scheduled")
+        var ledger = AlertLedger()
+        ledger.pending = [first, second].map { .init(alert: $0, raisedAt: now) }
+        ledger.save(to: folder)
+        let changing = AccountChangingStore()
+        let calls = Mutex<[String]>([])
+        let store = MobileStore(defaults: defaults, containerIdentifier: nil,
+            keys: mockNotificationKeys(), directory: folder,
+            notificationScheduler: { request in
+                let count = calls.withLock { calls in calls.append(request.identifier); return calls.count }
+                if count == 1 { changing.store?.accountChanged() }
+            }, claimAlert: { _, _ in .ours })
+        changing.store = store
+        let accepted = await store.deliverAlerts([first, second], now: now)
+        XCTAssertEqual(accepted, [first.id])
+        XCTAssertEqual(calls.withLock { $0 }, [first.id], "No second schedule can start under a superseded account")
+        let interrupted = AlertLedger.load(from: folder)
+        XCTAssertEqual(interrupted.sent[first.id], now)
+        XCTAssertNil(interrupted.sent[second.id])
+        XCTAssertEqual(interrupted.pending.map(\.alert.id), [second.id])
+        XCTAssertNotNil(defaults.data(forKey: MobileStore.Keys.unclaimedAlerts),
+                        "The old account's claim cannot stand for a notification accepted after the switch")
+
+        let retried = await store.deliverAlerts([first, second], now: now.addingTimeInterval(60))
+        XCTAssertEqual(retried, [second.id])
+        XCTAssertEqual(calls.withLock { $0 }, [first.id, second.id])
+        XCTAssertTrue(AlertLedger.load(from: folder).pending.isEmpty)
+    }
+
+    @MainActor
+    func testAccountChangeDuringClaimAwaitAcknowledgesTakenAndSchedulesOwnClaim() async throws {
+        for result in [MobileStore.Claim.taken, .ours] {
+            let defaults = makeDefaults()
+            let folder = try makeFolder()
+            let first = UsageAlert(id: "claim-in-flight", provider: "openrouter", kind: .threshold,
+                level: 80, title: "Usage", body: "Limit", resetsAt: nil, isUrgent: false)
+            let second = UsageAlert(id: "claim-not-started", provider: "openrouter", kind: .threshold,
+                level: 80, title: "Usage", body: "Limit", resetsAt: nil, isUrgent: false)
+            var ledger = AlertLedger()
+            ledger.pending = [first, second].map { .init(alert: $0, raisedAt: now) }
+            ledger.save(to: folder)
+            let changing = AccountChangingStore()
+            let calls = Mutex(0)
+            let store = MobileStore(defaults: defaults, containerIdentifier: nil,
+                keys: mockNotificationKeys(), directory: folder,
+                notificationScheduler: { _ in calls.withLock { $0 += 1 } }, claimAlert: { _, _ in
+                    await Task.yield()
+                    changing.store?.accountChanged()
+                    return result
+                })
+            changing.store = store
+            let accepted = await store.deliverAlerts([first, second], now: now)
+            XCTAssertEqual(accepted, [first.id], "Finish the current device-local alert and stop later alerts")
+            let saved = AlertLedger.load(from: folder)
+            XCTAssertEqual(saved.sent[first.id], now)
+            XCTAssertNil(saved.sent[second.id])
+            XCTAssertEqual(saved.pending.map(\.alert.id), [second.id])
+            switch result {
+            case .taken:
+                XCTAssertEqual(calls.withLock { $0 }, 0, "A confirmed prior delivery must never be scheduled locally")
+                XCTAssertNil(defaults.data(forKey: MobileStore.Keys.unclaimedAlerts))
+            case .ours:
+                XCTAssertEqual(calls.withLock { $0 }, 1, "An own claim needs accepted physical scheduling before acknowledgement")
+                XCTAssertNotNil(defaults.data(forKey: MobileStore.Keys.unclaimedAlerts),
+                                "The old account's claim cannot stand for the new account's local notification")
+            case .unasked:
+                XCTFail("This control uses only confirmed claim outcomes")
+            }
+        }
+    }
+
+    @MainActor
+    func testFailedScheduleAcrossAccountChangeStaysPendingAndRetryable() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let alert = UsageAlert(id: "rejected-after-account-change", provider: "openrouter", kind: .threshold,
+            level: 80, title: "Usage", body: "Limit", resetsAt: nil, isUrgent: false)
+        var ledger = AlertLedger()
+        ledger.pending = [.init(alert: alert, raisedAt: now)]
+        ledger.save(to: folder)
+        let changing = AccountChangingStore()
+        let calls = Mutex(0)
+        let store = MobileStore(defaults: defaults, containerIdentifier: nil,
+            keys: mockNotificationKeys(), directory: folder,
+            notificationScheduler: { _ in
+                let count = calls.withLock { calls in calls += 1; return calls }
+                if count == 1 {
+                    changing.store?.accountChanged()
+                    throw NSError(domain: "mock.notification", code: 1)
+                }
+            })
+        changing.store = store
+        let failed = await store.deliverAlerts([alert], now: now)
+        XCTAssertTrue(failed.isEmpty)
+        let saved = AlertLedger.load(from: folder)
+        XCTAssertNil(saved.sent[alert.id])
+        XCTAssertEqual(saved.pending.map(\.alert.id), [alert.id])
+        XCTAssertNil(defaults.data(forKey: MobileStore.Keys.unclaimedAlerts))
+        let retried = await store.deliverAlerts([alert], now: now.addingTimeInterval(60))
+        XCTAssertEqual(retried, [alert.id])
+        XCTAssertEqual(calls.withLock { $0 }, 2)
     }
 }

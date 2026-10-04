@@ -148,6 +148,7 @@ final class MobileStore {
     let keys: APIKeyStore
     let sourceID: String
     @ObservationIgnored private let notificationScheduler: @MainActor @Sendable (UNNotificationRequest) async throws -> Void
+    @ObservationIgnored private let claimOverride: (@MainActor @Sendable (UsageAlert, Date) async -> Claim)?
     private let relay: CloudRelay?
     private let defaults: UserDefaults
     private let history: HistoryStore
@@ -210,11 +211,13 @@ final class MobileStore {
         connectOnIPhone: Bool = PhoneConnect.isEnabled(),
         notificationScheduler: @escaping @MainActor @Sendable (UNNotificationRequest) async throws -> Void = {
             try await UNUserNotificationCenter.current().add($0)
-        }
+        },
+        claimAlert: (@MainActor @Sendable (UsageAlert, Date) async -> Claim)? = nil
     ) {
         self.defaults = defaults
         cacheGeneration = PhoneCacheAccess.generation(in: defaults)
         self.notificationScheduler = notificationScheduler
+        claimOverride = claimAlert
         self.connectOnIPhone = connectOnIPhone
         // Before the first handover, so the flag travels with the first readings.
         WatchLink.shared.connectAvailable = connectOnIPhone
@@ -963,26 +966,31 @@ final class MobileStore {
         let generation = relayGeneration
         var accepted: [String] = []
         for alert in due {
-            guard generation == relayGeneration else { return [] }
+            guard generation == relayGeneration else { return accepted }
             guard !Task.isCancelled else { return accepted }
             guard alertLedger.sent[alert.id] == nil else { continue }
             let claimed = await claim(alert, now: now)
-            guard generation == relayGeneration else { return [] }
-            guard !Task.isCancelled else { return accepted }
+            // Finish this device-local alert after an account change; the next alert must wait
+            // for a new pass. Plain cancellation still stops an unstarted physical schedule.
+            guard !Task.isCancelled || generation != relayGeneration else { return accepted }
             let delivered: Bool
+            let needsClaim: Bool
             switch claimed {
             case .ours:
                 delivered = await notify(alert)
+                needsClaim = generation != relayGeneration
             case .taken:
                 delivered = true
+                needsClaim = false
             case .unasked:
                 delivered = await notify(alert)
+                needsClaim = true
             }
-            // An account change invalidates this delivery's state, but cancellation alone
-            // cannot undo a notification the scheduler already accepted.
-            guard generation == relayGeneration else { return [] }
+            // Provider keys and the alert ledger belong to this device. Neither account changes
+            // nor cancellation can undo a confirmed delivery. An old account's own claim must
+            // be claimed again when its physical notification was accepted across the switch.
             if delivered {
-                if case .unasked = claimed {
+                if needsClaim {
                     var shown = unclaimed
                     if !shown.contains(where: { $0.alert.id == alert.id }) {
                         shown.append(ShownAlert(alert: alert, shownAt: now))
@@ -997,7 +1005,7 @@ final class MobileStore {
         return accepted
     }
 
-    private enum Claim {
+    enum Claim: Sendable {
         /// Show it: this iPhone's record now stands for the alert, or another iPhone's does, which
         /// showed it there without a push reaching this one.
         case ours
@@ -1009,6 +1017,7 @@ final class MobileStore {
     }
 
     private func claim(_ alert: UsageAlert, now: Date) async -> Claim {
+        if let claimOverride { return await claimOverride(alert, now) }
         guard let relay, relayPhase == .ready, defaults.bool(forKey: Keys.alertsFiltered) else { return .unasked }
         do {
             // A balance crossing announced on the other side of midnight (UTC) went out under
