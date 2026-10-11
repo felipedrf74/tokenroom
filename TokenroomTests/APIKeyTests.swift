@@ -98,10 +98,10 @@ final class APIKeyTests: XCTestCase {
         XCTAssertEqual(snapshot.windows.first?.amount?.used ?? 0, 4.5, accuracy: 0.001)
     }
 
-    // MARK: Keychain
+    // MARK: Credential storage (in-memory Keychain operations)
 
     func testKeyStoreRoundTripShowsOnlyTheLastFour() throws {
-        let store = APIKeyStore(servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).")
+        let store = APIKeyStore(servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).", keychain: FakeKeychain().operations, usesDataProtection: false)
         stores.append(store)
         XCTAssertNil(store.key(for: .openrouter))
         try store.save("  test-key-value-a1b2  ", for: .openrouter)
@@ -116,7 +116,7 @@ final class APIKeyTests: XCTestCase {
     }
 
     func testAKeysWarningIsKeptWithIt() throws {
-        let store = APIKeyStore(servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).")
+        let store = APIKeyStore(servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).", keychain: FakeKeychain().operations, usesDataProtection: false)
         stores.append(store)
         try store.save("test-key-value-c3d4", for: .xaiOrg, warning: "This key can also change your team's keys or billing.")
         XCTAssertEqual(store.metadata(for: .xaiOrg)?.warning, "This key can also change your team's keys or billing.")
@@ -134,7 +134,7 @@ final class APIKeyTests: XCTestCase {
         let copilot = try XCTUnwrap(Provider.copilot.keySpec)
         XCTAssertEqual(copilot.initialChoice(saved: nil), "Pro", "A new token starts on the first plan")
 
-        let store = APIKeyStore(servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).")
+        let store = APIKeyStore(servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).", keychain: FakeKeychain().operations, usesDataProtection: false)
         stores.append(store)
         try store.save("test-token-value-g7h8", for: .copilot, region: "Max")
         XCTAssertEqual(copilot.initialChoice(saved: store.metadata(for: .copilot)), "Max")
@@ -147,7 +147,7 @@ final class APIKeyTests: XCTestCase {
     }
 
     func testMissingKeyReadsAsSignedOut() async {
-        let store = APIKeyStore(servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).")
+        let store = APIKeyStore(servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).", keychain: FakeKeychain().operations, usesDataProtection: false)
         let result = await APIKeyClient(provider: .deepseek, keys: store).fetch()
         XCTAssertEqual(result, .failure(.signedOut(Provider.deepseek.signInHint)))
     }

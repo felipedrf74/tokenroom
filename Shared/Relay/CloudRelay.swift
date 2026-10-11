@@ -10,7 +10,8 @@ import Synchronization
 /// - `History`: that collector's hourly usage for the last week (`hist-<source>`), sent hourly.
 /// - `Event`: an alert (threshold crossed, test). The iPhone's query subscription turns each new
 ///   one into a visible notification, even when the app isn't running.
-/// - `Prefs`: the alert preferences (`prefs-alerts`), shared by the iPhone and Macs; the newer copy wins.
+/// - `Prefs`: alert preferences (`prefs-alerts`) and versioned delivery coordination payloads.
+///   Coordination records contain usage identity only; old preference readers ignore them.
 ///
 /// Widgets and the Watch only read; their builds leave the write methods out
 /// (`TOKENROOM_RELAY_READONLY`).
@@ -271,6 +272,10 @@ extension CloudRelay {
     /// created, so one already there means its notification went out. Left as it is, an iPhone's
     /// claim keeps its `shown:` key, which tells another iPhone that nothing reached it.
     func saveAlert(_ alert: UsageAlert) async throws {
+        if let scope = AlertDeliveryCoordinator.scope(for: alert) {
+            _ = try await coordinatedDelivery(alert, scope: scope, mode: .pushed)
+            return
+        }
         let record = Self.eventRecord(id: alert.id, provider: alert.provider, level: alert.level, title: alert.title, body: alert.body,
                                       resetsAt: alert.resetsAt, kind: alert.kind.rawValue, key: alert.key)
         do {
@@ -278,6 +283,101 @@ extension CloudRelay {
         } catch let error as CKError where error.code == .serverRecordChanged {
             // Already sent, by another device.
         }
+    }
+
+    private func coordinatedDelivery(_ alert: UsageAlert, scope: AlertDeliveryCoordinator.Scope,
+                                     mode: AlertDeliveryCoordinator.Mode) async throws -> AlertDeliveryCoordinator.Receipt {
+        let epoch = accountEpoch.value
+        try checkAlertAccount(epoch)
+        let receipt = try await AlertDeliveryCoordinator.deliver(alert, scope: scope, mode: mode, read: {
+            try await self.deliveryRevision(scope.recordName, epoch: epoch)
+        }, legacy: { ids in
+            try await self.legacyDeliveryEvents(ids, epoch: epoch)
+        }, write: { data, record, event in
+            try await self.writeDelivery(data, record: record, event: event, alert: alert, epoch: epoch)
+        }, isConflict: { error in
+            Self.isPreferenceConflict(error) || (error as? CKError)?.code == .zoneNotFound
+        })
+        try checkAlertAccount(epoch)
+        return receipt
+    }
+
+    private func checkAlertAccount(_ epoch: UUID) throws {
+        try Task.checkCancellation()
+        guard accountEpoch.value == epoch else { throw CancellationError() }
+    }
+
+    private func deliveryRevision(_ name: String, epoch: UUID) async throws -> AlertDeliveryCoordinator.Versioned<CKRecord> {
+        try checkAlertAccount(epoch)
+        let id = CKRecord.ID(recordName: name, zoneID: Self.zoneID)
+        do {
+            let record = try await database.record(for: id)
+            try checkAlertAccount(epoch)
+            guard record.recordType == RecordType.prefs, let data = record[Field.payload] as? Data else {
+                throw AlertDeliveryCoordinator.Failure.damaged
+            }
+            return .init(data: data, revision: record)
+        } catch let error as CKError where error.code == .unknownItem || error.code == .zoneNotFound {
+            try checkAlertAccount(epoch)
+            if error.code == .zoneNotFound { zoneReady = false; zoneEpoch = nil }
+            return .init(data: nil, revision: CKRecord(recordType: RecordType.prefs, recordID: id))
+        }
+    }
+
+    private func legacyDeliveryEvents(_ names: [String], epoch: UUID) async throws -> [AlertDeliveryCoordinator.LegacyEvent] {
+        try checkAlertAccount(epoch)
+        // The finite neighborhood handles pre-coordination Events at adjacent bucket edges.
+        let ids = names.map { CKRecord.ID(recordName: $0, zoneID: Self.zoneID) }
+        let results: [CKRecord.ID: Result<CKRecord, any Error>]
+        do { results = try await database.records(for: ids) }
+        catch let error as CKError where error.code == .zoneNotFound {
+            try checkAlertAccount(epoch)
+            zoneReady = false; zoneEpoch = nil
+            return []
+        }
+        try checkAlertAccount(epoch)
+        var events: [AlertDeliveryCoordinator.LegacyEvent] = []
+        for id in ids {
+            guard let result = results[id] else { throw ProviderError.parse }
+            switch result {
+            case .failure(let error):
+                guard let code = (error as? CKError)?.code, code == .unknownItem || code == .zoneNotFound else { throw error }
+            case .success(let record):
+                guard record.recordType == RecordType.event,
+                      let provider = record[Field.provider] as? String,
+                      let kind = record[Field.alertKind] as? String,
+                      let level = record[Field.level] as? Int,
+                      let key = record[Field.alertKey] as? String else { throw ProviderError.parse }
+                events.append(.init(id: id.recordName, provider: provider, kind: kind, level: level, key: key,
+                                    resetsAt: record[Field.resetsAt] as? Date))
+            }
+        }
+        return events
+    }
+
+    private func writeDelivery(_ data: Data, record: CKRecord, event: AlertDeliveryCoordinator.Receipt?,
+                               alert: UsageAlert, epoch: UUID) async throws {
+        try checkAlertAccount(epoch)
+        record[Field.payload] = data
+        var records = [record]
+        if let event {
+            records.append(Self.eventRecord(id: event.eventID, provider: alert.provider, level: alert.level,
+                                            title: alert.title, body: alert.body, resetsAt: alert.resetsAt,
+                                            kind: alert.kind.rawValue, key: event.mode == .shown ? alert.shownKey : alert.key))
+        }
+        // Both records share the custom zone: either ownership and Event are saved together,
+        // or neither is. A retry rereads the winning revision and immutable anchor.
+        try await ensureZone()
+        try checkAlertAccount(epoch)
+        do { try await modify(records, policy: .ifServerRecordUnchanged) }
+        catch let error as CKError where error.code == .zoneNotFound {
+            try checkAlertAccount(epoch)
+            zoneReady = false; zoneEpoch = nil
+            // Restart with a fresh revision if the zone disappeared after the reads. A
+            // userDeletedZone remains an error; it is never automatically recreated here.
+            throw error
+        }
+        try checkAlertAccount(epoch)
     }
 
     func syncAlertPreferences(base: AlertPreferences?, local: AlertPreferences) async throws -> AlertPreferencesSync.Resolution {
@@ -410,11 +510,17 @@ extension CloudRelay {
             savePolicy: policy,
             atomically: true
         )
-        for (_, result) in results.saveResults {
-            if case .failure(let error) = result {
-                throw error
-            }
+        if let failure = Self.prioritizedSaveFailure(Array(results.saveResults.values)) { throw failure }
+    }
+
+    static func prioritizedSaveFailure(_ results: [Result<CKRecord, any Error>]) -> (any Error)? {
+        let failures = results.compactMap { result -> (any Error)? in
+            if case .failure(let error) = result { return error }
+            return nil
         }
+        // Atomic sibling failures are unordered. A batchRequestFailed must not hide the
+        // serverRecordChanged that tells coordination and preference writers to reread.
+        return failures.first(where: Self.isPreferenceConflict) ?? failures.first
     }
 
     private func ensureZone() async throws {
@@ -502,10 +608,14 @@ extension CloudRelay {
         case shownElsewhere
     }
 
-    /// Before this iPhone shows an alert itself: creates the alert's record, under `shownKey`,
-    /// only if no device has yet. A Mac that sees the same crossing later saves over this record,
-    /// and an update sends no notification, so the alert shows once.
+    /// Before this iPhone shows an alert itself: atomically establishes ownership under
+    /// `shownKey`. Updated Macs respect that receipt without creating a second visible Event.
     func claimAlert(_ alert: UsageAlert) async throws -> Claim {
+        if let scope = AlertDeliveryCoordinator.scope(for: alert) {
+            let receipt = try await coordinatedDelivery(alert, scope: scope, mode: .shown)
+            if receipt.created { return .created }
+            return receipt.mode == .shown ? .shownElsewhere : .pushed
+        }
         let record = Self.eventRecord(id: alert.id, provider: alert.provider, level: alert.level, title: alert.title, body: alert.body,
                                       resetsAt: alert.resetsAt, kind: alert.kind.rawValue, key: alert.shownKey)
         do {

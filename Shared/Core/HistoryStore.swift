@@ -39,10 +39,14 @@ final class HistoryStore {
     /// Copilot's month read with a token was `ai_credits` in 2.0.0; its week carries on under the
     /// ID the login and the token both use now.
     private nonisolated static func migrated(_ saved: [String: UsageHistory]) -> [String: UsageHistory] {
+        var weeks = saved
+        for (key, week) in weeks {
+            let providerID = String(key.split(separator: "/").first ?? "")
+            weeks[key] = week.migratingLegacyAmounts(for: providerID)
+        }
         let copilot = Provider.copilot.rawValue
         let old = RelayHistory.key(provider: copilot, window: CopilotBilling.legacyWindowID)
-        guard let week = saved[old] else { return saved }
-        var weeks = saved
+        guard let week = weeks[old] else { return weeks }
         weeks[old] = nil
         let current = RelayHistory.key(provider: copilot, window: CopilotBilling.windowID)
         if weeks[current] == nil {
@@ -90,15 +94,16 @@ final class HistoryStore {
             if week.start > now {
                 week = UsageHistory(endingAt: snapshot.fetchedAt)
             }
+            let previous = week
             var changed = week.record(window.usedPercent, at: snapshot.fetchedAt)
             if let amount = window.amount, let remaining = amount.remainingOrComputed, amount.unit == "usd" || amount.unit == "cny" {
-                changed = week.recordAmount(remaining, at: snapshot.fetchedAt) || changed
+                changed = week.recordAmount(remaining, unit: amount.unit, at: snapshot.fetchedAt) || changed
             }
             let length = window.resetsAt.flatMap {
                 Pace.windowLength(kind: window.kind, resetsAt: $0, startsAt: window.startsAt, windowSeconds: window.windowSeconds)
             }
             changed = week.recordResetTime(window.resetsAt, used: window.usedPercent, length: length, at: snapshot.fetchedAt) || changed
-            if changed || weeks[key] == nil {
+            if changed || week != previous || weeks[key] == nil {
                 weeks[key] = week
                 anyChanged = true
             }

@@ -424,7 +424,7 @@ final class MobileLogicTests: XCTestCase {
         configuration.protocolClasses = [StubURLProtocol.self]
         TokenroomHTTP.overrideSession(URLSession(configuration: configuration))
 
-        let keys = APIKeyStore(servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).")
+        let keys = APIKeyStore(servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).", keychain: FakeKeychain().operations, usesDataProtection: false)
         defer { try? keys.remove(for: .openrouter) }
         try keys.save(secret, for: .openrouter, region: nil)
         let snapshot = try await APIKeyClient(provider: .openrouter, keys: keys).fetch().get()

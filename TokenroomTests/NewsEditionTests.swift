@@ -21,12 +21,12 @@ final class NewsEditionTests: XCTestCase {
         let models = [model("new", daysAgo: 2), model("older", daysAgo: 5), model("oldest", daysAgo: 20)]
         let edition = NewsEditions.today(models: models, announcements: [], retiring: [], since: now.addingTimeInterval(-3 * 86_400), now: now)
         XCTAssertEqual(edition.topStory?.id, "anthropic/new")
-        XCTAssertEqual(edition.moreModels.map(\.id), ["anthropic/older", "anthropic/oldest"], "The top story isn't repeated below it")
+        XCTAssertEqual(edition.moreModels.map(\.id), ["anthropic/older"], "Only recent models appear on Today")
         XCTAssertEqual(edition.digest.models, 1, "Only models since the last visit count as new")
 
         let stale = NewsEditions.today(models: [model("old", daysAgo: 20)], announcements: [], retiring: [], since: now, now: now)
         XCTAssertNil(stale.topStory, "A model from weeks ago isn't a top story")
-        XCTAssertEqual(stale.moreModels.map(\.id), ["anthropic/old"])
+        XCTAssertTrue(stale.moreModels.isEmpty)
     }
 
     func testToolsGroupTheirOwnNewsNewestToolFirst() {
@@ -71,6 +71,6 @@ final class NewsEditionTests: XCTestCase {
         let edition = NewsEditions.today(models: [], announcements: [], retiring: [later], since: now, now: now)
         XCTAssertTrue(edition.isEmpty, "A retirement outside Today must not suppress its empty actions")
         let models = NewsEditions.today(models: [later], announcements: [], retiring: [later], since: now, now: now)
-        XCTAssertFalse(models.isEmpty, "Older cached models are still visible under More models")
+        XCTAssertTrue(models.isEmpty, "Older cached models remain in the archive, not Today")
     }
 }

@@ -109,10 +109,17 @@ struct MenuMeter: Equatable, Identifiable, Sendable {
     var isPlaceholder: Bool
     var isAwaitingReading = false
     var attention: String? = nil
+    /// Set when the extra is showing a window other than the provider's primary one.
+    var windowLabel: String? = nil
+    /// Higher means this provider's shown window needs the menu bar sooner.
+    var urgency: Int = 0
+    /// When the shown window was measured to run out, if it does before the reset.
+    var runsOutAt: Date? = nil
 
     var displayValue: String { isAwaitingReading ? "—" : isPlaceholder ? "–%" : "\(valueText)%" }
     var accessibilityText: String {
-        "\(provider.displayName) \(displayValue)\(isAwaitingReading || isPlaceholder ? "" : " used")" + (attention.map { ", \($0)" } ?? "")
+        let name = windowLabel.map { "\(provider.displayName) \($0)" } ?? provider.displayName
+        return "\(name) \(displayValue)\(isAwaitingReading || isPlaceholder ? "" : " used")" + (attention.map { ", \($0)" } ?? "")
     }
 
     var id: Provider { provider }

@@ -9,6 +9,8 @@ enum AppTab: Hashable {
 struct RootView: View {
     @Bindable var store: MobileStore
     @Bindable var news: NewsStore
+    @State private var library = NewsRuntime.library()
+    @State private var skills = NewsRuntime.skillsStore()
     @State private var showsOnboarding = false
     @State private var tab: AppTab = .usage
     @State private var usagePath: [String] = []
@@ -17,7 +19,7 @@ struct RootView: View {
     var body: some View {
         #if DEBUG
         if let page = UserDefaults.standard.string(forKey: "TokenroomGallery") {
-            WidgetGalleryView(cache: PhoneCacheAccess.load(at: ReadingCache.defaultURL, defaults: AppGroup.defaults) ?? SampleData.cache(), page: page)
+            WidgetGalleryView(cache: store.allowsExternalEffects ? (PhoneCacheAccess.load(at: ReadingCache.defaultURL, defaults: AppGroup.defaults) ?? SampleData.cache()) : SampleData.cache(), page: page)
         } else {
             tabs
         }
@@ -35,7 +37,7 @@ struct RootView: View {
                 })
             }
             Tab("News", systemImage: "newspaper", value: .news) {
-                NewsView(news: news, store: store)
+                NewsView(news: news, store: store, library: library, skills: skills)
             }
             .badge(tab == .news ? 0 : news.unseenCount)
             Tab("Settings", systemImage: "gearshape", value: .settings) {
@@ -53,7 +55,7 @@ struct RootView: View {
                 open(link)
             }
             // `-TokenroomFollow claude` starts that provider's Live Activity, for checks.
-            if let id = UserDefaults.standard.string(forKey: "TokenroomFollow") {
+            if store.allowsExternalEffects, let id = UserDefaults.standard.string(forKey: "TokenroomFollow") {
                 let provider = store.reading(id: id)?.provider
                 let window = provider.flatMap { LiveActivities.candidate(in: $0) }
                 Task {

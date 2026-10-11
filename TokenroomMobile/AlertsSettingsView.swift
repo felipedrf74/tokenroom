@@ -89,6 +89,7 @@ struct AlertsSettingsView: View {
     }
 
     private func checkPermission() async {
+        guard store.allowsExternalEffects else { return }
         permission = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
         if permission == .authorized || permission == .provisional || permission == .ephemeral {
             permissionError = nil
@@ -96,7 +97,7 @@ struct AlertsSettingsView: View {
     }
 
     private func requestPermission() {
-        guard !requestingPermission else { return }
+        guard store.allowsExternalEffects, !requestingPermission else { return }
         requestingPermission = true
         permissionError = nil
         Task {

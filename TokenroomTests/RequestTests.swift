@@ -251,7 +251,7 @@ final class RequestTests: XCTestCase {
         try FileManager.default.createDirectory(at: apps.deletingLastPathComponent(), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
         try Data(#"{"github.com:Iv1.placeholder":{"user":"octocat-placeholder","oauth_token":"placeholder-login"}}"#.utf8).write(to: apps)
-        let keys = APIKeyStore(servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).")
+        let keys = APIKeyStore(servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).", keychain: FakeKeychain().operations, usesDataProtection: false)
         let previous = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]
         defer {
             if let previous {

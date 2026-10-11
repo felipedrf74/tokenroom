@@ -72,7 +72,8 @@ final class QuotaStore {
         checkedAt = cache.loadChecked()
         for provider in Provider.allCases {
             if let snapshot = cached[provider] {
-                statuses[provider] = .stale(snapshot)
+                rawSnapshots[provider] = snapshot.applyingBudget(reference: nil)
+                statuses[provider] = .stale(snapshot.applyingBudget(reference: settings.budgetReference(for: provider)))
             } else {
                 statuses[provider] = .loading
             }
@@ -82,6 +83,7 @@ final class QuotaStore {
             self.settings.setEnabled(provider, true)
             Task { await self.credentialsChanged(for: provider) }
         }
+        news?.allowsRefresh = { [weak self] in self?.settings.newsEnabled == true }
     }
 
     func start() {
@@ -518,7 +520,7 @@ final class QuotaStore {
             // The pace this Mac measured from its frequent readings, for readers with hourly
             // history. Measured as of the newest reading, which can come after `now`.
             let at = max(now, checkedAt[provider] ?? now)
-            let paces = relayed.isLive ? windowPaces(for: provider, now: at) : [:]
+            let paces = windowPaces(for: provider, now: at)
             for index in relayed.windows.indices where relayed.windows[index].isMetered {
                 if let pace = paces[relayed.windows[index].id] {
                     relayed.windows[index].pace = RelayPace(runsOutAt: pace.runsOutAt)
@@ -555,16 +557,36 @@ final class QuotaStore {
                  .expired(_, let snapshot?), .rateLimited(_, let snapshot?):
                 // A balance with no limit has no percentage to show.
                 guard snapshot.windows.first?.isMetered ?? true else { return nil }
-                let awaiting = snapshot.windows.first.map { RelayWindow($0).isAwaitingReading(at: now) } ?? false
+                let relay = RelayProvider(provider: provider, status: status, checkedAt: lastChecked(provider))
+                let lead = UsageRanking.leadWindow(for: relay, now: now) { window in
+                    UsageRanking.pace(
+                        for: window,
+                        isStale: status.isStale,
+                        samples: history.samples(provider: provider, window: window.id),
+                        now: now
+                    )
+                }
+                guard let shown = lead else { return nil }
+                let awaiting = shown.isAwaitingReading(at: now)
+                let namesTheWindow = !awaiting && relay.primaryWindow?.id != shown.id
+                let pace = UsageRanking.pace(
+                    for: shown,
+                    isStale: status.isStale,
+                    samples: history.samples(provider: provider, window: shown.id),
+                    now: now
+                )
                 return MenuMeter(
                     provider: provider,
-                    valueText: Self.percentText(snapshot.usedPercent),
-                    remaining: snapshot.remainingPercent,
-                    usedPercent: snapshot.usedPercent,
+                    valueText: Self.percentText(shown.used),
+                    remaining: max(0, min(100, 100 - shown.used)),
+                    usedPercent: shown.used,
                     isStale: status.isStale || awaiting,
                     isPlaceholder: false,
                     isAwaitingReading: awaiting,
-                    attention: ReadingText.attention(RelayProvider(provider: provider, status: status, checkedAt: lastChecked(provider)), now: now)
+                    attention: ReadingText.attention(relay, now: now, lead: shown),
+                    windowLabel: namesTheWindow ? shown.displayTitle : nil,
+                    urgency: awaiting ? 0 : UsageRanking.urgency(of: shown, pace: pace),
+                    runsOutAt: awaiting ? nil : pace?.runsOutAt
                 )
             }
         }
@@ -629,15 +651,30 @@ final class QuotaStore {
         statuses[provider]?.snapshot?.fetchedAt
     }
 
-    /// The currency a provider's budget or reference is entered in, from its last reading.
-    func budgetCurrency(for provider: Provider) -> String {
-        (rawSnapshots[provider] ?? statuses[provider]?.snapshot)?.budgetCurrencyCode ?? "USD"
+    /// Moonshot follows the key's selected account even when an old-region reading is retained.
+    /// Other providers use the reading's currency. Metadata is supplied by the asynchronous UI
+    /// key-row read; this accessor never reads a Keychain.
+    func budgetUnit(for provider: Provider, region: String? = nil) -> String {
+        BudgetReferencePreferences.editorUnit(for: provider, region: region,
+            readingUnit: (rawSnapshots[provider] ?? statuses[provider]?.snapshot)?.budgetUnit)
+    }
+
+    func budgetCurrency(for provider: Provider, region: String? = nil) -> String {
+        budgetUnit(for: provider, region: region).uppercased()
     }
 
     /// Re-applies the provider's budget to its last reading.
     func budgetDidChange(for provider: Provider) {
-        guard let raw = rawSnapshots[provider], case .live = statuses[provider] else { return }
-        statuses[provider] = .live(raw.applyingBudget(settings.budget(for: provider)))
+        guard let raw = rawSnapshots[provider] else { return }
+        let snapshot = raw.applyingBudget(reference: settings.budgetReference(for: provider))
+        switch statuses[provider] {
+        case .live: statuses[provider] = .live(snapshot)
+        case .stale: statuses[provider] = .stale(snapshot)
+        case .expired(let message, _): statuses[provider] = .expired(message, cached: snapshot)
+        case .rateLimited(let until, _): statuses[provider] = .rateLimited(until: until, cached: snapshot)
+        case .unreachable: statuses[provider] = .unreachable(cached: snapshot)
+        default: return
+        }
         snapshotsDirty = true
         persistLiveSnapshots()
     }
@@ -674,7 +711,7 @@ final class QuotaStore {
         switch result {
         case .success(let raw):
             rawSnapshots[provider] = raw
-            let snapshot = raw.applyingBudget(settings.budget(for: provider))
+            let snapshot = raw.applyingBudget(reference: settings.budgetReference(for: provider))
             checkedAt[provider] = snapshot.fetchedAt
             rateLimitedUntil[provider] = nil
             history.record(snapshot)

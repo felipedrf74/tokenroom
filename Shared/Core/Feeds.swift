@@ -42,16 +42,20 @@ enum ModelFeed {
         let root = try JSONFlex.object(from: data)
         guard let items = JSONFlex.array(root["data"]) else { throw ProviderError.parse }
         var byID: [String: (release: ModelRelease, isBase: Bool)] = [:]
+        var hasValidRecord = items.isEmpty
         for item in items {
             guard let model = JSONFlex.dictionary(item),
                   let rawID = JSONFlex.string(model["id"]),
-                  let created = JSONFlex.date(model["created"])
+                  let created = catalogDate(model["created"])
             else { continue }
-            let parts = rawID.split(separator: ":", maxSplits: 1).map(String.init)
-            let id = parts[0]
+            let parts = rawID.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+            guard let id = parts.first, !id.isEmpty else { continue }
             let variant = parts.count > 1 ? parts[1] : nil
-            let slug = id.split(separator: "/", maxSplits: 1)
-            guard slug.count == 2, !id.hasPrefix("~"), !id.hasSuffix("-latest"),
+            let slug = id.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)
+            guard slug.count == 2, !slug[0].isEmpty, !slug[1].isEmpty,
+                  created.timeIntervalSince1970.isFinite else { continue }
+            hasValidRecord = true
+            guard !id.hasPrefix("~"), !id.hasSuffix("-latest"),
                   !["openrouter", "stealth"].contains(String(slug[0]))
             else { continue }
             var name = JSONFlex.string(model["name"]) ?? id
@@ -64,17 +68,39 @@ enum ModelFeed {
                 name: name,
                 vendor: String(slug[0]),
                 created: created,
-                contextLength: JSONFlex.number(model["context_length"]).map { Int($0) },
-                promptPrice: JSONFlex.number(pricing?["prompt"]).map { $0 * 1_000_000 },
-                completionPrice: JSONFlex.number(pricing?["completion"]).map { $0 * 1_000_000 },
-                expires: JSONFlex.date(model["expiration_date"])
+                contextLength: contextLength(model["context_length"]),
+                promptPrice: pricePerMillion(pricing?["prompt"]),
+                completionPrice: pricePerMillion(pricing?["completion"]),
+                expires: catalogDate(model["expiration_date"])
             )
             // The base model's prices win over a variant's.
             if byID[id] == nil || (variant == nil && byID[id]?.isBase == false) {
                 byID[id] = (release, variant == nil)
             }
         }
+        // A malformed nonempty catalog must not replace a previously usable list with [];
+        // an explicitly empty list, or a list of intentionally excluded aliases, remains valid.
+        guard hasValidRecord else { throw ProviderError.parse }
         return byID.values.map(\.release).sorted { $0.created > $1.created }
+    }
+
+    private static func contextLength(_ raw: Any?) -> Int? {
+        guard let value = JSONFlex.number(raw), value.isFinite, value >= 0 else { return nil }
+        return Int(exactly: value)
+    }
+
+    private static func catalogDate(_ raw: Any?) -> Date? {
+        guard let date = JSONFlex.date(raw), date.timeIntervalSince1970.isFinite,
+              (0...253_402_300_799).contains(date.timeIntervalSince1970) else { return nil }
+        return date
+    }
+
+    private static func pricePerMillion(_ raw: Any?) -> Double? {
+        guard let value = JSONFlex.number(raw), value.isFinite, value >= 0 else { return nil }
+        let scaled = value * 1_000_000
+        // Price labels round at three decimal places; keep that multiplication finite too.
+        guard scaled.isFinite, scaled <= Double.greatestFiniteMagnitude / 1000 else { return nil }
+        return scaled
     }
 }
 
@@ -116,6 +142,24 @@ struct FeedItem: Codable, Equatable, Sendable, Identifiable {
     /// releases". Set by `NewsCache.announcements`, never stored.
     var alsoIn: String? = nil
 
+    var sourceID: String? = nil
+    var kind: NewsSourceKind? = nil
+    var publisherPublishedAt: Date? = nil
+    var updatedAt: Date? = nil
+    var firstSeenAt: Date? = nil
+    var excerpt: String? = nil
+    var canonicalID: String? = nil
+    var aliases: Set<String>? = nil
+    struct StatusUpdate: Codable, Equatable, Sendable {
+        var date: Date?
+        var excerpt: String?
+    }
+    var observedUpdates: [StatusUpdate]? = nil
+    var stableID: String { canonicalID ?? "\(sourceID ?? source)|\(id)" }
+    var aliasIDs: Set<String> { (aliases ?? []).union(["\(sourceID ?? source)|\(id)"]) }
+    var newsDate: Date? { firstSeenAt ?? published }
+    var sortDate: Date { publisherPublishedAt ?? updatedAt ?? published ?? .distantPast }
+
     /// Release feeds title entries with a bare version; "Codex 0.157.0" reads better in a list.
     var displayTitle: String {
         title.range(of: #"^v?\d+(\.\d+)+([-+.][0-9A-Za-z.]+)?$"#, options: .regularExpression) != nil
@@ -147,6 +191,10 @@ struct FeedSource: Sendable, Identifiable, Equatable {
     /// The feed it belongs to: a second source for the same product, shown under that feed's
     /// name and turned on and off with it.
     var partOf: String? = nil
+
+    var kind: NewsSourceKind = .officialAnnouncement
+    /// Legacy tool changelogs suppress repeated titles; people and incidents never do.
+    var suppressesRepeatedTitles: Bool { kind == .officialAnnouncement }
 
     /// The name its items show, and fold duplicates under.
     var itemSource: String {
@@ -208,9 +256,9 @@ enum FeedParser {
         let items = delegate.items
             .filter { !source.skipsPrereleases || !isPrerelease($0.title) }
             .filter { item in source.linkContains.map { item.link?.absoluteString.contains($0) == true } ?? true }
-            .filter { titles.insert($0.title.lowercased()).inserted }
+            .filter { !source.suppressesRepeatedTitles || titles.insert($0.title.lowercased()).inserted }
             .prefix(itemLimit)
-        return (Array(items), parsed && data.count <= source.sizeLimit)
+        return (Array(items), parsed && delegate.isFeed && data.count <= source.sizeLimit)
     }
 
     /// An entry's link if it's a web page, resolved against the feed. Other schemes
@@ -286,8 +334,11 @@ enum FeedParser {
 private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
     let source: FeedSource
     var items: [FeedItem] = []
+    private(set) var isFeed = false
+    private var path: [String] = []
     /// Depth inside the current item: 0 is the item, 1 its direct children. Nil between items.
-    /// Only direct children count; feeds nest other titles (authors, cards) deeper.
+    /// Direct children own fields; descendants of text fields may contain Atom XHTML.
+    /// Unrelated nested titles (authors, cards) never become the entry title.
     private var depth: Int?
     private var element = ""
     private var title = ""
@@ -295,27 +346,34 @@ private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
     private var identifier = ""
     private var published = ""
     private var updated = ""
+    private var excerpt = ""
 
     init(source: FeedSource) {
         self.source = source
     }
 
     func parser(_ parser: XMLParser, didStartElement name: String, namespaceURI: String?, qualifiedName: String?, attributes: [String: String] = [:]) {
+        let localName = String(name.split(separator: ":").last ?? Substring(name))
+        path.append(localName)
+        if path == ["feed"] || path == ["rss", "channel"] { isFeed = true }
         guard let current = depth else {
-            if name == "item" || name == "entry" {
+            if path == ["rss", "channel", "item"] || path == ["feed", "entry"] {
                 depth = 0
                 title = ""
                 link = nil
                 identifier = ""
                 published = ""
                 updated = ""
+                excerpt = ""
             }
             return
         }
         depth = current + 1
-        element = current == 0 ? name : ""
+        if current == 0 {
+            element = name == "dc:date" || name == "content:encoded" ? name : localName
+        } else { appendMarkupBoundary() }
         // Atom links live in attributes; prefer rel="alternate".
-        if current == 0, name == "link", let href = attributes["href"], (attributes["rel"] ?? "alternate") == "alternate" {
+        if current == 0, localName == "link", let href = attributes["href"], (attributes["rel"] ?? "alternate") == "alternate" {
             link = href
         }
     }
@@ -329,9 +387,14 @@ private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
     }
 
     private func append(_ string: String) {
+        guard let depth, depth >= 1 else { return }
+        if element == "title" { title += string; return }
+        if isExcerpt {
+            excerpt += String(string.prefix(max(0, 2000 - excerpt.count)))
+            return
+        }
         guard depth == 1 else { return }
         switch element {
-        case "title": title += string
         case "link": link = (link ?? "") + string.trimmingCharacters(in: .whitespacesAndNewlines)
         case "guid", "id": identifier += string
         case "pubDate", "published", "dc:date": published += string
@@ -340,13 +403,22 @@ private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
         }
     }
 
+    private var isExcerpt: Bool { ["description", "summary", "content", "content:encoded"].contains(element) }
+    private func appendMarkupBoundary() {
+        if element == "title", !title.isEmpty, title.last?.isWhitespace == false { title += " " }
+        if isExcerpt, !excerpt.isEmpty, excerpt.last?.isWhitespace == false, excerpt.count < 2000 { excerpt += " " }
+    }
+
     func parser(_ parser: XMLParser, didEndElement name: String, namespaceURI: String?, qualifiedName: String?) {
+        defer { path.removeLast() }
         guard let current = depth else { return }
-        element = ""
         guard current == 0 else {
+            if current == 1 { element = "" }
+            else { appendMarkupBoundary() }
             depth = current - 1
             return
         }
+        element = ""
         depth = nil
         let cleanTitle = FeedParser.cleanTitle(FeedParser.plainText(title))
         guard !cleanTitle.isEmpty else { return }
@@ -356,8 +428,12 @@ private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
             id: id.isEmpty ? (url?.absoluteString ?? cleanTitle) : id,
             title: cleanTitle,
             link: url,
-            published: FeedParser.date(published) ?? FeedParser.date(updated),
-            source: source.itemSource
+            published: FeedParser.date(published),
+            source: source.itemSource,
+            sourceID: source.id, kind: source.kind,
+            publisherPublishedAt: FeedParser.date(published),
+            updatedAt: FeedParser.date(updated),
+            excerpt: excerpt.isEmpty ? nil : String(FeedParser.plainText(excerpt).prefix(2000))
         ))
     }
 }

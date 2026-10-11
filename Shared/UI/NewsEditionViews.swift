@@ -304,7 +304,7 @@ struct ToolNewsCard: View {
             .padding(.bottom, 8)
             .accessibilityElement(children: .combine)
 
-            ForEach(Array(tool.items.enumerated()), id: \.element.id) { index, item in
+            ForEach(Array(tool.items.enumerated()), id: \.element.stableID) { index, item in
                 Divider()
                     .padding(.leading, 16)
                 headline(item, isLead: index == 0)
@@ -396,12 +396,12 @@ struct RiverRow: View {
 
     var body: some View {
         let provider = FeedSource.catalog.first { $0.name == item.source }?.provider
-        let row = HStack(alignment: .top, spacing: 10) {
+        let row = VStack(alignment: .leading, spacing: 10) {
             Text(item.published.map { $0.formatted(date: .omitted, time: .shortened) } ?? "")
                 .font(.footnote)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
-                .frame(width: 58, alignment: .leading)
+
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     if isNew {
@@ -418,7 +418,7 @@ struct RiverRow: View {
                 }
                 Text(item.displayTitle)
                     .font(.system(.body, design: .serif, weight: .semibold))
-                    .lineLimit(3)
+                    .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
                 if let alsoIn = item.alsoIn {
                     Text("Also in \(alsoIn)")
@@ -455,7 +455,7 @@ struct NewsRiver: View {
                     .padding(.horizontal, 4)
                 VStack(alignment: .leading, spacing: 10) {
                     let dayItems = byDay[day] ?? []
-                    ForEach(Array(dayItems.enumerated()), id: \.element.id) { index, item in
+                    ForEach(Array(dayItems.enumerated()), id: \.element.stableID) { index, item in
                         if index > 0 {
                             Divider()
                                 .padding(.leading, 68)

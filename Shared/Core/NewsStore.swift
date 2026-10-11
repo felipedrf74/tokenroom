@@ -14,6 +14,8 @@ final class NewsStore {
         static let knownSources = "newsKnownSources"
         /// The default labs when `vendors` was saved, so labs added to the defaults since start on.
         static let knownVendors = "newsKnownVendors"
+        static let voices = "newsVoices"
+        static let status = "newsStatusSources"
         static let seenAt = "newsSeenAt"
     }
 
@@ -29,13 +31,15 @@ final class NewsStore {
     private(set) var cache: NewsCache
     private(set) var isRefreshing = false
     private var visitIsOpen = false
-    /// `isAllowed`, when set, is asked again before a queued pass runs (the Mac's News can be
-    /// turned off while the pass before it is out).
-    private typealias RefreshRequest = (maxAge: TimeInterval?, preferences: AlertPreferences, notifies: Bool, now: Date, forcedSources: Set<String>, isAllowed: (@MainActor () -> Bool)?)
+    /// Per-call permission is an additional veto at pass/GET dispatch and follows queued work.
+    private typealias RefreshRequest = (maxAge: TimeInterval?, preferences: AlertPreferences, notifies: Bool, now: Date, forcedSources: Set<String>, isAllowed: (@MainActor @Sendable () -> Bool)?)
     private var queuedRefresh: RefreshRequest?
     /// The maxAge of the pass under way, so a request for fresher feeds is queued behind it.
     private var runningMaxAge: TimeInterval??
+    private var runningIsAllowed: (@MainActor @Sendable () -> Bool)?
     private var lastPreferences = AlertPreferences()
+    /// The owning app's policy applies to every entry point, including Follow and Retry.
+    @ObservationIgnored var allowsRefresh: @MainActor @Sendable () -> Bool = { true }
 
     /// Labs whose new models are announced, e.g. `anthropic`.
     var followedVendors: Set<String> {
@@ -58,6 +62,23 @@ final class NewsStore {
         }
     }
 
+    var followedVoices: Set<String> {
+        didSet {
+            defaults.set(followedVoices.sorted(), forKey: Keys.voices)
+            fetchAdded(sources.filter { followedVoices.subtracting(oldValue).contains($0.id) })
+        }
+    }
+    var followedStatusSources: Set<String> {
+        didSet {
+            defaults.set(followedStatusSources.sorted(), forKey: Keys.status)
+            fetchAdded(sources.filter { followedStatusSources.subtracting(oldValue).contains($0.id) })
+        }
+    }
+    private func fetchAdded(_ sources: [FeedSource]) {
+        let ids = Set(sources.filter { cache.items[$0.id] == nil }.map(\.id))
+        if !ids.isEmpty { Task { await refresh(preferences: lastPreferences, notifies: false, forcedSources: ids) } }
+    }
+
     /// When News was last opened. Items published after it count as new.
     private(set) var seenAt: Date {
         didSet { defaults.set(seenAt.timeIntervalSince1970, forKey: Keys.seenAt) }
@@ -75,8 +96,9 @@ final class NewsStore {
         defaults: UserDefaults = AppGroup.defaults,
         directory: URL? = AppGroup.containerURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
         now: Date = .now,
+        initialCache: NewsCache? = nil,
         fetch: @escaping @Sendable (NewsFetcher.Request) async -> NewsFetcher.Result = {
-            await NewsFetcher.refresh($0.cache, sources: $0.sources, following: $0.vendors, maxAge: $0.maxAge, now: $0.now, forcedSources: $0.forcedSources)
+            await NewsFetcher.refresh($0.cache, sources: $0.sources, following: $0.vendors, maxAge: $0.maxAge, now: $0.now, forcedSources: $0.forcedSources, isAllowed: $0.isAllowed)
         },
         notify: @escaping @MainActor ([ModelRelease], AlertPreferences, Date) -> Void = {
             NewsStore.notify($0, preferences: $1, now: $2)
@@ -86,7 +108,7 @@ final class NewsStore {
         self.directory = directory
         self.fetch = fetch
         self.notify = notify
-        cache = NewsCache.load(from: directory)
+        cache = initialCache ?? NewsCache.load(from: directory)
         // A saved choice, plus labs added to the defaults since it was saved, as with feeds below.
         let knownVendors = (defaults.array(forKey: Keys.knownVendors) as? [String]).map(Set.init) ?? Self.firstDefaultVendors
         followedVendors = (defaults.array(forKey: Keys.vendors) as? [String]).map { Set($0).union(ModelFeed.defaultVendors.subtracting(knownVendors)) } ?? ModelFeed.defaultVendors
@@ -95,6 +117,8 @@ final class NewsStore {
         let catalog = Set(FeedSource.catalog.map(\.id))
         let known = (defaults.array(forKey: Keys.knownSources) as? [String]).map(Set.init) ?? Self.firstCatalog
         followedSources = (defaults.array(forKey: Keys.sources) as? [String]).map { Set($0).union(catalog.subtracting(known)) } ?? catalog
+        followedVoices = Set(defaults.stringArray(forKey: Keys.voices) ?? [])
+        followedStatusSources = Set(defaults.stringArray(forKey: Keys.status) ?? [])
         // A first launch starts from now, so the whole list isn't "new".
         let saved = defaults.object(forKey: Keys.seenAt) as? Double
         let seen = saved.map(Date.init(timeIntervalSince1970:)) ?? now
@@ -107,11 +131,15 @@ final class NewsStore {
 
     var sources: [FeedSource] {
         FeedSource.catalog.filter { followedSources.contains($0.partOf ?? $0.id) }
+        + NewsVoice.catalog.compactMap(\.feed).filter { followedVoices.contains($0.id) }
+        + NewsStatusSource.catalog.filter { followedStatusSources.contains($0.id) }
     }
 
     var announcements: [FeedItem] {
         cache.announcements(from: sources)
     }
+
+    var allAnnouncements: [FeedItem] { cache.announcements(from: sources, limit: Int.max) }
 
     /// Newest first; followed labs only unless `all`.
     func models(all: Bool = false) -> [ModelRelease] {
@@ -123,18 +151,35 @@ final class NewsStore {
         cache.models.filter { ($0.expires ?? .distantPast) > .now }.sorted { ($0.expires ?? .distantFuture) < ($1.expires ?? .distantFuture) }
     }
 
-    /// New models from followed labs since News was last opened.
+    func retiringModels(all: Bool = false) -> [ModelRelease] {
+        retiring.filter { all || followedVendors.contains($0.vendor) }
+    }
+
+    /// Recent models from followed labs since News was last opened; archives never badge.
     var unseenModelCount: Int {
-        models().filter { $0.created > seenAt }.count
+        unseenModelCount(now: .now)
+    }
+
+    func unseenModelCount(now: Date) -> Int {
+        models().filter { $0.created > seenAt && NewsEditions.isRecentModel($0, now: now) }.count
     }
 
     /// Announcements from followed feeds since News was last opened.
     var unseenAnnouncementCount: Int {
-        announcements.filter { ($0.published ?? .distantPast) > seenAt }.count
+        allAnnouncements.filter { ($0.newsDate ?? .distantPast) > seenAt }.count
+    }
+
+    /// The Mac release pill opens Releases; voice/status unread items remain in the News badge.
+    var unseenReleaseCount: Int {
+        NewsDiscovery.stories(allAnnouncements, collection: .release).filter { ($0.newsDate ?? .distantPast) > seenAt }.count
     }
 
     var unseenCount: Int {
-        unseenModelCount + unseenAnnouncementCount
+        unseenCount(now: .now)
+    }
+
+    func unseenCount(now: Date) -> Int {
+        unseenModelCount(now: now) + unseenAnnouncementCount
     }
 
     /// "Couldn't read …" when the model list's last answer couldn't be read.
@@ -175,7 +220,7 @@ final class NewsStore {
     func keepCurrent(
         interval: TimeInterval = NewsFetcher.liveInterval,
         preferences: @escaping @MainActor () -> AlertPreferences,
-        isAllowed: @escaping @MainActor () -> Bool = { true },
+        isAllowed: @escaping @MainActor @Sendable () -> Bool = { true },
         sleep: @escaping @Sendable (TimeInterval) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }
     ) async {
         while !Task.isCancelled {
@@ -205,19 +250,34 @@ final class NewsStore {
         return names.map { ($0.key, $0.value) }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
+    /// A discovery retry retains the latest real preferences, including a queued notifying pass.
+    func retrySources(_ ids: Set<String>) async {
+        guard !ids.isEmpty else { return }
+        await refresh(preferences: lastPreferences, notifies: false, forcedSources: ids)
+    }
+
     /// Fetches what's due, or anything older than `maxAge`. New models from followed labs get one
     /// notification when `notifies` and the preferences allow it.
-    func refresh(maxAge: TimeInterval? = nil, preferences: AlertPreferences, notifies: Bool = true, now: Date = .now, forcedSources: Set<String> = [], isAllowed: (@MainActor () -> Bool)? = nil) async {
+    func refresh(maxAge: TimeInterval? = nil, preferences: AlertPreferences, notifies: Bool = true, now: Date = .now, forcedSources: Set<String> = [], isAllowed: (@MainActor @Sendable () -> Bool)? = nil) async {
+        guard allowsRefresh(), isAllowed?() != false else { return }
         lastPreferences = preferences
         if isRefreshing {
             // Requests during one pass coalesce into a single follow-up pass: a manual one, a new
             // feed, or one asking for fresher feeds than the pass under way (News opened meanwhile).
             let fresher = runningMaxAge.map { Self.isShorter(maxAge, than: $0) } ?? false
+            // Every accepted request updates preferences on an existing follow-up, even a
+            // cached/slower visit that would not independently justify another fetch. Keep
+            // that pass's permission, freshest age, forced feeds and notification intent.
+            if var queued = queuedRefresh {
+                queued.preferences = preferences
+                queued.notifies = queued.notifies || notifies
+                queuedRefresh = queued
+            }
             if maxAge == 0 || !forcedSources.isEmpty || fresher || sources.contains(where: { cache.items[$0.id] == nil && cache.sourceChecks?[$0.id] == nil }) {
                 let queued = queuedRefresh
                 queuedRefresh = (queued.map { Self.shorter($0.maxAge, maxAge) } ?? maxAge, preferences,
                                  (queued?.notifies ?? false) || notifies, now,
-                                 (queued?.forcedSources ?? []).union(forcedSources), isAllowed ?? queued?.isAllowed)
+                                 (queued?.forcedSources ?? []).union(forcedSources), isAllowed ?? queued?.isAllowed ?? runningIsAllowed)
             }
             return
         }
@@ -247,7 +307,7 @@ final class NewsStore {
         let knownItems = Set(previous.items.flatMap { source, items in items.map { source + "|" + $0.id } })
         let models = result.models.filter { !knownModels.contains($0.id) }.map(\.created)
         let items = result.items.flatMap { source, items in
-            items.filter { !knownItems.contains(source + "|" + $0.id) }.compactMap(\.published)
+            items.filter { !knownItems.contains(source + "|" + $0.id) }.compactMap(\.newsDate)
         }
         return (models + items).max().map { min($0, checkedAt) }
     }
@@ -256,6 +316,8 @@ final class NewsStore {
         defer {
             isRefreshing = false
             runningMaxAge = nil
+            runningIsAllowed = nil
+            queuedRefresh = nil
         }
         if cache.modelsFetchedAt == nil, cache.announcementsFetchedAt == nil, !visitIsOpen {
             seenAt = max(seenAt, initial.now)
@@ -263,15 +325,42 @@ final class NewsStore {
         }
         var request = initial
         while true {
+            // Recheck at physical dispatch, after the owning Task/previous pass yielded.
+            guard allowsRefresh(), request.isAllowed?() != false else { break }
             runningMaxAge = .some(request.maxAge)
+            runningIsAllowed = request.isAllowed
             let previous = cache
-            let result = await fetch(.init(cache: cache, sources: sources, vendors: followedVendors, maxAge: request.maxAge, now: request.now, forcedSources: request.forcedSources))
-            cache = result.cache
+            let checkedSources = sources
+            let requestAllows = request.isAllowed
+            let result = await fetch(.init(cache: cache, sources: checkedSources, vendors: followedVendors, maxAge: request.maxAge, now: request.now, forcedSources: request.forcedSources,
+                                           isAllowed: { [weak self] in self?.allowsRefresh() == true && requestAllows?() != false }))
+            var updated = result.cache
+            updated.retainFoldedIdentities(from: cache, sources: checkedSources)
+            cache = updated
+            for source in checkedSources where source.kind != .officialAnnouncement {
+                if let items = cache.items[source.id] {
+                    cache.items[source.id] = items.map { raw in
+                        var item = raw
+                        item.sourceID = source.id
+                        item.kind = source.kind
+                        let old = previous.items[source.id]?.first { $0.id == item.id }
+                        let baseline = min(visitBaseline, request.now)
+                        // A failed/partial bucket is not a successful first check. Keep that
+                        // source's initial archive quiet even if it was unfollowed while awaiting.
+                        if previous.check(for: source).succeededAt == nil {
+                            item.firstSeenAt = min(old?.newsDate ?? baseline, baseline)
+                        } else {
+                            item.firstSeenAt = old?.newsDate ?? min(item.newsDate ?? request.now, request.now)
+                        }
+                        return item
+                    }
+                }
+            }
             cache.save(to: directory)
             // What arrived while News is open is seen, so it doesn't come back as a badge; it
             // stays marked New for the rest of this visit (`visitBaseline`). Only what this
             // pass brought: a check that found nothing doesn't mark later arrivals seen.
-            if visitIsOpen, let arrival = Self.newestArrival(in: result.cache, since: previous, checkedAt: request.now) {
+            if visitIsOpen, let arrival = Self.newestArrival(in: cache, since: previous, checkedAt: request.now) {
                 seenAt = max(seenAt, arrival)
             }
             if request.notifies, request.preferences.newModels, !result.newModels.isEmpty {
@@ -279,8 +368,6 @@ final class NewsStore {
             }
             guard let next = queuedRefresh else { break }
             queuedRefresh = nil
-            // News turned off meanwhile (on the Mac): the follow-up doesn't go out.
-            if let isAllowed = next.isAllowed, !isAllowed() { break }
             request = next
         }
     }

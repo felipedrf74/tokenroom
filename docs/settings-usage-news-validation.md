@@ -1,5 +1,7 @@
 # Settings, usage, Watch, and News implementation
 
+**Current authority:** [Release checks](news-release-checks-20261011.md) and [completion audit](news-redesign-completion-audit-20261011.md) record the current source, automated, signing and finite News acceptance results. Final independent review and exact pushed-revision CI precede publication. The QA6 report and older snapshots below are historical; their no-tests and acceptance statements describe their original closeouts. Physical Production integration limits remain explicitly unverified.
+
 Completion audit: 2026-09-27. Implemented on `codex/settings-usage-news`, starting at `56f57708aa797ef4004a4ef3483a693b5a5739ca`. This records the pre-release QA snapshot; subsequent Git/App Store publication and local installation were separately authorized on 2026-09-28. References below to the "current" uncommitted diff describe that snapshot, not publication status. The later request did not authorize executing tests.
 
 The requested behavior is implemented in source, with independent review fixes described below. The completion audit found and closed additional gaps in ranking, reset presentation, widget summaries, localized budgets, Today empty states, and uncached feed follows. These follow-up edits are **uncommitted**. Source completion is distinct from acceptance: test execution and interactive/device QA are blocked in this pass by the user's explicit instruction, “Don't commit or run any tests unless if I specify to do it so.” Those checks are not passed or waived.
@@ -21,7 +23,7 @@ The requested behavior is implemented in source, with independent review fixes d
 | Independent News recovery | Optional per-source dates; independent scheduling, conditional GETs, byte limits; transport/parsing failures affect health and retry after one hour. Uncached follows fetch immediately, including re-follows after failure. Local `forcedSources` requests union through a queued pass without losing manual refreshes; an unstructured worker keeps those passes running when the requesting view task is cancelled. | Source complete; live-feed acceptance blocked below. |
 | News health and empty states | Today/Retiring health and cached-content explanations; separate nothing-followed/no-match/no-retirement/failure states with Follow/Show All/Retry. Today uses the visible edition, including the 30-day retirement horizon. | Source complete; visual/interaction acceptance blocked below. |
 | News visit continuity | `beginVisit` / `endVisit` at root tab-entry and Mac window-opening/closing boundaries. Opening clears badge; internal Follow navigation retains the New baseline. | Source complete; navigation acceptance blocked below. |
-| Discovery/model clarity | iPhone title/source search; Show More beyond 50/60 cached model rows; explicit input/output per million tokens; adaptive cards/specifications; serif/SF typography and native navigation retained. | Source complete; narrow/large-text acceptance blocked below. |
+| Discovery/model clarity | iPhone title/source search; complete retained model collections with search; explicit input/output per million tokens; adaptive cards/specifications; serif/SF typography and native navigation retained. | Source complete; narrow/large-text acceptance blocked below. |
 | Regression source for all changed domains | Settings/preference conflicts/budgets, mixed ages, Watch account gate/cache merging, secondary limits/resets, per-feed failures/follows, visit continuity, mobile store regressions. Twenty uncommitted regression methods in the current diff (18 Mac/shared, two hosted iPhone); nine were part of the first completion pass. | Source complete; latest methods unexecuted. |
 | Repeat Mac/shared tests | Historical 430-test pass belongs to the earlier committed implementation. | Impossible within current authorization: user forbids test execution. |
 | Repeat shared typechecks and Mac/iOS/Watch/widget compilation | Compiler checks only; no tests or apps launched. | Results below. |
@@ -119,7 +121,7 @@ xcodebuild build -project Tokenroom.xcodeproj -scheme TokenroomMobile -destinati
 - Ranking considers all metered windows and ties use the urgent window's percentage. Exhausted secondary windows receive a short warning; iPhone tile order remains stable while visible. XXL and larger text uses one column.
 - Scheduled resets show “Reset · awaiting reading”; no live zero is synthesized, including lingering/stale Live Activities. Mac presentation time advances independently of provider polling. Pinned widgets never replace a missing/expired choice with another provider. Elapsed windows produce no forecast or usage alert. Widget timelines include reset, stale, and expiry boundaries.
 - News has optional per-source success/failure metadata, independent retries, immediate uncached follows, conditional GETs, and existing byte limits. Parsing and transport failures are visible; partial answers preserve cached content. Manual refreshes coalesce into a follow-up pass while preserving any queued notification request and applying the latest preferences, even when the requesting News page task is cancelled.
-- News visits survive internal navigation. Today and Retiring show section health; empty states retain Follow, Show All, and Retry. iPhone search covers titles/sources, cached model lists have Show More, and prices label input/output per million tokens. Cards/specs adapt to larger text.
+- News visits survive internal navigation. Today and Retiring show section health; empty states retain Follow, Show All, and Retry. iPhone search covers titles/sources, model collections show the complete retained list, and prices label input/output per million tokens. Cards/specs adapt to larger text.
 
 ## Historical validation — earlier committed implementation only
 
@@ -144,6 +146,12 @@ Legacy feeds lack individual historical dates, so migration freezes existing agg
 
 No cleanup, installed-app replacement, publishing, deployment, release submission, new providers, or Watch News is part of this change.
 
+## 11 October 2026 — approved News redesign
+
+The later approved News work adds Today / Following / Skills / Saved, native reading details, local saved/read metadata, curated public voices and opt-in status, and bounded ClawHub discovery. The earlier evidence above remains historical. Current source, simulator acceptance, test exclusions and release boundaries are recorded in [News redesign validation](news-redesign-validation-20261011.md). The approved direct implementation ran 79 targeted tests before review, reproduced six regressions for five review findings, and passed the final 658-test Mac suite with eight login-Keychain exclusions, plus shared typechecks and unsigned Simulator builds; no release occurred.
+
+After Felipe's later no-tests instruction, a read-only [completion audit](news-redesign-completion-audit-20261011.md) found two missing promised test assertions and added three cases without compiling or executing them. Production Swift was unchanged in that audit; the later QA fix pass changes it. All plan items now have a specific disposition; narrow-layout, Reduce Motion, physical VoiceOver and interactive Mac acceptance remain impossible in that pass because new tests are prohibited. The previous passing counts do not cover those additions. The [independent QA prompt](news-redesign-qa-prompt-20261011.md) preserves this boundary.
+
 ## Reproduction commands
 
 Test commands below require renewed explicit authorization. They are recorded for future QA and were not executed in this completion pass. Do not use `scripts/build.sh` for QA: it can replace the installed app.
@@ -156,3 +164,25 @@ xcodebuild build-for-testing -project Tokenroom.xcodeproj -scheme TokenroomMobil
 ```
 
 Logs: `/tmp/tokenroom-verified-mac-tests.log`, `/tmp/tokenroom-frozen-shared.log`, `/tmp/tokenroom-verified-apple-build.log`, `/tmp/tokenroom-verified-hosted-build.log`. Simulator attempt logs: `/tmp/tokenroom-hosted-mobile.log`, `/tmp/tokenroom-hosted-mobile-retry.log`.
+
+## 11 October 2026 — independent News QA fixes
+
+The [QA fix report](news-qa-fixes-20261011.md) supersedes the earlier blanket source-completion verdict. All confirmed bugs/source gaps, including no-snapshot mobile XCTest isolation, have source corrections. Nineteen new regression cases plus the prior three are uncompiled/unexecuted; current production changes have not been compiled or run. Historical passing results above validate their earlier source snapshot only. Final source/diff review and exact blocked acceptance are recorded in the report and corrected completion audit. No tests, builds, launches, network probes, commits or releases occurred in this fix pass.
+
+## Second News QA stabilization — historical QA2 disposition
+
+[The second stabilization report](news-second-qa-fixes-20261011.md) supersedes the preceding first-fix closeout. Five additional P2 findings and three Minor gaps have source corrections: malformed model input safety/cache retention, owning Mac enablement before pass/GET dispatch, consistent recent-model counts, original skill positions, per-test defaults isolation, paired-feed health/retry and accurate shared progress/documentation. Twelve more regression sources bring later added uncompiled/unexecuted cases to 34. Existing non-News source dispositions above are unchanged. No current executable validation, native acceptance or release verdict follows.
+
+Historical QA3 corrections and validation limitations are recorded in [the third fix report](news-third-qa-fixes-20261011.md). Skills owner/deadline checks, malformed ranking retention, Atom XHTML parsing and explicit test dependencies are source changes only. At that closeout all 48 later regression sources plus amended existing cases were uncompiled/unexecuted; earlier green evidence is historical.
+
+Historical QA4 corrections are in [the fourth fix report](news-fourth-qa-fixes-20261011.md): queued preference updates, transitive Unsave/exact Undo, native source search and full mobile-root test/snapshot storage/effects isolation. Eighteen additional methods bring later additions to 66; none are compiled/executed. Source selection clears its query, searches all paired-family retained stories and shows a no-results state. Hosted storage preservation and native journeys remain blocked by the no-tests instruction.
+
+## Historical QA6 validation — superseded coverage/signing limits
+
+Felipe authorized the three remaining P2 repairs, relevant tests and fresh independent review. [QA6](news-sixth-qa-validation-20261011.md) records Mac Back/window commands, currency-bound references/history and atomic updated-writer alert ownership, plus the unchanged-snapshot reset regression found and fixed during validation. Final 758 safe Mac and 14 selected hosted iOS tests, shared platform typechecks, unsigned Release Mac/iOS widgets+Watch builds and direct Swift 6 fallback compile pass. Native Mac navigation and actual synthetic cross-process flock pass within their stated scope. Eight Keychain Mac cases are excluded; remaining mobile cases are not selected. Earlier counts/no-execution statements above are historical.
+
+The [current completion audit](news-redesign-completion-audit-20261011.md) leaves signed/device/accessibility/error-recovery acceptance explicit. Public release is NO_GO until those and signing/notarization/App Store/version prerequisites pass. No commit/push/version bump/release occurred.
+
+## Current release pass
+
+[The release checklist](news-release-checks-20261011.md) supersedes QA6 coverage/signing limits: all eight Mac credential cases inject in-memory operations, complete Mac 766/0 and hosted iOS34/0 pass, with shared platform checks and unsigned Release/fallback builds. Current signed r2 source/package verification, Mac notarization and private mobile upload/processing pass. Current Save capacity/Undo/corruption/reopen, cold/retained Skills captions and representative News offline/stale/malformed/partial/empty/retry witnesses pass. Current Simulator ordinary/largest text/light/dark/narrow navigation, Share sheet, Open Original, saved actions and Reduce Motion restoration pass within inert fixture scope. The earlier human VoiceOver attestation remains dated/component-scoped. Further physical phone work stopped at Felipe's request; different private iCloud accounts and no Watch leave real Production relay/alert, push/widget/Live Activity/App Group and physical Watch effects unverified. Original News Watch typecheck/embedded-build requirements pass without new hardware. Publication follows final independent docs/diff and exact-revision CI; public release and both-Mac install need separate receipts. No commit/push/public release or production replacement/after-release cleanup has yet occurred. Historical counts and reports above describe their own snapshots.

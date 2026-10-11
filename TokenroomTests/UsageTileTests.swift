@@ -88,12 +88,12 @@ final class UsageTileTests: XCTestCase {
             (provider(id: "claude", primary: "weekly", [session(86, resetsIn: 72 * 60), weekly(64, resetsIn: 53 * 3600)]), [:]),
             // The limit is reached.
             (provider(id: "kimiCode", [session(100, resetsIn: 90 * 60)]), [:]),
-            // Stale readings and calm windows stay out.
+            // A stale window still at 80% stays. A calm window stays out.
             (provider(id: "zai", state: "stale", [weekly(95)]), [:]),
             (provider(id: "grok", [weekly(23, resetsIn: 102 * 3600)]), [:]),
         ]
         let close = UsageTiles.closeWindows(readings, now: now)
-        XCTAssertEqual(close.map { "\($0.provider.id)/\($0.window.id)" }, ["kimiCode/session", "claude/session", "openai/weekly", "copilot/premium"])
+        XCTAssertEqual(close.map { "\($0.provider.id)/\($0.window.id)" }, ["kimiCode/session", "claude/session", "openai/weekly", "zai/weekly", "copilot/premium"])
     }
 
     func testTilesKeepTheirPlacesUntilRankedAgain() {

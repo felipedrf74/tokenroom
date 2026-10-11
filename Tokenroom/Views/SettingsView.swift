@@ -96,7 +96,16 @@ struct SettingsView: View {
         case .menuBar:
             return store.settings.menuStyle.title
         case .iPhone:
-            return store.relay.map { $0.isEnabled ? "Sending" : "Off" }
+            guard let relay = store.relay else { return nil }
+            switch relay.state {
+            case .unavailable: return "Unavailable"
+            case .off: return "Off"
+            case .waiting: return "Waiting for readings"
+            case .noAccount: return "Sign in to iCloud"
+            case .sent: return "Sent"
+            case .failed: return "Couldn't sync"
+            case .paused: return "Paused"
+            }
         case .alerts:
             return store.settings.showsAlertsOnMac ? "On this Mac and iPhone" : "On iPhone"
         case .general, .keys:
@@ -485,6 +494,8 @@ private struct KeysSettings: View {
     @State private var keySheet: Provider?
     /// Counts closed key sheets; rows read their key again when it changes.
     @State private var closedSheets = 0
+    @State private var budgetRegions: [Provider: String] = [:]
+    @State private var budgetClears: [Provider: Int] = [:]
 
     var body: some View {
         Form {
@@ -576,22 +587,41 @@ private struct KeysSettings: View {
     }
 
     private func keyedProvider(_ provider: Provider, budgetLabel: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let unit = store.budgetUnit(for: provider, region: budgetRegions[provider])
+        let reference = store.settings.budgetReference(for: provider)
+        return VStack(alignment: .leading, spacing: 8) {
             keyHeader(provider)
-            KeyRow(provider: provider, keys: CredentialReaders.apiKeys, reload: closedSheets) {
+            KeyRow(provider: provider, keys: CredentialReaders.apiKeys, reload: closedSheets,
+                   onMetadata: { metadata in
+                       budgetRegions[provider] = metadata.map { provider.keySpec?.initialChoice(saved: $0) ?? "" }
+                   }) {
                 keySheet = provider
             } onRemoved: {
                 store.settings.setEnabled(provider, false)
             }
             .padding(.leading, 28)
-            BudgetField(label: budgetLabel, currency: store.budgetCurrency(for: provider), value: Binding(
-                get: { store.settings.budget(for: provider) },
+            BudgetField(label: budgetLabel, currency: unit.uppercased(), resetRevision: budgetClears[provider, default: 0], value: Binding(
+                get: { store.settings.budgetReference(for: provider).flatMap { $0.unit == unit ? $0.amount : nil } },
                 set: { value in
-                    store.settings.setBudget(value, for: provider)
+                    store.settings.setBudget(value, for: provider, unit: unit)
                     store.budgetDidChange(for: provider)
                 }
             ))
             .padding(.leading, 28)
+            if let reference, reference.unit != unit {
+                Text("Saved reference: \(AmountFormat.text(reference.amount, unit: reference.unit)). Enter a new \(unit.uppercased()) amount to replace it; the saved amount only meters \(reference.unit.uppercased()) balances.")
+                    .font(.caption).foregroundStyle(.secondary).padding(.leading, 28)
+            } else if let previous = store.settings.budget(for: provider), reference == nil {
+                Text("Previous reference: \(previous.formatted(.number)) (currency unknown). Enter it again in \(unit.uppercased()) to activate it.")
+                    .font(.caption).foregroundStyle(.secondary).padding(.leading, 28)
+            }
+            if store.settings.budget(for: provider) != nil, reference?.unit != unit {
+                Button("Clear Saved Reference", role: .destructive) {
+                    store.settings.setBudget(nil, for: provider, unit: unit)
+                    store.budgetDidChange(for: provider)
+                    budgetClears[provider, default: 0] += 1
+                }.buttonStyle(.plain).font(.caption).padding(.leading, 28)
+            }
         }
         .padding(.vertical, 2)
     }
@@ -603,6 +633,7 @@ private struct KeyRow: View {
     var keys: APIKeyStore
     /// Changes when a key sheet closes, so a key saved there shows.
     var reload = 0
+    var onMetadata: ((APIKeyStore.Metadata?) -> Void)? = nil
     var onAdd: () -> Void
     var onRemoved: () -> Void
     @State private var metadata: APIKeyStore.Metadata?
@@ -658,6 +689,7 @@ private struct KeyRow: View {
             let provider = self.provider
             let loaded = await BlockingIO.run { (keys.metadata(for: provider), LocalKeys.settingsCaption(for: provider)) }
             metadata = loaded.0
+            onMetadata?(loaded.0)
             localKey = loaded.1
         }
     }
@@ -673,6 +705,7 @@ private struct KeyRow: View {
             do {
                 try await BlockingIO.run { try keys.remove(for: provider) }
                 metadata = nil
+                onMetadata?(nil)
                 message = nil
                 onRemoved()
             } catch {
@@ -686,30 +719,43 @@ private struct KeyRow: View {
 private struct BudgetField: View {
     var label: String
     var currency: String
+    var resetRevision = 0
     @Binding var value: Double?
     @State private var text = ""
     @State private var error: String?
+    @State private var edited = false
     @FocusState private var focused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Text("\(label) (\(currency))").font(.system(size: 11)).foregroundStyle(.secondary)
-                TextField("None", text: $text)
+                TextField("None", text: Binding(get: { text }, set: { text = $0; edited = true }))
                     .textFieldStyle(.roundedBorder).font(.system(size: 11)).frame(width: 110)
                     .focused($focused).onSubmit(save)
             }
             if let error { Text(error).font(.caption).foregroundStyle(.red) }
         }
         .onAppear { text = value.map { $0.formatted(.number.grouping(.never)) } ?? "" }
+        .onChange(of: currency) { _, _ in
+            text = value.map { $0.formatted(.number.grouping(.never)) } ?? ""
+            edited = false
+            error = nil
+        }
+        .onChange(of: resetRevision) { _, _ in
+            text = value.map { $0.formatted(.number.grouping(.never)) } ?? ""
+            edited = false
+            error = nil
+        }
         .onChange(of: focused) { _, focused in if !focused { save() } }
         .onDisappear(perform: save)
     }
 
     private func save() {
+        guard edited else { return }
         switch BudgetInput.parse(text) {
-        case .clear: error = nil; value = nil
-        case .amount(let amount): error = nil; value = amount
+        case .clear: error = nil; value = nil; edited = false
+        case .amount(let amount): error = nil; value = amount; edited = false
         case .invalid: error = BudgetInput.error
         }
     }
@@ -1063,7 +1109,7 @@ private struct NewsSettings: View {
                 } header: {
                     Text("Announcements")
                 } footer: {
-                    Text("Official feeds only. Tokenroom shows titles and links, and opens the rest in your browser.")
+                    Text("Choose curated voices and provider status in News → Following. Saves and reading choices stay on this device. Public articles open in your browser.")
                 }
             }
         }

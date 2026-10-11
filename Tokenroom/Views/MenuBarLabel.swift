@@ -10,11 +10,21 @@ enum MenuBarLayout {
         .compact
     }
 
-    /// What the extra draws. "Highest only" keeps the most used provider; the tooltip still lists all.
+    /// What the extra draws. "Highest only" keeps the provider whose open window needs
+    /// attention soonest, then the most used. The tooltip still lists all.
     static func displayed(_ meters: [MenuMeter], style: MenuBarStyle) -> [MenuMeter] {
         guard style == .highest else { return meters }
         let readings = meters.filter { !$0.isPlaceholder && !$0.isAwaitingReading }
-        guard let top = readings.max(by: { $0.usedPercent < $1.usedPercent }) ?? meters.first else { return [] }
+        guard let top = readings.max(by: { lhs, rhs in
+            if lhs.urgency != rhs.urgency { return lhs.urgency < rhs.urgency }
+            if (lhs.usedPercent >= 100) != (rhs.usedPercent >= 100) { return lhs.usedPercent < 100 }
+            switch (lhs.runsOutAt, rhs.runsOutAt) {
+            case let (left?, right?) where left != right: return left > right
+            case (.some, nil): return false
+            case (nil, .some): return true
+            default: return lhs.usedPercent < rhs.usedPercent
+            }
+        }) ?? meters.first else { return [] }
         return [top]
     }
 
@@ -27,7 +37,8 @@ enum MenuBarLayout {
             return "Tokenroom"
         }
         return meters.map { meter in
-            "\(meter.provider.displayName) \(meter.displayValue)" + (meter.attention.map { " · \($0)" } ?? "")
+            let figure = [meter.windowLabel, meter.displayValue].compactMap { $0 }.joined(separator: " ")
+            return "\(meter.provider.displayName) \(figure)" + (meter.attention.map { " · \($0)" } ?? "")
         }.joined(separator: "\n")
     }
 }

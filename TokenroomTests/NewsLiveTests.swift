@@ -87,7 +87,7 @@ final class NewsLiveTests: XCTestCase {
         await news.refresh(maxAge: NewsFetcher.liveInterval, preferences: AlertPreferences(), notifies: false, now: arrived)
         XCTAssertTrue(news.isNew(arrived), "Marked New for the rest of the visit")
         news.endVisit()
-        XCTAssertEqual(news.unseenModelCount, 0, "Seen as it arrived, so no badge after closing News")
+        XCTAssertEqual(news.unseenModelCount(now: arrived), 0, "Seen as it arrived, so no badge after closing News")
 
         // Outside a visit, a check's finds still count.
         let later = arrived.addingTimeInterval(86_400)
@@ -97,7 +97,7 @@ final class NewsLiveTests: XCTestCase {
             return NewsFetcher.Result(cache: cache, newModels: [])
         }, notify: { _, _, _ in })
         await closed.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: later)
-        XCTAssertEqual(closed.unseenModelCount, 1)
+        XCTAssertEqual(closed.unseenModelCount(now: later), 1)
     }
 
     // MARK: QA regressions
@@ -127,7 +127,7 @@ final class NewsLiveTests: XCTestCase {
             return NewsFetcher.Result(cache: cache, newModels: [])
         }, notify: { _, _, _ in })
         await later.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: liveCheck.addingTimeInterval(60))
-        XCTAssertEqual(later.unseenModelCount, 1, "Created during the visit, but never on screen")
+        XCTAssertEqual(later.unseenModelCount(now: liveCheck.addingTimeInterval(60)), 1, "Created during the visit, but never on screen")
     }
 
     /// News opened while another check runs still gets its 15-minute check right after it,

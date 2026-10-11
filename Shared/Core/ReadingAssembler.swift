@@ -42,7 +42,7 @@ enum ReadingAssembler {
         let prefix = providerID + "/"
         var result: [String: UsageHistory] = [:]
         for (key, week) in relay.series where key.hasPrefix(prefix) && !week.isEmpty {
-            result[String(key.dropFirst(prefix.count))] = week
+            result[String(key.dropFirst(prefix.count))] = week.migratingLegacyAmounts(for: providerID)
         }
         return result
     }

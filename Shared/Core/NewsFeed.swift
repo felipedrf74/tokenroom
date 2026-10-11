@@ -50,20 +50,47 @@ struct NewsCache: Codable, Equatable, Sendable {
     func announcements(from sources: [FeedSource], limit: Int = 80) -> [FeedItem] {
         let products = Dictionary(sources.map { ($0.id, $0.partOf ?? $0.id) }) { first, _ in first }
         let feeds = Dictionary(sources.map { ($0.id, $0) }) { first, _ in first }
-        let newestFirst: (FeedItem, FeedItem) -> Bool = { ($0.published ?? .distantPast) > ($1.published ?? .distantPast) }
-        var kept: [FeedItem] = []
+        let newestFirst: (FeedItem, FeedItem) -> Bool = {
+            $0.sortDate == $1.sortDate ? $0.stableID < $1.stableID : $0.sortDate > $1.sortDate
+        }
+        // Stable positions let a bridging entry merge every matching group without losing
+        // the keys learned from copies that have already been folded.
+        var kept: [FeedItem?] = []
         var keptFeeds: [String] = []
         var positions: [String: Int] = [:]
         let entries = items.flatMap { id, feed in products[id].map { product in feed.map { (item: $0, feed: id, product: product) } } ?? [] }
-        for (item, feed, product) in entries.sorted(by: { newestFirst($0.item, $1.item) }) {
-            let keys = [item.link.map { "link \($0.absoluteString)" }, "title \(product) \(item.duplicateKey)"].compactMap { $0 }
-            if let position = keys.lazy.compactMap({ positions[$0] }).first {
-                if let published = item.published, published < (kept[position].published ?? .distantFuture) {
-                    kept[position].published = published
+        for (raw, feed, product) in entries.sorted(by: { newestFirst($0.item, $1.item) }) {
+            var item = raw
+            item.sourceID = feed
+            item.kind = feeds[feed]?.kind ?? .officialAnnouncement
+            item.firstSeenAt = item.firstSeenAt ?? item.published ?? item.updatedAt
+            let paired = sources.contains { $0.partOf == product }
+            if paired, let range = item.duplicateKey.range(of: #"\d+(\.\d+)+([-+.][0-9a-z.]+)?"#, options: .regularExpression) {
+                item.canonicalID = "release|\(product)|\(item.duplicateKey[range])"
+            }
+            let keys: [String]
+            if item.kind == .officialAnnouncement {
+                keys = [item.link.map { "official link \($0.absoluteString)" }, item.canonicalID, "title \(product) \(item.duplicateKey)"].compactMap { $0 }
+            } else { keys = ["item \(feed)|\(item.id)"] }
+            let matches = Set(keys.compactMap { positions[$0] })
+            if let position = matches.min(), var winner = kept[position] {
+                var copies = matches.sorted().filter { $0 != position }.compactMap { kept[$0] }
+                copies.append(item)
+                for copy in copies {
+                    winner.firstSeenAt = [winner.newsDate, copy.newsDate].compactMap { $0 }.min()
+                    // Legacy stored date is bookkeeping, not an original publisher timestamp.
+                    if let date = copy.published { winner.published = min(date, winner.published ?? date) }
+                    winner.aliases = winner.aliasIDs.union(copy.aliasIDs).union([copy.stableID])
+                    if winner.alsoIn == nil, copy.sourceID != keptFeeds[position],
+                       let other = copy.sourceID.flatMap({ feeds[$0] }) {
+                        winner.alsoIn = Self.name(of: other, besides: winner.source)
+                    }
                 }
-                if kept[position].alsoIn == nil, feed != keptFeeds[position], let other = feeds[feed] {
-                    kept[position].alsoIn = Self.name(of: other, besides: kept[position].source)
-                }
+                kept[position] = winner
+                for other in matches where other != position { kept[other] = nil }
+                // Repoint every inherited key, not just this entry's keys, to the winner.
+                let redirected = positions.keys.filter { matches.contains(positions[$0]!) }
+                for key in redirected { positions[key] = position }
                 keys.forEach { positions[$0] = position }
                 continue
             }
@@ -71,13 +98,38 @@ struct NewsCache: Codable, Equatable, Sendable {
             kept.append(item)
             keptFeeds.append(feed)
         }
-        return Array(kept.sorted(by: newestFirst).prefix(limit))
+        return Array(kept.compactMap { $0 }.sorted(by: newestFirst).prefix(limit))
     }
 
     /// A feed's name as a place an entry also appeared: "Claude Code releases", or "Claude Code
     /// changelog" beside an entry already shown under "Claude Code".
     static func name(of feed: FeedSource, besides source: String) -> String {
         feed.name == source ? "\(feed.name) \(NewsEditions.kind(of: feed).lowercased())" : feed.name
+    }
+
+    /// Persist the associations learned while paired copies coexist. Carry them on the
+    /// surviving raw item when the other feed rotates it out, without retaining old articles.
+    mutating func retainFoldedIdentities(from previous: NewsCache, sources: [FeedSource]) {
+        var combined = self
+        for source in sources {
+            let current = combined.items[source.id] ?? []
+            let ids = Set(current.map(\.id))
+            combined.items[source.id] = current + (previous.items[source.id] ?? []).filter { !ids.contains($0.id) }
+        }
+        let groups = combined.announcements(from: sources, limit: .max)
+        var identities: [String: FeedItem] = [:]
+        for group in groups { for alias in group.aliasIDs { identities[alias] = group } }
+        for source in sources {
+            guard let current = items[source.id] else { continue }
+            items[source.id] = current.map { raw in
+                var item = raw
+                if let group = identities["\(source.id)|\(raw.id)"] {
+                    item.aliases = group.aliasIDs
+                    item.firstSeenAt = [item.newsDate, group.newsDate].compactMap { $0 }.min()
+                }
+                return item
+            }
+        }
     }
 
     static func load(from directory: URL?) -> NewsCache {
@@ -123,6 +175,8 @@ enum NewsFetcher {
         var maxAge: TimeInterval?
         var now: Date
         var forcedSources: Set<String> = []
+        /// Rechecked before each public GET; already-issued requests may finish normally.
+        var isAllowed: @MainActor @Sendable () -> Bool = { true }
     }
 
     /// What a GET got back.
@@ -139,7 +193,7 @@ enum NewsFetcher {
 
     /// Fetches what's due: models every 6 hours, announcements every 12, or anything older than
     /// `maxAge` when given (opening the tab, pulling to refresh).
-    static func refresh(_ cache: NewsCache, sources: [FeedSource], following vendors: Set<String>, maxAge: TimeInterval? = nil, now: Date = .now, forcedSources: Set<String> = []) async -> Result {
+    static func refresh(_ cache: NewsCache, sources: [FeedSource], following vendors: Set<String>, maxAge: TimeInterval? = nil, now: Date = .now, forcedSources: Set<String> = [], isAllowed: @escaping @MainActor @Sendable () -> Bool = { true }) async -> Result {
         var cache = cache
         // Freeze legacy sources' dates before another source advances the shared timestamp.
         var migrated = cache.sourceChecks ?? [:]
@@ -150,9 +204,12 @@ enum NewsFetcher {
         var newModels: [ModelRelease] = []
         var unreadable = cache.unreadable ?? []
 
-        if isDue(cache.modelsFetchedAt, failedAt: cache.modelsFailedAt, interval: maxAge ?? modelInterval, now: now) {
+        if forcedSources.contains(ModelFeed.id) || isDue(cache.modelsFetchedAt, failedAt: cache.modelsFailedAt, interval: maxAge ?? modelInterval, now: now) {
             let key = ModelFeed.url.absoluteString
-            switch await get(ModelFeed.url, validator: cache.validators[key]) {
+            guard let answer = await permittedGet(ModelFeed.url, validator: cache.validators[key], isAllowed: isAllowed) else {
+                return .init(cache: cache, newModels: [])
+            }
+            switch answer {
             case let .body(data, validator, isTruncated):
                 if !isTruncated, let releases = try? ModelFeed.releases(from: data) {
                     cache.models = firstSeen(releases, previous: cache.models, now: now)
@@ -195,11 +252,13 @@ enum NewsFetcher {
         }
         if !due.isEmpty {
             let previous = cache.validators
-            let answers = await withTaskGroup(of: (FeedSource, Answer).self) { group in
+            let answers = await withTaskGroup(of: (FeedSource, Answer?).self) { group in
                 for source in due {
-                    group.addTask { (source, await get(source.url, validator: previous[source.url.absoluteString], sizeLimit: source.sizeLimit)) }
+                    group.addTask {
+                        return (source, await permittedGet(source.url, validator: previous[source.url.absoluteString], sizeLimit: source.sizeLimit, isAllowed: isAllowed))
+                    }
                 }
-                var answers: [(FeedSource, Answer)] = []
+                var answers: [(FeedSource, Answer?)] = []
                 for await answer in group { answers.append(answer) }
                 return answers
             }
@@ -207,6 +266,7 @@ enum NewsFetcher {
             var anyFailed = false
             var checks = cache.sourceChecks ?? [:]
             for (source, answer) in answers {
+                guard let answer else { continue } // Disabled checks are neither failures nor fresh readings.
                 let key = source.url.absoluteString
                 var check = cache.check(for: source)
                 var success = false
@@ -222,8 +282,10 @@ enum NewsFetcher {
                     } else {
                         // A partial response supplements the last complete copy, never deletes it.
                         let ids = Set(items.map(\.id))
-                        cache.items[source.id] = (items + previousItems.filter { !ids.contains($0.id) })
-                            .sorted { ($0.published ?? .distantPast) > ($1.published ?? .distantPast) }
+                        if !items.isEmpty || cache.items[source.id] != nil {
+                            cache.items[source.id] = (items + previousItems.filter { !ids.contains($0.id) })
+                                .sorted { ($0.published ?? .distantPast) > ($1.published ?? .distantPast) }
+                        }
                         cache.validators[key] = nil
                     }
                 case .notModified:
@@ -247,7 +309,7 @@ enum NewsFetcher {
             }
             cache.sourceChecks = checks
             if anySucceeded { cache.announcementsFetchedAt = now }
-            cache.announcementsFailedAt = anyFailed ? now : nil
+            if anySucceeded || anyFailed { cache.announcementsFailedAt = anyFailed ? now : nil }
         }
         cache.unreadable = unreadable.isEmpty ? nil : unreadable
         return Result(cache: cache, newModels: newModels)
@@ -271,11 +333,19 @@ enum NewsFetcher {
     /// zone, a post scheduled early) counts as seen once News opens, and a later change to its
     /// date doesn't make it new again.
     static func firstSeen(_ items: [FeedItem], previous: [FeedItem], now: Date) -> [FeedItem] {
-        let earlier = Dictionary(previous.compactMap { item in item.published.map { (item.id, $0) } }) { first, _ in first }
-        return items.map { item in
-            var item = item
-            let latest = min(earlier[item.id] ?? now, now)
-            item.published = item.published.map { min($0, latest) }
+        let earlier = Dictionary(previous.map { ($0.id, $0) }) { first, _ in first }
+        return items.map { incoming in
+            var item = incoming
+            let old = earlier[item.id]
+            if let old { item.aliases = old.aliasIDs.union(item.aliasIDs) }
+            item.firstSeenAt = old?.newsDate ?? min(item.publisherPublishedAt ?? item.updatedAt ?? item.published ?? now, now)
+            item.published = item.published.map { min($0, old?.published ?? now, now) }
+            if item.kind == .officialStatus {
+                let update = FeedItem.StatusUpdate(date: item.updatedAt ?? item.publisherPublishedAt, excerpt: item.excerpt)
+                var updates = old?.observedUpdates ?? []
+                if !updates.contains(update) { updates.insert(update, at: 0) }
+                item.observedUpdates = Array(updates.prefix(5))
+            }
             return item
         }
     }
@@ -291,9 +361,18 @@ enum NewsFetcher {
         .sorted { $0.created > $1.created }
     }
 
+    /// Check the live owner on the transport entry's actor, without hopping back to a
+    /// generic worker after authorization. A veto is not an unsuccessful check.
+    @MainActor static func permittedGet(_ url: URL, validator: NewsCache.Validator?, sizeLimit: Int = FeedParser.sizeLimit,
+                                       isAllowed: @MainActor @Sendable () -> Bool) async -> Answer? {
+        guard !Task.isCancelled, isAllowed() else { return nil }
+        return await get(url, validator: validator, sizeLimit: sizeLimit)
+    }
+
     /// A conditional GET that reads at most `sizeLimit` bytes: a longer body stops there instead
     /// of loading whole.
-    static func get(_ url: URL, validator: NewsCache.Validator?, sizeLimit: Int = FeedParser.sizeLimit) async -> Answer {
+    @MainActor static func get(_ url: URL, validator: NewsCache.Validator?, sizeLimit: Int = FeedParser.sizeLimit) async -> Answer {
+        guard !Task.isCancelled else { return .unreachable }
         var request = URLRequest(url: url)
         request.timeoutInterval = TokenroomHTTP.timeout
         request.cachePolicy = .reloadIgnoringLocalCacheData

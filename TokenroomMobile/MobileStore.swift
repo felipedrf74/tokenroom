@@ -1,10 +1,7 @@
-import BackgroundTasks
 import CloudKit
 import Foundation
 import Observation
-import UIKit
 import UserNotifications
-import WidgetKit
 import os
 
 /// Everything the iPhone shows: readings your Macs relay through iCloud, providers read with keys
@@ -50,6 +47,7 @@ final class MobileStore {
         static let sampleMode = "sampleMode"
         static let onboarded = "onboarded"
         static let budgets = "budgets"
+        static let budgetReferences = BudgetReferencePreferences.referencesKey
         static let published = "relayPublished"
         static let alertPreferences = "alertPreferences"
         static let alertPreferencesShared = "alertPreferencesShared"
@@ -146,8 +144,14 @@ final class MobileStore {
     @ObservationIgnored private var followingTimeZone = false
 
     let keys: APIKeyStore
+    /// An app-owned test/fixture root may present data and edit isolated preferences only.
+    let allowsExternalEffects: Bool
+    var hasPersistentStorage: Bool { directory != nil }
+    var preferencesDefaults: UserDefaults { defaults }
+    var widgetReloadCount: Int { WidgetReloadLog.count(defaults: defaults) }
     let sourceID: String
     @ObservationIgnored private let notificationScheduler: @MainActor @Sendable (UNNotificationRequest) async throws -> Void
+    @ObservationIgnored private let platformEffects: MobilePlatformEffects
     @ObservationIgnored private let claimOverride: (@MainActor @Sendable (UsageAlert, Date) async -> Claim)?
     private let relay: CloudRelay?
     private let defaults: UserDefaults
@@ -212,17 +216,22 @@ final class MobileStore {
         notificationScheduler: @escaping @MainActor @Sendable (UNNotificationRequest) async throws -> Void = {
             try await UNUserNotificationCenter.current().add($0)
         },
-        claimAlert: (@MainActor @Sendable (UsageAlert, Date) async -> Claim)? = nil
+        claimAlert: (@MainActor @Sendable (UsageAlert, Date) async -> Claim)? = nil,
+        allowsExternalEffects: Bool = true,
+        platformEffects: MobilePlatformEffects = .system,
+        launchDefaults: UserDefaults = .standard
     ) {
         self.defaults = defaults
+        self.allowsExternalEffects = allowsExternalEffects
         cacheGeneration = PhoneCacheAccess.generation(in: defaults)
         self.notificationScheduler = notificationScheduler
+        self.platformEffects = platformEffects
         claimOverride = claimAlert
         self.connectOnIPhone = connectOnIPhone
         // Before the first handover, so the flag travels with the first readings.
-        WatchLink.shared.connectAvailable = connectOnIPhone
+        if allowsExternalEffects { platformEffects.setWatchConnectAvailable(connectOnIPhone) }
         self.keys = keys
-        keyGate = KeyFetchGate(defaults: defaults)
+        keyGate = allowsExternalEffects ? platformEffects.makeKeyFetchGate(defaults) : KeyFetchGate(defaults: defaults, lockDirectory: nil)
         if let existing = defaults.string(forKey: Keys.sourceID) {
             sourceID = existing
         } else {
@@ -240,7 +249,7 @@ final class MobileStore {
         hasOnboarded = defaults.bool(forKey: Keys.onboarded)
         #if DEBUG
         // Launch arguments (`-sampleMode YES`) land in the standard defaults, not the App Group's.
-        let arguments = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
+        let arguments = launchDefaults.volatileDomain(forName: UserDefaults.argumentDomain)
         if let sample = arguments[Keys.sampleMode] as? String { sampleMode = sample == "YES" }
         if let onboarded = arguments[Keys.onboarded] as? String { hasOnboarded = onboarded == "YES" }
         #endif
@@ -257,6 +266,7 @@ final class MobileStore {
     /// the app still reads the keys).
     /// - Parameter includeKeys: false for a silent push, which only means a Mac sent new readings.
     func refresh(force: Bool = false, includeKeys: Bool = true, now: Date = .now) async {
+        guard allowsExternalEffects else { return }
         if !sampleMode, cacheGeneration != PhoneCacheAccess.generation(in: defaults) {
             rebuild(now: now)
         }
@@ -445,7 +455,7 @@ final class MobileStore {
     /// The saved real readings for a Watch request, after its phone refresh finishes.
     var watchReadings: ReadingCache? {
         guard !sampleMode, let cache = PhoneCacheAccess.load(at: cacheURL, defaults: defaults), !cache.isSample else { return nil }
-        return cache
+        return cache.applyingLocalBudgetReferences(in: defaults)
     }
 
     /// The alert choices this iPhone last knew to match iCloud. What differs from them here is a
@@ -568,29 +578,25 @@ final class MobileStore {
         // Shared with the widgets: Anthropic's cost report allows a call every 15 minutes,
         // pull to refresh or not, and a 429 holds every caller off.
         let gate = keyGate
-        let due = providers.filter { provider in
-            if let until = rateLimitedUntil[provider], until > now { return false }
-            return !gate.isResting(provider, now: now)
-        }
-        var earlierAttempts: [Provider: Date] = [:]
-        for provider in due {
-            earlierAttempts[provider] = gate.lastAttempt(provider)
-            gate.recordAttempt(provider, at: now)
+        var claims: [Provider: KeyFetchGate.FetchClaim] = [:]
+        for provider in providers {
+            if let until = rateLimitedUntil[provider], until > now { continue }
+            claims[provider] = gate.claim(provider, at: now)
         }
         await withTaskGroup(of: (Provider, Result<QuotaSnapshot, ProviderError>).self) { group in
-            for provider in due {
+            for (provider, claim) in claims {
                 if localStatuses[provider] == nil {
                     localStatuses[provider] = .loading
                 }
                 group.addTask {
-                    await (provider, APIKeyClient(provider: provider, keys: keys).fetchWithinBudget())
+                    await (provider, APIKeyClient(provider: provider, keys: keys).fetchWithinBudget(onWorkFinished: { result in gate.complete(claim, result: result) }))
                 }
             }
             for await (provider, result) in group {
                 // Cut short (background time ran out): not a failure, and not a call, so the
                 // next refresh asks again and a saved reading stands in meanwhile.
                 if Task.isCancelled, case .failure = result {
-                    gate.recordAttempt(provider, at: earlierAttempts[provider])
+                    if let claim = claims[provider] { gate.restoreAttempt(claim) }
                     if localStatuses[provider] == .loading {
                         localStatuses[provider] = nil
                     }
@@ -610,13 +616,11 @@ final class MobileStore {
             localCheckedAt[provider] = raw.fetchedAt
             localFailedAt[provider] = nil
             rateLimitedUntil[provider] = nil
-            keyGate.block(provider, until: nil)
-            history.record(raw.applyingBudget(budget(for: provider)))
+            history.record(raw.applyingBudget(reference: budgetReference(for: provider)))
         case .failure(let error):
             let next = ProviderStatus.failure(error, cached: localStatuses[provider]?.snapshot, lastChecked: localCheckedAt[provider], now: now)
             if case .rateLimited(let until, _) = next {
                 rateLimitedUntil[provider] = until
-                keyGate.block(provider, until: until)
             }
             localStatuses[provider] = next
             localFailedAt[provider] = now
@@ -625,18 +629,18 @@ final class MobileStore {
 
     /// A reading with the budget or reference set on this iPhone now.
     private func budgeted(_ status: ProviderStatus, for provider: Provider) -> ProviderStatus {
-        let budget = budget(for: provider)
+        let reference = budgetReference(for: provider)
         switch status {
         case .live(let snapshot):
-            return .live(snapshot.applyingBudget(budget))
+            return .live(snapshot.applyingBudget(reference: reference))
         case .stale(let snapshot):
-            return .stale(snapshot.applyingBudget(budget))
+            return .stale(snapshot.applyingBudget(reference: reference))
         case .expired(let message, let cached):
-            return .expired(message, cached: cached?.applyingBudget(budget))
+            return .expired(message, cached: cached?.applyingBudget(reference: reference))
         case .rateLimited(let until, let cached):
-            return .rateLimited(until: until, cached: cached?.applyingBudget(budget))
+            return .rateLimited(until: until, cached: cached?.applyingBudget(reference: reference))
         case .unreachable(let cached):
-            return .unreachable(cached: cached?.applyingBudget(budget))
+            return .unreachable(cached: cached?.applyingBudget(reference: reference))
         case .loading, .signedOut, .notEntitled:
             return status
         }
@@ -649,12 +653,15 @@ final class MobileStore {
             rebuild()
             return
         }
-        guard let cacheURL, let cache = PhoneCacheAccess.load(at: cacheURL, defaults: defaults), !cache.isSample else { return }
+        guard let cacheURL, let saved = PhoneCacheAccess.load(at: cacheURL, defaults: defaults), !saved.isSample else { return }
+        let cache = saved.applyingLocalBudgetReferences(in: defaults)
         storedReadings = cache.items.map { Reading($0) }
         coverage = cache.carriedSources(excluding: Self.localLabel).map(\.source).covering
-        lastCacheHash = cache.materialHash
-        lastReloadSignature = cache.reloadSignature
-        lastHandoverRunOuts = cache.runOuts
+        // Delivery still compares against what widgets/the Watch last received on disk, so
+        // removing an ambiguous legacy meter is propagated on the next successful cache save.
+        lastCacheHash = saved.materialHash
+        lastReloadSignature = saved.reloadSignature
+        lastHandoverRunOuts = saved.runOuts
     }
 
     func ageReadings(at date: Date) { presentationNow = date }
@@ -711,13 +718,15 @@ final class MobileStore {
             id: sourceID, label: Self.localLabel, envelope: own, kind: .thisPhone
         ))
         saveCache(cache)
+        guard allowsExternalEffects else { return }
         let providers = output.connected.map(\.provider)
         let preferences = preferencesHere
         let samples = recentSamples(for: providers)
         let previous = liveActivityUpdate
+        let effects = platformEffects
         liveActivityUpdate = Task {
             await previous?.value
-            await LiveActivities.update(with: providers, preferences: preferences, samples: samples, now: now)
+            await effects.updateLiveActivities(providers, preferences, samples, now)
         }
     }
 
@@ -740,7 +749,7 @@ final class MobileStore {
     /// Widgets redraw from this. When nothing they'd draw changed, only the save time moves, so
     /// they don't refetch, and they aren't reloaded.
     private func saveCache(_ cache: ReadingCache) {
-        guard let cacheURL else { return }
+        guard allowsExternalEffects, let cacheURL else { return }
         let hash = cache.materialHash
         do {
             guard try PhoneCacheAccess.save(cache, at: cacheURL, defaults: defaults, generation: cacheGeneration) else { return }
@@ -755,7 +764,9 @@ final class MobileStore {
         guard changed || RelayPublishPolicy.runOutsMoved(runOuts, since: lastHandoverRunOuts) else { return }
         // Sample readings stay on this iPhone; the Watch keeps showing real ones.
         if !cache.isSample {
-            if let saved = PhoneCacheAccess.load(at: cacheURL, defaults: defaults) { WatchLink.shared.send(saved) }
+            if let saved = PhoneCacheAccess.load(at: cacheURL, defaults: defaults) {
+                platformEffects.sendToWatch(saved.applyingLocalBudgetReferences(in: defaults))
+            }
             lastHandoverRunOuts = runOuts
         }
         guard changed else { return }
@@ -768,21 +779,22 @@ final class MobileStore {
     /// (`ReadingCache.reloadSignature`); smaller moves wait for the widgets' next timeline, which
     /// reads this cache, or for the app to come forward.
     private func reloadWidgets(for cache: ReadingCache) {
+        guard allowsExternalEffects else { return }
         let signature = cache.reloadSignature
-        guard UIApplication.shared.applicationState != .background || signature != lastReloadSignature else {
+        guard !platformEffects.applicationIsBackground() || signature != lastReloadSignature else {
             reloadHeldBack = true
             return
         }
         lastReloadSignature = signature
         reloadHeldBack = false
-        WidgetCenter.shared.reloadAllTimelines()
+        platformEffects.reloadWidgets()
     }
 
     /// The app came forward: a reload held back in the background goes out now.
     func becameActive() {
-        guard reloadHeldBack else { return }
+        guard allowsExternalEffects, reloadHeldBack else { return }
         reloadHeldBack = false
-        WidgetCenter.shared.reloadAllTimelines()
+        platformEffects.reloadWidgets()
     }
 
     func reading(id: String) -> Reading? {
@@ -834,7 +846,7 @@ final class MobileStore {
             ? keyedProviders
             : Provider.allCases.filter { saved[$0.rawValue] != nil }
         let providers = owned.map { provider -> RelayProvider in
-            let standIn = saved[provider.rawValue]?.applyingBudget(budget(for: provider))
+            let standIn = saved[provider.rawValue]?.applyingBudget(reference: budgetReference(for: provider))
             guard let status = localStatuses[provider], status != .loading else {
                 return standIn ?? RelayProvider(provider: provider, status: .loading, checkedAt: nil)
             }
@@ -963,6 +975,7 @@ final class MobileStore {
     /// Cancellation stops further schedules, but a schedule already accepted stays acknowledged.
     /// Scheduling failures stay pending and are not later claimed as notifications shown.
     func deliverAlerts(_ due: [UsageAlert], now: Date) async -> [String] {
+        guard allowsExternalEffects else { return [] }
         let generation = relayGeneration
         var accepted: [String] = []
         for alert in due {
@@ -1196,19 +1209,9 @@ final class MobileStore {
     }
 
     func scheduleBackgroundRefresh(now: Date = .now) async {
-        let request = BGAppRefreshTaskRequest(identifier: Self.backgroundTaskID)
-        request.earliestBeginDate = now.addingTimeInterval(Self.backgroundInterval)
+        guard allowsExternalEffects else { return }
         do {
-            // Xcode 27 (Swift 6.4) has iOS 27's submitTaskRequest; Xcode 26 builds keep submit.
-            #if compiler(>=6.4)
-            if #available(iOS 27.0, *) {
-                try await BGTaskScheduler.shared.submitTaskRequest(request)
-            } else {
-                try BGTaskScheduler.shared.submit(request)
-            }
-            #else
-            try BGTaskScheduler.shared.submit(request)
-            #endif
+            try await platformEffects.scheduleBackgroundRefresh(now)
         } catch {
             logger.error("background refresh not scheduled: \(String(describing: error), privacy: .public)")
         }
@@ -1219,6 +1222,7 @@ final class MobileStore {
     @ObservationIgnored private var preparingNotifications: Task<Void, Never>?
 
     func prepareNotifications() async {
+        guard allowsExternalEffects else { return }
         if let preparingNotifications { await preparingNotifications.value; return }
         guard let relay else { return }
         let generation = relayGeneration
@@ -1287,25 +1291,38 @@ final class MobileStore {
         await refresh(force: true)
     }
 
-    /// The currency a provider's reference or budget is entered in: its balance's currency, from
-    /// this launch's reading or, before one, the reading shown.
-    func budgetCurrency(for provider: Provider) -> String {
-        if let snapshot = localStatuses[provider]?.snapshot {
-            return snapshot.budgetCurrencyCode
-        }
+    /// The selected Moonshot account takes precedence over a retained reading from another
+    /// region. Callers pass the editor's choice; no credential read is needed for this label.
+    func budgetUnit(for provider: Provider, region: String? = nil) -> String {
         let shown = (readings + disconnected).first { $0.id == provider.rawValue }?.provider
-        return shown?.windows.first { $0.amount != nil }?.amount?.unit == "cny" ? "CNY" : "USD"
+        return BudgetReferencePreferences.editorUnit(for: provider, region: region,
+            readingUnit: localStatuses[provider]?.snapshot?.budgetUnit
+                ?? shown?.windows.first { $0.amount != nil }?.amount?.unit)
+    }
+
+    func budgetCurrency(for provider: Provider, region: String? = nil) -> String {
+        budgetUnit(for: provider, region: region).uppercased()
     }
 
     func budget(for provider: Provider) -> Double? {
-        (defaults.dictionary(forKey: Keys.budgets) as? [String: Double])?[provider.rawValue]
+        BudgetReferencePreferences.amount(in: defaults, for: provider)
     }
 
-    func setBudget(_ value: Double?, for provider: Provider) {
+    func budgetReference(for provider: Provider) -> BudgetReference? {
+        BudgetReferencePreferences.reference(in: defaults, for: provider)
+    }
+
+    func setBudget(_ value: Double?, for provider: Provider, unit: String? = nil) {
         var budgets = (defaults.dictionary(forKey: Keys.budgets) as? [String: Double]) ?? [:]
         if let value, (!value.isFinite || value <= 0) { return }
+        let unit = unit ?? budgetUnit(for: provider)
+        let reference = value.map { BudgetReference(amount: $0, unit: unit) }
+        if let reference, !reference.isValid { return }
+        var references = defaults.dictionary(forKey: Keys.budgetReferences) ?? [:]
+        references[provider.rawValue] = reference?.propertyList
         budgets[provider.rawValue] = value
         defaults.set(budgets, forKey: Keys.budgets)
+        defaults.set(references, forKey: Keys.budgetReferences)
         // Applied to the reading there is, at once: Anthropic's report may not be due for a
         // quarter of an hour.
         rebuild()

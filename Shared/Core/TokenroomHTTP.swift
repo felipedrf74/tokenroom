@@ -194,9 +194,13 @@ extension ProviderClient {
     /// one slow provider never holds up the rest. The Mac's refresh, the iPhone's key providers,
     /// and widgets all read through it. A check cut short, by the time or by the caller, is
     /// unreachable.
-    func fetchWithinBudget(_ budget: TimeInterval? = nil) async -> Result<QuotaSnapshot, ProviderError> {
+    func fetchWithinBudget(_ budget: TimeInterval? = nil, onWorkFinished: (@Sendable (Result<QuotaSnapshot, ProviderError>) -> Void)? = nil) async -> Result<QuotaSnapshot, ProviderError> {
         let limit = min(budget ?? fetchBudget, fetchBudget)
-        return await TimeLimit.run(limit, otherwise: .failure(.unreachable)) { await self.fetch() }
+        return await TimeLimit.run(limit, otherwise: .failure(.unreachable)) {
+            let result = await self.fetch()
+            onWorkFinished?(result)
+            return result
+        }
     }
 
     func fetchBetweenCalls(previous: QuotaSnapshot?) async -> QuotaSnapshot? {

@@ -92,7 +92,7 @@ struct MobileSettingsView: View {
                 Section("About") {
                     LabeledContent("Version", value: TokenroomIdentity.version)
                     // WidgetKit's budget is per widget, so the busiest one is what counts.
-                    LabeledContent("Busiest widget's updates, last 24 hours", value: "\(WidgetReloadLog.count())")
+                    LabeledContent("Busiest widget's updates, last 24 hours", value: "\(store.widgetReloadCount)")
                     Link(destination: TokenroomIdentity.privacyURL) {
                         SettingsRowLabel("Privacy", symbol: "hand.raised.fill", tint: .blue)
                     }
@@ -281,6 +281,7 @@ struct KeyEditorView: View {
     @State private var acknowledgedAdmin = false
     @State private var budgetText = ""
     @State private var budgetError: String?
+    @State private var budgetEdited = false
     /// Set when the key's test found something to warn about (an xAI key with write access).
     @State private var warning: String?
 
@@ -288,10 +289,13 @@ struct KeyEditorView: View {
         self.store = store
         self.provider = provider
         _region = State(initialValue: provider.keySpec?.regions.first ?? "")
-        _budgetText = State(initialValue: store.budget(for: provider).map { $0.formatted(.number.grouping(.never)) } ?? "")
+        let unit = store.budgetUnit(for: provider, region: provider.keySpec?.regions.first)
+        let reference = store.budgetReference(for: provider)
+        _budgetText = State(initialValue: reference?.unit == unit ? reference!.amount.formatted(.number.grouping(.never)) : "")
     }
 
     private var spec: KeySpec? { provider.keySpec }
+    private var budgetUnit: String { store.budgetUnit(for: provider, region: regionValue) }
 
     var body: some View {
         Form {
@@ -360,19 +364,32 @@ struct KeyEditorView: View {
             }
             if provider.category != .subscription {
                 Section {
-                    TextField("None", text: $budgetText)
+                    TextField("None", text: Binding(get: { budgetText }, set: { budgetText = $0; budgetEdited = true }))
                         .keyboardType(.decimalPad)
                         .onSubmit(saveBudget)
                         .onChange(of: budgetText) { _, text in
                             budgetError = BudgetInput.parse(text) == .invalid ? BudgetInput.error : nil
                         }
                     if let budgetError { Text(budgetError).font(.footnote).foregroundStyle(.red) }
+                    if store.budget(for: provider) != nil, store.budgetReference(for: provider)?.unit != budgetUnit {
+                        Button("Clear Saved Reference", role: .destructive) {
+                            store.setBudget(nil, for: provider, unit: budgetUnit)
+                            budgetText = ""
+                            budgetEdited = false
+                            budgetError = nil
+                        }
+                    }
                 } header: {
-                    Text(provider.category == .orgSpend ? "Monthly budget (\(store.budgetCurrency(for: provider)))" : "Reference (\(store.budgetCurrency(for: provider)))")
+                    Text(provider.category == .orgSpend ? "Monthly budget (\(budgetUnit.uppercased()))" : "Reference (\(budgetUnit.uppercased()))")
                 } footer: {
                     Text(provider.category == .orgSpend
                         ? "A budget turns this month's spend into a meter, with alerts at 80% and 95%."
                         : "The amount you topped up to. It turns the balance into a meter, with an alert when it runs low.")
+                    if let reference = store.budgetReference(for: provider), reference.unit != budgetUnit {
+                        Text("Saved reference: \(AmountFormat.text(reference.amount, unit: reference.unit)). Enter a new \(budgetUnit.uppercased()) amount to replace it; the saved amount only meters \(reference.unit.uppercased()) balances.")
+                    } else if store.budget(for: provider) != nil, store.budgetReference(for: provider) == nil {
+                        Text("Previous reference: \(store.budget(for: provider)!.formatted(.number)) (currency unknown). Enter it again in \(budgetUnit.uppercased()) to activate it.")
+                    }
                 }
             }
         }
@@ -387,6 +404,12 @@ struct KeyEditorView: View {
         }
         .onChange(of: key) { _, _ in invalidateValidation() }
         .onChange(of: region) { _, _ in invalidateValidation() }
+        .onChange(of: budgetUnit) { _, unit in
+            let reference = store.budgetReference(for: provider)
+            budgetText = reference?.unit == unit ? reference!.amount.formatted(.number.grouping(.never)) : ""
+            budgetEdited = false
+            budgetError = nil
+        }
         .onDisappear { invalidateValidation() }
         .onDisappear(perform: saveBudget)
     }
@@ -407,7 +430,7 @@ struct KeyEditorView: View {
     }
 
     private func test() {
-        guard !working else { return }
+        guard store.allowsExternalEffects, !working else { return }
         working = true
         message = nil
         warning = nil
@@ -472,12 +495,18 @@ struct KeyEditorView: View {
     }
 
     private func saveBudget() {
-        guard provider.category != .subscription else { return }
+        guard provider.category != .subscription, budgetEdited else { return }
         switch BudgetInput.parse(budgetText) {
-        case .clear: budgetError = nil; store.setBudget(nil, for: provider)
+        case .clear:
+            budgetError = nil
+            store.setBudget(nil, for: provider, unit: budgetUnit)
+            budgetEdited = false
         case .amount(let value):
             budgetError = nil
-            if value != store.budget(for: provider) { store.setBudget(value, for: provider) }
+            if store.budgetReference(for: provider) != BudgetReference(amount: value, unit: budgetUnit) {
+                store.setBudget(value, for: provider, unit: budgetUnit)
+            }
+            budgetEdited = false
         case .invalid: budgetError = BudgetInput.error
         }
     }

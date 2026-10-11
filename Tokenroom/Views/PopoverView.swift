@@ -131,7 +131,7 @@ struct PopoverView: View {
         let banked = store.bankedResets
         let news = store.settings.newsEnabled ? store.news : nil
         let models = news?.unseenModelCount ?? 0
-        let updates = news?.unseenAnnouncementCount ?? 0
+        let updates = news?.unseenReleaseCount ?? 0
         if banked.count > 0 || models > 0 || updates > 0 {
             // Full labels when they fit, shorter ones when all three show.
             ViewThatFits(in: .horizontal) {

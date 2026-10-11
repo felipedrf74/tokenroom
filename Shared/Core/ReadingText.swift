@@ -61,11 +61,24 @@ enum ReadingText {
 
     /// Compact summaries retain the primary headline while explaining urgent secondary
     /// limits and any elapsed window awaiting its replacement reading.
-    static func attention(_ provider: RelayProvider, now: Date = .now) -> String? {
+    /// A short note under a compact reading. An exhausted secondary limit and a window that
+    /// has reset come first. Otherwise, when the surface is leading with a different window,
+    /// this names the primary one: "Weekly 32%".
+    /// - Parameter lead: the window the surface is showing. Omit it to choose that window here.
+    static func attention(_ provider: RelayProvider, now: Date = .now, lead: RelayWindow? = nil) -> String? {
         if let warning = UsageRanking.limitWarning(for: provider, now: now) { return warning }
-        guard let window = provider.windows.first(where: { $0.isAwaitingReading(at: now) }) else { return nil }
-        let pending = "Reset · awaiting reading"
-        return window.id == provider.primaryWindow?.id ? pending : "\(window.displayTitle): \(pending)"
+        if let window = provider.windows.first(where: { $0.isAwaitingReading(at: now) }) {
+            let pending = "Reset · awaiting reading"
+            return window.id == provider.primaryWindow?.id ? pending : "\(window.displayTitle): \(pending)"
+        }
+        let shown = lead ?? provider.leadWindow(now: now)
+        guard let shown,
+              let primary = provider.primaryWindow,
+              primary.id != shown.id,
+              primary.isMetered,
+              !primary.isAwaitingReading(at: now)
+        else { return nil }
+        return "\(primary.displayTitle) \(TokenroomFormat.percentText(primary.used))%"
     }
 
     /// "resets in 2d 5h"; billing cycles say the day: "resets Oct 9".

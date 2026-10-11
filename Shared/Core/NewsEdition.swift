@@ -15,7 +15,8 @@ struct NewsEdition: Equatable, Sendable {
     /// One tool's announcements, newest first.
     struct Tool: Equatable, Sendable, Identifiable {
         /// The feed's name, e.g. "Claude Code".
-        var id: String { source }
+        var id: String { sourceID ?? source }
+        var sourceID: String? = nil
         var source: String
         var provider: Provider?
         /// "Changelog", "Releases", "News".
@@ -44,6 +45,10 @@ enum NewsEditions {
     static let moreModelsLimit = 8
     static let itemsPerTool = 3
 
+    static func isRecentModel(_ model: ModelRelease, now: Date = .now) -> Bool {
+        now.timeIntervalSince(model.created) <= topStoryAge
+    }
+
     /// - Parameters:
     ///   - models: followed labs' models, newest first.
     ///   - announcements: followed feeds' items, newest first, duplicates folded.
@@ -54,12 +59,13 @@ enum NewsEditions {
             guard let date = expires.expires else { return false }
             return date > now && date.timeIntervalSince(now) <= retiringHorizon
         }
-        let top = models.first.flatMap { now.timeIntervalSince($0.created) <= topStoryAge ? $0 : nil }
-        let more = Array(models.dropFirst(top == nil ? 0 : 1).prefix(moreModelsLimit))
+        let recent = models.filter { isRecentModel($0, now: now) }
+        let top = recent.first
+        let more = Array(recent.dropFirst(top == nil ? 0 : 1).prefix(moreModelsLimit))
         return NewsEdition(
             digest: NewsEdition.Digest(
-                models: models.filter { $0.created > since }.count,
-                updates: announcements.filter { ($0.published ?? .distantPast) > since }.count,
+                models: recent.filter { $0.created > since }.count,
+                updates: announcements.filter { ($0.newsDate ?? .distantPast) > since }.count,
                 retiring: soon.count
             ),
             topStory: top,
@@ -74,18 +80,21 @@ enum NewsEditions {
         var order: [String] = []
         var grouped: [String: [FeedItem]] = [:]
         for item in announcements {
-            if grouped[item.source] == nil { order.append(item.source) }
-            grouped[item.source, default: []].append(item)
+            let key = item.sourceID ?? item.source
+            if grouped[key] == nil { order.append(key) }
+            grouped[key, default: []].append(item)
         }
         return order.map { source in
             let items = grouped[source] ?? []
-            let feed = FeedSource.catalog.first { $0.name == source }
+            let name = items.first?.source ?? source
+            let feed = FeedSource.catalog.first { $0.id == source || $0.name == source }
             return NewsEdition.Tool(
-                source: source,
+                sourceID: items.first?.sourceID,
+                source: name,
                 provider: feed?.provider,
                 kind: feed.map(kind) ?? "News",
                 items: Array(items.prefix(itemsPerTool)),
-                newCount: items.filter { ($0.published ?? .distantPast) > since }.count
+                newCount: items.filter { ($0.newsDate ?? .distantPast) > since }.count
             )
         }
     }

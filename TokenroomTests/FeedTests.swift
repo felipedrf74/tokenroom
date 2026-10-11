@@ -95,7 +95,8 @@ final class FeedTests: XCTestCase {
         let items = FeedParser.items(from: atom, source: source)
         XCTAssertEqual(items.map(\.title), ["0.157.0", "2.1.1"])
         XCTAssertEqual(items[0].link?.absoluteString, "https://example.com/releases/tag/v0.157.0")
-        XCTAssertEqual(items[0].published, utc(2026, 9, 25, 2, 32, 43), "Atom's updated when there's no published")
+        XCTAssertNil(items[0].published, "Missing publication date stays missing")
+        XCTAssertEqual(items[0].updatedAt, utc(2026, 9, 25, 2, 32, 43))
         XCTAssertEqual(items[1].published, utc(2026, 9, 24, 7, 45, 5), "published wins over updated")
     }
 
@@ -384,7 +385,7 @@ final class FeedTests: XCTestCase {
         let shown = cache.announcements(from: FeedSource.catalog)
         XCTAssertEqual(shown.map(\.displayTitle), ["Claude Code v2.1.283", "Claude Code 2.1.282"], "2.1.282 is in both feeds and shows once; 2.1.283 isn't in the changelog yet")
         XCTAssertEqual(Set(shown.map(\.source)), ["Claude Code"], "Both read as Claude Code")
-        XCTAssertEqual(shown.last?.published, utc(2026, 9, 24, 18), "Dated when the first copy appeared, so the second doesn't make it new again")
+        XCTAssertEqual(shown.last?.firstSeenAt, utc(2026, 9, 24, 18), "First-seen bookkeeping stays separate from publication date")
         XCTAssertEqual(shown.map(\.alsoIn), [nil, "Claude Code releases"], "The changelog's copy notes the releases feed it folded")
 
         // The releases feed's copy kept, the changelog's folded: named so it doesn't read as its own source.
@@ -455,27 +456,27 @@ final class FeedTests: XCTestCase {
         let defaults = makeDefaults()
         let folder = try makeNewsFolder()
         defaults.set(utc(2026, 9, 24).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt)
-        let news = NewsStore(defaults: defaults, directory: folder, now: utc(2026, 9, 25, 12))
-        XCTAssertEqual(news.unseenModelCount, 1, "Only labs that are followed")
+        let news = NewsStore(defaults: defaults, directory: folder, now: utc(2026, 9, 25, 12), fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
+        XCTAssertEqual(news.unseenModelCount(now: utc(2026, 9, 25, 12)), 1, "Only labs that are followed")
         XCTAssertEqual(news.unseenAnnouncementCount, 1)
-        XCTAssertEqual(news.unseenCount, 2)
+        XCTAssertEqual(news.unseenCount(now: utc(2026, 9, 25, 12)), 2)
 
         news.markSeen(now: utc(2026, 9, 25, 12))
-        XCTAssertEqual(news.unseenCount, 0, "Opening News clears the badge")
+        XCTAssertEqual(news.unseenCount(now: utc(2026, 9, 25, 12)), 0, "Opening News clears the badge")
         XCTAssertTrue(news.isNew(utc(2026, 9, 25, 8)), "…and keeps this visit's new items marked")
         XCTAssertFalse(news.isNew(utc(2026, 9, 23)))
         XCTAssertFalse(news.isNew(nil))
 
-        let nextVisit = NewsStore(defaults: defaults, directory: folder, now: utc(2026, 9, 26))
-        XCTAssertEqual(nextVisit.unseenCount, 0)
+        let nextVisit = NewsStore(defaults: defaults, directory: folder, now: utc(2026, 9, 26), fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
+        XCTAssertEqual(nextVisit.unseenCount(now: utc(2026, 9, 26)), 0)
         XCTAssertFalse(nextVisit.isNew(utc(2026, 9, 25, 8)), "Seen last time")
     }
 
     @MainActor
     func testAFirstLaunchDoesntCallEverythingNew() throws {
         let defaults = makeDefaults()
-        let news = NewsStore(defaults: defaults, directory: try makeNewsFolder(), now: utc(2026, 9, 25, 12))
-        XCTAssertEqual(news.unseenCount, 0)
+        let news = NewsStore(defaults: defaults, directory: try makeNewsFolder(), now: utc(2026, 9, 25, 12), fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
+        XCTAssertEqual(news.unseenCount(now: utc(2026, 9, 25, 12)), 0)
         XCTAssertEqual(defaults.double(forKey: NewsStore.Keys.seenAt), utc(2026, 9, 25, 12).timeIntervalSince1970, "Remembered, so the next launch counts from here")
         news.markSeen(now: utc(2026, 9, 25, 11))
         XCTAssertEqual(defaults.double(forKey: NewsStore.Keys.seenAt), utc(2026, 9, 25, 12).timeIntervalSince1970, "Never moves back")
@@ -498,12 +499,12 @@ final class FeedTests: XCTestCase {
         let feed = Self.rss("2.1.300", "Thu, 24 Sep 2026 12:00:00 GMT")
         stubNetwork { request in request.url == ModelFeed.url ? (200, models) : (200, feed) }
         // The Mac makes its News store at first launch, weeks before News is turned on.
-        let news = NewsStore(defaults: makeDefaults(), directory: try makeFolder(), now: utc(2026, 9, 1))
+        let news = NewsStore(defaults: makeDefaults(), directory: try makeFolder(), now: utc(2026, 9, 1), fetch: { await NewsFetcher.refresh($0.cache, sources: $0.sources, following: $0.vendors, maxAge: $0.maxAge, now: $0.now, forcedSources: $0.forcedSources, isAllowed: $0.isAllowed) }, notify: { _, _, _ in })
         news.followedSources = ["claude-code"]
         await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: utc(2026, 9, 25, 12))
         XCTAssertEqual(news.models().count, 1)
         XCTAssertEqual(news.announcements.count, 1)
-        XCTAssertEqual(news.unseenCount, 0, "What News finds when it's turned on isn't new")
+        XCTAssertEqual(news.unseenCount(now: utc(2026, 9, 25, 12)), 0, "What News finds when it's turned on isn't new")
         XCTAssertFalse(news.isNew(utc(2026, 9, 24)))
 
         let newer = Self.rss("2.1.301", "Sat, 26 Sep 2026 12:00:00 GMT")
@@ -526,21 +527,21 @@ final class FeedTests: XCTestCase {
         checked.save(to: folder)
         let defaults = makeDefaults()
         defaults.set(utc(2026, 9, 24).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt)
-        let news = NewsStore(defaults: defaults, directory: folder)
+        let news = NewsStore(defaults: defaults, directory: folder, fetch: { await NewsFetcher.refresh($0.cache, sources: $0.sources, following: $0.vendors, maxAge: $0.maxAge, now: $0.now, forcedSources: $0.forcedSources, isAllowed: $0.isAllowed) }, notify: { _, _, _ in })
         news.followedSources = ["claude-code"]
         let now = utc(2026, 9, 25, 12)
         await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: now)
         XCTAssertEqual(news.announcements.first?.published, now, "Dated when it arrived")
         XCTAssertEqual(news.models().first?.created, now)
-        XCTAssertEqual(news.unseenCount, 2)
+        XCTAssertEqual(news.unseenCount(now: now), 2)
 
         news.markSeen(now: now.addingTimeInterval(3600))
-        XCTAssertEqual(news.unseenCount, 0, "Opening News clears it")
+        XCTAssertEqual(news.unseenCount(now: now.addingTimeInterval(3600)), 0, "Opening News clears it")
 
         await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: utc(2026, 9, 28))
         XCTAssertEqual(news.announcements.first?.published, now, "Once its date has passed, it keeps the one it arrived with")
         XCTAssertEqual(news.models().first?.created, now)
-        XCTAssertEqual(news.unseenCount, 0, "…so it isn't new again")
+        XCTAssertEqual(news.unseenCount(now: utc(2026, 9, 28)), 0, "…so it isn't new again")
     }
 
     @MainActor
@@ -554,7 +555,7 @@ final class FeedTests: XCTestCase {
             if request.url == ModelFeed.url { return (503, Data()) }
             return request.url == cursor ? (200, Data("<rss><channel><item><title>Cut".utf8)) : (200, post(request))
         }
-        let news = NewsStore(defaults: makeDefaults(), directory: try makeFolder(), now: utc(2026, 9, 25))
+        let news = NewsStore(defaults: makeDefaults(), directory: try makeFolder(), now: utc(2026, 9, 25), fetch: { await NewsFetcher.refresh($0.cache, sources: $0.sources, following: $0.vendors, maxAge: $0.maxAge, now: $0.now, forcedSources: $0.forcedSources, isAllowed: $0.isAllowed) }, notify: { _, _, _ in })
         news.followedSources = ["cursor", "devin", "zai"]
         await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: utc(2026, 9, 25, 12))
         XCTAssertEqual(news.modelProblem, "Couldn't read OpenRouter's model list.")
@@ -582,12 +583,12 @@ final class FeedTests: XCTestCase {
         let earlier = FeedSource.catalog.map(\.id).filter { $0 != "minimax-code" }
         defaults.set(earlier.filter { $0 != "cursor" }, forKey: NewsStore.Keys.sources)
         defaults.set(earlier, forKey: NewsStore.Keys.knownSources)
-        let news = NewsStore(defaults: defaults, directory: nil)
+        let news = NewsStore(defaults: defaults, directory: nil, fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
         XCTAssertTrue(news.followedSources.contains("minimax-code"), "A feed added since starts on")
         XCTAssertFalse(news.followedSources.contains("cursor"), "One turned off stays off")
 
         news.followedSources.remove("minimax-code")
-        XCTAssertFalse(NewsStore(defaults: defaults, directory: nil).followedSources.contains("minimax-code"), "Turned off once offered, it stays off")
+        XCTAssertFalse(NewsStore(defaults: defaults, directory: nil, fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in }).followedSources.contains("minimax-code"), "Turned off once offered, it stays off")
     }
 
     @MainActor
@@ -597,20 +598,20 @@ final class FeedTests: XCTestCase {
         let earlier = ModelFeed.defaultVendors.subtracting(["deepseek"])
         defaults.set(earlier.subtracting(["openai"]).sorted(), forKey: NewsStore.Keys.vendors)
         defaults.set(earlier.sorted(), forKey: NewsStore.Keys.knownVendors)
-        let news = NewsStore(defaults: defaults, directory: nil)
+        let news = NewsStore(defaults: defaults, directory: nil, fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
         XCTAssertTrue(news.followedVendors.contains("deepseek"), "A lab added to the defaults since starts on")
         XCTAssertFalse(news.followedVendors.contains("openai"), "One turned off stays off")
 
         let saved = makeDefaults()
         saved.set(["anthropic"], forKey: NewsStore.Keys.vendors)
-        XCTAssertEqual(NewsStore(defaults: saved, directory: nil).followedVendors, Set(["anthropic"]).union(ModelFeed.defaultVendors.subtracting(NewsStore.firstDefaultVendors)), "A list saved by 2.0 had 2.0's defaults to choose from")
+        XCTAssertEqual(NewsStore(defaults: saved, directory: nil, fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in }).followedVendors, Set(["anthropic"]).union(ModelFeed.defaultVendors.subtracting(NewsStore.firstDefaultVendors)), "A list saved by 2.0 had 2.0's defaults to choose from")
     }
 
     @MainActor
     func testAListSavedBeforeTheCatalogWasRememberedKeepsItsChoices() {
         let defaults = makeDefaults()
         defaults.set(["claude-code", "cursor"], forKey: NewsStore.Keys.sources)
-        let news = NewsStore(defaults: defaults, directory: nil)
+        let news = NewsStore(defaults: defaults, directory: nil, fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
         let addedSince = Set(FeedSource.catalog.map(\.id)).subtracting(NewsStore.firstCatalog)
         XCTAssertEqual(news.followedSources, Set(["claude-code", "cursor"]).union(addedSince), "2.0 had offered every feed it knew")
     }
@@ -717,13 +718,13 @@ final class FeedTests: XCTestCase {
     func testVisitBaselineSurvivesFollowNavigationAndAdvancesAtNextEntry() throws {
         let defaults = makeDefaults()
         defaults.set(utc(2026, 9, 24).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt)
-        let news = NewsStore(defaults: defaults, directory: try makeNewsFolder(), now: utc(2026, 9, 25, 12))
+        let news = NewsStore(defaults: defaults, directory: try makeNewsFolder(), now: utc(2026, 9, 25, 12), fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
         news.beginVisit(now: utc(2026, 9, 25, 12))
         let baseline = news.visitBaseline
         news.beginVisit(now: utc(2026, 9, 25, 13))
         XCTAssertEqual(news.visitBaseline, baseline)
         XCTAssertTrue(news.isNew(utc(2026, 9, 25, 8)))
-        XCTAssertEqual(news.unseenCount, 0)
+        XCTAssertEqual(news.unseenCount(now: utc(2026, 9, 25, 13)), 0)
         news.endVisit()
         news.beginVisit(now: utc(2026, 9, 26))
         XCTAssertFalse(news.isNew(utc(2026, 9, 25, 8)))
@@ -732,7 +733,7 @@ final class FeedTests: XCTestCase {
     @MainActor
     func testManualRefreshesDuringARefreshCoalesceIntoOneFollowUp() async {
         let probe = NewsRefreshProbe()
-        let news = NewsStore(defaults: makeDefaults(), directory: nil, fetch: { await probe.fetch($0) })
+        let news = NewsStore(defaults: makeDefaults(), directory: nil, fetch: { await probe.fetch($0) }, notify: { _, _, _ in })
         let first = Task { await news.refresh(preferences: AlertPreferences(), notifies: false) }
         await probe.waitUntilStarted()
         await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false)
@@ -749,7 +750,7 @@ final class FeedTests: XCTestCase {
     @MainActor
     func testQueuedUncachedFollowsSurviveAManualRefreshInOneFollowUp() async {
         let probe = NewsRefreshProbe()
-        let news = NewsStore(defaults: makeDefaults(), directory: nil, fetch: { await probe.fetch($0) })
+        let news = NewsStore(defaults: makeDefaults(), directory: nil, fetch: { await probe.fetch($0) }, notify: { _, _, _ in })
         let first = Task { await news.refresh(preferences: AlertPreferences(), notifies: false) }
         await probe.waitUntilStarted()
         await news.refresh(preferences: AlertPreferences(), notifies: false, forcedSources: ["claude-code"])
@@ -792,7 +793,7 @@ final class FeedTests: XCTestCase {
     @MainActor
     func testCancelledRefreshOwnerStillRunsQueuedManualAndFollowRequest() async {
         let probe = NewsRefreshProbe()
-        let news = NewsStore(defaults: makeDefaults(), directory: nil, fetch: { await probe.fetch($0) })
+        let news = NewsStore(defaults: makeDefaults(), directory: nil, fetch: { await probe.fetch($0) }, notify: { _, _, _ in })
         let first = Task { await news.refresh(preferences: AlertPreferences(), notifies: false) }
         await probe.waitUntilStarted()
         await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false)

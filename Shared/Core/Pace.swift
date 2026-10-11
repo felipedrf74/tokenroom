@@ -33,6 +33,9 @@ struct Pace: Equatable, Sendable {
     /// Projected moment usage reaches 100%, only when that comes before the reset.
     var runsOutAt: Date?
     var severity: Severity
+    /// The collector measured this run-out, and the reading has since gone stale.
+    /// The time is kept until the reset. It is not a new reading.
+    var isProjected: Bool = false
 
     static let tolerance = 10.0
     static let minimumElapsed = 0.05
@@ -41,8 +44,10 @@ struct Pace: Equatable, Sendable {
     /// - Parameters:
     ///   - samples: recent `(time, used %)` readings, oldest first. Used for the run-out rate
     ///     when there are enough inside the current window.
-    /// - Returns: nil when there's no reset time, the window is too young, usage is tiny,
-    ///   or the reading is stale.
+    /// - Returns: nil when there's no reset time, the window is too young, or usage is tiny.
+    ///   A stale reading returns a pace only when the collector already measured a run-out
+    ///   before the reset. That pace is marked `isProjected`. A stale reading does not grow
+    ///   a new rate from a frozen percentage.
     static func evaluate(
         used: Double,
         kind: WindowKind,
@@ -55,10 +60,26 @@ struct Pace: Equatable, Sendable {
         now: Date = .now,
         calendar: Calendar = .gregorianUTC
     ) -> Pace? {
-        guard !isStale, let resetsAt, resetsAt > now,
+        guard let resetsAt, resetsAt > now,
               let length = windowLength(kind: kind, resetsAt: resetsAt, startsAt: startsAt, windowSeconds: windowSeconds, calendar: calendar),
               length > 0
         else { return nil }
+        if isStale {
+            if let measured {
+                // A measured nil means the collector found no run-out before the reset.
+                return projected(resetsAt: resetsAt, length: length, measured: measured, now: now)
+            }
+            // Samples are the collector's own recent readings. Judge them at the last one,
+            // not at the present, so the clock moving does not invent a new rate.
+            guard let last = samples.last, last.date < now,
+                  let then = evaluate(
+                    used: last.used, kind: kind, resetsAt: resetsAt, startsAt: startsAt, windowSeconds: windowSeconds,
+                    samples: samples, measured: nil, isStale: false, now: last.date, calendar: calendar
+                  ),
+                  let runsOut = then.runsOutAt
+            else { return nil }
+            return projected(resetsAt: resetsAt, length: length, measured: RelayPace(runsOutAt: runsOut), now: now)
+        }
 
         let start = resetsAt.addingTimeInterval(-length)
         let elapsed = now.timeIntervalSince(start)
@@ -106,6 +127,30 @@ struct Pace: Equatable, Sendable {
             severity = .none
         }
         return Pace(verdict: verdict, delta: delta, elapsedFraction: fraction, resetsAt: resetsAt, runsOutAt: runsOut, severity: severity)
+    }
+
+    /// Keeps a run-out the collector measured. A frozen percentage is not turned into a new rate.
+    private static func projected(resetsAt: Date, length: TimeInterval, measured: RelayPace?, now: Date) -> Pace? {
+        guard let measuredAt = measured?.runsOutAt, measuredAt < resetsAt else { return nil }
+        let start = resetsAt.addingTimeInterval(-length)
+        let fraction = min(max(now.timeIntervalSince(start) / length, 0), 1)
+        let severity: Severity
+        if measuredAt.timeIntervalSince(now) < 3_600 {
+            severity = .critical
+        } else if measuredAt >= resetsAt.addingTimeInterval(-length / 4) {
+            severity = .watch
+        } else {
+            severity = .tight
+        }
+        return Pace(
+            verdict: .ahead,
+            delta: 0,
+            elapsedFraction: fraction,
+            resetsAt: resetsAt,
+            runsOutAt: measuredAt,
+            severity: severity,
+            isProjected: true
+        )
     }
 
     /// The provider's own length, else reset minus start, else the usual length for the kind.
@@ -181,6 +226,10 @@ extension Pace {
     /// One short line for captions: "On pace", "Plenty left",
     /// "Ahead of pace · runs out Thu 14:00", "Limit reached · resets in 2h 10m".
     func caption(now: Date = .now, timeZone: TimeZone = .current) -> String {
+        if isProjected {
+            guard let runsOutAt, runsOutAt > now else { return "Projected to have run out" }
+            return "Projected · runs out \(Self.shortMoment(runsOutAt, now: now, timeZone: timeZone))"
+        }
         switch verdict {
         case .onPace:
             return "On pace"

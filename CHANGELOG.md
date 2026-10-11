@@ -1,5 +1,53 @@
 # Changelog
 
+## 2.4.0 for Mac / 1.1.0 for iPhone — release prepared
+
+The qualified Mac package is 2.4.0(1). Mobile 1.1.0(1) is privately uploaded and processed; App Review and public availability are separate. Current distribution receipts are linked from `docs/news-release-checks-20261011.md`.
+
+- Mac News readers offer native Back and Command-[ while keeping Check Now and News Settings accessible on pushed pages.
+- Saved balance references bind their amount to USD or CNY. Region changes never convert an old reference; ambiguous legacy Moonshot/DeepSeek references need explicit confirmation. Cached phone/widget/Watch meters obey the same currency guard. Monetary history and runway also require the same currency; a region change keeps percentage history and starts a new monetary segment.
+- Updated collectors coordinate reset-window alerts atomically in private iCloud, including reset-bound budgets, and adopt existing legacy records without creating notification aliases. Full coordination requires updated writers; nil-reset balances and banked alerts retain their existing semantics.
+
+- Queued News checks use the latest alert/quiet-hour preferences even after a slower cached request.
+- Unsave removes every saved copy of a folded story; Undo restores the original snapshots together.
+- Source pages support native search across their complete retained feed family.
+- App-owned iPhone XCTest and explicit snapshot roots isolate preferences, cache/history/locks and keys; lifecycle and UI actions respect the inert policy. News fixtures remain read-only. Production and inert iPhone roots use separate scene compositions, so the inert root omits background-handler registration and compiles correctly.
+
+- News has Today, Following, Skills and Saved on iPhone and Mac, with compact story cards, full reading details, native sharing, source dates, read markers and local saves with undo.
+- Follow curated voices through their public article feeds and X profile links, and opt in to official provider status. Existing tool and lab choices are preserved; personal resets remain in Usage.
+- Discover ClawHub skills by Trending, Most downloaded or Newest, with owner-qualified links, ranking definitions, check times and declared requirements. Listing metadata is read only; Tokenroom does not install or run skills.
+- Saved metadata survives feed rotation and unfollowing. Titles, links and bounded excerpts remain available offline on this device. News navigation and section actions adapt to accessibility text sizes.
+- News safely handles malformed model metadata, keeps archive models out of new counts, preserves original skill ranking positions and stops later Mac checks when News is disabled.
+- Atom feeds retain nested titles and supplied excerpts. Skills keeps usable rankings after malformed responses, shares one request deadline across readers and respects Mac News enablement before dispatch.
+- News collections explain source health across paired tool feeds and provide targeted recovery. First voice archives stay quiet after retry/refollow, failed library actions keep undo, and Skills preserves the latest result, error and rate-limit state across concurrent checks and navigation.
+
+- The menu bar, Home Screen and Lock Screen widgets, Apple Watch list, and complications lead with the open window that needs attention soonest. The week stays beside it when that window is a different one. A provider card still headlines its primary window. Highest in the menu bar follows that same urgency.
+- A run-out the collector already measured stays after the reading goes stale, labeled projected, until the window resets. Close to a limit keeps a stale window that is still at 80% or still projected to run out. A threshold alert still waits for a live reading. The run-out alert can go out once from that projection, and it says the percentage is from the last check.
+- The iPhone app and its widgets claim a key check together, so the two cannot call the same provider at the same time. A check cut short puts its attempt back only when a newer claim has not taken the slot.
+- Stale projections honor a collector's explicit no-run-out measurement and use each history sample's own percentage. Projected alerts respect quiet hours as their run-out time passes, exclude money budgets, and stay single even if the provider moves a reset time.
+- A timed-out key check keeps its lease until the physical work ends, recording a late Retry-After before another check can start. Changing a key fences the old check's cooldown and cancellation writes.
+- An iPhone provider detail explains when its reading was removed or aged out instead of leaving a blank page.
+- The Mac's iPhone & Watch settings summary reflects the real sync state instead of saying Sending whenever sync is enabled.
+
+## 1.0.3 — 2026-10-05
+
+Tokenroom for iPhone and Apple Watch 1.0.3, the App Store release of the Mac 2.3.1 reliability work. The source tree kept its 1.0.2 version; the uploaded build was numbered 1.0.3.
+
+- More reliable iCloud updates and fresher Apple Watch readings.
+- Better recovery when an iCloud account changes.
+- An accepted notification is not sent again, and one that could not be scheduled is tried again.
+- Last-checked times stay on the last successful check, and a failed refresh says so.
+- Replacing an API key and cancelling sign-in leave the previous credential in place.
+
+## 2.3.1 — 2026-10-04
+
+Tokenroom for Mac 2.3.1. The upload was numbered 2.3.1; this tree's version file stayed 2.3.0.
+
+- More reliable incremental iCloud reads and Watch refresh handoffs.
+- Notification acknowledgements survive an account change, and a schedule that did not succeed can be tried again.
+- The Mac header shows the oldest successful provider check. A failed or skipped refresh does not move it.
+- Safer API key replacement, sign-in cancellation, and credential redirect handling.
+
 ## 2.3.0 — 2026-10-01
 
 Tokenroom for Mac 2.3.0. It includes the 2.2.4 Claude fix below; 2.2.4 was not published on its own. The iPhone and Apple Watch app 1.0.2, build 1, has the same changes and goes to the App Store after 1.0.1, which is in review.

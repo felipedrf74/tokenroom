@@ -66,7 +66,7 @@ private struct ComplicationView: View {
         content
             .widgetURL(link)
             .opacity(entry.items.first?.provider.isLive == false ? 0.7 : 1)
-            .accessibilityValue(entry.items.first.map { "Last successful check \(RelativeTime.ago($0.provider.checkedAt ?? $0.provider.fetchedAt, now: entry.date))\($0.provider.isLive ? "" : ", stale")" + (ReadingText.attention($0.provider, now: entry.date).map { ", \($0)" } ?? "") } ?? "No readings")
+            .accessibilityValue(entry.items.first.map { "Last successful check \(RelativeTime.ago($0.provider.checkedAt ?? $0.provider.fetchedAt, now: entry.date))\($0.provider.isLive ? "" : ", stale")" + (ReadingText.attention($0.provider, now: entry.date, lead: $0.provider.leadWindow(now: entry.date, history: $0.history)).map { ", \($0)" } ?? "") } ?? "No readings")
     }
 
     /// Circular and corner complications show one provider and open it; the rest open the list.
@@ -81,7 +81,7 @@ private struct ComplicationView: View {
     @ViewBuilder
     private var content: some View {
         if let first = entry.items.first {
-            let window = first.provider.primaryWindow
+            let window = first.provider.leadWindow(now: entry.date, history: first.history)
             let used = min(max(window?.used ?? 0, 0), 100)
             switch family {
             case .accessoryCorner:
@@ -108,7 +108,7 @@ private struct ComplicationView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     // Samples give up a row to say so.
                     ForEach(entry.items.prefix(entry.isSample ? 2 : 3)) { item in
-                        let row = item.provider.primaryWindow
+                        let row = item.provider.leadWindow(now: entry.date, history: item.history)
                         HStack(spacing: 4) {
                             Text(item.provider.shortName)
                                 .font(.system(size: 12, weight: .semibold))
@@ -130,8 +130,8 @@ private struct ComplicationView: View {
                         .opacity(item.provider.isLive && row?.isAwaitingReading(at: entry.date) != true ? 1 : 0.65)
                     }
                     let stale = entry.items.filter { !$0.provider.isLive }.count
-                    if let item = entry.items.first(where: { ReadingText.attention($0.provider, now: entry.date) != nil }),
-                       let note = ReadingText.attention(item.provider, now: entry.date) {
+                    if let item = entry.items.first(where: { ReadingText.attention($0.provider, now: entry.date, lead: $0.provider.leadWindow(now: entry.date, history: $0.history)) != nil }),
+                       let note = ReadingText.attention(item.provider, now: entry.date, lead: item.provider.leadWindow(now: entry.date, history: item.history)) {
                         Text(note + (stale > 0 ? " · \(stale) stale" : ""))
                             .font(.caption2.weight(.semibold)).lineLimit(2).minimumScaleFactor(0.7)
                             .foregroundStyle(UsageRanking.limitWarning(for: item.provider, now: entry.date) == nil ? Color.secondary : TokenroomTokens.usageCritical)
@@ -188,7 +188,10 @@ private struct ComplicationView: View {
 
     /// "Codex 78% · Claude 64%", after "Sample" for samples.
     private var inlineText: String {
-        let readings = entry.items.prefix(2).map { "\($0.provider.shortName) \(ReadingText.headline($0.provider.primaryWindow, now: entry.date))" + (ReadingText.attention($0.provider, now: entry.date).map { " · \($0)" } ?? "") + (!$0.provider.isLive ? " · stale" : "") }
+        let readings = entry.items.prefix(2).map { item in
+            let window = item.provider.leadWindow(now: entry.date, history: item.history)
+            return "\(item.provider.shortName) \(ReadingText.headline(window, now: entry.date))" + (ReadingText.attention(item.provider, now: entry.date, lead: window).map { " · \($0)" } ?? "") + (!item.provider.isLive ? " · stale" : "")
+        }
         return ((entry.isSample ? ["Sample"] : []) + readings).joined(separator: " · ")
     }
 

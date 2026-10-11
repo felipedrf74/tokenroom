@@ -606,7 +606,7 @@ final class FoundationTests: XCTestCase {
             StubURLProtocol.reset()
         }
         let defaults = makeDefaults()
-        let news = NewsStore(defaults: defaults, directory: try makeFolder())
+        let news = NewsStore(defaults: defaults, directory: try makeFolder(), fetch: { await NewsFetcher.refresh($0.cache, sources: $0.sources, following: $0.vendors, maxAge: $0.maxAge, now: $0.now, forcedSources: $0.forcedSources, isAllowed: $0.isAllowed) }, notify: { _, _, _ in })
         // Feeds are fetched in parallel; the model list alone keeps the stub's record simple.
         news.followedSources = []
         let store = QuotaStore(

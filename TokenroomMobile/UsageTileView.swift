@@ -16,7 +16,7 @@ struct UsageTileView: View {
 
     var body: some View {
         let tile = UsageTiles.tile(for: provider)
-        let isClose = !isStale && [tile.ring, tile.bar].compactMap { $0 }.contains { !$0.isAwaitingReading(at: date) && UsageTiles.isClose($0, pace: pace($0)) }
+        let isClose = [tile.ring, tile.bar].compactMap { $0 }.contains { !$0.isAwaitingReading(at: date) && UsageTiles.isClose($0, pace: pace($0)) }
         VStack(alignment: .leading, spacing: 10) {
             header(isClose: isClose)
             if let ring = tile.ring {
@@ -154,7 +154,13 @@ struct WindowStatus: View {
     var date: Date = .now
 
     var body: some View {
-        if !isStale, let pace, pace.verdict == .limitReached {
+        if let pace, pace.isProjected {
+            Text(pace.caption(now: date))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(PaceStyle.color(pace.severity))
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if !isStale, let pace, pace.verdict == .limitReached {
             Text(pace.caption(now: date))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(PaceStyle.color(pace.severity))
@@ -278,6 +284,11 @@ struct CloseToLimitCard: View {
     /// "Runs out 10:18 AM · 35 min before it resets", "Limit reached · resets in 2h 10m",
     /// "Past 80% · resets Oct 1".
     private func caption(_ item: CloseWindow) -> Text {
+        if let pace = item.pace, pace.isProjected {
+            return Text(pace.caption(now: date))
+                .fontWeight(.semibold)
+                .foregroundStyle(PaceStyle.color(pace.severity))
+        }
         if let pace = item.pace, pace.verdict == .limitReached {
             return Text(pace.caption(now: date))
                 .fontWeight(.semibold)

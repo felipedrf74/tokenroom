@@ -52,7 +52,7 @@ private struct SmallWidget: View {
 
     var body: some View {
         let provider = item.provider
-        let window = provider.primaryWindow
+        let window = provider.leadWindow(now: entry.date, history: item.history)
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
                 ProviderMark(provider: provider, size: 20)
@@ -81,7 +81,7 @@ private struct SmallWidget: View {
                     .lineLimit(1)
                 ResetText(window: window, date: entry.date)
             }
-            if let note = ReadingText.attention(provider, now: entry.date),
+            if let note = ReadingText.attention(provider, now: entry.date, lead: window),
                UsageRanking.limitWarning(for: provider, now: entry.date) != nil || window?.isAwaitingReading(at: entry.date) != true {
                 Text(note).font(.caption2.weight(.semibold))
                     .foregroundStyle(UsageRanking.limitWarning(for: provider, now: entry.date) == nil ? Color.secondary : TokenroomTokens.usageCritical).lineLimit(2)
@@ -143,7 +143,7 @@ private struct ListRow: View {
 
     var body: some View {
         let provider = item.provider
-        let window = provider.primaryWindow
+        let window = provider.leadWindow(now: date, history: item.history)
         HStack(spacing: 8) {
             ProviderMark(provider: provider, size: 20)
             VStack(alignment: .leading, spacing: 3) {
@@ -163,7 +163,7 @@ private struct ListRow: View {
                         .foregroundStyle(headlineStyle(window, isLive: provider.isLive))
                         .widgetAccentable()
                 }
-                if let note = ReadingText.attention(provider, now: date) {
+                if let note = ReadingText.attention(provider, now: date, lead: window) {
                     Text(note).font(.caption2.weight(.semibold))
                         .foregroundStyle(UsageRanking.limitWarning(for: provider, now: date) == nil ? Color.secondary : TokenroomTokens.usageCritical).lineLimit(2)
                 }
@@ -173,8 +173,9 @@ private struct ListRow: View {
             }
             if showsHistory {
                 Group {
-                    if let history = item.primaryHistory, !history.isEmpty {
-                        Sparkline(history: history, tint: Color(hex: provider.tint), lineWidth: 1.2)
+                    let series = window.flatMap { item.history[$0.id] }
+                    if let series, !series.isEmpty {
+                        Sparkline(history: series, tint: Color(hex: provider.tint), lineWidth: 1.2)
                     } else {
                         Color.clear
                     }
@@ -194,7 +195,7 @@ private struct CircularWidget: View {
     var date: Date
 
     var body: some View {
-        let window = item.provider.primaryWindow
+        let window = item.provider.leadWindow(now: date, history: item.history)
         Group {
             if let window, !window.isMetered, let amount = window.amount {
                 // A balance has nothing to fill: its amount, rather than a ring reading 0.
@@ -231,7 +232,7 @@ private struct CircularWidget: View {
         }
         .widgetURL(DeepLink.provider(item.id).url)
         .opacity(item.provider.isLive && window?.isAwaitingReading(at: date) != true ? 1 : 0.65)
-        .accessibilityValue("Last successful check \(RelativeTime.ago(item.provider.checkedAt ?? item.provider.fetchedAt, now: date))\(item.provider.isLive ? "" : ", stale")" + (ReadingText.attention(item.provider, now: date).map { ", \($0)" } ?? ""))
+        .accessibilityValue("Last successful check \(RelativeTime.ago(item.provider.checkedAt ?? item.provider.fetchedAt, now: date))\(item.provider.isLive ? "" : ", stale")" + (ReadingText.attention(item.provider, now: date, lead: window).map { ", \($0)" } ?? ""))
     }
 }
 
@@ -273,7 +274,7 @@ private struct RectangularWidget: View {
                 .foregroundStyle(UsageRanking.limitWarning(for: item.provider, now: date) == nil ? Color.secondary : TokenroomTokens.usageCritical)
         } else if items.contains(where: { !$0.provider.isLive }) {
             Text("\(items.filter { !$0.provider.isLive }.count) stale").font(.caption2).lineLimit(1)
-        } else if let first = items.first, let resetsAt = first.provider.primaryWindow?.resetsAt, resetsAt > date {
+        } else if let first = items.first, let resetsAt = first.provider.leadWindow(now: date, history: first.history)?.resetsAt, resetsAt > date {
             HStack(spacing: 3) {
                 Image(systemName: "arrow.counterclockwise")
                 Text(first.provider.shortName)
@@ -284,7 +285,8 @@ private struct RectangularWidget: View {
 
     private func rows(_ items: [ReadingCache.Item]) -> some View {
         ForEach(items) { item in
-            let used = item.provider.primaryWindow?.used ?? 0
+            let window = item.provider.leadWindow(now: date, history: item.history)
+            let used = window?.used ?? 0
             HStack(spacing: 6) {
                 Text(item.provider.shortName)
                     .font(.caption2.weight(.semibold))
@@ -295,12 +297,12 @@ private struct RectangularWidget: View {
                 }
                 .gaugeStyle(.accessoryLinearCapacity)
                 .widgetAccentable()
-                Text(ReadingText.headline(item.provider.primaryWindow, now: date))
+                Text(ReadingText.headline(window, now: date))
                     .font(.caption2.monospacedDigit())
                     .lineLimit(1)
             }
-            .opacity(item.provider.isLive && item.provider.primaryWindow?.isAwaitingReading(at: date) != true ? 1 : 0.65)
-            .accessibilityValue("Last successful check \(RelativeTime.ago(item.provider.checkedAt ?? item.provider.fetchedAt, now: date))\(item.provider.isLive ? "" : ", stale")" + (ReadingText.attention(item.provider, now: date).map { ", \($0)" } ?? ""))
+            .opacity(item.provider.isLive && window?.isAwaitingReading(at: date) != true ? 1 : 0.65)
+            .accessibilityValue("Last successful check \(RelativeTime.ago(item.provider.checkedAt ?? item.provider.fetchedAt, now: date))\(item.provider.isLive ? "" : ", stale")" + (ReadingText.attention(item.provider, now: date, lead: window).map { ", \($0)" } ?? ""))
         }
     }
 }
@@ -319,7 +321,10 @@ private struct InlineWidget: View {
     }
 
     private func line(_ items: [ReadingCache.Item]) -> String {
-        let readings = items.map { "\($0.provider.shortName) \(ReadingText.headline($0.provider.primaryWindow, now: date))" + (ReadingText.attention($0.provider, now: date).map { " · \($0)" } ?? "") }
+        let readings = items.map { item in
+            let window = item.provider.leadWindow(now: date, history: item.history)
+            return "\(item.provider.shortName) \(ReadingText.headline(window, now: date))" + (ReadingText.attention(item.provider, now: date, lead: window).map { " · \($0)" } ?? "")
+        }
         let stale = items.filter { !$0.provider.isLive }.count
         return ((isSample ? ["Sample"] : []) + readings + (stale > 0 ? ["\(stale) stale"] : [])).joined(separator: " · ")
     }

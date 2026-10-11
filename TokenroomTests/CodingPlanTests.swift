@@ -216,7 +216,7 @@ final class CodingPlanTests: XCTestCase {
     func testAPastedKeyWinsOverOneFoundOnTheMac() async throws {
         let usage = fixture("opencode-go-usage")
         stub { _ in (200, usage) }
-        let keys = APIKeyStore(servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).")
+        let keys = APIKeyStore(servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).", keychain: FakeKeychain().operations, usesDataProtection: false)
         defer { try? keys.remove(for: .opencodeGo) }
         var client = APIKeyClient(provider: .opencodeGo, keys: keys)
         client.localCredential = { _ in APIKeyCredential(key: "placeholder-local", source: "opencode") }
@@ -232,7 +232,7 @@ final class CodingPlanTests: XCTestCase {
     }
 
     func testAnExpiredLocalLoginReportsExpired() async {
-        var client = APIKeyClient(provider: .kimiCode, keys: APIKeyStore(servicePrefix: "app.tokenroom.tests.\(UUID().uuidString)."))
+        var client = APIKeyClient(provider: .kimiCode, keys: APIKeyStore(servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).", keychain: FakeKeychain().operations, usesDataProtection: false))
         client.localCredential = { _ in throw ProviderError.expired(Provider.kimiCode.expiredHint) }
         let result = await client.fetch()
         XCTAssertEqual(result, .failure(.expired(Provider.kimiCode.expiredHint)))

@@ -23,7 +23,8 @@ enum WidgetRefresher {
         if AppGroup.defaults.bool(forKey: "sampleMode") {
             return SampleData.cache(now: now)
         }
-        let cached = PhoneCacheAccess.load(at: ReadingCache.defaultURL, defaults: AppGroup.defaults)
+        let cached = PhoneCacheAccess.load(at: ReadingCache.defaultURL, defaults: AppGroup.defaults)?
+            .applyingLocalBudgetReferences(in: AppGroup.defaults)
         if !force, let cached, (0..<maxAge).contains(now.timeIntervalSince(cached.savedAt)) {
             return cached
         }
@@ -44,7 +45,8 @@ enum WidgetRefresher {
             }
         }
         return refreshed.flatMap { PhoneCacheAccess.accepts($0, defaults: AppGroup.defaults) ? $0 : nil }
-            ?? PhoneCacheAccess.load(at: ReadingCache.defaultURL, defaults: AppGroup.defaults)
+            ?? PhoneCacheAccess.load(at: ReadingCache.defaultURL, defaults: AppGroup.defaults)?
+                .applyingLocalBudgetReferences(in: AppGroup.defaults)
     }
 
     /// The refresh under way in this process.
@@ -96,8 +98,10 @@ enum WidgetRefresher {
         }
 
         own = own.map { provider in
-            guard let id = Provider(rawValue: provider.id), let error = failures[id] else { return provider }
-            return provider.retainingAfterFailure(error, at: now)
+            guard let id = Provider(rawValue: provider.id) else { return provider }
+            let current = provider.applyingBudget(reference: BudgetReferencePreferences.reference(in: defaults, for: id))
+            guard let error = failures[id] else { return current }
+            return current.retainingAfterFailure(error, at: now)
         }
 
         var sources = (contents?.sources ?? []).compactMap { source -> RelayMerge.Source? in
@@ -162,18 +166,18 @@ enum WidgetRefresher {
     private static func readKeys(defaults: UserDefaults, now: Date) async -> (providers: [RelayProvider], readings: [QuotaSnapshot], failures: [Provider: ProviderError]) {
         let keys = APIKeyStore(accessGroup: AppGroup.keychainGroup)
         let gate = KeyFetchGate(defaults: defaults)
-        let providers = await BlockingIO.run {
+        let found = await BlockingIO.run { () -> [Provider] in
             Provider.allCases.filter { $0.readsWithKey && keys.hasKey(for: $0) }
-        }.filter { !gate.isResting($0, now: now) }
-        guard !providers.isEmpty else { return ([], [], [:]) }
-        let budgets = defaults.dictionary(forKey: "budgets") as? [String: Double] ?? [:]
-        for provider in providers {
-            gate.recordAttempt(provider, at: now)
         }
+        var claims: [Provider: KeyFetchGate.FetchClaim] = [:]
+        for provider in found { claims[provider] = gate.claim(provider, at: now) }
+        let providers = found.filter { claims[$0] != nil }
+        guard !providers.isEmpty else { return ([], [], [:]) }
         let (snapshots, failures) = await withTaskGroup(of: (Provider, Result<QuotaSnapshot, ProviderError>).self) { group in
             for provider in providers {
+                guard let claim = claims[provider] else { continue }
                 group.addTask {
-                    await (provider, APIKeyClient(provider: provider, keys: keys).fetchWithinBudget(readBudget))
+                    await (provider, APIKeyClient(provider: provider, keys: keys).fetchWithinBudget(readBudget, onWorkFinished: { result in gate.complete(claim, result: result) }))
                 }
             }
             var snapshots: [QuotaSnapshot] = []
@@ -181,11 +185,9 @@ enum WidgetRefresher {
             for await (provider, result) in group {
                 switch result {
                 case .success(let snapshot):
-                    gate.block(provider, until: nil)
                     snapshots.append(snapshot)
                 case .failure(.rateLimited(let until)):
                     failures[provider] = .rateLimited(until: until)
-                    gate.block(provider, until: ProviderStatus.clampedRetry(until, now: now))
                 case .failure(let error):
                     failures[provider] = error
                 }
@@ -193,7 +195,9 @@ enum WidgetRefresher {
             return (snapshots, failures)
         }
         let readings = providers.compactMap { provider in
-            snapshots.first { $0.provider == provider }.map { $0.applyingBudget(budgets[provider.rawValue]) }
+            snapshots.first { $0.provider == provider }.map {
+                $0.applyingBudget(reference: BudgetReferencePreferences.reference(in: defaults, for: provider))
+            }
         }
         return (readings.map { RelayProvider(provider: $0.provider, status: .live($0), checkedAt: $0.fetchedAt) }, readings, failures)
     }

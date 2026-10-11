@@ -2,6 +2,18 @@
 
 A draft for App Store Connect. Provider names appear only in the description, as facts, never in the name, subtitle, or keywords. Tokenroom isn't affiliated with any provider.
 
+## What's New — 1.0.3
+
+Submitted and released 5 October 2026. This is the live App Store text.
+
+This update improves usage sync and reliability across iPhone, Apple Watch, and Mac.
+
+• More reliable iCloud updates and fresher Apple Watch readings.
+• Better recovery when your iCloud account changes.
+• Notification fixes to prevent repeated accepted alerts and retry alerts that could not be scheduled.
+• More accurate last-checked times and clearer refresh errors.
+• Safer API key replacement and sign-in handling.
+
 ## What's New — 1.0.2
 
 Meters show the even pace as a notch, and the part past it is striped when you're using a limit faster than it lasts. Each provider's page opens with a ring, when it resets, how the pace looks, and your plan. Settings shows iCloud's status at the top. The News tab keeps itself current while it's open. On Apple Watch, a provider's page leads with a ring, and readings from your iPhone say so.
@@ -90,7 +102,9 @@ Tokenroom isn't affiliated with any of the providers it shows. Their names are u
 
 ## For a later listing
 
-Not for 1.0.1 or 1.0.2; leave their listings and notes as submitted.
+Not for 1.0.1, 1.0.2, or 1.0.3; leave their listings and notes as submitted.
+
+The next version can say that the Watch, widgets, and Lock Screen lead with the limit that is closest to running out, and that a pace measured on the Mac stays visible, marked projected, after that Mac sleeps.
 
 - "Logins never leave your Mac, and keys never leave your iPhone" stays true while the iPhone has no plan login (`PhoneConnect.productionAllowlist` is empty). Before a version that adds one is submitted, replace it with: "A login you add on your iPhone stays on that iPhone. A login on your Mac stays on your Mac. Only usage, reset times, and plan names sync, through your iCloud."
 - A later description can say the iPhone works without a Mac for every provider read with a key, Copilot's fine-grained token included, and lists the plans that need Tokenroom for Mac.
@@ -147,3 +161,13 @@ xcrun simctl io booted screenshot 2-detail.png
 ```
 
 Other destinations: `-TokenroomGallery home`, `-TokenroomGallery lock`, `-TokenroomOpen tokenroom://news`, and `-TokenroomOpen tokenroom://keys`; `-sampleMode NO -onboarded NO` for the welcome screen. The Watch app takes `-sampleMode YES` and `-TokenroomOpen tokenroom://provider/claude` the same way.
+
+## Next News release — draft, not submitted
+
+The qualified mobile candidate is 1.1.0(1), uploaded privately and processed by Apple. Build 1 is consumed and must not be reused for a different binary. Keep the live 1.0.3 text above unchanged until a new version is approved and distributed.
+
+Read your AI briefing in Today, Following, Skills and Saved. Follow curated voices and public release/status feeds, save stories locally, and explore clearly sourced ClawHub rankings. Larger text, source search and recovery controls make news easier to browse. Saved balance references now keep their currency when you change an account region. Updated devices coordinate reset-window alerts to avoid duplicate notifications.
+
+Before submission, select the qualified 1.1.0(1) build, prepare accurate version metadata and applicable App Store assets, and verify the portal submission requirements. The approved finite News fixture/native acceptance and source/sign/package/upload checks are recorded in docs/news-release-checks-20261011.md; further physical phone work stopped at Felipe's request. Different-account real iCloud/notification coordination, Production push/widgets/Live Activity/App Group effects and physical Watch runtime remain explicitly unverified integration limits, not new hardware requirements for the approved News plan. Apple App Review approval and public availability are separate from private processing. This draft is not evidence of submission or public release.
+
+The tracked version configuration now matches the qualified archive overrides: Mac 2.4.0(1), iPhone/widgets/Watch 1.1.0(1). `version-config-equivalence.json` records the effective version match while preserving the original signed-source manifest.

@@ -25,35 +25,35 @@ final class ForecastTests: XCTestCase {
         let before = (0..<8).map { 30 - Double($0) }
         let after = (0...24).map { 50 - Double($0) }
         let week = history(before + after)
-        let days = try XCTUnwrap(Forecast.daysLeft(remaining: 26, history: week, now: now))
+        let days = try XCTUnwrap(Forecast.daysLeft(remaining: 26, unit: "usd", history: week, now: now))
         XCTAssertEqual(days, 26.0 / 24, accuracy: 0.0001, "$24 a day, not the average across the top-up")
     }
 
     func testRunwayNeedsHalfADayOfFallingBalance() {
-        XCTAssertNil(Forecast.daysLeft(remaining: 44, history: history((0...6).map { 50 - Double($0) }), now: now), "Six hours isn't a rate")
-        XCTAssertNotNil(Forecast.daysLeft(remaining: 38, history: history((0...12).map { 50 - Double($0) }), now: now))
-        XCTAssertNil(Forecast.daysLeft(remaining: 50, history: history(Array(repeating: 50, count: 30)), now: now), "Not going down")
-        XCTAssertNil(Forecast.daysLeft(remaining: 0, history: history((0...24).map { 24 - Double($0) }), now: now), "Nothing left to last")
-        XCTAssertNil(Forecast.daysLeft(remaining: 10, history: nil, now: now))
-        XCTAssertNil(Forecast.daysLeft(remaining: 10, history: history([10]), now: now))
+        XCTAssertNil(Forecast.daysLeft(remaining: 44, unit: "usd", history: history((0...6).map { 50 - Double($0) }), now: now), "Six hours isn't a rate")
+        XCTAssertNotNil(Forecast.daysLeft(remaining: 38, unit: "usd", history: history((0...12).map { 50 - Double($0) }), now: now))
+        XCTAssertNil(Forecast.daysLeft(remaining: 50, unit: "usd", history: history(Array(repeating: 50, count: 30)), now: now), "Not going down")
+        XCTAssertNil(Forecast.daysLeft(remaining: 0, unit: "usd", history: history((0...24).map { 24 - Double($0) }), now: now), "Nothing left to last")
+        XCTAssertNil(Forecast.daysLeft(remaining: 10, unit: "usd", history: nil, now: now))
+        XCTAssertNil(Forecast.daysLeft(remaining: 10, unit: "usd", history: history([10]), now: now))
     }
 
     func testASmallRiseIsntATopUp() throws {
         // A dollar an hour for a day, with a cent refunded four hours ago.
         var amounts = (0...24).map { 50 - Double($0) }
         amounts[20] = amounts[19] + 0.01
-        let days = try XCTUnwrap(Forecast.daysLeft(remaining: 26, history: history(amounts), now: now), "The runway isn't hidden for half a day")
+        let days = try XCTUnwrap(Forecast.daysLeft(remaining: 26, unit: "usd", history: history(amounts), now: now), "The runway isn't hidden for half a day")
         XCTAssertEqual(days, 26.0 / 24, accuracy: 0.0001)
 
         // Under a dollar, where a cent is more than 1% of the balance.
         var low = (0...24).map { 0.98 - Double($0) * 0.03 }
         low[20] = low[19] + 0.01
-        XCTAssertEqual(try XCTUnwrap(Forecast.daysLeft(remaining: 0.26, history: history(low), now: now)), 0.26 / 0.72, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(Forecast.daysLeft(remaining: 0.26, unit: "usd", history: history(low), now: now)), 0.26 / 0.72, accuracy: 0.0001)
 
         // A rise over a dollar and over 1% is a top-up.
         var topped = (0...24).map { 50 - Double($0) }
         topped[20] = topped[19] + 1.5
-        XCTAssertNil(Forecast.daysLeft(remaining: 26, history: history(topped), now: now), "Four hours since a top-up isn't a rate")
+        XCTAssertNil(Forecast.daysLeft(remaining: 26, unit: "usd", history: history(topped), now: now), "Four hours since a top-up isn't a rate")
     }
 
     func testRunwayText() {

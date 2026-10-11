@@ -139,7 +139,7 @@ private struct WatchRow: View {
 
     var body: some View {
         let provider = item.provider
-        let window = provider.primaryWindow
+        let window = provider.leadWindow(now: date, history: item.history)
         HStack(spacing: 10) {
             if let window, window.isMetered {
                 // The provider's icon in the ring; the row reads its name, so the ring has no label.
@@ -162,7 +162,7 @@ private struct WatchRow: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                 }
-                if let note = ReadingText.attention(provider, now: date),
+                if let note = ReadingText.attention(provider, now: date, lead: window),
                    UsageRanking.limitWarning(for: provider, now: date) != nil || window?.isAwaitingReading(at: date) != true {
                     Text(note).font(.caption2.weight(.semibold))
                         .foregroundStyle(UsageRanking.limitWarning(for: provider, now: date) == nil ? Color.secondary : TokenroomTokens.usageCritical)
@@ -196,7 +196,8 @@ struct WatchDetailView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            if let lead = provider.primaryWindow, lead.isMetered {
+            let shown = provider.leadWindow(now: date, history: item.history)
+            if let lead = shown, lead.isMetered {
                 let pace = UsageRanking.pace(for: lead, isStale: !provider.isLive, history: item.history[lead.id], now: date)
                 HStack(spacing: 10) {
                     UsageRing(used: lead.used, isStale: !provider.isLive || lead.isAwaitingReading(at: date),
@@ -216,7 +217,10 @@ struct WatchDetailView: View {
                 .padding(.vertical, 4)
                 .accessibilityElement(children: .combine)
             }
-            ForEach(provider.windows.filter { !($0.id == provider.primaryWindow?.id && $0.isMetered) }) { window in
+            ForEach(provider.windows.filter { window in
+                if let shown, shown.isMetered, window.id == shown.id { return false }
+                return true
+            }) { window in
                 let pace = window.isMetered ? UsageRanking.pace(for: window, isStale: !provider.isLive, history: item.history[window.id], now: date) : nil
                 WindowRow(
                     title: window.displayTitle,
@@ -254,8 +258,8 @@ struct WatchDetailView: View {
         if let reset = ReadingText.reset(window, now: date) {
             parts.append(reset)
         }
-        if let pace, pace.needsAttention {
-            parts.append(pace.caption())
+        if let pace, pace.needsAttention || pace.isProjected {
+            parts.append(pace.caption(now: date))
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }

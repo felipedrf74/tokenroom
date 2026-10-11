@@ -151,7 +151,7 @@ enum SampleData {
                 value = startAmount - 17.6 * time.timeIntervalSince(toppedUp) / now.timeIntervalSince(toppedUp)
             }
             history.record(0, at: time)
-            history.recordAmount((value * 100).rounded() / 100, at: time)
+            history.recordAmount((value * 100).rounded() / 100, unit: "usd", at: time)
             time = time.addingTimeInterval(UsageHistory.step)
         }
         return history

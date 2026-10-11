@@ -20,7 +20,7 @@
   <img src="docs/images/hero.png" width="920" alt="Tokenroom's popover on the Mac, the Usage tab on iPhone, and the Apple Watch app">
 </p>
 
-Tokenroom is a menu-bar extra. It does not live in the Dock. It reuses logins you already have. For pay-as-you-go and organization billing you can add an API key, which stays in your Keychain. It does not keep names, emails, or tokens on disk.
+Tokenroom is a menu-bar extra. It does not live in the Dock. It reuses logins you already have. For pay-as-you-go and organization billing you can add an API key, which stays in your Keychain. It does not keep private account names, emails, or tokens on disk. News retains public publisher and skill-owner names for attribution.
 
 Tokenroom was called Headroom until 2.0. On first launch it brings over Headroom’s settings and last readings; quit Headroom and move it to the Trash afterwards.
 
@@ -30,7 +30,7 @@ Tokenroom was called Headroom until 2.0. On first launch it brings over Headroom
 
 ## Glance first
 
-The extra shows **used %** for every provider you turned on.
+The extra shows **used %** for every provider you turned on, leading with its open window that needs attention soonest. Provider cards keep their primary window headline.
 
 | Provider | What you see | Connect with |
 | --- | --- | --- |
@@ -68,7 +68,15 @@ The footer strip counts banked resets, new models, and updates; click one to ope
 
 ## News
 
-New models from the labs you follow (from OpenRouter's public model list) and official changelogs and blogs from the tools you use: Claude Code, Codex and ChatGPT, Gemini and Antigravity, GitHub Copilot, Cursor, Devin, Z.ai, Kimi Code, MiniMax, and OpenRouter. On the Mac, the News window keeps an index of Today, Models, Announcements, and Retiring, then the labs and tools you follow, each with what's new; Today reads like a short paper about your tools. It's off on the Mac until you turn it on in **Settings → News** or from the News window. Only the public feeds are read; nothing about you is sent.
+News has four destinations on iPhone and Mac: **Today**, **Following**, **Skills**, and **Saved**. Today leads with a recent official update, then new models, public articles from voices you follow, opt-in provider status, and upcoming model retirements. Open a story for its full title, publisher dates and available excerpt, then save it, share its link, or open the original. Search covers retained followed-source items and saved metadata.
+
+Following preserves your existing tools and labs. You can add curated voices such as Simon Willison, Ethan Mollick, Andrej Karpathy, Boris Cherny and Alexander Embiricos. Available public article feeds appear in Tokenroom; **Open on X** opens their profile. Following is a local reading choice and does not follow an account on X. Profile-only entries say so. Provider status reports are separate and opt in; your personal reset times remain in Usage.
+
+Skills shows ClawHub's public **Trending**, **Most downloaded**, and **Newest** listings, with owner, ranking definition and check time. Details show available version and declared requirements. Popularity does not establish compatibility. Tokenroom reads listing metadata and never downloads or runs a skill. Each shelf searches up to 30 loaded entries; rankings are transient and refresh when needed on entry or on request. Displayed positions preserve the original response order even when invalid records are omitted; saved positions retain their check date. Malformed rankings keep the last usable shelf; valid empty rankings clear it. Readers share one eight-second request deadline, and late responses cannot replace the shelf after it expires. Mac Skills checks require News to remain enabled at dispatch.
+
+Models older than 14 days remain in the archive without increasing new-model counts. Collections show when their sources were checked and offer targeted retry after a failure, including paired feeds for a tool. Checking News indicates the shared refresh in progress. Empty collections link to Following. Today’s retirement shelf follows your lab choices; All labs expands the full collection.
+
+Saved titles, links, bounded excerpts and reading choices stay on this device. They can be revisited offline; original pages still need a connection. Saves survive unfollowing or feed rotation. This version does not sync News choices or saves through iCloud. Mac News remains off until you turn it on in **Settings → News** or the News window. Public source requests use no Tokenroom account or provider credentials.
 
 ## Alerts
 
@@ -98,15 +106,15 @@ Tokenroom for iPhone shows the same meters, pace, and a week of history. They co
 - Home Screen and Lock Screen widgets, with countdowns that tick without draining the widget budget
 - a Live Activity that follows a session, or a nearly spent week, to its reset; start it from the app, Control Center, the Action button, or Siri ("Follow usage in Tokenroom")
 - the alerts above, as notifications, even when the app isn't running
-- News as a short daily paper about your tools: what's new since you looked, one top story, each tool's own changelog, and models retiring soon, with a badge for what's new
+- News with Today, Following, Skills and Saved: source-attributed stories, curated public voices, skill discovery, native sharing and a local reading library
 
 The Apple Watch app and its complications read the same iCloud records, so they keep working with the iPhone away. Refresh on the Watch also asks a reachable paired iPhone to check its own providers and share its newest readings. Provider tiles identify the collecting device and its last successful check; sync failures remain visible beside saved readings. Plans collected only on a Mac still need that Mac running to obtain new usage. The Smart Stack shows a limit as it nears its reset or passes 80%. The signed download of Tokenroom for Mac sends its readings on its own (**Settings → iPhone & Watch** turns that off). A copy you build and sign yourself can't use iCloud.
 
-Tokenroom for iPhone and Apple Watch is on its way to the App Store. It has a sample mode for looking around first.
+Tokenroom for iPhone and Apple Watch is available on the App Store. It has a sample mode for looking around first.
 
 ## Install
 
-Download `Tokenroom-2.3.0.zip` from the [latest release](https://github.com/felipedrf74/tokenroom/releases/latest), unzip it, and move Tokenroom.app to Applications. It's signed with a Developer ID and notarized by Apple, so it opens without warnings, and it's the build that can sync with the iPhone and Apple Watch apps.
+Download Tokenroom from the [latest release](https://github.com/felipedrf74/tokenroom/releases/latest), unzip it, and move Tokenroom.app to Applications. It's signed with a Developer ID and notarized by Apple, so it opens without warnings, and it's the build that can sync with the iPhone and Apple Watch apps.
 
 Or build it on the Mac that will run it (a build signed on your Mac works, but can't sync with iPhone):
 
@@ -170,3 +178,5 @@ Build settings live in `Config/*.xcconfig`. Builds are ad-hoc signed by default.
 [MIT](LICENSE). Tokenroom isn't affiliated with any of the providers it shows. Their names are used only to identify the services you connect.
 
 The [cross-platform assessment](docs/cross-platform-assessment-20261004.md) records the reliability changes, current architecture, verification, and remaining device and provider constraints.
+
+[Current release checks](docs/news-release-checks-20261011.md) record the News redesign and earlier Mac navigation, currency/history and alert fixes. Complete suites pass 766 Mac tests with no exclusions and 34 hosted iOS tests; shared platform checks and Release builds pass. Current signed r2 artifacts, Mac notarization and private mobile upload/processing pass. The finite approved News fixture acceptance passes ordinary/largest text, light/dark/narrow layouts, native navigation, sharing, saved actions and representative error recovery. Human VoiceOver attestation retains its earlier component scope. Further physical phone work stopped at Felipe's request; real Production iCloud/notification/widget/Live Activity/App Group and Watch runtime remain unverified integration limits. The approved News plan's Watch compilation passes; it requires no new hardware. Conditional publication follows final independent documentation/diff review and exact-revision CI. Public availability and both-Mac installation need separate receipts. [QA6](docs/news-sixth-qa-validation-20261011.md) remains historical evidence.

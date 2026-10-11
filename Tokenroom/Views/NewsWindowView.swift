@@ -18,6 +18,7 @@ extension NewsFilter {
 
 /// What the News window shows: one of the filters, a lab's models, or a tool's announcements.
 enum NewsPage: Hashable {
+    case destination(NewsDestination)
     case filter(NewsFilter)
     case lab(String)
     case tool(String)
@@ -38,351 +39,112 @@ final class NewsPageRequest {
     }
 }
 
-/// The Mac's News window: a sidebar index (Today, the kinds of news, then the labs and tools you
-/// follow, with counts) beside the page it selects. Off until turned on, since it's the one thing
-/// the Mac fetches that isn't your own usage.
+/// Native sidebar navigation over the shared device-local reader.
 struct NewsWindowView: View {
     @Bindable var store: QuotaStore
     var request: NewsPageRequest?
     var onOpenSettings: () -> Void
     @AppStorage(NewsSection.defaultsKey) private var savedFilter: NewsFilter = .today
     @State private var page: NewsPage?
-    @State private var showsAllLabs = false
     @State private var search = ""
-    @State private var modelLimit = 60
+    @State private var library = NewsRuntime.library()
+    @State private var skills: SkillsStore
 
-    /// - Parameters:
-    ///   - request: the section the popover asks for, followed while the window stays open.
-    ///   - page: where to open instead of the requested or saved section (debug snapshots).
     init(store: QuotaStore, request: NewsPageRequest? = nil, onOpenSettings: @escaping () -> Void, page: NewsPage? = nil) {
-        self.store = store
-        self.request = request
-        self.onOpenSettings = onOpenSettings
+        self.store = store; self.request = request; self.onOpenSettings = onOpenSettings
         _page = State(initialValue: page)
+        let skills = NewsRuntime.skillsStore()
+        skills.allowsRefresh = { [weak store] in store?.settings.newsEnabled == true }
+        _skills = State(initialValue: skills)
     }
-
     var body: some View {
         Group {
-            if store.settings.newsEnabled, let news = store.news {
-                content(news)
-            } else {
-                optIn
+            if store.settings.newsEnabled, let news = store.news { content(news) }
+            else {
+                VStack(spacing: 20) {
+                    Image(systemName: "newspaper").font(.largeTitle)
+                    Text("Your AI briefing").font(.system(.largeTitle, design: .serif))
+                    Text("Official updates, public articles and skills. Sources are public; your usage stays private.").foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 440)
+                    Button("Turn On News") { store.settings.newsEnabled = true; Task { await store.refreshNews(force: true) } }.buttonStyle(.borderedProminent)
+                }.frame(maxWidth: .infinity, maxHeight: .infinity).padding(32)
             }
-        }
-        .frame(minWidth: 820, idealWidth: 920, minHeight: 560, idealHeight: 660)
-    }
-
-    private var optIn: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "newspaper")
-                .font(.system(size: 36))
-                .foregroundStyle(.tint)
-            Text("News")
-                .font(.title2.weight(.semibold))
-            Text("New models from the labs you follow, and official changelogs and blogs from the tools you use. Tokenroom reads OpenRouter's public model list and each provider's own feed. Nothing about you or your usage is sent.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: 380)
-                .fixedSize(horizontal: false, vertical: true)
-            Button("Turn On News") {
-                store.settings.newsEnabled = true
-                Task { await store.refreshNews(force: true) }
+        }.frame(minWidth: 820, idealWidth: 920, minHeight: 560, idealHeight: 660)
+            .onChange(of: request?.count, initial: true) {
+                guard let request, request.count > 0 else { return }
+                search = ""
+                page = request.section == .today ? .destination(.today) : .filter(request.section)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-        }
-        .padding(32)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-
     private func content(_ news: NewsStore) -> some View {
         NavigationSplitView {
-            sidebar(news)
-                .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
-        } detail: {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    health(news)
-                    detail(news)
-                    if isEmpty(news) { emptyState(news) }
-                    Text("From OpenRouter's public model list and each tool's official changelog, blog, or releases. Tokenroom shows titles and links and opens the rest in your browser. Tokenroom isn't affiliated with these providers.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
+            List(selection: $page) {
+                Section {
+                    ForEach(NewsDestination.allCases) { item in Label(item.rawValue, systemImage: item.symbol).tag(NewsPage.destination(item)) }
                 }
-                .padding(24)
-                .frame(maxWidth: 980, alignment: .leading)
-                .frame(maxWidth: .infinity)
-            }
-            .navigationTitle(title(news))
-            .navigationSubtitle(subtitle(news))
-            .searchable(text: $search, placement: .toolbar, prompt: "Search titles and sources")
-            .onChange(of: search) { _, _ in modelLimit = 60 }
-            .onChange(of: showsAllLabs) { _, _ in modelLimit = 60 }
-            .toolbar {
-                ToolbarItem {
-                    Button {
-                        Task { await store.refreshNews(force: true) }
-                    } label: {
-                        if news.isRefreshing {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Label("Check Now", systemImage: "arrow.clockwise")
-                        }
-                    }
-                    .disabled(news.isRefreshing)
-                    .help("Check now")
+                Section("Collections") {
+                    ForEach(NewsFilter.allCases.filter { $0 != .today }) { item in Label(item.rawValue, systemImage: item.symbol).tag(NewsPage.filter(item)) }
+                    Label("Voices", systemImage: "person.2").tag(NewsPage.tool("voices"))
+                    Label("Status", systemImage: "waveform.path.ecg").tag(NewsPage.tool("status"))
                 }
-                ToolbarItem {
-                    Button("Follow…", action: onOpenSettings)
-                        .help("Choose labs and feeds")
+                Section("Your labs") {
+                    ForEach(news.vendorChoices.filter { news.followedVendors.contains($0.id) }, id: \.id) { lab in Text(lab.name).tag(NewsPage.lab(lab.id)) }
                 }
-            }
-        }
-        .onAppear {
-            if page == nil { page = .filter(request?.section ?? savedFilter) }
-        }
-        .onChange(of: request?.count) {
-            // The popover's pills and News button, while the window is open or kept after closing.
-            guard let request else { return }
-            search = ""
-            page = .filter(request.section)
-        }
-        .onChange(of: page) { _, page in
-            modelLimit = 60
-            if case .filter(let filter)? = page { savedFilter = filter }
-        }
-    }
-
-    // MARK: Sidebar
-
-    private func sidebar(_ news: NewsStore) -> some View {
-        let edition = edition(news)
-        return List(selection: $page) {
-            Section {
-                ForEach(NewsFilter.allCases) { filter in
-                    Label(filter.rawValue, systemImage: filter.symbol)
-                        .badge(count(filter, edition: edition))
-                        .tag(NewsPage.filter(filter))
-                }
-            }
-            let labs = followedLabs(news)
-            if !labs.isEmpty {
-                Section("Labs") {
-                    ForEach(labs, id: \.id) { lab in
-                        Label {
-                            Text(lab.name)
-                        } icon: {
-                            LabMark(vendor: lab.id, name: lab.name, size: 18)
-                        }
-                        .badge(news.models().filter { $0.vendor == lab.id && news.isNew($0.created) }.count)
-                        .tag(NewsPage.lab(lab.id))
-                    }
-                }
-            }
-            let tools = followedTools(news)
-            if !tools.isEmpty {
                 Section("Your tools") {
-                    ForEach(tools) { tool in
-                        Label {
-                            Text(tool.name)
-                        } icon: {
-                            if let provider = tool.provider {
-                                ProviderMark(provider: provider, size: 18)
-                            } else {
-                                Image(systemName: "megaphone")
-                            }
-                        }
-                        .badge(news.announcements.filter { $0.source == tool.name && news.isNew($0.published) }.count)
-                        .tag(NewsPage.tool(tool.name))
-                    }
+                    ForEach(FeedSource.toggles.filter { news.followedSources.contains($0.id) }) { source in Text(source.name).tag(NewsPage.tool(source.id)) }
                 }
+            }.listStyle(.sidebar).navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
+        } detail: {
+            NavigationStack {
+                detail(news)
+                    .navigationTitle(title)
             }
+            .toolbar {
+                NewsWindowToolbar(commands: windowCommands(news))
+            }.id(page)
         }
-        .listStyle(.sidebar)
+        .id(request?.count)
+        // Pushed views own the visible AppKit toolbar, so they receive these
+        // window commands rather than relying on the hidden root's toolbar.
+        .environment(\.newsWindowCommands, windowCommands(news))
+        .onAppear { if page == nil { page = request?.section == .today || request == nil && savedFilter == .today ? .destination(.today) : .filter(request?.section ?? savedFilter) } }
+        .onChange(of: page) { _, page in search = ""; if case .filter(let filter)? = page { savedFilter = filter } }
     }
-
-    private func count(_ filter: NewsFilter, edition: NewsEdition) -> Int {
-        switch filter {
-        case .today: 0
-        case .models: edition.digest.models
-        case .announcements: edition.digest.updates
-        case .retiring: edition.digest.retiring
-        }
-    }
-
-    private func followedLabs(_ news: NewsStore) -> [(id: String, name: String)] {
-        news.vendorChoices.filter { news.followedVendors.contains($0.id) }
-    }
-
-    private func followedTools(_ news: NewsStore) -> [FeedSource] {
-        FeedSource.toggles.filter { news.followedSources.contains($0.id) }
-    }
-
-    // MARK: Pages
-
-    private func edition(_ news: NewsStore) -> NewsEdition {
-        NewsEditions.today(models: news.models(), announcements: news.announcements, retiring: news.retiring, since: news.visitBaseline)
-    }
-
-    @ViewBuilder
-    private func detail(_ news: NewsStore) -> some View {
-        if !search.isEmpty {
-            searchResults(news)
-        } else {
-            switch page ?? .filter(savedFilter) {
-            case .filter(.today): today(news)
-            case .filter(.models): models(news, news.models(all: showsAllLabs), header: showsAllLabs ? "All labs" : "Labs you follow", toggle: true)
-            case .filter(.announcements): NewsRiver(items: news.announcements) { news.isNew($0) }
-            case .filter(.retiring): retiring(news.retiring)
-            case .lab(let vendor): models(news, news.models(all: true).filter { $0.vendor == vendor }, header: nil, toggle: false)
-            case .tool(let name): NewsRiver(items: news.announcements.filter { $0.source == name }) { news.isNew($0) }
+    private func windowCommands(_ news: NewsStore) -> NewsWindowCommands {
+        NewsWindowCommands(isChecking: news.isRefreshing || skills.isRefreshing, checkNow: {
+            Task {
+                if page == .destination(.skills) { await skills.refresh(sort: skills.sort, force: true) }
+                else { await store.refreshNews(force: true) }
             }
+        }, openSettings: onOpenSettings)
+    }
+    @ViewBuilder private func detail(_ news: NewsStore) -> some View {
+        switch page ?? .destination(.today) {
+        case .destination(let destination): reader(news, destination: destination)
+        case .filter(.today): reader(news, destination: .today)
+        case .filter(.models): NewsCollectionView(news: news, library: library, collection: .model)
+        case .filter(.announcements): NewsCollectionView(news: news, library: library, collection: .release)
+        case .filter(.retiring): NewsCollectionView(news: news, library: library, collection: .retirement)
+        case .lab(let vendor): NewsCollectionView(news: news, library: library, collection: .model, vendorID: vendor)
+        case .tool(let id):
+            if id == "voices" { NewsCollectionView(news: news, library: library, collection: .voice) }
+            else if id == "status" { NewsCollectionView(news: news, library: library, collection: .status) }
+            else if let source = FeedSource.toggles.first(where: { $0.id == id || $0.name == id }) { NewsSourceDetail(news: news, library: library, source: source) }
+            else { ContentUnavailableView("Source unavailable", systemImage: "newspaper") }
         }
     }
-
-    @ViewBuilder
-    private func today(_ news: NewsStore) -> some View {
-        let edition = edition(news)
-        if edition.topStory != nil || !edition.moreModels.isEmpty {
-            HStack(alignment: .top, spacing: 16) {
-                if let top = edition.topStory {
-                    TopStoryView(release: top, isNew: news.isNew(top.created))
-                        .frame(maxWidth: .infinity)
-                }
-                VStack(spacing: 12) {
-                    ForEach(edition.moreModels.prefix(edition.topStory == nil ? 4 : 2)) { release in
-                        ModelCardView(release: release, isNew: news.isNew(release.created), width: nil)
-                    }
-                }
-                .frame(width: edition.topStory == nil ? nil : 240)
-            }
-        }
-        if !edition.tools.isEmpty {
-            sectionHeader("From your tools")
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 12, alignment: .top), GridItem(.flexible(), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
-                ForEach(edition.tools.prefix(6)) { tool in
-                    ToolNewsCard(tool: tool) { news.isNew($0) }
-                }
-            }
-        }
-        if !edition.retiring.isEmpty {
-            sectionHeader("Retiring soon")
-            retiring(edition.retiring)
-        }
+    private func reader(_ news: NewsStore, destination: NewsDestination) -> some View {
+        ScrollView {
+            NewsReaderContent(news: news, library: library, skills: skills, destination: destination, query: search,
+                              suggestedProviders: Set(store.statuses.compactMap { provider, status in status.snapshot == nil ? nil : provider.rawValue }))
+                .padding(24).frame(maxWidth: 820, alignment: .leading).frame(maxWidth: .infinity)
+        }.searchable(text: $search, placement: .toolbar, prompt: destination == .skills ? "Search these skills" : "Search titles and sources")
     }
-
-    @ViewBuilder
-    private func models(_ news: NewsStore, _ releases: [ModelRelease], header: String?, toggle: Bool) -> some View {
-        if let header {
-            HStack {
-                sectionHeader(header)
-                Spacer()
-                if toggle {
-                    Button(showsAllLabs ? "Followed Only" : "Show All") { showsAllLabs.toggle() }
-                        .buttonStyle(.borderless)
-                }
-            }
-        }
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 200, maximum: 280), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
-            ForEach(releases.prefix(modelLimit)) { release in
-                ModelCardView(release: release, isNew: news.isNew(release.created), width: nil)
-            }
-        }
-        if releases.count > modelLimit {
-            Button("Show More (\(releases.count - modelLimit) remaining)") { modelLimit += 60 }
-        }
-    }
-
-    private func retiring(_ releases: [ModelRelease]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(releases.enumerated()), id: \.element.id) { index, release in
-                if index > 0 {
-                    Divider()
-                        .padding(.leading, 56)
-                }
-                RetiringModelRow(release: release)
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(TokenroomTokens.cardFill))
-    }
-
-    @ViewBuilder
-    private func searchResults(_ news: NewsStore) -> some View {
-        let models = news.models(all: true).filter { NewsSearch.matches(search, title: $0.name, source: $0.vendorName) }
-        let items = news.announcements.filter { NewsSearch.matches(search, title: $0.displayTitle, source: $0.source) }
-        if !models.isEmpty {
-            self.models(news, models, header: "Models", toggle: false)
-        }
-        if !items.isEmpty {
-            NewsRiver(items: items) { news.isNew($0) }
-        }
-        if models.isEmpty, items.isEmpty {
-            emptyState(news, searching: true)
-        }
-    }
-
-    private func sectionHeader(_ title: String) -> some View {
-        Text(title)
-            .font(.title3.weight(.semibold))
-            .padding(.horizontal, 4)
-    }
-
-    private func title(_ news: NewsStore) -> String {
-        switch page ?? .filter(savedFilter) {
-        case .filter(let filter): filter.rawValue
-        case .lab(let vendor): news.vendorChoices.first { $0.id == vendor }?.name ?? vendor
-        case .tool(let name): name
-        }
-    }
-
-    private var currentFilter: NewsFilter {
-        switch page ?? .filter(savedFilter) {
-        case .filter(let filter): return filter
-        case .lab: return .models
-        case .tool: return .announcements
-        }
-    }
-
-    private func subtitle(_ news: NewsStore) -> String {
-        Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day())
-    }
-
-    private func health(_ news: NewsStore) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(news.freshness(for: search.isEmpty ? currentFilter : .today)).font(.footnote).foregroundStyle(.secondary)
-            if let problem = news.problem(for: search.isEmpty ? currentFilter : .today) {
-                Text(problem + " Showing cached items where available.").font(.footnote).foregroundStyle(.secondary)
-                Button("Retry") { Task { await store.refreshNews(force: true) } }
-            }
-        }
-    }
-
-    private func emptyState(_ news: NewsStore, searching: Bool = false) -> some View {
-        let state = NewsEmptyPresentation.make(section: currentFilter, searching: searching,
-            hasLabs: !news.followedVendors.isEmpty || showsAllLabs, hasSources: !news.sources.isEmpty, problem: news.problem(for: currentFilter))
-        return VStack(spacing: 12) {
-            if news.isRefreshing { ProgressView("Checking news…") }
-            ContentUnavailableView(state.title, systemImage: "newspaper", description: Text(state.message))
-            HStack {
-                Button("Follow…", action: onOpenSettings)
-                Button("Show All") { search = ""; showsAllLabs = true; page = .filter(.models) }
-                Button("Retry") { Task { await store.refreshNews(force: true) } }
-            }
-        }.frame(maxWidth: .infinity)
-    }
-
-    private func isEmpty(_ news: NewsStore) -> Bool {
-        guard search.isEmpty else { return false }
-        switch page ?? .filter(savedFilter) {
-        case .filter(.today): return edition(news).isEmpty
-        case .filter(.models): return news.models(all: showsAllLabs).isEmpty
-        case .filter(.announcements): return news.announcements.isEmpty
-        case .filter(.retiring): return news.retiring.isEmpty
-        case .lab(let vendor): return !news.models(all: true).contains { $0.vendor == vendor }
-        case .tool(let name): return !news.announcements.contains { $0.source == name }
+    private var title: String {
+        switch page ?? .destination(.today) {
+        case .destination(let item): item.rawValue
+        case .filter(let item): item.rawValue
+        case .lab(let id): store.news?.vendorChoices.first { $0.id == id }?.name ?? id
+        case .tool(let id): FeedSource.toggles.first { $0.id == id }?.name ?? id.capitalized
         }
     }
 }

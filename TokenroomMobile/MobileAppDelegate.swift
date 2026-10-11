@@ -8,23 +8,14 @@ import UserNotifications
 @MainActor
 final class MobileAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     private var accountObserver: RelayAccountObserver?
-    let store = MobileStore(containerIdentifier: LaunchEnvironment.isUnitTestHost ? nil : RelayAvailability.containerIdentifier)
-    let news: NewsStore = {
-        #if DEBUG
-        if let path = UserDefaults.standard.string(forKey: "TokenroomSnapshotNews") {
-            return NewsStore(directory: URL(fileURLWithPath: path).deletingLastPathComponent(), fetch: {
-                .init(cache: $0.cache, newModels: [])
-            })
-        }
-        #endif
-        return NewsStore()
-    }()
+    let store = MobileRuntime.store()
+    let news = NewsRuntime.newsStore()
 
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        guard !LaunchEnvironment.isUnitTestHost else { return true }
+        guard store.allowsExternalEffects else { return true }
         accountObserver = RelayAccountObserver(name: .CKAccountChanged) { [weak store] in
             PhoneCacheAccess.invalidate(in: AppGroup.defaults)
             Task { @MainActor in
@@ -53,6 +44,7 @@ final class MobileAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificati
         didReceiveRemoteNotification userInfo: [AnyHashable: Any]
     ) async -> UIBackgroundFetchResult {
         let store = self.store
+        guard store.allowsExternalEffects else { return .noData }
         let changed = await TimeLimit.run(25, otherwise: false) { await store.refreshForPush() }
         return changed ? .newData : .noData
     }

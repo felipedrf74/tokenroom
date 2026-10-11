@@ -1,0 +1,46 @@
+# Fourth News QA fixes — 11 October 2026
+
+**Superseded validation:** [QA5 independent review](news-fifth-qa-validation-20261011.md) confirms all four repairs and bridge folding with current tests, records two additional repaired compile/test defects, and reports a remaining native Mac Back defect. The no-tests restriction and uncompiled counts below describe the QA4 pass only.
+
+Checkout: `/Users/felipedominguez/Developer/tokenroom-improvements-20261004`, branch `tokenroom/urgent-window-projected-pace`, HEAD `adbb201fb82e235bee9422e06a7e1208cc4736a9` plus the entire dirty working tree. Felipe authorized fixes, documentation correction and final diff review, explicitly prohibiting tests and commits.
+
+## Historical QA4 status
+
+All four confirmed QA4 P2 findings have source corrections. Eighteen new regression methods (13 `NewsFourthQAFixTests`, five `MobileRuntimeTests`) bring later additions to **66, all uncompiled/unexecuted**. Existing amended cases/current production also need compilation and execution. Historical green runs predate these corrections. Fresh final read-only review confirmed all four corrections and the related bridge-folding fix; no remaining confirmed P0–P2 source defect was identified.
+
+No tests/test compilation, typechecks, builds, app launches, UI exercises, network probes, credential operations, commits, pushes, releases, version changes or cleanup occurred. Source inspection, document/diff review, inventories, file hashes and whitespace checks are the only current evidence.
+
+## Findings and source dispositions
+
+| QA4 finding | Source correction | Regression/check source |
+|---|---|---|
+| QA4-01: accepted slower request leaves queued alert preferences stale | `NewsStore.refresh` updates preferences and ORs notification intent on every accepted call with an existing follow-up, even if the request alone would not queue work. Nonqualifying requests preserve queued maxAge, forced feeds, now and permission. Qualifying manual/forced/fresher requests retain their existing coalescing contract. Vetoed requests do not change last preferences. | Held pass → notifying manual queue → cached/slower latest disabled new-model preference; latest quiet-hour preference with notify OR; queued permission remains live despite a slower unrestricted request. |
+| QA4-02: folded Unsave removes only one saved copy | `NewsSaveButton` uses the displayed complete identity. `NewsLibrary` computes transitive alias closure, removes every connected saved copy atomically and reconciles connected duplicates on save without changing the original snapshot/savedAt. `NewsRemovalUndo.items` retains every removed snapshot; batch restore validates/persists once and restores exact metadata/dates. Distinct current overlaps survive; conflicting exact IDs fail atomically. Capacity/alias/file/write/load failures keep valid state and prior Undo. Existing single-item library APIs remain compatible. | Multi-copy removal/exact Undo, transitive closure, save bridge/date retention, failed remove/resave/restore, exact-ID conflict, alias overflow and full-library restore/merge capacity. Existing corruption/4 MiB sources remain relevant; no execution. |
+| QA4-03: Mac tool/source detail loses search | Shared `NewsSourceDetail` owns native `.searchable`, toolbar placement on Mac, default placement on iPhone. Shared selection filters the full retained paired family before title/source search, without shelf caps. No-results state is explicit; source changes reset the query. | Target in a paired sibling beyond the shelf cap, unrelated-source exclusion, complete blank-query archive and empty results. Native toolbar/focus/search navigation still unverified. |
+| QA4-04: mobile XCTest root still uses production storage | `MobileAppDelegate` owns `MobileRuntime.store()`. XCTest and explicit debug snapshot roots get isolated preferences, nil disk/history/ledger/key-fetch lock directory, mocked Keychain operations, nil CloudKit and no phone connect. Instance `allowsExternalEffects` guards initialization, refresh/direct alerts, widgets/ActivityKit, background scheduling and notification preparation. Delegate/lifecycle callbacks and background handler attachment respect it. Root AppStorage is isolated; gallery never loads production cache in inert mode. Live-Activity controls, debug Follow, notification permission and direct key validation respect policy. News fixtures load via initial-cache injection with nil persistence, so they are input only. | Root with/without fixture, sample/onboarded arguments, isolated source ID/mocked keys, snapshot without XCTest, direct refresh/push/delivery/background, ordinary sample-mode selection. Actual hosted launch and signed storage preservation remain unexecuted. |
+
+Ordinary production sample mode is intentionally distinct from an explicit snapshot/test root and retains collection/widget behavior. MobileStore's initializer defaults remain production-compatible, preserving deliberately injected existing notification/claim tests. No provider credentials are copied or inspected. News profile-only follows remain local choices; no X timeline/API or skill execution was added.
+
+QA4-R01 Skills timing was adjudicated **UNCONFIRMED** in the input report. Current synchronous MainActor completion acceptance precedes parsing/publication without an intervening await; a later deadline/cancellation can linearize after accepted input. This pass does not assert a decode-inclusive deadline or prove elapsed transport timing. No speculative Skills change is included.
+
+The fresh reviewer found an additional inherited P2 directly related to folding identities: a paired entry can match one group's URL and another group's title, but the old first-match algorithm left two rendered rows and incomplete aliases. `NewsCache.announcements` now consolidates every matched group into the newest winner, retains earliest bookkeeping/unioned identities, and redirects all learned keys using stable positions. A direct three-entry bridge → alias-group Unsave/Undo → identity-rotation regression source was added. This is a source witness, not an endpoint observation.
+
+## Changed files in this increment
+
+Production: `Shared/Core/NewsStore.swift`, `NewsFeed.swift`, `NewsLibrary.swift`, `NewsPresentation.swift`, `NewsRuntime.swift`; `Shared/UI/NewsReadingViews.swift`; `TokenroomMobile/MobileRuntime.swift` (new), `MobileStore.swift`, `MobileAppDelegate.swift`, `TokenroomMobileApp.swift`, `RootView.swift`, `FollowButton.swift`, `AlertsSettingsView.swift`, `MobileSettingsView.swift`.
+
+Regression sources: `TokenroomTests/NewsFourthQAFixTests.swift` and `TokenroomMobileTests/MobileRuntimeTests.swift` (both new).
+
+Documentation: README, CHANGELOG, both repository skills, approved spec/plan, current completion audit/validation/QA prompt, Settings/Usage/News validation, this fourth report and a historical-status banner on the third report. Other dirty branch files are inherited work; their preservation is checked against baseline hashes. No project-file or version edit is required for synchronized source groups.
+
+## Evidence and preservation
+
+Input report: `/Users/felipedominguez/Documents/ChatGPT/TokenRoom/news-implementation-20261011/qa4-rerun-20261011T161943Z/qa-report.md`.
+
+Current fix evidence: `/Users/felipedominguez/Documents/ChatGPT/TokenRoom/news-implementation-20261011/qa4-fixes-20261011T164407Z`. `baseline.json`, `before/` and `before-tracked.diff` bind the 71-path starting dirty snapshot to QA4. `supplemental-before.json` and copies bind initially clean files changed here. Current `after/`, `after-hashes.json`, inventory, `incremental.diff`, review record and closeout bind the resulting source snapshot. These are source evidence, not executed validation. Historical QA1/QA2/QA3 packages are retained unchanged.
+
+## Final review and remaining validation
+
+Fresh `/root/qa4_final_review` inspected the complete tracked/untracked checkout and exact increment, confirmed all four source corrections, discovered the related inherited bridge-folding P2, and reread its fix/regression source. It found no remaining confirmed P0–P2 source defect or definite static compile/assertion error. Documentation pointers/historical headings/counts were corrected and reread. Root reviewed the final incremental diff, then captured complete after copies/hashes/inventory, whitespace and preservation closeout. The reviewer final answer (file-link formatting shortened) and source dispositions are retained in `final-review.md`. Every original T1–T7 step and all eight acceptance bullets remain accounted for in the completion audit; no blocked execution criterion is waived.
+
+Current source completeness does not imply runtime acceptance or release readiness. Compilation/suites/platform builds and actual native source search, alias-group Unsave/Undo, large text, narrow layouts, VoiceOver/Reduce Motion, Mac keyboard/sidebar navigation, hosted XCTest storage preservation, eight-second streaming/decode observations, signed App Group/flock, notifications/iCloud/Watch/live public services remain unfinished. Felipe's explicit no-tests instruction makes those checks impossible **in this pass**, not permanently impossible. No commit or release approval follows.

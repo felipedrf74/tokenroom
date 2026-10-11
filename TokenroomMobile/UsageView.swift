@@ -74,6 +74,14 @@ struct UsageView: View {
             .navigationDestination(for: String.self) { id in
                 if let reading = store.reading(id: id) {
                     ProviderDetailView(reading: reading, date: date)
+                } else {
+                    // A key removal, account change, or aged-out reading can remove an open provider.
+                    Text("Couldn't find a reading for this provider.")
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding()
+                        .navigationTitle(Provider(rawValue: id)?.displayName ?? "Usage")
+                        .navigationBarTitleDisplayMode(.inline)
                 }
             }
             .overlay {

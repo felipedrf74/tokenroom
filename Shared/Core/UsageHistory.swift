@@ -18,6 +18,12 @@ struct UsageHistory: Codable, Equatable, Sendable {
     var used: [UInt8?]
     /// Amount left at the end of each hour, for balances; nil for other windows.
     var amounts: [Double?]? = nil
+    /// Currency of this monetary segment. Nil in older records: a multi-currency provider's
+    /// unlabelled amounts cannot supply a runway or join newly labelled amounts.
+    var amountUnit: String? = nil
+    /// Latest physical monetary reading, so a late sample from an old region cannot replace
+    /// this segment or overwrite the newest amount in its hour.
+    var amountCheckedAt: Date? = nil
     /// When the window reset during the week, oldest first.
     var resets: [Date]? = nil
     /// The reset time the latest reading reported, to notice the next reset.
@@ -49,15 +55,43 @@ struct UsageHistory: Codable, Equatable, Sendable {
         return true
     }
 
-    /// Records the amount left on a balance; the hour keeps its latest value, so a top-up shows.
+    /// Records the amount left on a balance and its provenance; the hour keeps its latest value,
+    /// so a top-up shows. A later physical check advances provenance even if its amount is equal.
     @discardableResult
-    mutating func recordAmount(_ remaining: Double, at date: Date) -> Bool {
+    mutating func recordAmount(_ remaining: Double, unit: String, at date: Date) -> Bool {
+        let lastCheck = amountCheckedAt ?? amountPoints.last?.date
+        guard remaining.isFinite, unit == "usd" || unit == "cny",
+              lastCheck.map({ date >= $0 }) != false else { return false }
         guard let index = bucket(for: date) else { return false }
+        let changedUnit = amountUnit != unit
+        if changedUnit {
+            // Keep usage/reset history, but never treat dollars and yuan as one burn rate.
+            amounts = nil
+            amountUnit = unit
+        }
+        let changedCheck = amountCheckedAt != date
+        amountCheckedAt = date
         var values = amounts ?? Array(repeating: nil, count: Self.capacity)
-        guard values[index] != remaining else { return false }
+        guard changedUnit || changedCheck || values[index] != remaining else { return false }
         values[index] = remaining
         amounts = values
         return true
+    }
+
+    /// Monetary history from before units were stored can only migrate when that provider has
+    /// one documented currency. Clearing ambiguous amounts leaves percentages and resets intact.
+    func migratingLegacyAmounts(for providerID: String) -> UsageHistory {
+        guard amountUnit == nil, amounts != nil else { return self }
+        var copy = self
+        if let provider = Provider(rawValue: providerID),
+           let unit = BudgetReferencePreferences.legacyUnit(for: provider) {
+            copy.amountUnit = unit
+            copy.amountCheckedAt = amountPoints.last?.date
+        } else {
+            copy.amounts = nil
+            copy.amountCheckedAt = nil
+        }
+        return copy
     }
 
     /// Notes a reset when the reported reset time moves on to a later window. Returns whether

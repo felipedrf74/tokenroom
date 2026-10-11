@@ -34,7 +34,8 @@ struct ProviderCard: View {
     }
 
     private var attention: String? {
-        ReadingText.attention(RelayProvider(provider: provider, status: status, checkedAt: checkedAt), now: date)
+        let reading = RelayProvider(provider: provider, status: status, checkedAt: checkedAt)
+        return ReadingText.attention(reading, now: date, lead: reading.primaryWindow)
     }
 
     private var fullCard: some View {

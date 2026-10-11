@@ -37,8 +37,13 @@ final class AppSettings {
         didSet { persist() }
     }
 
-    /// Dollar budgets that turn spend and balances into meters.
+    /// Kept for older readers and unresolved legacy references. A number alone never chooses a
+    /// currency for a multi-currency provider.
     var budgets: [Provider: Double] {
+        didSet { persist() }
+    }
+
+    private(set) var budgetReferences: [Provider: BudgetReference] {
         didSet { persist() }
     }
 
@@ -79,6 +84,7 @@ final class AppSettings {
         var known: [String] = []
         var hidden: [String] = []
         var budgets: [String: Double] = [:]
+        var budgetReferences: [String: Any] = [:]
     }
     /// Providers these settings hadn't seen before this launch, so detection can turn them on.
     private(set) var newlyKnown: [Provider] = []
@@ -91,6 +97,7 @@ final class AppSettings {
         static let menuStyle = "menuStyle"
         static let hiddenFromMenuBar = "menuBarHidden"
         static let budgets = "budgets"
+        static let budgetReferences = BudgetReferencePreferences.referencesKey
         static let alertsOnMac = "alertsOnMac"
         static let newsEnabled = "newsEnabled"
         static let alertPreferences = "alertPreferences"
@@ -114,11 +121,14 @@ final class AppSettings {
         hiddenFromMenuBar = Set((defaults.array(forKey: Keys.hiddenFromMenuBar) as? [String] ?? []).compactMap(Provider.init(rawValue:)))
         var budgets: [Provider: Double] = [:]
         for (key, value) in defaults.dictionary(forKey: Keys.budgets) as? [String: Double] ?? [:] {
-            if let provider = Provider(rawValue: key), value > 0 {
+            if let provider = Provider(rawValue: key), value.isFinite, value > 0 {
                 budgets[provider] = value
             }
         }
         self.budgets = budgets
+        budgetReferences = Dictionary(uniqueKeysWithValues: budgets.keys.compactMap { provider in
+            BudgetReferencePreferences.reference(in: defaults, for: provider).map { (provider, $0) }
+        })
         showsAlertsOnMac = defaults.bool(forKey: Keys.alertsOnMac)
         newsEnabled = defaults.bool(forKey: Keys.newsEnabled)
         alertPreferences = defaults.data(forKey: Keys.alertPreferences)
@@ -128,7 +138,11 @@ final class AppSettings {
             enabled: Self.foreignIDs(defaults.array(forKey: Keys.enabled)),
             known: Self.foreignIDs(defaults.array(forKey: Keys.known)),
             hidden: Self.foreignIDs(defaults.array(forKey: Keys.hiddenFromMenuBar)),
-            budgets: (defaults.dictionary(forKey: Keys.budgets) as? [String: Double] ?? [:]).filter { Provider(rawValue: $0.key) == nil }
+            budgets: (defaults.dictionary(forKey: Keys.budgets) as? [String: Double] ?? [:]).filter { Provider(rawValue: $0.key) == nil },
+            budgetReferences: (defaults.dictionary(forKey: Keys.budgetReferences) ?? [:]).filter { key, _ in
+                guard let provider = Provider(rawValue: key) else { return true }
+                return budgetReferences[provider] == nil
+            }
         )
         isReady = true
         persist()
@@ -138,12 +152,22 @@ final class AppSettings {
         budgets[provider]
     }
 
-    func setBudget(_ value: Double?, for provider: Provider) {
+    func budgetReference(for provider: Provider) -> BudgetReference? {
+        guard let reference = budgetReferences[provider], reference.isValid,
+              budgets[provider] == reference.amount else { return nil }
+        return reference
+    }
+
+    func setBudget(_ value: Double?, for provider: Provider, unit: String = "usd") {
         if let value, (!value.isFinite || value <= 0) { return }
+        if let value, !BudgetReference(amount: value, unit: unit).isValid { return }
+        foreign.budgetReferences[provider.rawValue] = nil
         if let value {
             budgets[provider] = value
+            budgetReferences[provider] = BudgetReference(amount: value, unit: unit)
         } else {
             budgets.removeValue(forKey: provider)
+            budgetReferences.removeValue(forKey: provider)
         }
     }
 
@@ -231,6 +255,8 @@ final class AppSettings {
         defaults.set(menuStyle.rawValue, forKey: Keys.menuStyle)
         defaults.set((hiddenFromMenuBar.map(\.rawValue) + foreign.hidden).sorted(), forKey: Keys.hiddenFromMenuBar)
         defaults.set(Dictionary(uniqueKeysWithValues: budgets.map { ($0.key.rawValue, $0.value) }).merging(foreign.budgets) { mine, _ in mine }, forKey: Keys.budgets)
+        defaults.set(Dictionary(uniqueKeysWithValues: budgetReferences.map { ($0.key.rawValue, $0.value.propertyList as Any) })
+            .merging(foreign.budgetReferences) { mine, _ in mine }, forKey: Keys.budgetReferences)
         defaults.set(showsAlertsOnMac, forKey: Keys.alertsOnMac)
         defaults.set(newsEnabled, forKey: Keys.newsEnabled)
         if let data = try? RelayEnvelope.encoder.encode(alertPreferences) {

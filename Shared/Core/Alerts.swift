@@ -1,7 +1,7 @@
 import Foundation
 
-/// One usage alert. Every device computes the same ID for the same event, so when two collectors
-/// see the same crossing, iCloud keeps one record and the iPhone shows one notification.
+/// One usage alert. Updated collectors coordinate reset-based deliveries in private iCloud;
+/// bucketed IDs remain compatible with existing Event records and older queued alerts.
 struct UsageAlert: Codable, Equatable, Sendable, Identifiable {
     enum Kind: String, Codable, Sendable {
         /// A window crossed 80% or 95%.
@@ -39,6 +39,15 @@ struct UsageAlert: Codable, Equatable, Sendable, Identifiable {
     /// A budget alert's text before its countdown, so a held alert can say how long is left
     /// when it goes out rather than when it was raised.
     var detail: String? = nil
+    /// A stale reading's measured run-out. Kept for retry-time urgency; absent in older alerts
+    /// and live alerts, whose existing urgency stays unchanged.
+    var projectedRunsOutAt: Date? = nil
+    /// The logical reset that owns this alert. For a reset notice this is the ended window,
+    /// while `resetsAt` continues to describe the next reset in its presentation.
+    var identityResetAt: Date? = nil
+    /// The provider's reported period, when present; legacy Event rounding used this ahead
+    /// of the window kind. Retained for migration, never used to create a forecast.
+    var identityPeriodSec: TimeInterval? = nil
 
     /// The key on the record of an alert an iPhone showed itself. No subscription lists it, so
     /// the record never comes back to it as a push.
@@ -407,7 +416,10 @@ enum AlertRules {
                     resetsAt: window.resetsAt,
                     isUrgent: false,
                     window: window.id,
-                    instance: name
+                    instance: name,
+                    windowKind: before.kind,
+                    identityResetAt: oldReset,
+                    identityPeriodSec: before.periodSec
                 ))
             }
         }
@@ -465,7 +477,8 @@ enum AlertRules {
             isUrgent: level >= 95,
             window: window.id,
             instance: name,
-            windowKind: window.kind
+            windowKind: window.kind,
+            identityPeriodSec: window.periodSec
         )
     }
 
@@ -476,7 +489,8 @@ enum AlertRules {
     /// said it.
     static func runsOut(_ provider: RelayProvider, window: RelayWindow, preferences: AlertPreferences, samples: [(date: Date, used: Double)] = [], now: Date) -> UsageAlert? {
         let isSession = window.windowKind == .session
-        guard isSession ? preferences.sessionRunsOut : preferences.limitRunsOut,
+        guard !isMoneyWindow(window),
+              isSession ? preferences.sessionRunsOut : preferences.limitRunsOut,
               window.used >= runsOutMinimumUse, window.used < 95,
               let pace = UsageRanking.pace(for: window, isStale: !provider.isLive, samples: samples, now: now),
               pace.verdict == .ahead, let runsOutAt = pace.runsOutAt,
@@ -488,18 +502,23 @@ enum AlertRules {
         calendar.timeZone = zone
         let moment = Pace.shortMoment(runsOutAt, now: now, timeZone: zone)
         let when = calendar.isDate(runsOutAt, inSameDayAs: now) ? "at \(moment)" : moment
+        let used = "\(TokenroomFormat.percentText(window.used))% used"
+        let basis = pace.isProjected ? "\(used) at last check" : used
+        let remaining = runsOutAt.timeIntervalSince(now)
         return UsageAlert(
             id: "evt-\(provider.id)-\(window.id)-runsOut-\(name)",
             provider: provider.id,
             kind: .runsOut,
             level: 0,
             title: "\(provider.name): \(window.limitName) runs out \(when)",
-            body: "\(TokenroomFormat.percentText(window.used))% used, \(UsageTiles.lead(runsOut: runsOutAt, resetsAt: pace.resetsAt)).",
+            body: "\(basis), \(UsageTiles.lead(runsOut: runsOutAt, resetsAt: pace.resetsAt)).",
             resetsAt: window.resetsAt,
-            isUrgent: runsOutAt.timeIntervalSince(now) < 3600,
+            isUrgent: remaining < 3600 && remaining > -3600,
             window: window.id,
             instance: name,
-            windowKind: window.kind
+            windowKind: window.kind,
+            projectedRunsOutAt: pace.isProjected ? runsOutAt : nil,
+            identityPeriodSec: window.periodSec
         )
     }
 
@@ -520,7 +539,12 @@ enum AlertRules {
             if let detail = alert.detail, let reset = RelativeTime.resets(resetsAt, now: now) {
                 alert.body = "\(detail) It \(reset)."
             }
-        case .reset, .bankedNew, .bankedExpiring, .runsOut:
+        case .runsOut:
+            if let projected = alert.projectedRunsOutAt {
+                let remaining = projected.timeIntervalSince(now)
+                alert.isUrgent = remaining < 3600 && remaining > -3600
+            }
+        case .reset, .bankedNew, .bankedExpiring:
             break
         }
         return alert
@@ -588,12 +612,14 @@ enum AlertRules {
             window: window.id,
             instance: name,
             windowKind: window.kind,
-            detail: detail
+            detail: detail,
+            identityPeriodSec: window.periodSec
         )
     }
 
     /// A window instance, named by its reset time. Short windows round to 10 minutes, a day or
-    /// longer to the hour, so two devices whose readings disagree by a few minutes still agree.
+    /// longer to the hour. These legacy names can disagree across a rounding boundary; updated
+    /// writers use AlertDeliveryCoordinator to agree on the immutable logical reset instead.
     /// A balance has no reset: its instance is the day, so a top-up re-arms it the next day.
     static func instance(_ resetsAt: Date?, window: RelayWindow? = nil, now: Date = .now) -> String {
         guard let resetsAt else {
@@ -672,6 +698,9 @@ struct AlertLedger: Codable, Equatable, Sendable {
     /// lower one held back for quiet hours doesn't follow it, even when the window's reset time
     /// moved between them and their names differ.
     var levelsSent: [String: LevelSent] = [:]
+    /// The window at its first raised run-out, so a moved reset does not give that same alert a
+    /// second rounded ID. Retained for pending and delivered alerts, independently of lastSeen.
+    private var runOutInstances: [String: RelayWindow] = [:]
 
     struct LevelSent: Codable, Equatable, Sendable {
         var level: Int
@@ -692,36 +721,85 @@ struct AlertLedger: Codable, Equatable, Sendable {
         pending = (try? container.decodeIfPresent([Pending].self, forKey: .pending)) ?? []
         shownHere = (try? container.decodeIfPresent([String: Date].self, forKey: .shownHere)) ?? [:]
         levelsSent = (try? container.decodeIfPresent([String: LevelSent].self, forKey: .levelsSent)) ?? [:]
+        runOutInstances = (try? container.decodeIfPresent([String: RelayWindow].self, forKey: .runOutInstances)) ?? [:]
     }
 
     /// Raises alerts for these readings and queues them; returns the ones raised now. Readings
     /// that aren't live (stale, expired) don't move `lastSeen`, so a crossing is judged against
-    /// the last real one. `samples` holds recent readings by provider id, then window id, for the
-    /// pace of readings without a measured one.
+    /// the last real one. A stale reading can still raise the run-out alert once, from a
+    /// run-out the collector already measured, after this ledger has seen the provider live.
+    /// It does not raise a threshold, reset, or balance alert. `samples` holds recent readings
+    /// by provider id, then window id, for the pace of readings without a measured one.
     @discardableResult
     mutating func process(_ providers: [RelayProvider], preferences: AlertPreferences, samples: [String: [String: [(date: Date, used: Double)]]] = [:], now: Date = .now) -> [UsageAlert] {
         var fresh: [UsageAlert] = []
-        for provider in providers where provider.isLive {
-            for alert in AlertRules.alerts(previous: lastSeen[provider.id], current: provider, preferences: preferences, samples: samples[provider.id] ?? [:], now: now)
-            where sent[alert.id] == nil && !pending.contains(where: { $0.alert.id == alert.id }) && !fresh.contains(where: { $0.id == alert.id }) {
-                fresh.append(alert)
-                pending.append(Pending(alert: alert, raisedAt: now))
+        for provider in providers {
+            if provider.isLive {
+                for alert in AlertRules.alerts(previous: lastSeen[provider.id], current: provider, preferences: preferences, samples: samples[provider.id] ?? [:], now: now)
+                where sent[alert.id] == nil && !pending.contains(where: { $0.alert.id == alert.id }) && !fresh.contains(where: { $0.id == alert.id })
+                    && reserveRunOutInstance(for: alert, provider: provider, now: now) {
+                    fresh.append(alert)
+                    pending.append(Pending(alert: alert, raisedAt: now))
+                }
+                lastSeen[provider.id] = provider
+            } else if lastSeen[provider.id] != nil {
+                for window in provider.windows where window.isMetered && !window.isAwaitingReading(at: now) {
+                    guard let alert = AlertRules.runsOut(provider, window: window, preferences: preferences, samples: samples[provider.id]?[window.id] ?? [], now: now),
+                          sent[alert.id] == nil,
+                          !pending.contains(where: { $0.alert.id == alert.id }),
+                          !fresh.contains(where: { $0.id == alert.id }),
+                          reserveRunOutInstance(for: alert, provider: provider, now: now)
+                    else { continue }
+                    fresh.append(alert)
+                    pending.append(Pending(alert: alert, raisedAt: now))
+                }
             }
-            lastSeen[provider.id] = provider
         }
         prune(preferences: preferences, now: now)
         return fresh
+    }
+
+    /// Other alert kinds keep their existing IDs. A run-out is raised once for the logical
+    /// window, even if a reset move crosses an ID bucket before or after delivery.
+    private mutating func reserveRunOutInstance(for alert: UsageAlert, provider: RelayProvider, now: Date) -> Bool {
+        guard alert.kind == .runsOut, let id = alert.window,
+              let window = provider.windows.first(where: { $0.id == id }) else { return true }
+        let key = provider.id + "/" + id
+        if runOutInstances[key] == nil {
+            // Older ledgers have no snapshot. A pending alert retains its reset; a delivered
+            // alert can be recognized from the live baseline and that instance's sent ID.
+            if let held = pending.first(where: { $0.alert.kind == .runsOut && $0.alert.provider == provider.id && $0.alert.window == id }),
+               let reset = held.alert.resetsAt {
+                var before = lastSeen[provider.id]?.windows.first(where: { $0.id == id }) ?? window
+                before.resetsAt = reset
+                runOutInstances[key] = before
+            } else if let before = lastSeen[provider.id]?.windows.first(where: { $0.id == id }) {
+                let name = AlertRules.instance(before.resetsAt, window: before, now: now)
+                if sent["evt-\(provider.id)-\(id)-runsOut-\(name)"] != nil {
+                    runOutInstances[key] = before
+                }
+            }
+        }
+        if let before = runOutInstances[key], AlertRules.isSameInstance(before: before, current: window, now: now) {
+            return false
+        }
+        runOutInstances[key] = window
+        return true
     }
 
     /// Queued alerts that should go out now: urgent ones always, the rest once quiet hours end.
     /// One waiting behind a higher level for the same window (80% held overnight, then 95%)
     /// doesn't follow it, and held ones say how long is left as they go out.
     func due(preferences: AlertPreferences, now: Date = .now) -> [UsageAlert] {
-        let ready = pending.filter { preferences.allows($0.alert) && preferences.shouldSend($0.alert, at: now) }
+        let ready = pending.map { item in
+            var item = item
+            item.alert = AlertRules.refreshed(item.alert, now: now)
+            return item
+        }.filter { preferences.allows($0.alert) && preferences.shouldSend($0.alert, at: now) }
         let readyIDs = Set(ready.map(\.alert.id))
         return ready
             .filter { !Self.isSuperseded($0, sent: sent, levelsSent: levelsSent, going: readyIDs) }
-            .map { AlertRules.refreshed($0.alert, now: now) }
+            .map(\.alert)
     }
 
     /// Whether the same window's alert at a higher level went out after this one was raised, or
@@ -774,6 +852,7 @@ struct AlertLedger: Codable, Equatable, Sendable {
         sent = sent.filter { now.timeIntervalSince($0.value) < Self.memory }
         shownHere = shownHere.filter { now.timeIntervalSince($0.value) < Self.memory }
         levelsSent = levelsSent.filter { now.timeIntervalSince($0.value.sentAt) < Self.memory }
+        runOutInstances = runOutInstances.filter { $0.value.resetsAt.map { now.timeIntervalSince($0) < Self.memory } ?? false }
         // Held through at least one whole stretch of quiet hours, however long it is.
         let lifetime = max(Self.pendingLifetime, preferences.quietLength + 3600)
         let delivered = sent

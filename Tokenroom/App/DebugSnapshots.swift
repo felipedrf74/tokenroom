@@ -44,6 +44,10 @@ enum DebugSnapshots {
         settings.showsAlertsOnMac = true
         settings.setBudget(1000, for: .anthropicOrg)
         let news = NewsStore(defaults: defaults, directory: scratch, now: now.addingTimeInterval(-2 * 86_400))
+        if UserDefaults.standard.string(forKey: "TokenroomSnapshotNews") != nil {
+            news.followedVoices = Set(NewsVoice.catalog.filter { $0.feed.map { news.cache.items[$0.id] != nil } ?? false }.map(\.id))
+            news.followedStatusSources = Set(NewsStatusSource.catalog.filter { news.cache.items[$0.id] != nil }.map(\.id))
+        }
         let store = QuotaStore(settings: settings, clients: [], cache: SnapshotCache(directory: scratch), relay: nil, news: news)
         for snapshot in samples {
             store.statuses[snapshot.provider] = .live(snapshot)
@@ -64,9 +68,14 @@ enum DebugSnapshots {
             request.tab = tab
             renderWindow(SettingsView(store: store, request: request), size: NSSize(width: 820, height: 620), to: output.appendingPathComponent("settings-\(tab.rawValue).png"))
         }
-        render(NewsWindowView(store: store, onOpenSettings: {}, page: .filter(.today)), width: 920, height: 660, appearance: .aqua, to: output.appendingPathComponent("news.png"))
-        render(NewsWindowView(store: store, onOpenSettings: {}, page: .filter(.today)), width: 920, height: 660, appearance: .darkAqua, to: output.appendingPathComponent("news-dark.png"))
-        render(NewsWindowView(store: store, onOpenSettings: {}, page: .filter(.announcements)), width: 920, height: 660, appearance: .aqua, to: output.appendingPathComponent("news-announcements.png"))
+        renderWindow(NewsWindowView(store: store, onOpenSettings: {}, page: .destination(.today)), size: NSSize(width: 920, height: 660), appearance: .aqua, to: output.appendingPathComponent("news.png"))
+        renderWindow(NewsWindowView(store: store, onOpenSettings: {}, page: .destination(.today)), size: NSSize(width: 920, height: 660), appearance: .darkAqua, to: output.appendingPathComponent("news-dark.png"))
+        renderWindow(NewsWindowView(store: store, onOpenSettings: {}, page: .filter(.announcements)), size: NSSize(width: 920, height: 660), appearance: .aqua, to: output.appendingPathComponent("news-announcements.png"))
+
+        renderWindow(NewsWindowView(store: store, onOpenSettings: {}, page: .destination(.following)), size: NSSize(width: 920, height: 660), appearance: .aqua, to: output.appendingPathComponent("news-following.png"))
+        if let item = news.allAnnouncements.first {
+            render(NewsStoryDetail(item: item, library: NewsLibrary(directory: nil)), width: 720, height: 660, appearance: .aqua, to: output.appendingPathComponent("news-story-detail.png"))
+        }
 
         // Every provider's icon (or its monogram), light and dark: providers outside the sample
         // data, such as Grok Bot, show here too.

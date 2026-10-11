@@ -1,24 +1,54 @@
 import SwiftUI
 import UserNotifications
 
+// SceneBuilder cannot branch between scene types. Choose the app configuration before
+// SwiftUI creates any scenes, so inert hosts never register a background task.
 @main
+enum TokenroomMobileEntry {
+    @MainActor static func main() {
+        if NewsRuntime.isInert() { InertTokenroomMobileApp.main() }
+        else { TokenroomMobileApp.main() }
+    }
+}
+
 struct TokenroomMobileApp: App {
     @UIApplicationDelegateAdaptor(MobileAppDelegate.self) private var appDelegate
+
+    var body: some Scene {
+        MobileWindowScene(store: appDelegate.store, news: appDelegate.news)
+            .backgroundTask(.appRefresh(MobileStore.backgroundTaskID)) {
+                await appDelegate.store.backgroundRefresh()
+                await appDelegate.news.refresh(preferences: appDelegate.store.alertPreferences)
+            }
+    }
+}
+
+private struct InertTokenroomMobileApp: App {
+    @UIApplicationDelegateAdaptor(MobileAppDelegate.self) private var appDelegate
+
+    var body: some Scene {
+        MobileWindowScene(store: appDelegate.store, news: appDelegate.news)
+    }
+}
+
+private struct MobileWindowScene: Scene {
+    let store: MobileStore
+    let news: NewsStore
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
-        let store = appDelegate.store
-        let news = appDelegate.news
         WindowGroup {
             RootView(store: store, news: news)
+                .defaultAppStorage(store.allowsExternalEffects ? .standard : store.preferencesDefaults)
+                .environment(\.mobileAllowsExternalEffects, store.allowsExternalEffects)
                 .task {
                     // Also saves the push subscriptions, once iCloud answers. Not forced: when
                     // coming forward already started one, this is that refresh.
-                    guard !LaunchEnvironment.isUnitTestHost else { return }
+                    guard store.allowsExternalEffects else { return }
                     await store.refresh()
                 }
                 .onChange(of: scenePhase) { _, phase in
-                    guard !LaunchEnvironment.isUnitTestHost else { return }
+                    guard store.allowsExternalEffects else { return }
                     switch phase {
                     case .active:
                         store.becameActive()
@@ -35,13 +65,9 @@ struct TokenroomMobileApp: App {
                 }
                 .onChange(of: store.hasOnboarded, initial: true) { _, onboarded in
                     // Ask once the person has chosen how to use Tokenroom, not on first sight.
-                    guard !LaunchEnvironment.isUnitTestHost, onboarded, !store.sampleMode else { return }
+                    guard store.allowsExternalEffects, onboarded, !store.sampleMode else { return }
                     Task { _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) }
                 }
-        }
-        .backgroundTask(.appRefresh(MobileStore.backgroundTaskID)) {
-            await store.backgroundRefresh()
-            await news.refresh(preferences: store.alertPreferences)
         }
     }
 }

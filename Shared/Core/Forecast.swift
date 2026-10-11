@@ -15,8 +15,9 @@ enum Forecast {
 
     /// Days a balance lasts at the rate it went down since the last top-up, within the week.
     /// Nil when it isn't going down, or there isn't enough history yet.
-    static func daysLeft(remaining: Double, history: UsageHistory?, now: Date = .now) -> Double? {
-        guard remaining > 0, let points = history?.amountPoints, points.count >= 2 else { return nil }
+    static func daysLeft(remaining: Double, unit: String, history: UsageHistory?, now: Date = .now) -> Double? {
+        guard remaining.isFinite, remaining > 0, history?.amountUnit == unit,
+              unit == "usd" || unit == "cny", let points = history?.amountPoints, points.count >= 2 else { return nil }
         // Walk back from the newest reading until the balance was clearly lower (a top-up after it).
         var segment = [points[points.count - 1]]
         for point in points.dropLast().reversed() {
@@ -80,7 +81,7 @@ enum Forecast {
         guard !window.isAwaitingReading(at: now) else { return nil }
         guard let amount = window.amount, amount.unit == "usd" || amount.unit == "cny" else { return nil }
         if window.resetsAt == nil, let remaining = amount.remainingOrComputed {
-            return daysLeft(remaining: remaining, history: history, now: now).map(runwayText)
+            return daysLeft(remaining: remaining, unit: amount.unit, history: history, now: now).map(runwayText)
         }
         if let spent = amount.used, amount.remaining == nil, let resetsAt = window.resetsAt, let startsAt = window.startsAt {
             return projectedSpend(spent: spent, startsAt: startsAt, resetsAt: resetsAt, checkedAt: checkedAt, now: now)

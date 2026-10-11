@@ -10,6 +10,7 @@ struct FollowButton: View {
     var isCompact = false
     /// Reports why following failed, for a caption next to the button.
     var onError: (String?) -> Void = { _ in }
+    @Environment(\.mobileAllowsExternalEffects) private var allowsExternalEffects
     @State private var isFollowing = false
 
     var body: some View {
@@ -20,6 +21,7 @@ struct FollowButton: View {
                 Label(isFollowing ? (isCompact ? "Stop" : "Stop Following") : (isCompact ? "Follow" : "Follow on Lock Screen"), systemImage: isFollowing ? "xmark.circle" : "timer")
             }
             .onAppear {
+                guard allowsExternalEffects else { return }
                 isFollowing = LiveActivities.activity(for: provider.id) != nil
             }
             .accessibilityHint(isFollowing ? "Removes the countdown from the Lock Screen" : "Shows a countdown to the \(window.displayTitle.lowercased()) reset on the Lock Screen and in the Dynamic Island")
@@ -27,6 +29,7 @@ struct FollowButton: View {
     }
 
     private func toggle(_ window: RelayWindow) {
+        guard allowsExternalEffects else { return }
         if isFollowing {
             Task {
                 await LiveActivities.stop(provider.id)

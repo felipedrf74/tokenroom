@@ -1,6 +1,6 @@
 # Privacy
 
-Last updated: September 30, 2026. Questions: [open an issue](https://github.com/felipedrf74/tokenroom/issues).
+Last updated: October 11, 2026. Questions: [open an issue](https://github.com/felipedrf74/tokenroom/issues).
 
 Tokenroom runs on your Mac, iPhone, and Apple Watch. There is no Tokenroom account and no Tokenroom server. Syncing between your devices goes through your own iCloud account.
 
@@ -50,22 +50,24 @@ In `~/Library/Application Support/Tokenroom/`:
 - `checked.json`: when each provider last answered
 - `history.json`: a week of hourly used percents, and for balances the amount left each hour, plus when windows reset, for pace, forecasts, and sparklines
 - `alerts.json`: the last reading of each provider, the IDs of alerts already sent and the highest level each window's alerts reached, and the full text of alerts waiting for quiet hours to end, so each alert goes out once
-- `news.json`, only if you turn on News: model names, prices, the titles, dates, and links of announcements, and which feeds couldn't be read at the last check
+- `news.json`, only if you turn on News: public model names and prices; story titles, publisher dates, bounded excerpts, links and identities; provider status updates observed by this device; source check times and failures
+- `News/news-library.json`: saved public story/model/skill metadata, including publisher or skill-owner names, bounded excerpts, original links, saved dates, and device-local read identities and dates. Saved skill rankings include their source and check date. This library is separate from usage readings and never enters iCloud, the App Group, or the Watch
 - `bridge/`, created when you turn on the Claude Code status-line bridge: the bridge script, the last rate limits Claude Code reported, and your previous status line, so turning the bridge off restores it. The bridge changes only `statusLine` in `~/.claude/settings.json`, leaves the rest of the file as you wrote it, and keeps no copy of it. It doesn't edit a `settings.json` that links elsewhere (dotfiles other Macs may share), or one it can't write; Settings tells you what to change instead. Turning the bridge off removes these files. (Tokenroom 2.0.0 kept copies of the file here; 2.0.1 deletes them when it starts. If yours was a link that 2.0.0 replaced with a file, the copy of the link, which holds only where it pointed, stays until you dismiss Settings' note about it or turn the bridge off.)
 
-In `UserDefaults` for this app: enabled providers, which providers this install has seen, menu bar choices, refresh interval, budgets, alert choices (and the copy of them last shared through iCloud), when old alert records were last deleted, and News choices.
+In `UserDefaults` for this app: enabled providers, which providers this install has seen, menu bar choices, refresh interval, budget/reference amounts with their saved currency, alert choices (and the copy of them last shared through iCloud), when old alert records were last deleted, and News choices.
 
 On first launch after the rename from Headroom, Tokenroom copies Headroom’s settings and `snapshots.json` from `app.headroom.mac` and `~/Library/Application Support/Headroom/`.
 
 ## iPhone and Apple Watch
 
-When iPhone sync is on, the signed Mac app writes the same readings as `snapshots.json`, plus the hourly history, to a private database in your iCloud account. Only your devices signed in to that account can read it. Turning iPhone sync off stops new writes.
+When iPhone sync is on, the signed Mac app writes the same readings as `snapshots.json`, plus the hourly history (including the currency and last check time of balance samples), to a private database in your iCloud account. Only your devices signed in to that account can read it. Turning iPhone sync off stops new writes.
 
 On iPhone, Tokenroom keeps:
 
 - the latest readings and a week of history in its App Group container, so its widgets can show them, plus readings the widgets took for that history (one per provider an hour, for up to a week), when each key provider was last called and any wait it asked for, and when each widget refreshed in the last two days (by size and the provider it leads with)
 - its alert ledger, like the Mac's `alerts.json` (the last reading of each provider it reads with a key, alert IDs sent, and the text of alerts waiting for quiet hours), alerts it showed before it could tell iCloud, the alert choices as last shared, and the time zone it last gave them
 - API keys you add there in the iPhone’s Keychain, readable only by Tokenroom and its widgets, never synced
+- the device-local public News cache and follow choices in its App Group container; saved/read library metadata remains in the app’s own Application Support storage, outside the App Group and usage relay. Saved items can be read offline, while opening their original pages requires a connection
 
 No plan login can be added on the iPhone yet: Claude, Codex, Grok Build, Grok Bot, Cursor, Antigravity, and Devin are read by Tokenroom for Mac, from the login on that Mac. If a provider later documents a way for other apps to read plan usage, a login you add on the iPhone will stay in that iPhone’s Keychain, in Tokenroom’s own item that its widgets, the Watch, and your other devices can’t read, and only usage will sync. A login on your Mac stays on your Mac.
 
@@ -73,18 +75,24 @@ When you add keys on the iPhone, it writes its own readings (never the keys) to 
 
 The records carry readings only: used percents, reset times, window names, plan names, amounts (and whether a limit is a budget you set), a provider's category, and the Mac's pace forecast for each window. They never contain tokens, API keys, email addresses, names, account or organization IDs, or file paths.
 
-Alerts travel the same way. When a window crosses 80% or 95%, resets after heavy use, a banked reset arrives or is about to expire, or a balance or budget runs low, a Mac saves a short alert record (provider, kind, level, and the text you see) that your iPhone shows as a notification. Your alert choices and quiet hours, with the time zone of the device that last changed them (your iPhone updates it when its own time zone changes, so a Mac holds alerts for the same night), are one more record, which the iPhone and your Macs both read and update, so a change on either applies to both. Your iPhone, and Macs while iPhone sync is on, delete alert records older than two weeks.
+Alerts travel the same way. When a window crosses 80% or 95%, resets after heavy use, a banked reset arrives or is about to expire, or a balance or budget runs low, a Mac saves a short alert record (provider, kind, level, and the text you see) that your iPhone shows as a notification. Your alert choices and quiet hours, with the time zone of the device that last changed them (your iPhone updates it when its own time zone changes, so a Mac holds alerts for the same night), are one more record, which the iPhone and your Macs both read and update, so a change on either applies to both. Your iPhone, and Macs while iPhone sync is on, delete alert records older than two weeks. Updated collectors also keep private delivery ownership metadata: provider/window and alert key, an immutable reset time, canonical alert ID, pushed/shown mode and retention time. This prevents duplicate reset-window alerts between updated devices; active future windows keep ownership beyond the alert record's two-week lifetime. This metadata contains usage identity only, never credentials or News choices. Older app versions do not participate in that coordination.
 
 On Apple Watch, Tokenroom reads the same iCloud records and keeps the latest readings on the Watch, for its app and complications, and when its complications last refreshed. When the iPhone is near, it also hands the Watch its latest readings directly (WatchConnectivity), sooner than iCloud would, and whether the iPhone can show its list of plans that need a Mac; the Watch can ask the iPhone to open that list. The Watch never has your API keys or a login.
 
 ## News
 
-News reads public pages only, with no account and nothing about you in the request: OpenRouter's public model list (`openrouter.ai`), and official changelogs and blogs (`code.claude.com`, `openai.com`, `learn.chatgpt.com`, `github.com`, `blog.google`, `antigravity.google`, `github.blog`, `cursor.com`, `docs.devin.ai`, `docs.z.ai`, `openrouter.ai`). It keeps titles, dates, and links on the device and opens articles in your browser. On the iPhone it's the News tab. On the Mac it's off until you turn it on in Settings › News.
+News reads public sources with no Tokenroom account or provider credentials: OpenRouter's model list (`openrouter.ai`), official changelogs and blogs (`code.claude.com`, `openai.com`, `learn.chatgpt.com`, `github.com`, `blog.google`, `antigravity.google`, `github.blog`, `cursor.com`, `docs.devin.ai`, `docs.z.ai`, `openrouter.ai`), opt-in provider status (`status.openai.com`, `status.claude.com`), and public articles from curated voices (`simonwillison.net`, `oneusefulthing.org`, `karpathy.bearblog.dev`, `borischerny.com`). The sources receive ordinary network request information, such as your IP address and the requested public feed. Tokenroom sends no usage readings, keys, saved library or read history with these requests.
+
+Following a voice is a local choice in Tokenroom. Profiles open on `x.com` in your browser; Tokenroom does not read X timelines, use an X API key or sign you in. Opening a profile or original article uses your browser's own session and the destination's privacy practices.
+
+Skills requests public ranking metadata from `clawhub.ai`, with a selected ranking and a limit of 30 records. Ranking results are transient; saving an item retains its displayed metadata and ranking/check date locally. Tokenroom never downloads or executes skill files. The optional Explore link opens `skills.sh` in your browser.
+
+News follows, saved metadata and read state stay on this device. They are not relayed through private iCloud or to the Watch, and widgets do not display them. The iPhone’s News cache and follow choices use the App Group; its saved/read library is separate app-owned storage. On iPhone News is a tab. On Mac it remains off until enabled in Settings › News or the News window.
 
 ## What Tokenroom does not store or send
 
 - another tool's login, beyond the short-lived Claude, Grok Build, and Codex recovery described above (on the iPhone, a future phone login would be Tokenroom’s own item on that iPhone, not a copy of another tool’s login and not the Mac’s recovery item)
-- email addresses, display names, account IDs, or organization names
+- private account email addresses, display names, account IDs, or organization names. Public publisher and skill-owner names are intentionally retained as News attribution
 - prompts, chats, or file contents
 - payment details
 

@@ -45,13 +45,15 @@ enum UsageTiles {
         return pace.verdict == .limitReached || (pace.verdict == .ahead && pace.runsOutAt != nil)
     }
 
-    /// Every live window close to its limit, most urgent first: the limit reached, then the
-    /// soonest run-out, then the most used.
+    /// Every window still close to its limit, most urgent first: the limit reached, then the
+    /// soonest run-out, then the most used. A stale reading stays while its last percentage
+    /// is still at 80% or the collector's measured run-out is still before the reset.
+    /// A window that has reset stays out.
     static func closeWindows(_ readings: [(provider: RelayProvider, history: [String: UsageHistory])], now: Date = .now) -> [CloseWindow] {
         var found: [CloseWindow] = []
-        for reading in readings where reading.provider.isLive {
+        for reading in readings {
             for window in reading.provider.windows where window.isMetered && !window.isAwaitingReading(at: now) {
-                let pace = UsageRanking.pace(for: window, isStale: false, history: reading.history[window.id], now: now)
+                let pace = UsageRanking.pace(for: window, isStale: !reading.provider.isLive, history: reading.history[window.id], now: now)
                 if isClose(window, pace: pace) {
                     found.append(CloseWindow(provider: reading.provider, window: window, pace: pace))
                 }

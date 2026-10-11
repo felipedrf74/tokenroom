@@ -37,18 +37,88 @@ final class MobileStoreTests: XCTestCase {
         return folder
     }
 
-    /// A store with no iCloud, a Keychain prefix no real key uses, and its own folder.
+    /// A complete store pass with no iCloud, in-memory missing credentials, isolated storage
+    /// and inert device SDK effects. Refresh/cache/alert logic still executes.
     @MainActor
     private func makeStore(defaults: UserDefaults, folder: URL) -> MobileStore {
         MobileStore(
             defaults: defaults,
             containerIdentifier: nil,
-            keys: APIKeyStore(servicePrefix: "app.tokenroom.tests.\(UUID().uuidString)."),
-            directory: folder
+            keys: MobileFixtureKeychain().keys,
+            directory: folder, connectOnIPhone: false,
+            notificationScheduler: { _ in XCTFail("This fixture must not schedule a real notification") },
+            platformEffects: .inert, launchDefaults: defaults
         )
     }
 
     // MARK: Store
+
+    @MainActor
+    func testInertPlatformAdapterPreservesRefreshPersistenceAndMockAlertDelivery() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let keychain = MobileFixtureKeychain()
+        let schedules = Mutex(0)
+        let store = MobileStore(defaults: defaults, containerIdentifier: nil, keys: keychain.keys,
+            directory: folder, connectOnIPhone: false,
+            notificationScheduler: { _ in schedules.withLock { $0 += 1 } },
+            platformEffects: .inert, launchDefaults: defaults)
+        XCTAssertTrue(store.allowsExternalEffects, "Explicit store tests execute collection and persistence")
+
+        await store.refresh(force: true, now: now)
+        XCTAssertEqual(store.lastRefresh, now)
+        XCTAssertEqual(keychain.copyCount, Provider.allCases.filter(\.readsWithKey).count,
+                       "The real refresh pass checks every provider through the injected missing-item Keychain")
+        let saved = try XCTUnwrap(ReadingCache.load(from: folder.appendingPathComponent(ReadingCache.fileName)))
+        XCTAssertEqual(saved.savedAt, now)
+        XCTAssertTrue(saved.items.isEmpty)
+        XCTAssertFalse(saved.isSample)
+
+        let alert = UsageAlert(id: "isolated-platform-delivery", provider: "openrouter", kind: .threshold,
+            level: 80, title: "Usage", body: "Limit", resetsAt: nil, isUrgent: false)
+        let accepted = await store.deliverAlerts([alert], now: now)
+        XCTAssertEqual(accepted, [alert.id])
+        XCTAssertEqual(schedules.withLock { $0 }, 1)
+        XCTAssertEqual(AlertLedger.load(from: folder).sent[alert.id], now,
+                       "A mocked accepted delivery still writes the real isolated acknowledgement")
+        await store.scheduleBackgroundRefresh(now: now)
+    }
+
+    @MainActor
+    func testPlatformEffectsRouteThroughInjectedHandlersWithoutDisablingRefresh() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let calls = Mutex<[String]>([])
+        let effects = MobilePlatformEffects(
+            setWatchConnectAvailable: { value in calls.withLock { $0.append("connect:\(value)") } },
+            sendToWatch: { _ in calls.withLock { $0.append("watch") } },
+            reloadWidgets: { calls.withLock { $0.append("widgets") } },
+            applicationIsBackground: { calls.withLock { $0.append("application-state") }; return false },
+            updateLiveActivities: { _, _, _, _ in calls.withLock { $0.append("activities") } },
+            makeKeyFetchGate: { defaults in
+                calls.withLock { $0.append("gate") }
+                return KeyFetchGate(defaults: defaults, lockDirectory: nil)
+            },
+            scheduleBackgroundRefresh: { _ in calls.withLock { $0.append("background") } }
+        )
+        let store = MobileStore(defaults: defaults, containerIdentifier: nil, keys: MobileFixtureKeychain().keys,
+            directory: folder, connectOnIPhone: false,
+            notificationScheduler: { _ in XCTFail("No alert exists in this refresh") },
+            platformEffects: effects, launchDefaults: defaults)
+        await store.refresh(force: true, now: now)
+        await store.scheduleBackgroundRefresh(now: now)
+        let first = calls.withLock { $0 }
+        for hook in ["connect:false", "gate", "watch", "widgets", "application-state", "activities", "background"] {
+            XCTAssertEqual(first.filter { $0 == hook }.count, 1, "\(hook) must use the injected handler once")
+        }
+        let cache = try XCTUnwrap(ReadingCache.load(from: folder.appendingPathComponent(ReadingCache.fileName)))
+        XCTAssertEqual(cache.savedAt, now)
+        await store.refresh(force: true, now: now.addingTimeInterval(60))
+        let second = calls.withLock { $0 }
+        XCTAssertEqual(second.filter { $0 == "watch" }.count, 1, "An unchanged cache is not handed over again")
+        XCTAssertEqual(second.filter { $0 == "widgets" }.count, 1, "An unchanged cache does not reload widgets")
+        XCTAssertEqual(second.filter { $0 == "activities" }.count, 2, "Activity updates still follow complete refreshes")
+    }
 
     @MainActor
     func testSharedAccountInvalidationCannotStampOldMemoryWithTheNewGeneration() async throws {
@@ -295,11 +365,11 @@ final class MobileStoreTests: XCTestCase {
         let defaults = makeDefaults()
         let calls = Mutex(0)
         let store = MobileStore(defaults: defaults, containerIdentifier: nil,
-            keys: APIKeyStore(servicePrefix: "app.tokenroom.tests." + UUID().uuidString), directory: try makeFolder(),
+            keys: MobileFixtureKeychain().keys, directory: try makeFolder(), connectOnIPhone: false,
             notificationScheduler: { _ in
                 let attempt = calls.withLock { count in count += 1; return count }
                 if attempt == 1 { throw NSError(domain: "mock.notification", code: 1) }
-            })
+            }, platformEffects: .inert, launchDefaults: defaults)
         let alert = UsageAlert(id: "test-alert", provider: "openrouter", kind: .threshold, level: 80,
             title: "Usage", body: "Limit", resetsAt: nil, isUrgent: false)
         let failed = await store.deliverAlerts([alert], now: now)
@@ -315,14 +385,14 @@ final class MobileStoreTests: XCTestCase {
 
     func testWidgetsSeeTheAppsCallsThroughTheSharedGate() {
         let defaults = makeDefaults()
-        KeyFetchGate(defaults: defaults).recordAttempt(.anthropicOrg, at: now)
-        let widget = KeyFetchGate(defaults: defaults)
+        KeyFetchGate(defaults: defaults, lockDirectory: nil).recordAttempt(.anthropicOrg, at: now)
+        let widget = KeyFetchGate(defaults: defaults, lockDirectory: nil)
         XCTAssertTrue(widget.isResting(.anthropicOrg, now: now.addingTimeInterval(60)), "Anthropic's cost report allows a call every 15 minutes")
         XCTAssertFalse(widget.isResting(.anthropicOrg, now: now.addingTimeInterval(15 * 60)))
 
         widget.block(.openrouter, until: now.addingTimeInterval(600))
-        XCTAssertTrue(KeyFetchGate(defaults: defaults).isResting(.openrouter, now: now), "A 429 in a widget holds the app off too")
-        XCTAssertFalse(KeyFetchGate(defaults: makeDefaults()).isResting(.openrouter, now: now))
+        XCTAssertTrue(KeyFetchGate(defaults: defaults, lockDirectory: nil).isResting(.openrouter, now: now), "A 429 in a widget holds the app off too")
+        XCTAssertFalse(KeyFetchGate(defaults: makeDefaults(), lockDirectory: nil).isResting(.openrouter, now: now))
     }
 
     @MainActor
@@ -345,12 +415,12 @@ final class MobileStoreTests: XCTestCase {
         ledger.save(to: folder)
         let calls = Mutex(0)
         let store = MobileStore(defaults: defaults, containerIdentifier: nil,
-            keys: APIKeyStore(servicePrefix: "app.tokenroom.tests." + UUID().uuidString), directory: folder,
+            keys: MobileFixtureKeychain().keys, directory: folder, connectOnIPhone: false,
             notificationScheduler: { _ in
                 calls.withLock { $0 += 1 }
                 // The scheduler accepted the request as the background deadline expired.
                 withUnsafeCurrentTask { $0?.cancel() }
-            })
+            }, platformEffects: .inert, launchDefaults: defaults)
         let delivery = Task { @MainActor in await store.deliverAlerts([alert], now: now) }
         let accepted = await delivery.value
         XCTAssertTrue(delivery.isCancelled)
@@ -365,8 +435,8 @@ final class MobileStoreTests: XCTestCase {
         let acknowledged = try Data(contentsOf: ledgerURL)
 
         let relaunched = MobileStore(defaults: defaults, containerIdentifier: nil,
-            keys: APIKeyStore(servicePrefix: "app.tokenroom.tests." + UUID().uuidString), directory: folder,
-            notificationScheduler: { _ in calls.withLock { $0 += 1 } })
+            keys: MobileFixtureKeychain().keys, directory: folder, connectOnIPhone: false,
+            notificationScheduler: { _ in calls.withLock { $0 += 1 } }, platformEffects: .inert, launchDefaults: defaults)
         let replay = await relaunched.deliverAlerts([alert], now: now.addingTimeInterval(60))
         XCTAssertTrue(replay.isEmpty, "Already persisted incoming alert IDs are skipped")
         XCTAssertEqual(calls.withLock { $0 }, 1)
@@ -388,11 +458,11 @@ final class MobileStoreTests: XCTestCase {
         ledger.save(to: folder)
         let calls = Mutex<[String]>([])
         let store = MobileStore(defaults: defaults, containerIdentifier: nil,
-            keys: APIKeyStore(servicePrefix: "app.tokenroom.tests." + UUID().uuidString), directory: folder,
+            keys: MobileFixtureKeychain().keys, directory: folder, connectOnIPhone: false,
             notificationScheduler: { request in
                 let count = calls.withLock { calls in calls.append(request.identifier); return calls.count }
                 if count == 1 { withUnsafeCurrentTask { $0?.cancel() } }
-            })
+            }, platformEffects: .inert, launchDefaults: defaults)
         let delivery = Task { @MainActor in await store.deliverAlerts([first, second], now: now) }
         let accepted = await delivery.value
         XCTAssertEqual(accepted, [first.id])
@@ -417,12 +487,7 @@ final class MobileStoreTests: XCTestCase {
     }
 
     private func mockNotificationKeys() -> APIKeyStore {
-        APIKeyStore(servicePrefix: "app.tokenroom.tests." + UUID().uuidString, keychain: .init(
-            copy: { _ in (errSecItemNotFound, nil) },
-            add: { _ in errSecInteractionNotAllowed },
-            update: { _, _ in errSecInteractionNotAllowed },
-            delete: { _ in errSecItemNotFound }
-        ))
+        MobileFixtureKeychain().keys
     }
 
     @MainActor
@@ -437,13 +502,13 @@ final class MobileStoreTests: XCTestCase {
         let changing = AccountChangingStore()
         let calls = Mutex(0)
         let store = MobileStore(defaults: defaults, containerIdentifier: nil,
-            keys: mockNotificationKeys(), directory: folder,
+            keys: mockNotificationKeys(), directory: folder, connectOnIPhone: false,
             notificationScheduler: { _ in
                 let count = calls.withLock { calls in calls += 1; return calls }
                 await Task.yield()
                 if count == 1 { changing.store?.accountChanged() }
                 // iOS accepted the request even though the account changed while awaiting it.
-            })
+            }, platformEffects: .inert, launchDefaults: defaults)
         changing.store = store
         let accepted = await store.deliverAlerts([alert], now: now)
         XCTAssertEqual(accepted, [alert.id])
@@ -462,8 +527,8 @@ final class MobileStoreTests: XCTestCase {
         let nextPass = await store.deliverAlerts([alert], now: now.addingTimeInterval(60))
         XCTAssertTrue(nextPass.isEmpty)
         let relaunched = MobileStore(defaults: defaults, containerIdentifier: nil,
-            keys: mockNotificationKeys(), directory: folder,
-            notificationScheduler: { _ in calls.withLock { $0 += 1 } })
+            keys: mockNotificationKeys(), directory: folder, connectOnIPhone: false,
+            notificationScheduler: { _ in calls.withLock { $0 += 1 } }, platformEffects: .inert, launchDefaults: defaults)
         let replay = await relaunched.deliverAlerts([alert], now: now.addingTimeInterval(120))
         XCTAssertTrue(replay.isEmpty)
         XCTAssertEqual(calls.withLock { $0 }, 1, "One accepted physical schedule remains one schedule across retries and relaunch")
@@ -485,11 +550,11 @@ final class MobileStoreTests: XCTestCase {
         let changing = AccountChangingStore()
         let calls = Mutex<[String]>([])
         let store = MobileStore(defaults: defaults, containerIdentifier: nil,
-            keys: mockNotificationKeys(), directory: folder,
+            keys: mockNotificationKeys(), directory: folder, connectOnIPhone: false,
             notificationScheduler: { request in
                 let count = calls.withLock { calls in calls.append(request.identifier); return calls.count }
                 if count == 1 { changing.store?.accountChanged() }
-            }, claimAlert: { _, _ in .ours })
+            }, claimAlert: { _, _ in .ours }, platformEffects: .inert, launchDefaults: defaults)
         changing.store = store
         let accepted = await store.deliverAlerts([first, second], now: now)
         XCTAssertEqual(accepted, [first.id])
@@ -522,12 +587,12 @@ final class MobileStoreTests: XCTestCase {
             let changing = AccountChangingStore()
             let calls = Mutex(0)
             let store = MobileStore(defaults: defaults, containerIdentifier: nil,
-                keys: mockNotificationKeys(), directory: folder,
+                keys: mockNotificationKeys(), directory: folder, connectOnIPhone: false,
                 notificationScheduler: { _ in calls.withLock { $0 += 1 } }, claimAlert: { _, _ in
                     await Task.yield()
                     changing.store?.accountChanged()
                     return result
-                })
+                }, platformEffects: .inert, launchDefaults: defaults)
             changing.store = store
             let accepted = await store.deliverAlerts([first, second], now: now)
             XCTAssertEqual(accepted, [first.id], "Finish the current device-local alert and stop later alerts")
@@ -561,14 +626,14 @@ final class MobileStoreTests: XCTestCase {
         let changing = AccountChangingStore()
         let calls = Mutex(0)
         let store = MobileStore(defaults: defaults, containerIdentifier: nil,
-            keys: mockNotificationKeys(), directory: folder,
+            keys: mockNotificationKeys(), directory: folder, connectOnIPhone: false,
             notificationScheduler: { _ in
                 let count = calls.withLock { calls in calls += 1; return calls }
                 if count == 1 {
                     changing.store?.accountChanged()
                     throw NSError(domain: "mock.notification", code: 1)
                 }
-            })
+            }, platformEffects: .inert, launchDefaults: defaults)
         changing.store = store
         let failed = await store.deliverAlerts([alert], now: now)
         XCTAssertTrue(failed.isEmpty)

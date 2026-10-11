@@ -54,6 +54,36 @@ enum UsageRanking {
         return "\(window.displayTitle) limit reached"
     }
 
+    /// How urgently one open window needs a compact surface. A reached limit leads even when
+    /// the reading is stale: the percentage is still the last measurement. A projected run-out
+    /// uses the severity `Pace` already assigned.
+    static func urgency(of window: RelayWindow, pace: Pace?) -> Int {
+        if window.used >= 100 { return urgency(severity: .critical) }
+        return urgency(pace)
+    }
+
+    /// The window a menu bar, widget, or Watch row leads with. The provider's primary window
+    /// stays the card headline. Among metered windows that have not reset, this is the reached
+    /// limit, then the tightest run-out, then the most used. When every metered window is
+    /// waiting for a new reading, the primary window remains so the surface can say so.
+    static func leadWindow(for provider: RelayProvider, now: Date = .now, pace: (RelayWindow) -> Pace?) -> RelayWindow? {
+        let active = provider.windows.filter { $0.isMetered && !$0.isAwaitingReading(at: now) }
+        guard !active.isEmpty else { return provider.primaryWindow }
+        let ranked = active.map { window -> (window: RelayWindow, runsOut: Date?, used: Double) in
+            let reading = pace(window)
+            return (window, reading?.runsOutAt, window.used)
+        }
+        return ranked.max { lhs, rhs in
+            if (lhs.used >= 100) != (rhs.used >= 100) { return lhs.used < 100 }
+            switch (lhs.runsOut, rhs.runsOut) {
+            case let (left?, right?) where left != right: return left > right
+            case (.some, nil): return false
+            case (nil, .some): return true
+            default: return lhs.used < rhs.used
+            }
+        }?.window
+    }
+
     /// Most urgent first; ties by name.
     static func sorted<Item>(_ items: [Item], provider: (Item) -> RelayProvider, now: Date = .now, pace: (Item) -> Pace?) -> [Item] {
         sorted(items, provider: provider, now: now, windowPace: { item, _ in pace(item) })
@@ -82,5 +112,14 @@ enum UsageRanking {
             if lhs.used != rhs.used { return lhs.used > rhs.used }
             return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
         }.map { $0.item }
+    }
+}
+
+extension RelayProvider {
+    /// Compact surfaces pass each window's pace, including a projected run-out on a stale reading.
+    func leadWindow(now: Date = .now, history: [String: UsageHistory] = [:]) -> RelayWindow? {
+        UsageRanking.leadWindow(for: self, now: now) { window in
+            UsageRanking.pace(for: window, isStale: !isLive, history: history[window.id], now: now)
+        }
     }
 }
