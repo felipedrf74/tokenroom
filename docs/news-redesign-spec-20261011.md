@@ -2,6 +2,8 @@
 
 Date: 11 October 2026. Status: specification and direct implementation plan approved; implemented, with final review and acceptance recorded separately. Final review clarified identity, timestamp and persistence behavior below without expanding the approved feature scope.
 
+**Current delivery authority:** [Release and installation record](news-release-delivery-20261011.md). The original no-tests/no-commit/no-install scope below was later superseded by Felipe's conditional release authorization and signing-only approval. Provider authentication restrictions still apply. Mac 2.4.0 is public and installed on both Macs; mobile 1.1.0(1) is Waiting for Review.
+
 ## Purpose and scope
 
 Help a person using AI tools answer three questions quickly: what changed in the tools I follow, whose analysis is useful, and which agent skills are worth exploring? Build a readable native iPhone experience with clear provenance and useful return visits. The Mac uses the same source and reading models with native sidebar navigation.

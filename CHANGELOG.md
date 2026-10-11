@@ -1,8 +1,8 @@
 # Changelog
 
-## 2.4.0 for Mac / 1.1.0 for iPhone — release prepared
+## 2.4.0 for Mac — released 11 October 2026 / 1.1.0 for iPhone — awaiting review
 
-The qualified Mac package is 2.4.0(1). Mobile 1.1.0(1) is privately uploaded and processed; App Review and public availability are separate. Current distribution receipts are linked from `docs/news-release-checks-20261011.md`.
+Mac 2.4.0(1) is [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.4.0) and installed on both validated Macs. Mobile 1.1.0(1) is submitted to Apple and Waiting for Review, with automatic release after approval selected; it is not publicly available yet. [The delivery record](docs/news-release-delivery-20261011.md) separates source qualification, publication, installation and remaining integration limits.
 
 - Mac News readers offer native Back and Command-[ while keeping Check Now and News Settings accessible on pushed pages.
 - Saved balance references bind their amount to USD or CNY. Region changes never convert an old reference; ambiguous legacy Moonshot/DeepSeek references need explicit confirmation. Cached phone/widget/Watch meters obey the same currency guard. Monetary history and runway also require the same currency; a region change keeps percentage history and starts a new monetary segment.

@@ -1,6 +1,6 @@
 # Settings, usage, Watch, and News implementation
 
-**Current authority:** [Release checks](news-release-checks-20261011.md) and [completion audit](news-redesign-completion-audit-20261011.md) record the current source, automated, signing and finite News acceptance results. Final independent review and exact pushed-revision CI precede publication. The QA6 report and older snapshots below are historical; their no-tests and acceptance statements describe their original closeouts. Physical Production integration limits remain explicitly unverified.
+**Current authority:** [Release and installation record](news-release-delivery-20261011.md), [preparation release checks](news-release-checks-20261011.md) and [completion audit](news-redesign-completion-audit-20261011.md). Mac 2.4.0 is public and installed on both Macs; mobile 1.1.0(1) is Waiting for Review. The preparation, QA6 and older snapshots below retain their original scope. Physical Production integration limits remain explicitly unverified.
 
 Completion audit: 2026-09-27. Implemented on `codex/settings-usage-news`, starting at `56f57708aa797ef4004a4ef3483a693b5a5739ca`. This records the pre-release QA snapshot; subsequent Git/App Store publication and local installation were separately authorized on 2026-09-28. References below to the "current" uncommitted diff describe that snapshot, not publication status. The later request did not authorize executing tests.
 

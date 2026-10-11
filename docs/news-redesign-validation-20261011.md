@@ -1,4 +1,8 @@
-# News redesign validation — current release checks, 11 October 2026
+# News redesign validation — 11 October 2026
+
+**Current delivery authority:** [Release and installation record](news-release-delivery-20261011.md), including successful exact-revision CI, public Mac package verification, both installations and mobile Waiting for Review. Validation below is the preserved preparation checkpoint; it does not describe current publication status.
+
+## Preparation checkpoint — before integration
 
 [Final-source release checks](news-release-checks-20261011.md) pass **766 complete Mac tests, zero failures/no exclusions**, **34 complete hosted iOS tests, zero failures**, affected Skills **16/16**, shared macOS/iOS/watchOS typechecks, unsigned Release Mac/generic iOS widgets+Watch builds and optimized fallback compilation. The Save-capacity/global-caption and cold malformed Skills P3s are fixed. Actual native Save/corruption/failed-Undo/retry/reopen witnesses pass within isolated control scope; cold malformed Skills has no fictional retained result/date, retry recovers, and retained malformed preserves its real row/date. Full independent QA identified the now-fixed Skills P3; its r2 addendum confirms no remaining actionable source defect in reviewed scope and all 257 production inputs matching the r2 manifest. Original report/hash receipts remain preserved.
 

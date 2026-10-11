@@ -1,6 +1,10 @@
-# Independent QA prompt — current Tokenroom release checks
+# Independent QA prompt — Tokenroom source and delivery
 
-Independently review `/Users/felipedominguez/Developer/tokenroom-improvements-20261004`, branch `tokenroom/urgent-window-projected-pace`, HEAD `adbb201fb82e235bee9422e06a7e1208cc4736a9` plus the **complete uncommitted tree**, including untracked files. Do not use `/Users/felipedominguez/Developer/tokenroom`. Treat completion claims as hypotheses.
+Independently review `/Users/felipedominguez/Developer/tokenroom-improvements-20261004` and its actual current HEAD/working tree. The released application source is commit `7ad4700f9fc83f788a78dbf3f5de96e07c5df0ea`, tree `be3276e84da6e5e609724c31f8503a9883eab103`; subsequent delivery documentation does not replace that package binding. Read [the current delivery record](news-release-delivery-20261011.md) before interpreting the preserved preparation scope below. Confirm the public Mac package and both installed apps match their receipts; mobile is Waiting for Review, with no approval/public availability claim. Do not use `/Users/felipedominguez/Developer/tokenroom`. Treat completion claims as hypotheses.
+
+## Preserved source-review scope — before integration
+
+The original review targeted branch `tokenroom/urgent-window-projected-pace`, HEAD `adbb201fb82e235bee9422e06a7e1208cc4736a9` plus the complete uncommitted tree, including untracked files. Later source/config equivalence, Git integration, CI and delivery receipts supersede that checkout state; historical QA findings and validation limits remain in scope.
 
 ## Authority and safe review scope
 
