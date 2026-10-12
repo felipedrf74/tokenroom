@@ -1,6 +1,6 @@
 # Mac News editorial redesign
 
-This change was reviewed on top of `d94a60ab1732524e211073c74789eb561321dd9c`, in `tokenroom-improvements-20261004`. The 11 October visual checkpoint was uncommitted and unsigned. On 12 October the release candidate was promoted to Mac 2.4.1(1), signed and notarized; [the release record](mac-news-release-delivery-20261012.md) tracks the separate commit, CI, publication and installation gates. The submitted mobile 1.1.0(1) remains separate.
+This change was reviewed on top of `d94a60ab1732524e211073c74789eb561321dd9c`, in `tokenroom-improvements-20261004`. The 11 October visual checkpoint was uncommitted and unsigned. On 12 October Mac 2.4.1(1) was signed, notarized, publicly released and installed on both Macs; [the release record](mac-news-release-delivery-20261012.md) tracks the separate source, CI, publication and installation evidence. The submitted mobile 1.1.0(1) remains separate.
 
 ## Goal and visual target
 
@@ -52,9 +52,9 @@ This is an unsigned isolated News presentation check. It does not prove spoken V
 
 ## Independent QA prompt
 
-Review the final uncommitted checkout in `tokenroom-improvements-20261004` against `d94a60ab1732524e211073c74789eb561321dd9c`. The original goal is to implement Felipe's selected Editorial Briefing visual concept throughout native Mac News while preserving the product's account-free reader behavior and phone presentation.
+Review the Mac News source released as `v2.4.1` (`79d0b41f729fa48a0935d53e1e5383a0692b2a3b`) against base `d94a60ab1732524e211073c74789eb561321dd9c`, in `tokenroom-improvements-20261004`. Include subsequent documentation-only changes and verify application-source equivalence. The original goal is to implement Felipe's selected Editorial Briefing visual concept throughout native Mac News while preserving the product's account-free reader behavior and phone presentation.
 
-Read this document, `design-qa.md`, both `.grok` platform skills and the actual tracked/untracked diff. Open the selected reference and the native implementation captures together; distinguish current evidence from older release results. Report concrete bugs, missing scope and validation gaps with file/line, trigger, consequence and smallest fix. Do not edit, commit, release, access credentials or launch production checks. Do not run more tests unless Felipe authorizes that review to do so.
+Read this document, `design-qa.md`, `docs/mac-news-release-delivery-20261012.md`, both `.grok` platform skills and the actual base-to-release diff. Open the selected reference and the native implementation captures together; distinguish current source/package/CI/installation evidence from older release results. Report concrete bugs, missing scope and validation gaps with file/line, trigger, consequence and smallest fix. Do not edit, commit, release, access credentials or launch production checks. Do not run more tests unless Felipe authorizes that review to do so.
 
 Inspect carefully: root library/Skills lifetime, Back and source search, transitive Unsave/Undo, raw ranking positions and sort-specific fixtures, real source freshness, first-nonempty excerpt selection, code examples and old-cache migration, viewport-derived columns, detail controls at narrow width, button contrast and known lab/source marks. Verify stale/empty/failed feeds, unfollow/refollow, missing publication/link/metrics, long/non-Latin titles, offline saved snapshots, first failure, paired-source partial health and simultaneous Skills readers. Preview/XCTest must stay isolated even if only the preview boolean is provided. No auth, login migration, cloud writes or skill execution may start.
 

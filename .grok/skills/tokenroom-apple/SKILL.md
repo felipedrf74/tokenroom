@@ -9,9 +9,9 @@ description: >-
 
 # Tokenroom for iPhone and Apple Watch
 
-**Previous delivery status (11 October 2026):** `docs/news-release-delivery-20261011.md` is the current authority. Mac 2.4.0 is public and installed on both Macs; mobile 1.1.0(1) is Waiting for Review, with automatic release after approval selected. Preparation/QA status prose below describes its dated checkpoint. Physical Production integration limits remain unverified.
+**Previous delivery status (11 October 2026):** `docs/news-release-delivery-20261011.md` records the prior delivery. Mac 2.4.0 is public and installed on both Macs; mobile 1.1.0(1) is Waiting for Review, with automatic release after approval selected. Preparation/QA status prose below describes its dated checkpoint. Physical Production integration limits remain unverified.
 
-**Mac editorial candidate (12 October 2026):** Mac 2.4.1(1) is signed and notarized. `docs/mac-news-release-delivery-20261012.md` tracks the new release gates; commit/CI/publication/install must be observed separately. Mobile 1.1.0(1) is unchanged.
+**Delivery status (12 October 2026):** Mac 2.4.1(1) is public and installed on both Macs. `docs/mac-news-release-delivery-20261012.md` is the current Mac authority, with exact source/CI/public-package/install receipts. Neither app was launched after installation. Mobile 1.1.0(1) is unchanged; its portal status was not rechecked in this Mac-only release.
 
 The Mac collects; everything else reads. Macs relay readings through the user's private CloudKit database. The iPhone adds providers it reads with its own API keys. The Watch reads iCloud directly. There is no Tokenroom server. Mac rules (providers, tokens, the menu bar) are in `.grok/skills/tokenroom-macos/SKILL.md`.
 

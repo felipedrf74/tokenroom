@@ -2,7 +2,7 @@
 
 final result: passed
 
-Scope: the new uncommitted native Mac News presentation, based on `d94a60ab1732524e211073c74789eb561321dd9c`. Review started 11 October and final captures/checks crossed into 12 October 2026 (Europe/Lisbon). This receipt is separate from the already released Mac 2.4.0 and submitted mobile 1.1.0 candidate.
+Scope: the native Mac News presentation reviewed before release, based on `d94a60ab1732524e211073c74789eb561321dd9c`. Review started 11 October and final captures/checks crossed into 12 October 2026 (Europe/Lisbon). This visual receipt is separate from the earlier Mac 2.4.0 and submitted mobile 1.1.0 candidate; subsequent Mac 2.4.1 delivery is recorded separately below.
 
 ## Visual truth and comparison
 

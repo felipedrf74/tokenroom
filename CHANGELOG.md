@@ -1,6 +1,8 @@
 # Changelog
 
-## 2.4.1 for Mac — release candidate
+## 2.4.1 for Mac — released 12 October 2026
+
+Mac 2.4.1(1) is [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.4.1) and installed on both Macs. [The delivery record](docs/mac-news-release-delivery-20261012.md) binds the release to its source, exact-revision CI, public download and installation checks. Mobile 1.1.0(1) is unchanged.
 
 - Mac News uses an editorial briefing with a lead illustration, a release rail, compact grouped updates and branded model cards. Following, Skills, Saved, collections and reading details share the desktop style and adapt to smaller windows.
 - Save and More actions stay inline. Source controls and ranking filters use native segmented controls, while original links and sharing remain in reading details.
