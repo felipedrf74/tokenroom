@@ -8,7 +8,7 @@
 - Larger text stacks controls and artwork, uses menus for section/ranking selection and keeps short browsing previews with full supplied summaries in the reader. Control icons retain 44-point tap targets.
 - Undo survives adaptive hero/reader layout changes and identifies the originally removed story if the lead changes. Short lead headlines retain a 44-point tap target. Article freshness stays distinct from model checks, and native News links use the accessible light/dark accent text color.
 
-The iPhone 1.1.1(1) release candidate is privately uploaded and processed; it has not been submitted to App Review or published. [Release checks](docs/ios-news-release-checks-20261012.md) bind source, native checks and the signed uploaded package. Mac 2.4.1 remains the published Mac package.
+The iPhone 1.1.1(1) release candidate is submitted and Waiting for Review; it is not public. Source `740f9a0` and exact-source CI passed; [the submission record](docs/ios-news-release-delivery-20261012.md) keeps approval/public availability separate. [Release checks](docs/ios-news-release-checks-20261012.md) bind source, native checks and the signed uploaded package. Mac 2.4.1 remains the published Mac package.
 
 ## 2.4.1 for Mac — released 12 October 2026
 

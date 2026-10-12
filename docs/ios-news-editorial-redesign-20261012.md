@@ -1,6 +1,6 @@
 # iPhone News Editorial Briefing — implementation
 
-Status: implementation complete; mobile 1.1.1(1) is a privately uploaded, processed release candidate, based on `ac66a4966b3779657be2cefe50d319a201b4e61f`. No commit, push, App Review submission or public release has occurred for this candidate. Public mobile 1.1.0 was confirmed on 12 October; Mac 2.4.1 remains the published Mac package. Current qualification and outstanding gates are in [release checks](ios-news-release-checks-20261012.md).
+Status: implementation complete and integrated as `740f9a0`; exact-source CI passed. Apple accepted mobile 1.1.1(1), now Waiting for Review with manual release selected. Approval and public availability remain pending. [Submission record](ios-news-release-delivery-20261012.md) is the current delivery authority; [release checks](ios-news-release-checks-20261012.md) preserve detailed qualification. Public mobile 1.1.0 and the published Mac 2.4.1 package are distinct releases.
 
 ## Selected direction
 

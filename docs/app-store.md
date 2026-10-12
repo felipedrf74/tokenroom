@@ -172,9 +172,9 @@ The qualified 1.1.0(1) build is attached, accurate version metadata and the nati
 
 At the 1.1.0 checkpoint, tracked versions matched the qualified archive overrides: Mac 2.4.0(1), iPhone/widgets/Watch 1.1.0(1). `version-config-equivalence.json` records the effective version match while preserving the original signed-source manifest.
 
-## Mobile 1.1.1 — private editorial candidate
+## Mobile 1.1.1 — submitted, awaiting review
 
-Version 1.1.1 build 1 is privately uploaded and processed; Apple build `12b15493-c81e-4a63-b826-d1178056b33d`. A Prepare for Submission draft has this build attached and manual release selected. It has not been submitted to App Review or publicly released. Current versions are Mac 2.4.1(1), mobile/widgets/Watch 1.1.1(1). Both mobile build numbers are consumed.
+Version 1.1.1 build 1 is privately uploaded and processed; Apple build `12b15493-c81e-4a63-b826-d1178056b33d`. Apple accepted submission `16200897-ca51-4994-817d-04ce82c1f1ed` on 12 October at 20:46 Europe/Lisbon; it is Waiting for Review. The attached exact build has manual release selected and is not publicly released. [The submission record](ios-news-release-delivery-20261012.md) binds source, CI, package and portal evidence. Current versions are Mac 2.4.1(1), mobile/widgets/Watch 1.1.1(1). Both mobile build numbers are consumed.
 
 Saved draft What's New:
 

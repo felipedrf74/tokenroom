@@ -1,6 +1,6 @@
 # iPhone News Editorial Briefing — visual QA
 
-Scope: native iPhone News presentation implementing Felipe's selected option 1. Uncommitted source based on `ac66a4966b3779657be2cefe50d319a201b4e61f`, reviewed 12 October 2026. This is a presentation/source gate, not release qualification. Historical Mac QA is preserved at [docs/mac-news-visual-qa-20261012.md](docs/mac-news-visual-qa-20261012.md); the published Mac package is unchanged.
+Scope: native iPhone News presentation implementing Felipe's selected option 1. Source based on `ac66a4966b3779657be2cefe50d319a201b4e61f`, reviewed 12 October 2026 and integrated as `740f9a0`. This is a presentation/source gate, not release qualification. Historical Mac QA is preserved at [docs/mac-news-visual-qa-20261012.md](docs/mac-news-visual-qa-20261012.md); the published Mac package is unchanged.
 
 ## Visual truth and captured implementation
 
@@ -92,6 +92,6 @@ Current evidence root: `/Users/felipedominguez/Documents/ChatGPT/TokenRoom/ios-n
 - Full final Mac suite: 780 passed; full hosted iOS suite: 34 passed; zero failed/skipped. Shared typechecks, final version Simulator build and optimized fallback pass. These supersede the smaller earlier qualification scope. Existing Mac test-only State/QoS warnings are recorded in the result bundle; no new failing test.
 - Signed 1.1.1(1) archive/export/private upload and exact uploaded artifact checks passed; Apple processed the candidate. Manual release remains selected. These are packaging/processing gates, not App Review or public availability.
 
-See [release checks](docs/ios-news-release-checks-20261012.md) for signatures, source-input binding, integration limits and remaining publication gates. Current spoken VoiceOver focus remains unverified; Felipe explicitly accepted proceeding with that limitation recorded. Native AX/large-text checks do not claim it. No production Mac was launched or installed for this iPhone change.
+See [release checks](docs/ios-news-release-checks-20261012.md) for signatures/source-input binding and the [submission record](docs/ios-news-release-delivery-20261012.md) for passing main CI and accepted App Review submission. Approval/public availability remain pending. Current spoken VoiceOver focus remains unverified; Felipe explicitly accepted proceeding with that limitation recorded. Native AX/large-text checks do not claim it. No production Mac was launched or installed for this iPhone change.
 
 final result: passed

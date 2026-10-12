@@ -1,6 +1,6 @@
 # iPhone News 1.1.1(1) — release qualification
 
-Checkpoint: 12 October 2026. Implementation is complete in the uncommitted checkout based on `ac66a4966b3779657be2cefe50d319a201b4e61f`. Local functional/compile/visual checks and signed private upload/processing pass. Final documentation/diff review, commit/main CI, App Review and public availability remain separate gates; none is claimed by this checkpoint.
+Qualification checkpoint: 12 October 2026. Implementation and local qualification are complete. Source `740f9a0` is committed on main and exact-source CI passed; Apple accepted 1.1.1(1), now Waiting for Review. See the [submission record](ios-news-release-delivery-20261012.md) for current states. The detailed pre-integration checks below remain timestamped qualification evidence, not public-release proof.
 
 Checkout: `/Users/felipedominguez/Developer/tokenroom-improvements-20261004`.
 Current evidence: `/Users/felipedominguez/Documents/ChatGPT/TokenRoom/ios-news-release-20261012/`.
@@ -56,13 +56,13 @@ A first export failed because Homebrew rsync rejected Apple's `--extended-attrib
 
 The first verifier assumed an incorrect App Group suffix; it was corrected to source-defined `group.app.tokenroom`, with no candidate change. Phone/widgets have the existing shared keychain group; Watch components have none. This verifies declared capabilities, not production delivery.
 
-## Apple state and publication gates
+## Apple qualification checkpoint and publication gates
 
 Public mobile **1.1.0** was approved and released on 12 October 2026 at **15:07:19 UTC**, confirmed by official US/PT lookup receipts `public-store-us.json` and `public-store-pt.json`. Its prior submission history is preserved, not rewritten as candidate 1.1.1 evidence.
 
-Private **1.1.1(1)** is processed and attached to a Prepare for Submission draft. Accurate What's New and review notes are saved. Manual release is selected, so processing or approval cannot automatically publish this candidate. The saved asset list contains seven screenshots, in order: Usage, detail, Home Screen widgets, Lock Screen, API keys, welcome, then the current native Today screenshot. The obsolete Following placement is absent and its source asset is retained in Asset Library. Smaller sizes inherit this set; unchanged Watch assets remain applicable. A reload confirms saved build/notes/assets and manual release in `asc-1.1.1-draft-receipt.json`; `asc-new-news-preview.png` shows the uploaded News asset.
+At the private draft checkpoint, **1.1.1(1)** was processed and attached to a Prepare for Submission draft. Accurate What's New and review notes were saved with manual release selected. The later submission record confirms accepted Waiting for Review status; approval cannot automatically publish this candidate. At the saved-draft checkpoint, the asset list contained seven screenshots, in order: Usage, detail, Home Screen widgets, Lock Screen, API keys, welcome, then the current native Today screenshot. The obsolete Following placement is absent and its source asset is retained in Asset Library. Smaller sizes inherit this set; unchanged Watch assets remain applicable. A reload confirms saved build/notes/assets and manual release in `asc-1.1.1-draft-receipt.json`; `asc-new-news-preview.png` shows the uploaded News asset.
 
-Remaining sequence:
+Pre-integration sequence (source/CI/submission stages are now completed in the submission record):
 
 1. Complete final independent documentation/source/diff review. Spoken VoiceOver is an accepted recorded limitation, per Felipe’s explicit reply on 12 October.
 2. Recheck clean scope and signed input hashes; commit the qualified change, push main without overwriting unrelated work, and wait for exact-revision CI.
