@@ -185,6 +185,26 @@ final class FeedTests: XCTestCase {
         XCTAssertFalse(NewsFetcher.isDue(second.cache.announcementsFetchedAt, interval: NewsFetcher.announcementInterval, now: now.addingTimeInterval(3600)))
     }
 
+    func testLegacyExcerptRevalidatesBodyOnceWithoutLosingReadIdentity() async throws {
+        defer { unstubNetwork() }
+        let rss = Data("<rss><channel><item><guid>release</guid><title>Release</title><description><![CDATA[<p>Supplied summary.</p>]]></description></item></channel></rss>".utf8)
+        stubNetwork { request in
+            request.url == ModelFeed.url ? (200, Self.noModels) :
+                (request.value(forHTTPHeaderField: "If-None-Match") == nil ? 200 : 304, rss)
+        }
+        let now = utc(2026, 10, 11, 12)
+        var cache = NewsCache()
+        cache.items[claudeCode.id] = [FeedItem(id: "release", title: "Release", source: "Claude Code", firstSeenAt: now.addingTimeInterval(-3600), excerpt: "Supplied summary. <!DOCTYPE html><html>Full copy</html>")]
+        cache.validators[claudeCode.url.absoluteString] = .init(etag: "\"v1\"")
+        let first = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], maxAge: 0, now: now)
+        XCTAssertNil(StubURLProtocol.requests.last?.value(forHTTPHeaderField: "If-None-Match"))
+        XCTAssertEqual(first.cache.items[claudeCode.id]?.first?.excerpt, "Supplied summary.")
+        XCTAssertEqual(first.cache.items[claudeCode.id]?.first?.firstSeenAt, now.addingTimeInterval(-3600))
+        let second = await NewsFetcher.refresh(first.cache, sources: [claudeCode], following: [], maxAge: 0, now: now.addingTimeInterval(60))
+        XCTAssertEqual(StubURLProtocol.requests.last?.value(forHTTPHeaderField: "If-None-Match"), "\"v1\"")
+        XCTAssertEqual(second.cache.items[claudeCode.id]?.first?.excerpt, "Supplied summary.")
+    }
+
     func testTheModelsRequestSendsNoAnthropicVersion() async {
         defer {
             TokenroomHTTP.overrideSession(nil)

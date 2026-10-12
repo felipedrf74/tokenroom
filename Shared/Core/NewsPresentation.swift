@@ -122,9 +122,14 @@ extension NewsStore {
 }
 
 extension FeedItem {
+    var displayExcerpt: String? {
+        guard let excerpt else { return nil }
+        let clean = excerpt.trimmingCharacters(in: .whitespacesAndNewlines)
+        return clean.isEmpty ? nil : clean
+    }
     func bookmark(now: Date = .now) -> NewsBookmark {
         .init(id: stableID, aliases: aliasIDs, kind: .story, title: displayTitle, publisher: source, url: link,
-              summary: excerpt, publishedAt: publisherPublishedAt, updatedAt: updatedAt, savedAt: now)
+              summary: displayExcerpt, publishedAt: publisherPublishedAt, updatedAt: updatedAt, savedAt: now)
     }
 }
 extension ModelRelease {

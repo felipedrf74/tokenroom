@@ -13,6 +13,7 @@ import Foundation
                         isUnitTestHost: Bool = LaunchEnvironment.isUnitTestHost) -> Bool {
         if isUnitTestHost { return true }
         #if DEBUG
+        if launchDefaults.bool(forKey: "TokenroomNewsPreview") { return true }
         return ["TokenroomSnapshotNews", "TokenroomSnapshots", "TokenroomGallery"].contains {
             launchDefaults.string(forKey: $0) != nil
         }
@@ -46,8 +47,16 @@ import Foundation
     static func skillsStore() -> SkillsStore {
         #if DEBUG
         if let path = UserDefaults.standard.string(forKey: "TokenroomSnapshotNews") {
-            let data = try? Data(contentsOf: URL(fileURLWithPath: path).deletingLastPathComponent().appendingPathComponent("skills.json"))
-            return SkillsStore(fetch: { _ in data.map { .body($0) } ?? .unreachable })
+            let folder = URL(fileURLWithPath: path).deletingLastPathComponent()
+            let bodies = Dictionary(uniqueKeysWithValues: SkillSort.allCases.compactMap { sort -> (String, Data)? in
+                let name = sort == .trending ? "skills.json" : "skills-\(sort.rawValue).json"
+                return (try? Data(contentsOf: folder.appendingPathComponent(name))).map { (sort.apiValue, $0) }
+            })
+            return SkillsStore(fetch: { request in
+                guard let url = request.url,
+                      let sort = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "sort" })?.value else { return .unreachable }
+                return bodies[sort].map { .body($0) } ?? .unreachable
+            })
         }
         #endif
         if isInert() { return SkillsStore(fetch: { _ in .unreachable }) }

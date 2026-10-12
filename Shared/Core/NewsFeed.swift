@@ -252,10 +252,13 @@ enum NewsFetcher {
         }
         if !due.isEmpty {
             let previous = cache.validators
+            let needsExcerptBody = Set(due.filter { source in
+                cache.items[source.id]?.contains { $0.excerpt != nil && $0.excerptIsPlainText != true } == true
+            }.map(\.id))
             let answers = await withTaskGroup(of: (FeedSource, Answer?).self) { group in
                 for source in due {
                     group.addTask {
-                        return (source, await permittedGet(source.url, validator: previous[source.url.absoluteString], sizeLimit: source.sizeLimit, isAllowed: isAllowed))
+                        return (source, await permittedGet(source.url, validator: needsExcerptBody.contains(source.id) ? nil : previous[source.url.absoluteString], sizeLimit: source.sizeLimit, isAllowed: isAllowed))
                     }
                 }
                 var answers: [(FeedSource, Answer?)] = []

@@ -34,6 +34,13 @@ enum TokenroomTokens {
     /// `tight` and the accent as small text: the brand orange is 3.4:1 on white, this 5.7:1 there
     /// and 6.5:1 on dark cells. The orange stays for controls, large numbers, and marks.
     static let accentText = Color(light: (154, 85, 24), dark: (217, 143, 74))
+    #if os(macOS)
+    /// Desktop News action fill: white labels have 4.9:1 contrast in either appearance.
+    /// accentText remains the token for orange text on the reader's surfaces.
+    static let newsActionFill = Color(red: 177 / 255, green: 84 / 255, blue: 42 / 255)
+    /// Small reader metadata stays legible on the white and subtle card surfaces.
+    static let newsSecondaryText = Color(light: (100, 100, 100), dark: (170, 170, 170))
+    #endif
     /// `critical` as small text: the same red in light, lighter in dark (6.0:1 on dark cells,
     /// where the red is 3.2:1).
     static let criticalText = Color(light: (194, 59, 34), dark: (255, 107, 79))

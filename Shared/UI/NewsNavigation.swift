@@ -42,6 +42,7 @@ struct NewsWindowCommands {
     var isChecking: Bool
     var checkNow: () -> Void
     var openSettings: () -> Void
+    var settingsEnabled = true
 }
 
 extension EnvironmentValues {
@@ -55,7 +56,7 @@ struct NewsWindowToolbar: ToolbarContent {
             Button("Check Now", systemImage: "arrow.clockwise", action: commands.checkNow)
                 .disabled(commands.isChecking)
         }
-        ToolbarItem { Button("News Settings…", systemImage: "gearshape", action: commands.openSettings) }
+        ToolbarItem { Button("News Settings…", systemImage: "gearshape", action: commands.openSettings).disabled(!commands.settingsEnabled) }
     }
 }
 

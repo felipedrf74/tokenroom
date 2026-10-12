@@ -1,6 +1,36 @@
 import SwiftUI
 
 #if os(iOS) || os(macOS)
+enum NewsControlMetrics {
+    static var secondaryText: Color {
+        #if os(macOS)
+        TokenroomTokens.newsSecondaryText
+        #else
+        Color.secondary
+        #endif
+    }
+    static var minimumHeight: CGFloat {
+        #if os(macOS)
+        24
+        #else
+        44
+        #endif
+    }
+}
+
+extension View {
+    @ViewBuilder func newsDetailLayout() -> some View {
+        #if os(macOS)
+        self.padding(24)
+            .background(TokenroomTokens.cardFill, in: RoundedRectangle(cornerRadius: 12))
+            .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1) }
+            .frame(maxWidth: 820, alignment: .leading).padding(24).frame(maxWidth: .infinity)
+        #else
+        self.padding(24).frame(maxWidth: 720, alignment: .leading).frame(maxWidth: .infinity)
+        #endif
+    }
+}
+
 struct NewsCard<Content: View>: View {
     @ViewBuilder var content: () -> Content
     var body: some View {
@@ -19,7 +49,7 @@ struct NewsShelf<Content: View>: View {
         layout {
             Text(title).font(.title3.weight(.semibold)).accessibilityAddTraits(.isHeader)
             if !typeSize.isAccessibilitySize { Spacer() }
-            NewsNavigationLink(destination: destination) { Text("See All").font(.subheadline).frame(minHeight: 44) }
+            NewsNavigationLink(destination: destination) { Text("See All").font(.subheadline).frame(minHeight: NewsControlMetrics.minimumHeight) }
                 .accessibilityLabel("See all \(title)")
         }
     }
@@ -28,6 +58,7 @@ struct NewsShelf<Content: View>: View {
 struct NewsSaveButton: View {
     @Bindable var library: NewsLibrary
     var item: NewsBookmark
+    var compact = false
     @State private var undo = NewsRemovalUndo()
     @State private var actionProblem: String?
     private var saved: Bool { library.isSaved(id: item.id, aliases: item.aliases) }
@@ -37,17 +68,30 @@ struct NewsSaveButton: View {
                 let succeeded = saved ? undo.remove(id: item.id, aliases: item.aliases, from: library) : undo.save(item, in: library)
                 actionProblem = succeeded ? nil : library.problem
             } label: {
-                Label(!saved ? "Save" : "Saved", systemImage: !saved ? "bookmark" : "bookmark.fill").frame(minHeight: 44)
+                saveLabel.frame(minHeight: NewsControlMetrics.minimumHeight)
             }.accessibilityLabel(!saved ? "Save \(item.title)" : "Remove \(item.title) from saved")
+                .help(!saved ? "Save \(item.title)" : "Remove \(item.title) from saved")
             if undo.item != nil {
                 Button("Undo removal") {
                     actionProblem = undo.restore(in: library) ? nil : library.problem
-                }.frame(minHeight: 44)
+                }.frame(minHeight: NewsControlMetrics.minimumHeight)
             }
-            if let problem = library.loadProblem ?? actionProblem { Text(problem).font(.footnote).foregroundStyle(.secondary) }
+            if let problem = library.loadProblem ?? actionProblem { Text(problem).font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText) }
         }.onChange(of: library.problem) { _, problem in
             if problem == nil { actionProblem = nil }
         }
+    }
+    @ViewBuilder private var saveLabel: some View {
+        #if os(macOS)
+        if compact {
+            Image(systemName: !saved ? "bookmark" : "bookmark.fill")
+                .font(.system(size: 14)).frame(width: 22)
+        } else {
+            Label(!saved ? "Save" : "Saved", systemImage: !saved ? "bookmark" : "bookmark.fill")
+        }
+        #else
+        Label(!saved ? "Save" : "Saved", systemImage: !saved ? "bookmark" : "bookmark.fill")
+        #endif
     }
 }
 
@@ -58,23 +102,23 @@ struct NewsStoryRow: View {
     var prominent = false
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(item.source + " · " + (item.kind ?? .officialAnnouncement).label).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+            Text(item.source + " · " + (item.kind ?? .officialAnnouncement).label).font(.caption.weight(.medium)).foregroundStyle(NewsControlMetrics.secondaryText)
             Text(item.displayTitle).font(.system(prominent ? .title2 : .headline, design: .serif, weight: .semibold))
                 .foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
-            if prominent, let excerpt = item.excerpt { Text(excerpt).font(.subheadline).foregroundStyle(.secondary).lineLimit(3) }
+            if prominent, let excerpt = item.displayExcerpt { Text(excerpt).font(.subheadline).foregroundStyle(NewsControlMetrics.secondaryText).lineLimit(3) }
             ViewThatFits(in: .horizontal) {
                 HStack { metadata }
                 VStack(alignment: .leading, spacing: 4) { metadata }
             }
-        }.multilineTextAlignment(.leading).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }.multilineTextAlignment(.leading).frame(maxWidth: .infinity, minHeight: NewsControlMetrics.minimumHeight, alignment: .leading)
             .accessibilityElement(children: .combine)
     }
     @ViewBuilder private var metadata: some View {
         if let date = item.publisherPublishedAt ?? item.updatedAt ?? item.published {
-            Text((item.publisherPublishedAt == nil && item.updatedAt != nil ? "Updated " : "") + RelativeTime.ago(date)).font(.caption).foregroundStyle(.secondary)
+            Text((item.publisherPublishedAt == nil && item.updatedAt != nil ? "Updated " : "") + RelativeTime.ago(date)).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText)
         }
         if isNew { NewBadge() }
-        if isRead { Text("Read").font(.caption).foregroundStyle(.secondary) }
+        if isRead { Text("Read").font(.caption).foregroundStyle(NewsControlMetrics.secondaryText) }
     }
 }
 
@@ -84,23 +128,31 @@ struct NewsStoryDetail: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text((item.kind ?? .officialAnnouncement).label).font(.subheadline).foregroundStyle(.secondary)
+                #if os(macOS)
+                HStack(spacing: 10) {
+                    MacNewsSourceMark(sourceID: item.sourceID, name: item.source, size: 36)
+                    Text(item.source).font(.headline)
+                }
+                #endif
+                Text((item.kind ?? .officialAnnouncement).label).font(.subheadline).foregroundStyle(NewsControlMetrics.secondaryText)
                 Text(item.displayTitle).font(.system(.largeTitle, design: .serif, weight: .bold)).fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
+                #if !os(macOS)
                 Text(item.source).font(.headline)
+                #endif
                 NewsDates(published: item.publisherPublishedAt, updated: item.updatedAt)
-                if let excerpt = item.excerpt { Text(excerpt).font(.body).textSelection(.enabled) }
+                if let excerpt = item.displayExcerpt { Text(excerpt).font(.body).textSelection(.enabled) }
                 if item.kind == .officialStatus {
-                    Text("Provider report. Your experience may differ. Only updates observed by this device are shown.").font(.footnote).foregroundStyle(.secondary)
+                    Text("Provider report. Your experience may differ. Only updates observed by this device are shown.").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
                     ForEach(Array((item.observedUpdates ?? []).enumerated()), id: \.offset) { _, update in
                         VStack(alignment: .leading) {
-                            if let date = update.date { Text(date, format: .dateTime).font(.caption).foregroundStyle(.secondary) }
+                            if let date = update.date { Text(date, format: .dateTime).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText) }
                             if let excerpt = update.excerpt { Text(excerpt) }
                         }
                     }
                 }
                 NewsDetailActions(library: library, item: item.bookmark())
-                if let other = item.alsoIn { Text("Also reported in \(other)").font(.footnote).foregroundStyle(.secondary) }
-            }.padding(24).frame(maxWidth: 720, alignment: .leading).frame(maxWidth: .infinity)
+                if let other = item.alsoIn { Text("Also reported in \(other)").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText) }
+            }.newsDetailLayout()
         }.navigationTitle("Story")
             .onAppear { library.markRead(id: item.stableID, aliases: item.aliasIDs) }
     }
@@ -114,7 +166,7 @@ struct NewsDates: View {
             if let published { Text("Published \(published.formatted(date: .abbreviated, time: .shortened))") }
             else { Text("Publication date not supplied") }
             if let updated { Text("Updated \(updated.formatted(date: .abbreviated, time: .shortened))") }
-        }.font(.footnote).foregroundStyle(.secondary)
+        }.font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
     }
 }
 
@@ -123,17 +175,35 @@ struct NewsDetailActions: View {
     var item: NewsBookmark
     var openLabel = "Open Original"
     var body: some View {
+        #if os(macOS)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                if let url = item.url {
+                    Link(destination: url) { Label(openLabel, systemImage: "arrow.up.right") }
+                        .buttonStyle(.borderedProminent).tint(TokenroomTokens.newsActionFill)
+                    ShareLink(item: url) { Image(systemName: "square.and.arrow.up") }
+                        .accessibilityLabel("Share \(item.title)").help("Share")
+                } else {
+                    ShareLink(item: item.title) { Label("Share title", systemImage: "square.and.arrow.up") }
+                    Text("Original link not supplied").font(.caption).foregroundStyle(NewsControlMetrics.secondaryText)
+                }
+                NewsSaveButton(library: library, item: item)
+            }
+            if let url = item.url { Text(url.host ?? url.absoluteString).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText) }
+        }.controlSize(.regular)
+        #else
         VStack(alignment: .leading, spacing: 12) {
             NewsSaveButton(library: library, item: item)
             if let url = item.url {
-                ShareLink(item: url) { Label("Share", systemImage: "square.and.arrow.up").frame(minHeight: 44) }.accessibilityLabel("Share \(item.title)")
-                Link(destination: url) { Label(openLabel, systemImage: "arrow.up.right.square").frame(minHeight: 44) }
-                Text(url.host ?? url.absoluteString).font(.footnote).foregroundStyle(.secondary)
+                ShareLink(item: url) { Label("Share", systemImage: "square.and.arrow.up").frame(minHeight: NewsControlMetrics.minimumHeight) }.accessibilityLabel("Share \(item.title)")
+                Link(destination: url) { Label(openLabel, systemImage: "arrow.up.right.square").frame(minHeight: NewsControlMetrics.minimumHeight) }
+                Text(url.host ?? url.absoluteString).font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
             } else {
-                ShareLink(item: item.title) { Label("Share title", systemImage: "square.and.arrow.up").frame(minHeight: 44) }
-                Text("The publisher did not supply an original link.").font(.footnote).foregroundStyle(.secondary)
+                ShareLink(item: item.title) { Label("Share title", systemImage: "square.and.arrow.up").frame(minHeight: NewsControlMetrics.minimumHeight) }
+                Text("The publisher did not supply an original link.").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
             }
         }.buttonStyle(.bordered)
+        #endif
     }
 }
 
@@ -143,7 +213,10 @@ struct NewsModelDetail: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text(model.vendorName).font(.headline).foregroundStyle(.secondary)
+                #if os(macOS)
+                LabMark(vendor: model.vendor, name: model.vendorName, size: 40)
+                #endif
+                Text(model.vendorName).font(.headline).foregroundStyle(NewsControlMetrics.secondaryText)
                 Text(model.shortName).font(.system(.largeTitle, design: .serif, weight: .bold)).fixedSize(horizontal: false, vertical: true)
                 NewsDates(published: model.created, updated: nil)
                 if let context = model.contextText { Text("\(context) context") }
@@ -151,8 +224,8 @@ struct NewsModelDetail: View {
                 if let price = model.completionPrice { Text("Output: \(ModelReleaseRow.price(price)) per million tokens") }
                 if let expires = model.expires { Text("Retires \(expires.formatted(date: .abbreviated, time: .omitted))") }
                 NewsDetailActions(library: library, item: model.bookmark())
-                Text("From OpenRouter's public model catalog.").font(.footnote).foregroundStyle(.secondary)
-            }.padding(24).frame(maxWidth: 720, alignment: .leading).frame(maxWidth: .infinity)
+                Text("From OpenRouter's public model catalog.").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
+            }.newsDetailLayout()
         }.navigationTitle("Model").onAppear { library.markRead(id: "model|" + model.id) }
     }
 }
@@ -163,7 +236,10 @@ struct NewsSavedDetail: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text(item.publisher).font(.headline).foregroundStyle(.secondary)
+                #if os(macOS)
+                MacNewsSourceMark(name: item.publisher, size: 36)
+                #endif
+                Text(item.publisher).font(.headline).foregroundStyle(NewsControlMetrics.secondaryText)
                 Text(item.title).font(.system(.largeTitle, design: .serif, weight: .bold)).fixedSize(horizontal: false, vertical: true)
                 NewsDates(published: item.publishedAt, updated: item.updatedAt)
                 if let summary = item.summary { Text(summary).textSelection(.enabled) }
@@ -175,8 +251,8 @@ struct NewsSavedDetail: View {
                     if let date = skill.checkedAt { Text("Ranking checked \(date.formatted())").font(.footnote) }
                 }
                 NewsDetailActions(library: library, item: item)
-                Text("Saved on this device \(item.savedAt.formatted(date: .abbreviated, time: .omitted)). Original content requires a connection.").font(.footnote).foregroundStyle(.secondary)
-            }.padding(24).frame(maxWidth: 720, alignment: .leading).frame(maxWidth: .infinity)
+                Text("Saved on this device \(item.savedAt.formatted(date: .abbreviated, time: .omitted)). Original content requires a connection.").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
+            }.newsDetailLayout()
         }.navigationTitle("Saved item").onAppear { library.markRead(id: item.id, aliases: item.aliases) }
     }
 }
@@ -194,24 +270,24 @@ struct NewsSavedList: View {
             Menu {
                 Button("All saved") { kind = nil }
                 ForEach(NewsBookmark.Kind.allCases, id: \.self) { value in Button(value.rawValue.capitalized) { kind = value } }
-            } label: { Label(kind?.rawValue.capitalized ?? "All saved", systemImage: "line.3.horizontal.decrease").frame(minHeight: 44) }
-            if let problem = library.problem { Text(problem).font(.footnote).foregroundStyle(.secondary) }
+            } label: { Label(kind?.rawValue.capitalized ?? "All saved", systemImage: "line.3.horizontal.decrease").frame(minHeight: NewsControlMetrics.minimumHeight) }
+            if let problem = library.problem { Text(problem).font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText) }
             if items.isEmpty { ContentUnavailableView("No saved items", systemImage: "bookmark", description: Text("Save stories and skills to find their details here, even when their feed changes.")) }
             ForEach(items) { item in
                 NewsCard {
                     NewsNavigationLink { NewsSavedDetail(item: item, library: library) } label: {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text(item.publisher + " · " + item.kind.rawValue.capitalized).font(.caption).foregroundStyle(.secondary)
+                            Text(item.publisher + " · " + item.kind.rawValue.capitalized).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText)
                             Text(item.title).font(.system(.headline, design: .serif)).foregroundStyle(.primary)
-                        }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).multilineTextAlignment(.leading)
+                        }.frame(maxWidth: .infinity, minHeight: NewsControlMetrics.minimumHeight, alignment: .leading).multilineTextAlignment(.leading)
                     }.buttonStyle(.plain)
-                    Button("Remove", role: .destructive) { undo.remove(id: item.id, aliases: item.aliases, from: library) }.frame(minHeight: 44).accessibilityLabel("Remove \(item.title)")
+                    Button("Remove", role: .destructive) { undo.remove(id: item.id, aliases: item.aliases, from: library) }.frame(minHeight: NewsControlMetrics.minimumHeight).accessibilityLabel("Remove \(item.title)")
                 }
             }
             if let removed = undo.item {
-                Button("Undo removal of \(removed.title)") { undo.restore(in: library) }.frame(minHeight: 44)
+                Button("Undo removal of \(removed.title)") { undo.restore(in: library) }.frame(minHeight: NewsControlMetrics.minimumHeight)
             }
-            Text("Saved metadata and reading choices stay on this device.").font(.footnote).foregroundStyle(.secondary)
+            Text("Saved metadata and reading choices stay on this device.").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
         }
     }
 }
@@ -225,19 +301,26 @@ struct NewsSourceDetail: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                #if os(macOS)
+                HStack(spacing: 12) {
+                    MacNewsSourceMark(sourceID: source.id, name: source.name, size: 40)
+                    Text(source.name).font(.system(.title, design: .serif, weight: .bold))
+                }
+                #else
                 Text(source.name).font(.system(.largeTitle, design: .serif, weight: .bold))
-                Text(source.kind.label).foregroundStyle(.secondary)
-                Toggle("Follow in Tokenroom", isOn: followBinding).frame(minHeight: 44)
+                #endif
+                Text(source.kind.label).foregroundStyle(NewsControlMetrics.secondaryText)
+                Toggle("Follow in Tokenroom", isOn: followBinding).frame(minHeight: NewsControlMetrics.minimumHeight)
                 NewsSourceHealth(news: news, source: source)
-                Link("Open source feed", destination: source.url).frame(minHeight: 44)
-                Text(source.kind == .commentary ? "Articles from this publisher's public feed. These are not X posts." : "Updates supplied by this official source.").font(.footnote).foregroundStyle(.secondary)
+                Link("Open source feed", destination: source.url).frame(minHeight: NewsControlMetrics.minimumHeight)
+                Text(source.kind == .commentary ? "Articles from this publisher's public feed. These are not X posts." : "Updates supplied by this official source.").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
                 if items.isEmpty, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     ContentUnavailableView.search(text: query)
                 }
                 ForEach(items, id: \.stableID) { item in
                     NewsStoryLink(item: item, news: news, library: library)
                 }
-            }.padding(24).frame(maxWidth: 720, alignment: .leading).frame(maxWidth: .infinity)
+            }.newsDetailLayout()
         }.navigationTitle(source.name)
         .onChange(of: source.id) { _, _ in query = "" }
         #if os(macOS)
@@ -272,12 +355,12 @@ struct NewsSourceHealth: View {
                 Text(problem + (hasPreviousArticles ? " Previous articles remain available." : ""))
                 Button(health.retryIDs.count > 1 ? "Retry failed sources" : "Retry source") {
                     Task { await news.retrySources(health.retryIDs) }
-                }.frame(minHeight: 44)
+                }.frame(minHeight: NewsControlMetrics.minimumHeight)
             } else if health.sourceCount > 0, health.uncheckedCount == 0,
                       health.sourceIDs.allSatisfy({ news.cache.items[$0]?.isEmpty == true }) {
                 Text("No articles in the latest feeds.")
             }
-        }.font(.footnote).foregroundStyle(.secondary)
+        }.font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
     }
 }
 
@@ -287,12 +370,17 @@ struct NewsStoryLink: View {
     @Bindable var library: NewsLibrary
     var prominent = false
     var body: some View {
+        #if os(macOS)
+        if prominent { MacNewsHero(item: item, news: news, library: library) }
+        else { MacNewsStoryRow(item: item, news: news, library: library) }
+        #else
         NewsCard {
             NewsNavigationLink { NewsStoryDetail(item: item, library: library) } label: {
                 NewsStoryRow(item: item, isNew: news.isNew(item.newsDate), isRead: library.isRead(id: item.stableID, aliases: item.aliasIDs), prominent: prominent)
             }.buttonStyle(.plain)
             NewsSaveButton(library: library, item: item.bookmark())
         }
+        #endif
     }
 }
 #endif

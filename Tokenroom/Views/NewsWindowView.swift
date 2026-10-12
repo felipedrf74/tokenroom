@@ -49,6 +49,9 @@ struct NewsWindowView: View {
     @State private var search = ""
     @State private var library = NewsRuntime.library()
     @State private var skills: SkillsStore
+    @State private var collectionsExpanded = true
+    @State private var labsExpanded = true
+    @State private var toolsExpanded = false
 
     init(store: QuotaStore, request: NewsPageRequest? = nil, onOpenSettings: @escaping () -> Void, page: NewsPage? = nil) {
         self.store = store; self.request = request; self.onOpenSettings = onOpenSettings
@@ -68,7 +71,7 @@ struct NewsWindowView: View {
                     Button("Turn On News") { store.settings.newsEnabled = true; Task { await store.refreshNews(force: true) } }.buttonStyle(.borderedProminent)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity).padding(32)
             }
-        }.frame(minWidth: 820, idealWidth: 920, minHeight: 560, idealHeight: 660)
+        }.frame(minWidth: 820, idealWidth: 1160, minHeight: 560, idealHeight: 800)
             .onChange(of: request?.count, initial: true) {
                 guard let request, request.count > 0 else { return }
                 search = ""
@@ -81,16 +84,22 @@ struct NewsWindowView: View {
                 Section {
                     ForEach(NewsDestination.allCases) { item in Label(item.rawValue, systemImage: item.symbol).tag(NewsPage.destination(item)) }
                 }
-                Section("Collections") {
-                    ForEach(NewsFilter.allCases.filter { $0 != .today }) { item in Label(item.rawValue, systemImage: item.symbol).tag(NewsPage.filter(item)) }
-                    Label("Voices", systemImage: "person.2").tag(NewsPage.tool("voices"))
-                    Label("Status", systemImage: "waveform.path.ecg").tag(NewsPage.tool("status"))
-                }
-                Section("Your labs") {
-                    ForEach(news.vendorChoices.filter { news.followedVendors.contains($0.id) }, id: \.id) { lab in Text(lab.name).tag(NewsPage.lab(lab.id)) }
-                }
-                Section("Your tools") {
-                    ForEach(FeedSource.toggles.filter { news.followedSources.contains($0.id) }) { source in Text(source.name).tag(NewsPage.tool(source.id)) }
+                Section(isExpanded: $collectionsExpanded) {
+                        ForEach(NewsFilter.allCases.filter { $0 != .today }) { item in Label(item.rawValue, systemImage: item.symbol).tag(NewsPage.filter(item)) }
+                        Label("Voices", systemImage: "person.2").tag(NewsPage.tool("voices"))
+                        Label("Status", systemImage: "waveform.path.ecg").tag(NewsPage.tool("status"))
+                } header: { Text("Collections") }
+                Section("Sources") {
+                    DisclosureGroup("Model labs", isExpanded: $labsExpanded) {
+                        ForEach(news.vendorChoices.filter { news.followedVendors.contains($0.id) }, id: \.id) { lab in
+                            HStack(spacing: 10) { LabMark(vendor: lab.id, name: lab.name, size: 20); Text(lab.name) }.tag(NewsPage.lab(lab.id))
+                        }
+                    }
+                    DisclosureGroup("Tools", isExpanded: $toolsExpanded) {
+                        ForEach(FeedSource.toggles.filter { news.followedSources.contains($0.id) }) { source in
+                            HStack(spacing: 10) { MacNewsSourceMark(sourceID: source.id, name: source.name, size: 20); Text(source.name) }.tag(NewsPage.tool(source.id))
+                        }
+                    }
                 }
             }.listStyle(.sidebar).navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
         } detail: {
@@ -99,6 +108,11 @@ struct NewsWindowView: View {
                     .navigationTitle(title)
             }
             .toolbar {
+                if #available(macOS 26, *) {
+                    ToolbarItem(placement: .principal) { windowBrand }.sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem(placement: .principal) { windowBrand }
+                }
                 NewsWindowToolbar(commands: windowCommands(news))
             }.id(page)
         }
@@ -109,13 +123,19 @@ struct NewsWindowView: View {
         .onAppear { if page == nil { page = request?.section == .today || request == nil && savedFilter == .today ? .destination(.today) : .filter(request?.section ?? savedFilter) } }
         .onChange(of: page) { _, page in search = ""; if case .filter(let filter)? = page { savedFilter = filter } }
     }
+    private var windowBrand: some View {
+        HStack(spacing: 8) {
+            Image(nsImage: NSApplication.shared.applicationIconImage).resizable().frame(width: 22, height: 22).accessibilityHidden(true)
+            Text("Tokenroom News").font(.system(size: 14, weight: .medium))
+        }
+    }
     private func windowCommands(_ news: NewsStore) -> NewsWindowCommands {
         NewsWindowCommands(isChecking: news.isRefreshing || skills.isRefreshing, checkNow: {
             Task {
                 if page == .destination(.skills) { await skills.refresh(sort: skills.sort, force: true) }
                 else { await store.refreshNews(force: true) }
             }
-        }, openSettings: onOpenSettings)
+        }, openSettings: onOpenSettings, settingsEnabled: !NewsRuntime.isInert())
     }
     @ViewBuilder private func detail(_ news: NewsStore) -> some View {
         switch page ?? .destination(.today) {
@@ -133,10 +153,13 @@ struct NewsWindowView: View {
         }
     }
     private func reader(_ news: NewsStore, destination: NewsDestination) -> some View {
-        ScrollView {
-            NewsReaderContent(news: news, library: library, skills: skills, destination: destination, query: search,
-                              suggestedProviders: Set(store.statuses.compactMap { provider, status in status.snapshot == nil ? nil : provider.rawValue }))
-                .padding(24).frame(maxWidth: 820, alignment: .leading).frame(maxWidth: .infinity)
+        GeometryReader { viewport in
+            ScrollView {
+                NewsReaderContent(news: news, library: library, skills: skills, destination: destination, query: search,
+                                  suggestedProviders: Set(store.statuses.compactMap { provider, status in status.snapshot == nil ? nil : provider.rawValue }))
+                    .environment(\.macNewsAvailableWidth, max(0, min(1160, viewport.size.width) - 48))
+                    .padding(24).frame(maxWidth: 1160, alignment: .leading).frame(maxWidth: .infinity)
+            }
         }.searchable(text: $search, placement: .toolbar, prompt: destination == .skills ? "Search these skills" : "Search titles and sources")
     }
     private var title: String {

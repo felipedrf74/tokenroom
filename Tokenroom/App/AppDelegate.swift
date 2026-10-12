@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     override init() {
         #if DEBUG
-        if UserDefaults.standard.string(forKey: "TokenroomSnapshots") != nil {
+        if UserDefaults.standard.string(forKey: "TokenroomSnapshots") != nil || UserDefaults.standard.bool(forKey: "TokenroomNewsPreview") {
             // Rendering must not initialize migrations, real settings, or the real cache first.
             let name = "TokenroomSnapshotBootstrap"
             let defaults = UserDefaults(suiteName: name)!
@@ -51,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         #if DEBUG
+        if DebugSnapshots.showNewsPreviewIfRequested() { return }
         if DebugSnapshots.runIfRequested() {
             NSApp.terminate(nil)
             return
@@ -101,6 +102,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func openSettings(tab: SettingsTab? = nil) {
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "TokenroomNewsPreview") { return }
+        #endif
         statusItem?.closePopover()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
@@ -136,13 +140,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self?.openSettings(tab: .news)
             }
             let hosting = NSHostingController(rootView: view)
-            // The window takes its toolbar (Check Now, Follow…, search) and title from SwiftUI.
-            hosting.sceneBridgingOptions = [.toolbars, .title]
+            // The branded toolbar names the window; page headings live in the reader.
+            hosting.sceneBridgingOptions = [.toolbars]
             let window = NSWindow(contentViewController: hosting)
             window.title = "News"
+            window.titleVisibility = .hidden
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
             window.toolbarStyle = .unified
-            window.setContentSize(NSSize(width: 920, height: 660))
+            window.setContentSize(NSSize(width: 1160, height: 800))
             window.setFrameAutosaveName("TokenroomNews")
             window.isReleasedWhenClosed = false
             window.hidesOnDeactivate = false

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.4.1 for Mac — release candidate
+
+- Mac News uses an editorial briefing with a lead illustration, a release rail, compact grouped updates and branded model cards. Following, Skills, Saved, collections and reading details share the desktop style and adapt to smaller windows.
+- Save and More actions stay inline. Source controls and ranking filters use native segmented controls, while original links and sharing remain in reading details.
+- Today reports how many followed feeds are current, delayed or not loaded, with model freshness separately. A delayed feed no longer makes every source appear out of date.
+- Feed excerpts use the first meaningful supplied summary, clean HTML once and preserve literal code examples. Older cached excerpts refresh from their public source on its next due check without changing saved/read identity.
+
 ## 2.4.0 for Mac — released 11 October 2026 / 1.1.0 for iPhone — awaiting review
 
 Mac 2.4.0(1) is [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.4.0) and installed on both validated Macs. Mobile 1.1.0(1) is submitted to Apple and Waiting for Review, with automatic release after approval selected; it is not publicly available yet. [The delivery record](docs/news-release-delivery-20261011.md) separates source qualification, publication, installation and remaining integration limits.

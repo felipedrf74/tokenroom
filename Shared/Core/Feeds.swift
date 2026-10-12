@@ -148,6 +148,9 @@ struct FeedItem: Codable, Equatable, Sendable, Identifiable {
     var updatedAt: Date? = nil
     var firstSeenAt: Date? = nil
     var excerpt: String? = nil
+    /// Parsed once at the feed boundary. Older caches revalidate their source body
+    /// on its next due check; display must not reinterpret literal code as HTML.
+    var excerptIsPlainText: Bool? = nil
     var canonicalID: String? = nil
     var aliases: Set<String>? = nil
     struct StatusUpdate: Codable, Equatable, Sendable {
@@ -295,6 +298,18 @@ enum FeedParser {
         return text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
+    /// Excerpts can carry a complete HTML document; title token syntax stays
+    /// governed by the narrower plainText contract above.
+    static func plainExcerptText(_ html: String) -> String {
+        var text = html
+        for pattern in [#"(?is)<!--.*?-->"#, #"(?is)<(head|script|style)\b[^>]*>.*?</\1\s*>"#,
+                        #"(?is)<!doctype[^>]*>"#,
+                        #"(?i)</?(?:html|body|head|meta|link|section|article|header|footer|nav|aside|main|figure|figcaption|blockquote|table|thead|tbody|tfoot|tr|td|th|dl|dt|dd|video|audio|source|picture|button|form|input|label|script|style)(?:\s[^<>]*)?/?>"#] {
+            text = text.replacingOccurrences(of: pattern, with: " ", options: .regularExpression)
+        }
+        return plainText(text)
+    }
+
     /// `&#8217;` and `&#x2019;`.
     static func decodeNumericEntities(_ text: String) -> String {
         guard text.contains("&#") else { return text }
@@ -347,6 +362,10 @@ private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
     private var published = ""
     private var updated = ""
     private var excerpt = ""
+    private var excerptCandidate = ""
+    private var capturesExcerpt = false
+    private var excerptIsXMLText = false
+    private var suppressedExcerptDepth: Int?
 
     init(source: FeedSource) {
         self.source = source
@@ -365,13 +384,26 @@ private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
                 published = ""
                 updated = ""
                 excerpt = ""
+                excerptCandidate = ""
+                capturesExcerpt = false
+                suppressedExcerptDepth = nil
             }
             return
         }
         depth = current + 1
         if current == 0 {
             element = name == "dc:date" || name == "content:encoded" ? name : localName
-        } else { appendMarkupBoundary() }
+            capturesExcerpt = ["description", "summary", "content", "content:encoded"].contains(element) && excerpt.isEmpty
+            excerptCandidate = ""
+            // Atom text and XHTML have already been decoded by XMLParser.
+            excerptIsXMLText = path.first == "feed" && ["text", "xhtml"].contains(attributes["type"] ?? "text")
+        } else {
+            if isExcerpt {
+                excerptIsXMLText = true
+                if suppressedExcerptDepth == nil, ["head", "script", "style"].contains(localName.lowercased()) { suppressedExcerptDepth = current + 1 }
+            }
+            appendMarkupBoundary()
+        }
         // Atom links live in attributes; prefer rel="alternate".
         if current == 0, localName == "link", let href = attributes["href"], (attributes["rel"] ?? "alternate") == "alternate" {
             link = href
@@ -390,7 +422,8 @@ private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
         guard let depth, depth >= 1 else { return }
         if element == "title" { title += string; return }
         if isExcerpt {
-            excerpt += String(string.prefix(max(0, 2000 - excerpt.count)))
+            guard suppressedExcerptDepth == nil else { return }
+            excerptCandidate += String(string.prefix(max(0, 2000 - excerptCandidate.count)))
             return
         }
         guard depth == 1 else { return }
@@ -403,18 +436,29 @@ private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
         }
     }
 
-    private var isExcerpt: Bool { ["description", "summary", "content", "content:encoded"].contains(element) }
+    private var isExcerpt: Bool { capturesExcerpt && ["description", "summary", "content", "content:encoded"].contains(element) }
     private func appendMarkupBoundary() {
         if element == "title", !title.isEmpty, title.last?.isWhitespace == false { title += " " }
-        if isExcerpt, !excerpt.isEmpty, excerpt.last?.isWhitespace == false, excerpt.count < 2000 { excerpt += " " }
+        if isExcerpt, suppressedExcerptDepth == nil, !excerptCandidate.isEmpty, excerptCandidate.last?.isWhitespace == false, excerptCandidate.count < 2000 { excerptCandidate += " " }
     }
 
     func parser(_ parser: XMLParser, didEndElement name: String, namespaceURI: String?, qualifiedName: String?) {
         defer { path.removeLast() }
         guard let current = depth else { return }
         guard current == 0 else {
-            if current == 1 { element = "" }
-            else { appendMarkupBoundary() }
+            if current == 1 {
+                if isExcerpt {
+                    let clean = excerptIsXMLText
+                        ? excerptCandidate.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+                        : FeedParser.plainExcerptText(excerptCandidate)
+                    if !clean.isEmpty { excerpt = String(clean.prefix(2000)) }
+                }
+                element = ""
+                capturesExcerpt = false
+            } else {
+                if suppressedExcerptDepth == current { suppressedExcerptDepth = nil }
+                appendMarkupBoundary()
+            }
             depth = current - 1
             return
         }
@@ -433,7 +477,8 @@ private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
             sourceID: source.id, kind: source.kind,
             publisherPublishedAt: FeedParser.date(published),
             updatedAt: FeedParser.date(updated),
-            excerpt: excerpt.isEmpty ? nil : String(FeedParser.plainText(excerpt).prefix(2000))
+            excerpt: excerpt.isEmpty ? nil : excerpt,
+            excerptIsPlainText: true
         ))
     }
 }

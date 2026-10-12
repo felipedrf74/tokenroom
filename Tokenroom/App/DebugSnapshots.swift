@@ -8,6 +8,68 @@ import SwiftUI
 /// `-TokenroomSnapshotNews <news.json>` adds a saved News cache.
 @MainActor
 enum DebugSnapshots {
+    private static var previewWindow: NSWindow?
+    private static var previewObservers: [NSObjectProtocol] = []
+
+    /// A real, interactive News window over input-only fixtures. This path
+    /// returns before status items, migrations and production collectors start.
+    static func showNewsPreviewIfRequested() -> Bool {
+        guard UserDefaults.standard.bool(forKey: "TokenroomNewsPreview") else { return false }
+        guard let path = UserDefaults.standard.string(forKey: "TokenroomSnapshotNews"),
+              FileManager.default.fileExists(atPath: path) else {
+            NSApp.terminate(nil)
+            return true
+        }
+        let fixture = NewsCache.load(from: URL(fileURLWithPath: path).deletingLastPathComponent())
+        let suite = "TokenroomNewsPreview-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.set(FeedSource.catalog.map(\.id), forKey: NewsStore.Keys.knownSources)
+        defaults.set(Array(Set(FeedSource.catalog.filter { fixture.items[$0.id] != nil }.map { $0.partOf ?? $0.id })), forKey: NewsStore.Keys.sources)
+        defaults.set(Array(ModelFeed.defaultVendors), forKey: NewsStore.Keys.vendors)
+        defaults.set(Array(ModelFeed.defaultVendors), forKey: NewsStore.Keys.knownVendors)
+        defaults.set(NewsVoice.catalog.filter { $0.feed.map { fixture.items[$0.id] != nil } ?? false }.map(\.id), forKey: NewsStore.Keys.voices)
+        defaults.set(NewsStatusSource.catalog.filter { fixture.items[$0.id] != nil }.map(\.id), forKey: NewsStore.Keys.status)
+        defaults.set(Date.now.addingTimeInterval(-2 * 86_400).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt)
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        let settings = AppSettings(defaults: defaults)
+        settings.newsEnabled = true
+        let news = NewsRuntime.newsStore(inertDefaults: defaults)
+        let store = QuotaStore(settings: settings, clients: [], cache: SnapshotCache(directory: scratch), relay: nil, news: news)
+        news.beginVisit()
+        let hosting = NSHostingController(rootView: NewsWindowView(store: store, onOpenSettings: {}, page: .destination(.today))
+            .defaultAppStorage(defaults)
+            .environment(\.controlActiveState, .active))
+        hosting.sceneBridgingOptions = [.toolbars]
+        let window = NSWindow(contentViewController: hosting)
+        window.title = "Tokenroom News Preview"
+        window.titleVisibility = .hidden
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        window.toolbarStyle = .unified
+        let width = UserDefaults.standard.double(forKey: "TokenroomNewsPreviewWidth")
+        let height = UserDefaults.standard.double(forKey: "TokenroomNewsPreviewHeight")
+        window.setContentSize(NSSize(width: width > 0 ? max(820, width) : 1160,
+                                     height: height > 0 ? max(560, height) : 800))
+        window.isReleasedWhenClosed = false
+        window.hidesOnDeactivate = false
+        if let mode = UserDefaults.standard.string(forKey: "TokenroomNewsPreviewAppearance") {
+            window.appearance = NSAppearance(named: mode == "dark" ? .darkAqua : .aqua)
+        }
+        previewWindow = window
+        previewObservers.append(NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: scratch)
+        })
+        previewObservers.append(NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
+            NSApp.terminate(nil)
+        })
+        NSApp.setActivationPolicy(.regular)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+        return true
+    }
+
     static func runIfRequested() -> Bool {
         guard let path = UserDefaults.standard.string(forKey: "TokenroomSnapshots") else { return false }
         let output = URL(fileURLWithPath: path, isDirectory: true)
