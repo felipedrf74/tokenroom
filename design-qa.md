@@ -1,80 +1,97 @@
-# Mac News Editorial Briefing — visual QA
+# iPhone News Editorial Briefing — visual QA
+
+Scope: native iPhone News presentation implementing Felipe's selected option 1. Uncommitted source based on `ac66a4966b3779657be2cefe50d319a201b4e61f`, reviewed 12 October 2026. This is a presentation/source gate, not release qualification. Historical Mac QA is preserved at [docs/mac-news-visual-qa-20261012.md](docs/mac-news-visual-qa-20261012.md); the published Mac package is unchanged.
+
+## Visual truth and captured implementation
+
+Evidence root: `/Users/felipedominguez/Documents/ChatGPT/TokenRoom/ios-news-implementation-20261012/`.
+
+Earlier captures 01–41 are under its `screenshots/` directory; current captures 44–58 and their AX records are at the evidence root.
+
+- Exact selected source: `/Users/felipedominguez/Documents/ChatGPT/TokenRoom/ios-news-design-20261012/03-option-1.png`, 853 × 1844 pixels; SHA-256 `f3356dbdc58ac1589f662e047a7a9fc58b28885d93c420ecc4d7ee438e2c63ee`.
+- Native Today: `47-dark-reviewed.png` and `44-light-reviewed.png`, each 1170 × 2532 pixels from the task-owned iPhone 13 Simulator, 390 × 844 logical points at 3× density, iOS 27.
+- Full source/current comparison: `49-source-vs-native-reviewed.png`, selected source plus native dark and light in one image, normalized to 390 × 844 each. Reviewed together, then at the lead scale in `50-focused-lead-reviewed.png`.
+- Other current sections: `48-following-reviewed.png`, `53-skills-reviewed.png`, `55-saved-reviewed.png`. `58-iphone-news-sections.png` shows all four native sections at a common scale.
+- Adaptive evidence: `screenshots/38-largest-metrics-fixed.png`, `45-hero-undo-largest-window.png`, `45-hero-undo-largest.ax.txt`, `46-detail-undo-largest.ax.txt`; earlier maximum-size navigation/health/model captures 31–36 supplement these.
+- Model-only follows: `51-models-only-window.png` and `52-models-only-health-window.png`, with paired AX records.
+- Recovery: `56-source-failure-window.png` and `56-source-failure-retry.ax.txt`; `57-skills-unavailable-window.png` renders the honest cold-unavailable state. Its earlier Retry-response capture was interrupted; the later release-check receipt below closes that interaction.
+
+Native viewport images were saved through Device Hub's Screenshot control. Files ending `-window.png` include the Device Hub frame, typically 784 × 1684 pixels; they are not same-density app screenshots. There is no CSS viewport. The source omits OS chrome; native status/notch/navigation/tab bars remain. The comparison checks composition and visual style, not pixel-perfect type or identical publisher data. Native genuine titles are longer than some illustrative mock rows, and check/published clocks differ. Native rows scroll beneath the system floating tab bar with bottom padding allowing final actions to clear it.
+
+The approved Mac portrait artwork is reused byte-for-byte in the mobile asset catalog, SHA-256 `1e602ee9993b68c81bd673ecc751e9ad4e44a617b71c00fd19dfd15bfec6039a`. It is decorative artwork, not a claimed publisher image. Official source/lab marks use the catalog; unsupported identity uses honest initials. No new generated logo or voice portrait is introduced.
+
+## Findings, corrections and post-fix evidence
+
+| Finding | Correction | Evidence |
+|---|---|---|
+| Generic uniform cards, tall navigation chrome and oversized separate actions lost the selected editorial hierarchy | Dedicated mobile views, compact masthead, branded lead/artwork, grouped release rows and inline actions | Full/focused source comparison 49–50; sections 58 |
+| First lead layout put its actions in a separate full-width band | Integrate Read/Save in its text column; keep genuine complete headline | 05–06, final 47/50 |
+| Enlarged masthead/control glyphs overlapped; source-status columns became narrow fragments | Stack masthead/status at larger type; fix icon sizes inside 44-point targets | 30 before, 31/36/45 after |
+| Accessibility cards grew into excessively long summary walls; lifetime-download qualifier clipped | Bounded browsing previews, full reader summaries, stacked metrics and vertically wrapping download label | 35/37 before, 38 after; native reader actions 26 |
+| Independent source review: duplicate state-owning Save controls could lose Undo during reflow | One stable Save child under AnyLayout in hero and detail | Native Unsave → largest text → normal → Undo restored in both; 45–46 AX records |
+| Independent source review: model-only follows could say No sources followed | Explicit No article feeds followed; model catalog check remains separate | Native models retained in 51; Models checked with zero article feeds in 52 |
+| Small native light-mode News links and selected tab inherited the lower-contrast generic accent | Scope the existing accessible accent text token to the selected News tab | Before 41; after 44, final combined 49; independent source review |
+| Source-health failure AX label appended an extra final period | Preserve an existing final period before appending Source check details | Final source review and closeout build/typechecks; punctuation-only change after the visual captures |
+
+No confirmed P0/P1/P2 remains in the reviewed presentation sources or captured layouts. Source review and rendered visual review have distinct scopes. The earlier external Simulator interruption is historical; the release-check addendum below records the completed retry response.
+
+## Fidelity surfaces
+
+- **Typography:** scaled native serif lead/reader titles and SF controls/metadata preserve the selected editorial hierarchy. Actual full lead headlines wrap; ordinary compact rows may show a bounded title, with full content in readers. Section/ranking menus retain full accessible labels at larger sizes.
+- **Layout:** 20-point gutters, compact date/masthead, restrained section spacing, grouped divider rows and 18-point card corners. Artwork sits beside the ordinary lead's text column, then stacks for narrower widths/larger text. Following, Skills and Saved use layouts suited to choosing sources, scanning rankings and managing reading snapshots.
+- **Color:** dark charcoal and warm orange follow the selected style; light uses grouped-system-like canvas and white panels. Secondary text is light 100/100/100 and dark 170/170/170. White primary-action text uses the darker 177/84/42 fill (approximately 5.03:1). Native News links use the existing accessible text accent; this is not a claim that every OS-generated disabled/control color was audited.
+- **Images/icons:** approved portrait illustration is sharp, correctly clipped and decorative/AX-hidden. Catalog source marks, truthful initials and SF Symbols serve distinct identity/action roles. Control symbols remain fixed-size inside 44-point targets.
+- **Content:** actual supplied title/excerpt/date/source, read/New metadata, owner-qualified skill attribution, actual ranking/metric definitions and separate article/model freshness. Public voice articles and X profile-only sources remain distinguishable. Reset times stay in Usage; no fabricated X timeline or skill compatibility claim is added.
+
+## Native interactions observed
+
+All app runs used DEBUG snapshot composition with inert stores and isolated preferences; no production app or provider check was launched.
+
+- Today → native reader → Back; read marker and complete supplied summary. Hero Save/Unsave/Undo and reader Unsave/Undo, including transitions to the largest accessibility text size and back, restored the saved item.
+- Saved remove → empty → Undo restored the displayed saved date; query no-match and closing search recovered the list. Final unpinned Today → Saved was captured in 55.
+- Following source navigation and independent follow switch changed off/on. Source search for a retained version filtered the source family; closing recovered results. Curated voice directory and a profile-only voice detail were checked.
+- Trending, Downloads and Newest loaded distinct fixture order/definitions; skill detail showed owner/requirements/version/original/actions and returned to its shelf. Skills Save changed the bookmark state. Ordinary ranking choices have explicit AX names/selection; larger type uses menus.
+- Maximum text showed readable masthead/status, reachable section/rank menus and model/reader bottom actions. Final lifetime-download text wrapped completely. No spoken VoiceOver attestation is inferred from AX labels.
+- Native Share sheet opened. An attempted dismissal selected the public Open Safari action; the public GitHub original opened and returned through the system Tokenroom Back control. No share was sent. A later dismissal-only check passed; see the release-check addendum.
+- Model-only follow launch retained model cards and qualified zero article feeds; health retained its model checked date.
+- Simulated source failure retained previous stories, identified the source, and targeted Retry left the inert failed fixture honest. Skills missing-fixture bodies rendered No skills loaded with a reachable Retry skills control and no successful-check date; its later Retry completed with the honest failed state and no successful-check date.
+
+A `-newsDestination Skills` launch argument pins that AppStorage value, so its section-switch attempt is not navigation evidence (`54-skills-pinned-destination-window.png`). A subsequent launch without the argument proved section navigation to Saved. Model-only preferences were supplied solely to the inert launch's argument domain; production defaults were untouched.
+
+## Earlier visual checkpoint — executed checks and source review
+
+| Check | Result and evidence |
+|---|---|
+| Selected Mac News/Library/Discovery/source-contract/Skills/QA/presentation tests | 101 passed, zero failed/skipped; `news-final.xcresult`, `news-tests-summary.json`, `logs/news-tests-final.log` |
+| Hosted iOS MobileRuntimeTests | Five passed, zero failed/skipped; `mobile-runtime.xcresult`, `mobile-runtime-summary.json`, `logs/mobile-runtime-tests.log` |
+| Final shared typecheck | macOS/iOS/watchOS passed; `logs/shared-typecheck-closeout.log` |
+| Final unsigned generic iOS Simulator build | Build succeeded, including embedded widgets/Watch; `logs/mobile-build-closeout.log` |
+| Independent dirty-source review | Two P2 findings fixed/re-reviewed; no remaining concrete actionable bug. Additional RootView tint and AX-punctuation changes reviewed separately |
+| Final diff | Tracked/untracked source and documentation reviewed; whitespace check passed; HEAD unchanged, no version/signing change |
+
+The test runs include the functional Undo/freshness fixes and News tint. Only the final punctuation-only accessibility label change followed them; its final compile/typecheck/source review passed without rerunning the suites. The selected Mac suite emits the existing test-only State-outside-installed-View warning in NewsDiscoveryTests, with no failure. A full product suite was not rerun for this scoped presentation change. All DerivedData stays outside source; the installer script was not used.
+
+## Validation limits and release boundary
+
+Another Simulator workflow repeatedly shut down this task's device, confirmed by Felipe. Only the owned UUID `C409E3C9-807D-4F67-AB32-6E1ADAD7FCF3` was provisioned/operated; no other workflow's device was stopped or deleted. The stopped-device AX record is not a successful retry result. A subsequent uninterrupted Retry response is recorded in the addendum.
+
+At this earlier visual checkpoint, human VoiceOver speech/focus, a fresh Reduce Motion toggle/restoration, share dismissal alone and live feeds/registry delivery were unverified. The addendum closes motion, Share cancellation and the public registry contract check without claiming device transport or spoken VoiceOver. No custom animation was introduced. The fixtures cannot prove production disk persistence, notifications, private iCloud, provider authentication, signed App Group behavior or physical Watch acceptance. Existing focused tests cover persistence/isolation contracts; native fixtures deliberately keep saves in memory.
+
+At the earlier visual checkpoint, no signing/version/publication action had occurred. The later qualification uses unused mobile 1.1.1(1), documented below; no public release for it is claimed. Historical Mac publication/installation receipts remain in their dedicated report. See the [implementation note](docs/ios-news-editorial-redesign-20261012.md) and [independent QA prompt](docs/ios-news-independent-qa-prompt-20261012.md).
+
+## Release-check addendum — 12 October 2026
+
+The current source retains the selected composition. Two fresh independent P3 findings were fixed: the short hero headline label has a 44-point minimum height and rectangular hit region; Undo’s accessible name uses the retained removed snapshot, even if the lead is replaced. Native `short-title-lower-target.ax.txt`, `undo-after-hero-change.ax.txt` and `undo-original-story-restored.ax.txt` confirm those journeys.
+
+Current evidence root: `/Users/felipedominguez/Documents/ChatGPT/TokenRoom/ios-news-release-20261012/`.
+
+- `skills-unavailable-after-retry.ax.txt/.png`: completed cold Retry retains the unavailable message and no invented successful-check date.
+- `share-dismissed.ax.txt/.png`: native Share closes via Cancel, returns to the reader and sends nothing.
+- `reduce-motion-before-current.ax.txt`, `reduce-motion-on-reader.ax.txt/.png`, `reduce-motion-on-back.ax.txt`, `reduce-motion-restored.ax.txt`: Reduce Motion on, reader/Back, off restored. Previous ordinary reader/Back evidence covers motion off. External shutdowns do not count as navigation results.
+- `store-news-today-native.png`: current candidate’s native iPhone 18 Pro Max viewport, 1320 × 2868, ordinary text/dark, status bar 9:41. Actual retained public data and approved decorative artwork; no content or freshness dates redrawn. Prior iPhone 13/light/largest/four-section evidence remains valid.
+- Full final Mac suite: 780 passed; full hosted iOS suite: 34 passed; zero failed/skipped. Shared typechecks, final version Simulator build and optimized fallback pass. These supersede the smaller earlier qualification scope. Existing Mac test-only State/QoS warnings are recorded in the result bundle; no new failing test.
+- Signed 1.1.1(1) archive/export/private upload and exact uploaded artifact checks passed; Apple processed the candidate. Manual release remains selected. These are packaging/processing gates, not App Review or public availability.
+
+See [release checks](docs/ios-news-release-checks-20261012.md) for signatures, source-input binding, integration limits and remaining publication gates. Current spoken VoiceOver focus remains unverified; Felipe explicitly accepted proceeding with that limitation recorded. Native AX/large-text checks do not claim it. No production Mac was launched or installed for this iPhone change.
 
 final result: passed
-
-Scope: the native Mac News presentation reviewed before release, based on `d94a60ab1732524e211073c74789eb561321dd9c`. Review started 11 October and final captures/checks crossed into 12 October 2026 (Europe/Lisbon). This visual receipt is separate from the earlier Mac 2.4.0 and submitted mobile 1.1.0 candidate; subsequent Mac 2.4.1 delivery is recorded separately below.
-
-## Visual truth and comparison
-
-Evidence directory: `/Users/felipedominguez/Documents/ChatGPT/TokenRoom/mac-news-visual-audit-20261011/`.
-
-- Source visual truth: `selected-editorial-briefing.png`, 1487 × 1058 pixels, SHA-256 `0ddc3f7aaef01efbc494bd069e12c7474cd671131cd8799d5e586e47f0d075e3`.
-- Final implementation: `70-editorial-today-v9.png`, 2320 × 1600 pixels, native 1160 × 800 point outer window at 2× density.
-- Full-view comparison: `73-reference-vs-native-v9.png`, source and implementation in the same comparison image, each normalized by width to 1160 pixels with aspect preserved.
-- Focused comparison: `74-hero-comparison-v9.png`, real source and implementation lead regions together, each normalized by width to 780 pixels with aspect preserved. This checked readable headline, source mark, excerpt, art crop and action rather than relying on the reduced full view.
-- Final other sections: `71-editorial-following-v9.png`, `72-editorial-skills-v9.png`, `75-editorial-saved-v9.png`; summary board `76-editorial-sections-final.png`.
-- Narrow light/failure: `60-editorial-light-failure-v9.png`, 1640 × 1224 pixels, native 820 × 612 point outer window at 2×. The SwiftUI minimum is 820 × 560; native toolbar chrome clamps the observed outer height to 612. This is not a claim of a 560-point outer-window capture.
-- Skills unavailable: `61-editorial-skills-unavailable-v9.png`, same narrow/light window. Missing fixture Skills bodies deliberately simulate unreachable, with an explicit README; no real registry outage is claimed.
-
-There is no CSS viewport or browser deviceScaleFactor: the implementation is SwiftUI/AppKit. The source's pixel density was not supplied. Width normalization permits composition/style comparison, not pixel-perfect typography or same-data precision. Publisher copy, followed sources, dates, New/read metadata and native toolbar/selection chrome differ. Captures use retained actual public fixtures, with capture/check dates preserved; clocks naturally crossed midnight. The real Tokenroom icon replaces the mock's Anthropic icon in the app toolbar. System selection/accent and missing-logo monograms remain native and honest.
-
-## Findings and iteration history
-
-| Finding | Correction | Post-fix evidence |
-|---|---|---|
-| Earlier desktop used one stacked phone-style card format and oversized controls; source marks and the rail were lost | Dedicated desktop views; native-sized controls; branded inline rows; lead plus rail; grouped update columns and model grid | 20–32, then final 70–75 |
-| First implementation stacked at default width and failed to show the asset; raw appended HTML appeared in the lead | Responsive desktop composition; catalog/loose-resource-compatible `NewsEditorialArt.png`; first meaningful excerpt at parser boundary | 11–12, final 70 and 74; excerpt regression logs |
-| Narrow child-width feedback hid sidebar/rail | Width comes from containing scroll viewport, independent of already-sized children | 13 before, 14 after; final 60 |
-| Following's visible segmented label wrapped into fragments | Visually hidden segmented labels retain accessible names | 16 before, 21 and final 71 after |
-| Decoded code tokens were stripped on repeated HTML cleaning; markup-empty description hid real content | Parser distinguishes raw HTML and flattened XML, finalizes each candidate semantically, never re-cleans display/save text; due legacy caches revalidate body once | Failing `excerpt-provenance-red.log` and `legacy-excerpt-red.log`, passing regression and full-suite logs |
-| Saved models used a generic publisher letter despite an available lab asset | Resolve known public lab names through existing `LabMark`, retaining an explicit SpaceXAI alias | 31 before, 51 and final 75 after |
-| White prominent labels on the dark orange text token measured about 2.63:1 | Separate darker `newsActionFill` for Mac button/monogram backgrounds | 50 and 53, final 60 and 70; measured 5.03:1 |
-| Separated date/freshness and generous shelf spacing pushed all new-model context below first window | Group the header, combine wide date/freshness and tighten update-row padding; retain genuine long publisher titles | 40 before, 55 and final 73 after; New models heading reaches initial window |
-| Flat panels and off-center Retiring empty view weakened presentation | Existing subtle card fill and centered empty collection state | 54, then final captures |
-| Light secondary text measured about 3.8–4.0:1 | Dedicated Mac secondary text: light 100/100/100, dark 170/170/170; iOS retains its original semantic secondary | 57 before, final 60 after; measured light 5.35–5.92:1 and dark about 6.10:1 |
-
-The independent visual reviewer inspected full/focused combined images and final native captures and reported **passed**, with no remaining P0/P1/P2. Earlier blocked findings were fixed and recaptured. Optional P3: the native Skills unavailable message can be centered across the reader more explicitly. This does not prevent use or hide an action.
-
-## Five fidelity surfaces
-
-- **Typography:** native system serif lead/detail titles and SF controls/metadata preserve the editorial hierarchy. Genuine longer feed titles wrap; complete titles remain in details. Compact shelves and the release rail use smaller optical weights appropriate to scanning.
-- **Spacing/layout:** matching lead/rail panel heights, grouped columns, 12-point corners, subtle borders and restrained section spacing. Parent-width reflow retains persistent controls at the actual supported minimum. Following, Skills and Saved use layouts suited to their distinct tasks.
-- **Colors/tokens:** semantic primary text, existing card fill, orange text kept separate from button fill. Screenshot color profiles were converted to sRGB before independent contrast sampling: button 5.03:1; app metadata light 5.35–5.92:1; dark about 6.10:1. OS toolbar/disabled controls/default empty-view grays were not presented as app-wide compliance proof.
-- **Image quality/icons:** generated decorative portrait artwork is sharp and cleanly cropped; it does not pretend to be a publisher photo. Provider/lab marks reuse the approved catalog, with honest monograms where missing. Known Saved lab identity matches Models. SF icons serve controls and generic skill identity; no fabricated portraits or logos.
-- **Copy/content:** actual public publisher titles/excerpts, owner-qualified skill metadata, truthful separate freshness and explicit public-feed/X-profile distinctions. Popularity and compatibility are not equated. Missing dates/metrics/requirements and simulated failure/unavailable states retain explicit meaning.
-
-## Native interactions and validation
-
-Executed in the input-only DEBUG preview with production app left intact:
-
-- Today → story → native Back, read marker, Save → Saved → Remove → Undo.
-- Following group-scoped query: Tools & Labs + Simon gives no results; Voices reveals the profile; voice detail → Back retains group/query.
-- Skills: three distinct captured sorts, correct first-row/rank/definition changes, detail, save and persistent root library across section navigation.
-- Models: adaptive grid, real detail/context/prices and save. Announcement/commentary/status collections remain distinct; empty retirements are truthful.
-- Source detail: native search finds retained weekly story; unfollow empties it; refollow restores the retained match.
-- Native share menu opens and dismisses without sending. Public original links retain publisher/owner-qualified destinations; no skill install/execute path exists.
-- Light/narrow failure Details shows the failed source, retained-article explanation and targeted Retry. Inert retries preserve the simulated state. Skills unreachable stays honestly unloaded with reachable Retry; no fake successful-check date appears.
-- Preview closes cleanly; its process exits and owned suite/temp directory are removed. No production installation, credential read, provider check or cloud relay is part of this preview.
-
-Current final source checks (all unsigned; DerivedData outside repository):
-
-| Check | Result / evidence in the audit `logs/` directory |
-|---|---|
-| Full Mac suite | 780 tests, 0 failures; `editorial-final-v9-mac-tests.log` and its xcresult path |
-| Freshness/preview/excerpt regressions | Failing-first cases followed by green relevant tests; final suite includes all 14 new regression methods |
-| Shared typecheck | macOS, iOS, watchOS; `editorial-qualified-shared-typecheck.log` |
-| Generic iOS Simulator build | Includes widgets and Watch; `editorial-qualified-mobile-build.log` |
-| Native Mac build | `editorial-native-v9-build.log`; final test build also compiled the current source |
-| Optimized Swift 6 fallback | Compile-only manual invocation, no installer/sign/launch; `editorial-final-v9-swiftc-fallback.log` and external `fallback/Tokenroom` |
-| Loose art resource | Filename matches imageset/fallback lookup; exact-byte copy checked |
-| Diff/source review | `git diff --check` passes; independent tracked/untracked source and preview-isolation sweep found no concrete defect |
-
-Independent source review and native visual review are different evidence. Regression tests cover real parsing/HTTP migration and existing persistence/permission contracts; screenshots do not establish server delivery.
-
-## Remaining validation limits
-
-Spoken VoiceOver and complete keyboard traversal are not newly attested. Native Back was executed; Command-[ stayed source-reviewed, while this pass's computer-input backend rejected the literal bracket spelling and its alternate spelling did not dispatch the chord. The existing shortcut code was retained. No system Reduce Motion preference was changed; no custom animation was introduced.
-
-At this visual checkpoint the work was uncommitted and unreleased. The subsequent [12 October release record](docs/mac-news-release-delivery-20261012.md) tracks Mac 2.4.1(1) signing, source binding, CI, publication and installation separately. Provider authentication, signed App Group behavior, notifications and cross-device CloudKit/device delivery were not exercised by these isolated News previews. Mobile/Watch compile evidence does not replace hardware acceptance. Original shipped-build receipts remain separate.
-
-Implementation details, changed files and the reusable independent QA prompt are in [the redesign note](docs/mac-news-editorial-redesign-20261011.md).

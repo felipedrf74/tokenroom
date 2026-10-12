@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — iPhone News Editorial Briefing
+
+- iPhone News follows the selected editorial concept: a compact masthead, portrait lead artwork, official source marks and grouped release rows with inline Save and More actions.
+- Following uses branded rows with local follow switches. Skills separates its ranking, attribution and metrics; Saved groups reading snapshots with removal and Undo. Collections and reading details share the visual style.
+- Search opens on demand from the masthead, and source/collection search remains visible. A compact source-status link opens complete check/failure details and retry controls.
+- Larger text stacks controls and artwork, uses menus for section/ranking selection and keeps short browsing previews with full supplied summaries in the reader. Control icons retain 44-point tap targets.
+- Undo survives adaptive hero/reader layout changes and identifies the originally removed story if the lead changes. Short lead headlines retain a 44-point tap target. Article freshness stays distinct from model checks, and native News links use the accessible light/dark accent text color.
+
+The iPhone 1.1.1(1) release candidate is privately uploaded and processed; it has not been submitted to App Review or published. [Release checks](docs/ios-news-release-checks-20261012.md) bind source, native checks and the signed uploaded package. Mac 2.4.1 remains the published Mac package.
+
 ## 2.4.1 for Mac — released 12 October 2026
 
 Mac 2.4.1(1) is [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.4.1) and installed on both Macs. [The delivery record](docs/mac-news-release-delivery-20261012.md) binds the release to its source, exact-revision CI, public download and installation checks. Mobile 1.1.0(1) is unchanged.
@@ -9,9 +19,9 @@ Mac 2.4.1(1) is [publicly released](https://github.com/felipedrf74/tokenroom/rel
 - Today reports how many followed feeds are current, delayed or not loaded, with model freshness separately. A delayed feed no longer makes every source appear out of date.
 - Feed excerpts use the first meaningful supplied summary, clean HTML once and preserve literal code examples. Older cached excerpts refresh from their public source on its next due check without changing saved/read identity.
 
-## 2.4.0 for Mac — released 11 October 2026 / 1.1.0 for iPhone — awaiting review
+## 2.4.0 for Mac — released 11 October 2026 / 1.1.0 for iPhone — released 12 October 2026
 
-Mac 2.4.0(1) is [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.4.0) and installed on both validated Macs. Mobile 1.1.0(1) is submitted to Apple and Waiting for Review, with automatic release after approval selected; it is not publicly available yet. [The delivery record](docs/news-release-delivery-20261011.md) separates source qualification, publication, installation and remaining integration limits.
+Mac 2.4.0(1) is [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.4.0) and installed on both validated Macs. Mobile 1.1.0(1) was approved and released on 12 October 2026 at 15:07:19 UTC, confirmed by Apple’s public US and PT listings. Its earlier Waiting for Review state is retained as a dated checkpoint in the delivery record. [The delivery record](docs/news-release-delivery-20261011.md) separates source qualification, publication, installation and remaining integration limits.
 
 - Mac News readers offer native Back and Command-[ while keeping Check Now and News Settings accessible on pushed pages.
 - Saved balance references bind their amount to USD or CNY. Region changes never convert an old reference; ambiguous legacy Moonshot/DeepSeek references need explicit confirmation. Cached phone/widget/Watch meters obey the same currency guard. Monetary history and runway also require the same currency; a region change keeps percentage history and starts a new monetary segment.

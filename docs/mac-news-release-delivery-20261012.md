@@ -4,7 +4,7 @@ Mac 2.4.1(1) is [publicly released](https://github.com/felipedrf74/tokenroom/rel
 
 ## Scope and qualification
 
-Today, Following, Skills, Saved, collections and reading details use native desktop layouts, branded source marks, compact controls and decorative editorial art. Source freshness distinguishes delayed feeds from current ones; parser-boundary excerpt cleanup preserves supplied summaries and literal code examples. [The implementation note](mac-news-editorial-redesign-20261011.md) and [visual QA](../design-qa.md) contain the complete behavior, interactions, comparisons and independent review findings.
+Today, Following, Skills, Saved, collections and reading details use native desktop layouts, branded source marks, compact controls and decorative editorial art. Source freshness distinguishes delayed feeds from current ones; parser-boundary excerpt cleanup preserves supplied summaries and literal code examples. [The implementation note](mac-news-editorial-redesign-20261011.md) and [visual QA](mac-news-visual-qa-20261012.md) contain the complete behavior, interactions, comparisons and independent review findings.
 
 The source base is `d94a60ab1732524e211073c74789eb561321dd9c`. The released commit is `79d0b41f729fa48a0935d53e1e5383a0692b2a3b`, tree `172dbc88e346414e8ef99ebb6c08c2d2cdfa83dd`. All 20 reviewed Swift/art changes match the final visual-review receipt. All 211 committed production inputs match the archive manifest, excluding local signing configuration and user workspace state; SHA-256 digest `16bb1dce131f282e68fddd86f032c8b800846074eb8da9ceb365538e34d22d81`. The version was promoted before archiving. Main was fast-forward pushed using the account's existing configured admin bypass; no protection rules changed.
 

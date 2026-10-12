@@ -34,7 +34,7 @@ Preview arguments are `-TokenroomSnapshotNews <fixture-directory>/news.json`, `-
 
 Public fixtures and logs live under `/Users/felipedominguez/Documents/ChatGPT/TokenRoom/mac-news-visual-audit-20261011/`. `fixtures-v2/provenance-receipt.json` binds the exact parser to six retained public feed bodies, 117 parsed items, 35 models and three distinct actual ClawHub ranking responses. It preserves publisher/capture dates and all IDs. The failure fixture explicitly simulates the Copilot failure; it is not a newly observed outage. Original fixtures and receipts are retained. Frozen feed checks age honestly in screenshots. Skills' inert response check time means a fixture was read, not that the registry was contacted at that moment.
 
-`design-qa.md` contains the actual visual comparison, iteration history and final acceptance status. Screenshots represent native SwiftUI/AppKit, not a browser recreation. Screen-sharing chrome and window activation vary independently of product layout.
+`docs/mac-news-visual-qa-20261012.md` contains the actual visual comparison, iteration history and final acceptance status. Screenshots represent native SwiftUI/AppKit, not a browser recreation. Screen-sharing chrome and window activation vary independently of product layout.
 
 ## Changed files
 
@@ -42,11 +42,11 @@ Public fixtures and logs live under `/Users/felipedominguez/Documents/ChatGPT/To
 - Shared UI: `NewsNavigation.swift`, `NewsReaderContent.swift`, `NewsReadingViews.swift`, `SkillViews.swift`, `TokenroomTokens.swift`, new `NewsDesktopContent.swift`, `NewsDesktopDiscovery.swift`, `NewsDesktopStyle.swift`.
 - Mac: `AppDelegate.swift`, `DebugSnapshots.swift`, `NewsWindowView.swift`, new `NewsEditorialArt.imageset`.
 - Tests: `FeedTests.swift`, new `MacNewsPresentationTests.swift`.
-- Documentation: both `.grok` platform skills, `CHANGELOG.md`, this document and `design-qa.md`.
+- Documentation: both `.grok` platform skills, `CHANGELOG.md`, this document and `docs/mac-news-visual-qa-20261012.md`.
 
 ## Validation boundaries
 
-Current validation receipts and the independent source/visual reviews are listed in `design-qa.md`. Meaningful regressions cover source freshness, preview inertness, HTML summaries, code-token preservation and the real conditional-fetch migration. Native checks cover Today/story/Back/read/save, Saved Remove/Undo, group-scoped Following search, public voice detail, all three Skills sorts, skill/model details and saves, source search/follow/refollow, sharing, separate collections, narrow/light layouts and retained failure controls.
+Current validation receipts and the independent source/visual reviews are listed in `docs/mac-news-visual-qa-20261012.md`. Meaningful regressions cover source freshness, preview inertness, HTML summaries, code-token preservation and the real conditional-fetch migration. Native checks cover Today/story/Back/read/save, Saved Remove/Undo, group-scoped Following search, public voice detail, all three Skills sorts, skill/model details and saves, source search/follow/refollow, sharing, separate collections, narrow/light layouts and retained failure controls.
 
 This is an unsigned isolated News presentation check. It does not prove spoken VoiceOver, real production provider checks, notifications, CloudKit, signed App Group behavior or cross-device delivery. These are separate from this Mac-only visual change and from the earlier release's receipts. The retained Command-[ implementation is source-reviewed; this pass's native automation could not verify that chord because the input backend rejected the literal bracket key and its alternate key spelling did not dispatch it. Native Back buttons were executed successfully.
 
@@ -54,7 +54,7 @@ This is an unsigned isolated News presentation check. It does not prove spoken V
 
 Review the Mac News source released as `v2.4.1` (`79d0b41f729fa48a0935d53e1e5383a0692b2a3b`) against base `d94a60ab1732524e211073c74789eb561321dd9c`, in `tokenroom-improvements-20261004`. Include subsequent documentation-only changes and verify application-source equivalence. The original goal is to implement Felipe's selected Editorial Briefing visual concept throughout native Mac News while preserving the product's account-free reader behavior and phone presentation.
 
-Read this document, `design-qa.md`, `docs/mac-news-release-delivery-20261012.md`, both `.grok` platform skills and the actual base-to-release diff. Open the selected reference and the native implementation captures together; distinguish current source/package/CI/installation evidence from older release results. Report concrete bugs, missing scope and validation gaps with file/line, trigger, consequence and smallest fix. Do not edit, commit, release, access credentials or launch production checks. Do not run more tests unless Felipe authorizes that review to do so.
+Read this document, `docs/mac-news-visual-qa-20261012.md`, `docs/mac-news-release-delivery-20261012.md`, both `.grok` platform skills and the actual base-to-release diff. Open the selected reference and the native implementation captures together; distinguish current source/package/CI/installation evidence from older release results. Report concrete bugs, missing scope and validation gaps with file/line, trigger, consequence and smallest fix. Do not edit, commit, release, access credentials or launch production checks. Do not run more tests unless Felipe authorizes that review to do so.
 
 Inspect carefully: root library/Skills lifetime, Back and source search, transitive Unsave/Undo, raw ranking positions and sort-specific fixtures, real source freshness, first-nonempty excerpt selection, code examples and old-cache migration, viewport-derived columns, detail controls at narrow width, button contrast and known lab/source marks. Verify stale/empty/failed feeds, unfollow/refollow, missing publication/link/metrics, long/non-Latin titles, offline saved snapshots, first failure, paired-source partial health and simultaneous Skills readers. Preview/XCTest must stay isolated even if only the preview boolean is provided. No auth, login migration, cloud writes or skill execution may start.
 

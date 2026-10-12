@@ -44,6 +44,7 @@ struct RootView: View {
                 MobileSettingsView(store: store, path: $settingsPath)
             }
         }
+        .tint(tab == .news ? TokenroomTokens.accentText : Color.accentColor)
         .sheet(isPresented: $showsOnboarding, onDismiss: { store.hasOnboarded = true }) {
             OnboardingView(store: store)
         }

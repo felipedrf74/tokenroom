@@ -6,7 +6,7 @@ enum NewsControlMetrics {
         #if os(macOS)
         TokenroomTokens.newsSecondaryText
         #else
-        Color.secondary
+        MobileNewsPalette.secondary
         #endif
     }
     static var minimumHeight: CGFloat {
@@ -19,6 +19,13 @@ enum NewsControlMetrics {
 }
 
 extension View {
+    @ViewBuilder func newsReaderCanvas() -> some View {
+        #if os(iOS)
+        self.background(MobileNewsPalette.canvas)
+        #else
+        self
+        #endif
+    }
     @ViewBuilder func newsDetailLayout() -> some View {
         #if os(macOS)
         self.padding(24)
@@ -26,7 +33,8 @@ extension View {
             .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1) }
             .frame(maxWidth: 820, alignment: .leading).padding(24).frame(maxWidth: .infinity)
         #else
-        self.padding(24).frame(maxWidth: 720, alignment: .leading).frame(maxWidth: .infinity)
+        self.padding(20).frame(maxWidth: 720, alignment: .leading).frame(maxWidth: .infinity)
+            .navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
         #endif
     }
 }
@@ -61,6 +69,7 @@ struct NewsSaveButton: View {
     var compact = false
     @State private var undo = NewsRemovalUndo()
     @State private var actionProblem: String?
+    @State private var showsProblem = false
     private var saved: Bool { library.isSaved(id: item.id, aliases: item.aliases) }
     var body: some View {
         VStack(alignment: .leading) {
@@ -71,13 +80,32 @@ struct NewsSaveButton: View {
                 saveLabel.frame(minHeight: NewsControlMetrics.minimumHeight)
             }.accessibilityLabel(!saved ? "Save \(item.title)" : "Remove \(item.title) from saved")
                 .help(!saved ? "Save \(item.title)" : "Remove \(item.title) from saved")
-            if undo.item != nil {
-                Button("Undo removal") {
+            if let removed = undo.item {
+                Button {
                     actionProblem = undo.restore(in: library) ? nil : library.problem
-                }.frame(minHeight: NewsControlMetrics.minimumHeight)
+                } label: {
+                    #if os(iOS)
+                    if compact { Image(systemName: "arrow.uturn.backward").font(.system(size: 18)).frame(width: 44, height: 44) }
+                    else { Text("Undo removal") }
+                    #else
+                    Text("Undo removal")
+                    #endif
+                }.frame(minHeight: NewsControlMetrics.minimumHeight).accessibilityLabel("Undo removal of \(removed.title)")
             }
-            if let problem = library.loadProblem ?? actionProblem { Text(problem).font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText) }
-        }.onChange(of: library.problem) { _, problem in
+            if let problem = library.loadProblem ?? actionProblem {
+                #if os(iOS)
+                if compact {
+                    Button { showsProblem = true } label: { Image(systemName: "exclamationmark.circle").font(.system(size: 18)).frame(width: 44, height: 44) }
+                        .accessibilityLabel(problem + ". Show details")
+                } else { Text(problem).font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText) }
+                #else
+                Text(problem).font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
+                #endif
+            }
+        }.alert("Couldn't update Saved", isPresented: $showsProblem) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(library.loadProblem ?? actionProblem ?? "Try again.") }
+        .onChange(of: library.problem) { _, problem in
             if problem == nil { actionProblem = nil }
         }
     }
@@ -90,7 +118,11 @@ struct NewsSaveButton: View {
             Label(!saved ? "Save" : "Saved", systemImage: !saved ? "bookmark" : "bookmark.fill")
         }
         #else
-        Label(!saved ? "Save" : "Saved", systemImage: !saved ? "bookmark" : "bookmark.fill")
+        if compact {
+            Image(systemName: !saved ? "bookmark" : "bookmark.fill").font(.system(size: 18)).frame(width: 44, height: 44)
+        } else {
+            Label(!saved ? "Save" : "Saved", systemImage: !saved ? "bookmark" : "bookmark.fill")
+        }
         #endif
     }
 }
@@ -133,12 +165,14 @@ struct NewsStoryDetail: View {
                     MacNewsSourceMark(sourceID: item.sourceID, name: item.source, size: 36)
                     Text(item.source).font(.headline)
                 }
+                #else
+                HStack(spacing: 10) {
+                    MobileNewsSourceMark(sourceID: item.sourceID, name: item.source, size: 36)
+                    Text(item.source).font(.headline)
+                }
                 #endif
                 Text((item.kind ?? .officialAnnouncement).label).font(.subheadline).foregroundStyle(NewsControlMetrics.secondaryText)
                 Text(item.displayTitle).font(.system(.largeTitle, design: .serif, weight: .bold)).fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
-                #if !os(macOS)
-                Text(item.source).font(.headline)
-                #endif
                 NewsDates(published: item.publisherPublishedAt, updated: item.updatedAt)
                 if let excerpt = item.displayExcerpt { Text(excerpt).font(.body).textSelection(.enabled) }
                 if item.kind == .officialStatus {
@@ -153,7 +187,7 @@ struct NewsStoryDetail: View {
                 NewsDetailActions(library: library, item: item.bookmark())
                 if let other = item.alsoIn { Text("Also reported in \(other)").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText) }
             }.newsDetailLayout()
-        }.navigationTitle("Story")
+        }.newsReaderCanvas().navigationTitle("Story")
             .onAppear { library.markRead(id: item.stableID, aliases: item.aliasIDs) }
     }
 }
@@ -171,6 +205,7 @@ struct NewsDates: View {
 }
 
 struct NewsDetailActions: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
     @Bindable var library: NewsLibrary
     var item: NewsBookmark
     var openLabel = "Open Original"
@@ -193,18 +228,31 @@ struct NewsDetailActions: View {
         }.controlSize(.regular)
         #else
         VStack(alignment: .leading, spacing: 12) {
-            NewsSaveButton(library: library, item: item)
             if let url = item.url {
-                ShareLink(item: url) { Label("Share", systemImage: "square.and.arrow.up").frame(minHeight: NewsControlMetrics.minimumHeight) }.accessibilityLabel("Share \(item.title)")
-                Link(destination: url) { Label(openLabel, systemImage: "arrow.up.right.square").frame(minHeight: NewsControlMetrics.minimumHeight) }
+                Link(destination: url) {
+                    Label(openLabel, systemImage: "arrow.up.right").font(.subheadline.weight(.semibold))
+                        .frame(minHeight: 44).padding(.horizontal, 14)
+                        .foregroundStyle(.white).background(MobileNewsPalette.actionFill, in: RoundedRectangle(cornerRadius: 12))
+                }.buttonStyle(.plain)
                 Text(url.host ?? url.absoluteString).font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
-            } else {
-                ShareLink(item: item.title) { Label("Share title", systemImage: "square.and.arrow.up").frame(minHeight: NewsControlMetrics.minimumHeight) }
-                Text("The publisher did not supply an original link.").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
             }
-        }.buttonStyle(.bordered)
+            let layout = typeSize >= .xxLarge ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12)) : AnyLayout(HStackLayout(alignment: .top, spacing: 16))
+            layout { saveAndShare }
+            if item.url == nil { Text("The publisher did not supply an original link.").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText) }
+        }
         #endif
     }
+    #if os(iOS)
+    @ViewBuilder private var saveAndShare: some View {
+        NewsSaveButton(library: library, item: item)
+        if let url = item.url {
+            ShareLink(item: url) { Label("Share", systemImage: "square.and.arrow.up").frame(minHeight: 44) }.accessibilityLabel("Share \(item.title)")
+        } else {
+            ShareLink(item: item.title) { Label("Share title", systemImage: "square.and.arrow.up").frame(minHeight: 44) }
+        }
+    }
+    #endif
+
 }
 
 struct NewsModelDetail: View {
@@ -213,9 +261,7 @@ struct NewsModelDetail: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                #if os(macOS)
-                LabMark(vendor: model.vendor, name: model.vendorName, size: 40)
-                #endif
+                LabMark(vendor: model.vendor, name: model.vendorName, size: 40).accessibilityHidden(true)
                 Text(model.vendorName).font(.headline).foregroundStyle(NewsControlMetrics.secondaryText)
                 Text(model.shortName).font(.system(.largeTitle, design: .serif, weight: .bold)).fixedSize(horizontal: false, vertical: true)
                 NewsDates(published: model.created, updated: nil)
@@ -226,7 +272,7 @@ struct NewsModelDetail: View {
                 NewsDetailActions(library: library, item: model.bookmark())
                 Text("From OpenRouter's public model catalog.").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
             }.newsDetailLayout()
-        }.navigationTitle("Model").onAppear { library.markRead(id: "model|" + model.id) }
+        }.newsReaderCanvas().navigationTitle("Model").onAppear { library.markRead(id: "model|" + model.id) }
     }
 }
 
@@ -238,6 +284,10 @@ struct NewsSavedDetail: View {
             VStack(alignment: .leading, spacing: 20) {
                 #if os(macOS)
                 MacNewsSourceMark(name: item.publisher, size: 36)
+                #else
+                if item.kind == .skill {
+                    Image(systemName: "puzzlepiece.extension.fill").font(.largeTitle).foregroundStyle(TokenroomTokens.accentText).accessibilityHidden(true)
+                } else { MobileNewsSourceMark(name: item.publisher, size: 36) }
                 #endif
                 Text(item.publisher).font(.headline).foregroundStyle(NewsControlMetrics.secondaryText)
                 Text(item.title).font(.system(.largeTitle, design: .serif, weight: .bold)).fixedSize(horizontal: false, vertical: true)
@@ -253,42 +303,19 @@ struct NewsSavedDetail: View {
                 NewsDetailActions(library: library, item: item)
                 Text("Saved on this device \(item.savedAt.formatted(date: .abbreviated, time: .omitted)). Original content requires a connection.").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
             }.newsDetailLayout()
-        }.navigationTitle("Saved item").onAppear { library.markRead(id: item.id, aliases: item.aliases) }
+        }.newsReaderCanvas().navigationTitle("Saved item").onAppear { library.markRead(id: item.id, aliases: item.aliases) }
     }
 }
 
 struct NewsSavedList: View {
     @Bindable var library: NewsLibrary
     var query = ""
-    @State private var kind: NewsBookmark.Kind?
-    @State private var undo = NewsRemovalUndo()
-    private var items: [NewsBookmark] {
-        library.saved.filter { (kind == nil || $0.kind == kind) && NewsSearch.matches(query, title: $0.title, source: $0.publisher) }
-    }
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Menu {
-                Button("All saved") { kind = nil }
-                ForEach(NewsBookmark.Kind.allCases, id: \.self) { value in Button(value.rawValue.capitalized) { kind = value } }
-            } label: { Label(kind?.rawValue.capitalized ?? "All saved", systemImage: "line.3.horizontal.decrease").frame(minHeight: NewsControlMetrics.minimumHeight) }
-            if let problem = library.problem { Text(problem).font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText) }
-            if items.isEmpty { ContentUnavailableView("No saved items", systemImage: "bookmark", description: Text("Save stories and skills to find their details here, even when their feed changes.")) }
-            ForEach(items) { item in
-                NewsCard {
-                    NewsNavigationLink { NewsSavedDetail(item: item, library: library) } label: {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(item.publisher + " · " + item.kind.rawValue.capitalized).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText)
-                            Text(item.title).font(.system(.headline, design: .serif)).foregroundStyle(.primary)
-                        }.frame(maxWidth: .infinity, minHeight: NewsControlMetrics.minimumHeight, alignment: .leading).multilineTextAlignment(.leading)
-                    }.buttonStyle(.plain)
-                    Button("Remove", role: .destructive) { undo.remove(id: item.id, aliases: item.aliases, from: library) }.frame(minHeight: NewsControlMetrics.minimumHeight).accessibilityLabel("Remove \(item.title)")
-                }
-            }
-            if let removed = undo.item {
-                Button("Undo removal of \(removed.title)") { undo.restore(in: library) }.frame(minHeight: NewsControlMetrics.minimumHeight)
-            }
-            Text("Saved metadata and reading choices stay on this device.").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
-        }
+        #if os(macOS)
+        MacNewsSavedList(library: library, query: query)
+        #else
+        MobileNewsSavedList(library: library, query: query)
+        #endif
     }
 }
 
@@ -307,7 +334,8 @@ struct NewsSourceDetail: View {
                     Text(source.name).font(.system(.title, design: .serif, weight: .bold))
                 }
                 #else
-                Text(source.name).font(.system(.largeTitle, design: .serif, weight: .bold))
+                MobileNewsSourceMark(sourceID: source.id, name: source.name, size: 40)
+                Text(source.name).font(.system(.largeTitle, design: .serif, weight: .bold)).fixedSize(horizontal: false, vertical: true)
                 #endif
                 Text(source.kind.label).foregroundStyle(NewsControlMetrics.secondaryText)
                 Toggle("Follow in Tokenroom", isOn: followBinding).frame(minHeight: NewsControlMetrics.minimumHeight)
@@ -317,16 +345,18 @@ struct NewsSourceDetail: View {
                 if items.isEmpty, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     ContentUnavailableView.search(text: query)
                 }
-                ForEach(items, id: \.stableID) { item in
-                    NewsStoryLink(item: item, news: news, library: library)
-                }
+                #if os(iOS)
+                if !items.isEmpty { MobileNewsStoryList(items: items, news: news, library: library) }
+                #else
+                ForEach(items, id: \.stableID) { NewsStoryLink(item: $0, news: news, library: library) }
+                #endif
             }.newsDetailLayout()
-        }.navigationTitle(source.name)
+        }.newsReaderCanvas().navigationTitle(source.name)
         .onChange(of: source.id) { _, _ in query = "" }
         #if os(macOS)
         .searchable(text: $query, placement: .toolbar, prompt: "Search this source")
         #else
-        .searchable(text: $query, prompt: "Search this source")
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search this source")
         #endif
     }
     private var followBinding: Binding<Bool> {
@@ -374,12 +404,8 @@ struct NewsStoryLink: View {
         if prominent { MacNewsHero(item: item, news: news, library: library) }
         else { MacNewsStoryRow(item: item, news: news, library: library) }
         #else
-        NewsCard {
-            NewsNavigationLink { NewsStoryDetail(item: item, library: library) } label: {
-                NewsStoryRow(item: item, isNew: news.isNew(item.newsDate), isRead: library.isRead(id: item.stableID, aliases: item.aliasIDs), prominent: prominent)
-            }.buttonStyle(.plain)
-            NewsSaveButton(library: library, item: item.bookmark())
-        }
+        if prominent { MobileNewsHero(item: item, news: news, library: library) }
+        else { MobileNewsStoryRow(item: item, news: news, library: library) }
         #endif
     }
 }
