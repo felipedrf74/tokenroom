@@ -14,6 +14,8 @@ description: >-
 
 **Delivery status (12 October 2026):** Mac 2.4.1(1) is public and installed on both Macs. `docs/mac-news-release-delivery-20261012.md` is the current Mac authority, with exact source/CI/public-package/install receipts. Neither app was launched after installation. Mobile 1.1.0(1) is unchanged; its portal status was not rechecked in this Mac-only release.
 
+**iPhone delivery update (13 October 2026):** Mobile 1.1.1(1) is approved, manually released and verified on live official US/PT pages. `docs/ios-news-release-delivery-20261012.md` records that separate release and conservative cache cleanup. Fresh read-only checks confirm both Macs still match the public Mac 2.4.1(1) package; no new Mac release, installation or production launch was performed in the iPhone closeout. Historical owned phone Simulators are already absent; the pre-existing Watch and other workflows' devices remain intact.
+
 Community menu-bar extra. Glance first. Apple-native, not a web page. Bundle ID `app.tokenroom.mac`.
 
 ## Tokens (single source)

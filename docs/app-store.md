@@ -4,7 +4,7 @@ A draft for App Store Connect. Provider names appear only in the description, as
 
 ## What's New — 1.0.3
 
-Submitted and released 5 October 2026. Preserved historical text; current public version is 1.1.0, below.
+Submitted and released 5 October 2026. Preserved historical text; current public version is 1.1.1, below.
 
 This update improves usage sync and reliability across iPhone, Apple Watch, and Mac.
 
@@ -42,7 +42,7 @@ Usage readings now show when each provider was last checked and flag stale data.
 | Content rights | Yes: shows third-party content (provider names, model and feed titles) it has the right to use |
 | EU trader status (DSA) | Non-trader |
 | Tracking | None |
-| Release | 1.1.1 candidate: manual release after qualification, CI and App Review approval |
+| Release | 1.1.1 publicly released 13 October 2026 after qualification, CI, App Review approval and manual release |
 
 ## App privacy
 
@@ -164,7 +164,7 @@ Other destinations: `-TokenroomGallery home`, `-TokenroomGallery lock`, `-Tokenr
 
 ## Mobile 1.1.0 — released 12 October 2026
 
-Mobile 1.1.0(1) was submitted on 11 October and released on 12 October 2026 at 15:07:19 UTC. Official US/PT public lookups and App Store Connect Ready for Distribution confirm it. Submission `982fe0ca-d959-4411-a434-751652a1fc06` is Approved/Review Completed; build `e37ecc7d-9eef-41a7-9a94-41692a62838b` is consumed. The [earlier delivery record](news-release-delivery-20261011.md) retains its dated Waiting for Review checkpoint. Current lookup receipts are in the [1.1.1 release checks](ios-news-release-checks-20261012.md). This is the current public What's New text:
+Mobile 1.1.0(1) was submitted on 11 October and released on 12 October 2026 at 15:07:19 UTC. Official US/PT public lookups and App Store Connect Ready for Distribution confirm it. Submission `982fe0ca-d959-4411-a434-751652a1fc06` is Approved/Review Completed; build `e37ecc7d-9eef-41a7-9a94-41692a62838b` is consumed. The [earlier delivery record](news-release-delivery-20261011.md) retains its dated Waiting for Review checkpoint. Its lookup receipts are in the [1.1.1 release checks](ios-news-release-checks-20261012.md). This is the prior 1.1.0 What's New text:
 
 Read your AI briefing in Today, Following, Skills and Saved. Follow curated voices and public release/status feeds, save stories locally, and explore clearly sourced ClawHub rankings. Larger text, source search and recovery controls make news easier to browse. Saved balance references now keep their currency when you change an account region. Updated devices coordinate reset-window alerts to avoid duplicate notifications.
 
@@ -172,14 +172,14 @@ The qualified 1.1.0(1) build is attached, accurate version metadata and the nati
 
 At the 1.1.0 checkpoint, tracked versions matched the qualified archive overrides: Mac 2.4.0(1), iPhone/widgets/Watch 1.1.0(1). `version-config-equivalence.json` records the effective version match while preserving the original signed-source manifest.
 
-## Mobile 1.1.1 — submitted, awaiting review
+## Mobile 1.1.1 — released 13 October 2026
 
-Version 1.1.1 build 1 is privately uploaded and processed; Apple build `12b15493-c81e-4a63-b826-d1178056b33d`. Apple accepted submission `16200897-ca51-4994-817d-04ce82c1f1ed` on 12 October at 20:46 Europe/Lisbon; it is Waiting for Review. The attached exact build has manual release selected and is not publicly released. [The submission record](ios-news-release-delivery-20261012.md) binds source, CI, package and portal evidence. Current versions are Mac 2.4.1(1), mobile/widgets/Watch 1.1.1(1). Both mobile build numbers are consumed.
+Version 1.1.1 build 1 is publicly released; Apple build `12b15493-c81e-4a63-b826-d1178056b33d`. Apple accepted submission `16200897-ca51-4994-817d-04ce82c1f1ed` on 12 October at 20:46 Europe/Lisbon, then approved the exact build on 13 October. The authorized manual release completed and the live official US/PT pages show 1.1.1 with the What's New text below. Cached iTunes lookup results remain distinct from the live pages. [The delivery record](ios-news-release-delivery-20261012.md) binds source, both successful pre-publication CI runs, package, approval, public availability and conservative cleanup. Current versions are Mac 2.4.1(1), mobile/widgets/Watch 1.1.1(1). Both mobile build numbers are consumed.
 
-Saved draft What's New:
+Public 1.1.1 What's New (unchanged from the qualified saved draft):
 
 News has a fresh editorial design with illustrated lead stories, source icons and compact release lists. Following, Skills and Saved are easier to browse, with clearer rankings, inline actions and layouts that adapt to larger text. Reader navigation, contrast and Undo accessibility are improved.
 
 Review notes retain the existing account-free/sample-data/key/Mac/iCloud explanation. They now identify 1.1.1 and explain decorative lead artwork, adaptive editorial presentation, original story attribution/dates and ClawHub-supplied ranks. No X sign-in, skill execution or credential transfer is introduced. Sign-in-required/contact fields are unchanged.
 
-The new native Today screenshot is `ios-news-release-20261012/store-news-today-native.png` (1320 × 2868). It uses retained actual public fixture content and capture dates; no fake fresh source check. The obsolete Following placement is removed from this private version while its original remains in Asset Library. Usage, detail, widgets, Lock Screen, API keys, welcome and Watch assets remain applicable. Reloaded final saved order: Usage, detail, Home Screen widgets, Lock Screen, API keys, welcome, current Today. Smaller sizes inherit this large-display set; the saved draft receipt confirms it. See [release checks](ios-news-release-checks-20261012.md) for exact source/sign/upload binding and publication gates.
+The new native Today screenshot is `ios-news-release-20261012/store-news-today-native.png` (1320 × 2868). It uses retained actual public fixture content and capture dates; no fake fresh source check. The obsolete Following placement was removed from this version while its original remains in Asset Library. Usage, detail, widgets, Lock Screen, API keys, welcome and Watch assets remain applicable. Reloaded final saved order: Usage, detail, Home Screen widgets, Lock Screen, API keys, welcome, current Today. Smaller sizes inherit this large-display set; the saved draft receipt confirms it. See [release checks](ios-news-release-checks-20261012.md) for exact source/sign/upload binding and the completed release sequence.

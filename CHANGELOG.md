@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — iPhone News Editorial Briefing
+## 1.1.1 for iPhone — released 13 October 2026
 
 - iPhone News follows the selected editorial concept: a compact masthead, portrait lead artwork, official source marks and grouped release rows with inline Save and More actions.
 - Following uses branded rows with local follow switches. Skills separates its ranking, attribution and metrics; Saved groups reading snapshots with removal and Undo. Collections and reading details share the visual style.
@@ -8,7 +8,7 @@
 - Larger text stacks controls and artwork, uses menus for section/ranking selection and keeps short browsing previews with full supplied summaries in the reader. Control icons retain 44-point tap targets.
 - Undo survives adaptive hero/reader layout changes and identifies the originally removed story if the lead changes. Short lead headlines retain a 44-point tap target. Article freshness stays distinct from model checks, and native News links use the accessible light/dark accent text color.
 
-The iPhone 1.1.1(1) release candidate is submitted and Waiting for Review; it is not public. Source `740f9a0` and exact-source CI passed; [the submission record](docs/ios-news-release-delivery-20261012.md) keeps approval/public availability separate. [Release checks](docs/ios-news-release-checks-20261012.md) bind source, native checks and the signed uploaded package. Mac 2.4.1 remains the published Mac package.
+iPhone 1.1.1(1) is [publicly released](https://apps.apple.com/pt/app/tokenroom-ai-usage-limits/id6816126110), confirmed on the live official US/PT pages after Apple approval and manual release. Source `740f9a0`, both pre-publication CI runs and all signed inputs passed their fresh recheck. [The delivery record](docs/ios-news-release-delivery-20261012.md) separates qualification, approval, public availability and completed conservative cleanup. [Release checks](docs/ios-news-release-checks-20261012.md) retain the native and signed-package evidence. Mac 2.4.1 remains the published Mac package and both installed copies were freshly verified.
 
 ## 2.4.1 for Mac — released 12 October 2026
 

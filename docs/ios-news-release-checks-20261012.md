@@ -1,6 +1,6 @@
 # iPhone News 1.1.1(1) — release qualification
 
-Qualification checkpoint: 12 October 2026. Implementation and local qualification are complete. Source `740f9a0` is committed on main and exact-source CI passed; Apple accepted 1.1.1(1), now Waiting for Review. See the [submission record](ios-news-release-delivery-20261012.md) for current states. The detailed pre-integration checks below remain timestamped qualification evidence, not public-release proof.
+Qualification checkpoint: 12 October 2026; delivery update: 13 October. Implementation and local qualification are complete. Source `740f9a0` is on main; its CI and documentation follow-up `a48f1bc` CI passed and were freshly rechecked before publication. Apple approved 1.1.1(1), manual release completed, and live official US/PT pages confirm public 1.1.1. See the [delivery record](ios-news-release-delivery-20261012.md) for exact publication and completed cleanup receipts. The detailed pre-integration checks below remain timestamped qualification evidence.
 
 Checkout: `/Users/felipedominguez/Developer/tokenroom-improvements-20261004`.
 Current evidence: `/Users/felipedominguez/Documents/ChatGPT/TokenRoom/ios-news-release-20261012/`.
@@ -62,7 +62,7 @@ Public mobile **1.1.0** was approved and released on 12 October 2026 at **15:07:
 
 At the private draft checkpoint, **1.1.1(1)** was processed and attached to a Prepare for Submission draft. Accurate What's New and review notes were saved with manual release selected. The later submission record confirms accepted Waiting for Review status; approval cannot automatically publish this candidate. At the saved-draft checkpoint, the asset list contained seven screenshots, in order: Usage, detail, Home Screen widgets, Lock Screen, API keys, welcome, then the current native Today screenshot. The obsolete Following placement is absent and its source asset is retained in Asset Library. Smaller sizes inherit this set; unchanged Watch assets remain applicable. A reload confirms saved build/notes/assets and manual release in `asc-1.1.1-draft-receipt.json`; `asc-new-news-preview.png` shows the uploaded News asset.
 
-Pre-integration sequence (source/CI/submission stages are now completed in the submission record):
+Release sequence (all stages completed; historical qualification and current delivery receipts remain separate):
 
 1. Complete final independent documentation/source/diff review. Spoken VoiceOver is an accepted recorded limitation, per Felipe’s explicit reply on 12 October.
 2. Recheck clean scope and signed input hashes; commit the qualified change, push main without overwriting unrelated work, and wait for exact-revision CI.
@@ -71,6 +71,8 @@ Pre-integration sequence (source/CI/submission stages are now completed in the s
 5. Preserve signed archives/dSYMs/IPAs and evidence. Clean only proven redundant task-owned temporary files/devices; never globally shut down/delete Simulators or another workflow's artifacts.
 
 Mac 2.4.1 publication/install evidence remains in its dedicated delivery record. This iPhone-only release does not publish or reinstall a new Mac binary.
+
+The post-release delivery record confirms approval of the exact build, the manual release, live official US/PT 1.1.1 pages and the fresh 198-input/package/CI binding. Cached iTunes lookup responses remain on 1.1.0 with Akamai cache-hit headers and are retained as distinct observations. Four manifest-owned cache directories were removed only after verified public availability and retained log/recovery checks. Both owned phone UUIDs were already absent; no Simulator operation was performed and the pre-existing Watch remains intact.
 
 ## Explicit limits and assumptions
 

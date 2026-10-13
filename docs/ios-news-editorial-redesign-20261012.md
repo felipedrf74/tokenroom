@@ -1,6 +1,6 @@
 # iPhone News Editorial Briefing — implementation
 
-Status: implementation complete and integrated as `740f9a0`; exact-source CI passed. Apple accepted mobile 1.1.1(1), now Waiting for Review with manual release selected. Approval and public availability remain pending. [Submission record](ios-news-release-delivery-20261012.md) is the current delivery authority; [release checks](ios-news-release-checks-20261012.md) preserve detailed qualification. Public mobile 1.1.0 and the published Mac 2.4.1 package are distinct releases.
+Status on 13 October: implementation complete and integrated as `740f9a0`; exact-source and documentation CI passed. Apple approved mobile 1.1.1(1), manual release completed, and the live official US/PT pages confirm public 1.1.1. Conservative cache cleanup is complete with source/packages/evidence retained. [Delivery record](ios-news-release-delivery-20261012.md) is the current authority; [release checks](ios-news-release-checks-20261012.md) preserve detailed qualification. Prior public mobile 1.1.0 and the published Mac 2.4.1 package remain distinct releases.
 
 ## Selected direction
 
