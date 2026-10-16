@@ -77,13 +77,17 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
-          # Only this workflow's own summaries carry review state.
+          # Only this workflow's own summaries carry review state. gh prints
+          # each matching body base64-encoded on its own line.
           gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
-            --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | test("^<!-- claude-review round=[0-9]+ head=[0-9a-f]{40} -->")) | @json' \
-            > "$RUNNER_TEMP/earlier.jsonl"
-          count="$(wc -l < "$RUNNER_TEMP/earlier.jsonl" | tr -d ' ')"
+            --jq '.[] | select(.user.login == "github-actions[bot]") | .body | select(test("^<!-- claude-review round=[0-9]+ head=[0-9a-f]{40} -->")) | @base64' \
+            > "$RUNNER_TEMP/earlier.b64"
+          count="$(grep -c . "$RUNNER_TEMP/earlier.b64" || true)"
           round=$((count + 1))
-          last="$(tail -n 1 "$RUNNER_TEMP/earlier.jsonl" | jq -r 'fromjson | .body' | sed -nE '1s/^<!-- claude-review round=[0-9]+ head=([0-9a-f]{40}) -->.*/\1/p')"
+          last=""
+          if [ "$count" -gt 0 ]; then
+            last="$(tail -n 1 "$RUNNER_TEMP/earlier.b64" | base64 -d | sed -nE '1s/^<!-- claude-review round=[0-9]+ head=([0-9a-f]{40}) -->.*/\1/p')"
+          fi
           from="$(git merge-base "origin/${BASE_REF}" HEAD)"
           scope="the whole change"
           if [ "$round" -gt 3 ] && [ -n "$last" ] && git merge-base --is-ancestor "$last" HEAD \
@@ -97,7 +101,10 @@ jobs:
             echo "from=${from}"
             echo "scope=${scope}"
             echo "earlier<<${delimiter}"
-            jq -r 'fromjson | .body' "$RUNNER_TEMP/earlier.jsonl" | tail -c 20000
+            while IFS= read -r encoded; do
+              printf '%s' "$encoded" | base64 -d
+              printf '\n\n'
+            done < "$RUNNER_TEMP/earlier.b64" | tail -c 20000
             echo "${delimiter}"
           } >> "$GITHUB_OUTPUT"
 
@@ -134,7 +141,7 @@ jobs:
             </earlier-reviews>
           claude_args: >-
             --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*)"
-            --disallowedTools "Edit,Write,NotebookEdit,WebFetch,WebSearch,Bash(*--output*),Bash(*--no-index*),Bash(*--contents*),Bash(*/proc/*),Read(//proc/**),Read(//home/runner/work/_temp/**)"
+            --disallowedTools "Edit,Write,NotebookEdit,WebFetch,WebSearch,Bash(*--output*),Bash(*--no-index*),Bash(*--contents*),Bash(*/proc/*),Read(//proc/**),Read(//home/runner/work/_temp/**),Read(./.git/**),Read(//home/runner/work/**/.git/**)"
 
       - name: Post the review summary
         if: ${{ steps.credential.outputs.present == 'true' && steps.claude.outputs.execution_file != '' }}
