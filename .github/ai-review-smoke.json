@@ -1,0 +1,7 @@
+{
+  "purpose": "Controlled advisory review activation verification",
+  "fixtureVersion": 1,
+  "applicationRuntime": false,
+  "expectedAccess": "Read-only review and a marked summary comment",
+  "mergePolicy": "Close this verification pull request without merging"
+}
