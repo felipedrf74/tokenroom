@@ -108,6 +108,24 @@ jobs:
             echo "${delimiter}"
           } >> "$GITHUB_OUTPUT"
 
+      # CLAUDE_CODE_SUBPROCESS_ENV_SCRUB needs bubblewrap on Linux runners. The
+      # pinned action installs it only when allowed_non_write_users is set, which
+      # this workflow never sets, so install the same two packages here.
+      - name: Install subprocess isolation dependencies
+        if: ${{ steps.credential.outputs.present == 'true' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends bubblewrap socat; then
+              exit 0
+            fi
+            echo "apt-get attempt ${attempt} failed, retrying..."
+            sleep 5
+          done
+          exit 1
+
       - uses: anthropics/claude-code-action@12dd8d74c712f5f3669365b2369b558c495b1104 # v1.0.238
         id: claude
         if: ${{ steps.credential.outputs.present == 'true' }}
