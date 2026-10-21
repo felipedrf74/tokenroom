@@ -385,24 +385,40 @@ enum CredentialReaders {
         }
     }
 
+    /// A Claude item that is there but won't be usable, which waiting doesn't change: its secret
+    /// isn't a login, or its own access list was read and doesn't trust `/usr/bin/security`, so
+    /// it's never read. A read that fails now throws `ProviderError.unreachable` instead.
+    struct UnusableClaudeItem: Error, Equatable {}
+
     /// One Claude item by its service and account: the item a saved grant renews, which another
     /// may outrank in `claudeAuth`. Read the same quiet way (access list first, then
-    /// `/usr/bin/security` only where it's trusted). Nil when the item isn't there; throws when it
-    /// can't be read now, so a grant waiting for it is kept.
+    /// `/usr/bin/security` only where it's trusted). Nil when the item isn't there; throws
+    /// `unreachable` when it can't be read now, so a grant waiting for it is kept, and
+    /// `UnusableClaudeItem` when it's there but can't take a grant. `access` stands in for the
+    /// item's own access list, looked up by service and account.
     static func claudeItem(
         service: String,
         account: String,
         exists: (String, String) -> Bool? = { claudeItemExists(service: $0, account: $1) },
-        access: (String) -> ClaudeKeyAccess = { claudeKeyAccess(service: $0) },
+        access: ((String) -> ClaudeKeyAccess)? = nil,
         security: (String, String?) -> SecurityPasswordResult = { securityPassword(service: $0, account: $1) }
     ) throws -> ClaudeAuth? {
         guard !account.isEmpty else { throw ProviderError.unreachable }
         if exists(service, account) == false { return nil }
-        guard access(service).trustsSecurityTool else { throw ProviderError.unreachable }
+        let policy = access.map { $0(service) } ?? claudeKeyAccess(service: service, account: account)
+        guard policy.trustsSecurityTool else {
+            if policy.wasRead { throw UnusableClaudeItem() }
+            throw ProviderError.unreachable
+        }
         switch security(service, account) {
         case .value(let value):
             guard let raw = present(value) else { throw ProviderError.unreachable }
-            return try parseClaudeAuth(raw, account: account, service: service)
+            do {
+                return try parseClaudeAuth(raw, account: account, service: service)
+            } catch {
+                // Read in full, and not a login (Claude Code signed out of it, say).
+                throw UnusableClaudeItem()
+            }
         case .missing:
             return nil
         case .unavailable:
@@ -495,6 +511,9 @@ enum CredentialReaders {
         var hasPartitionList: Bool = false
         var trustedPaths: [String] = []
         var trustsThisApp: Bool = false
+        /// The access list was read. False when the Keychain didn't answer (locked, say), so
+        /// whether the item trusts the tool isn't known yet.
+        var wasRead: Bool = false
 
         var trustsSecurityTool: Bool {
             if hasPartitionList {
@@ -504,10 +523,11 @@ enum CredentialReaders {
         }
     }
 
-    static func claudeKeyAccess(service: String) -> ClaudeKeyAccess {
+    /// With `account`, the access list of that one item, not of whichever item has the service.
+    static func claudeKeyAccess(service: String, account: String? = nil) -> ClaudeKeyAccess {
         let context = LAContext()
         context.interactionNotAllowed = true
-        let query: [String: Any] = [
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecReturnRef as String: true,
@@ -515,6 +535,9 @@ enum CredentialReaders {
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
             kSecUseAuthenticationContext as String: context,
         ]
+        if let account {
+            query[kSecAttrAccount as String] = account
+        }
         let (status, item) = KeychainGate.copyMatching(query)
         guard status == errSecSuccess, let item, CFGetTypeID(item) == SecKeychainItemGetTypeID() else {
             return ClaudeKeyAccess()
@@ -527,7 +550,7 @@ enum CredentialReaders {
         guard SecAccessCopyACLList(access, &list) == errSecSuccess, let acls = list as? [SecACL] else {
             return ClaudeKeyAccess()
         }
-        var found = ClaudeKeyAccess()
+        var found = ClaudeKeyAccess(wasRead: true)
         for acl in acls {
             let authorizations = SecACLCopyAuthorizations(acl) as? [String] ?? []
             let isPartition = authorizations.contains(kSecACLAuthorizationPartitionID as String)
