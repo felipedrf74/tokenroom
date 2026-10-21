@@ -86,7 +86,7 @@ final class RelayPublisherTests: XCTestCase {
         cloud.release()
         let sent = await sending.value
         XCTAssertEqual(cloud.savedAlerts, ["a1"])
-        XCTAssertEqual(sent, ["a1"], "a2 and a3 wait in the ledger for sync to come back")
+        XCTAssertEqual(sent.saved, ["a1"], "a2 and a3 wait in the ledger for sync to come back")
         XCTAssertEqual(publisher.state, .off)
     }
 }
