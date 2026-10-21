@@ -402,6 +402,29 @@ final class LoginSessionTests: XCTestCase {
         XCTAssertFalse(patched.contains("access-old"), patched)
     }
 
+    /// A login the in-place edit can't patch (here, no expiry to replace) is rewritten whole, and
+    /// compactly, the way Claude Code writes its Keychain item.
+    func testAClaudeLoginRewrittenWholeStaysCompact() throws {
+        let raw = #"{"mcpOAuth":{"accessToken":"other"},"claudeAiOauth":{"accessToken":"access-old","refreshToken":"refresh-old"},"note":"keep me"}"#
+        let patched = try XCTUnwrap(OAuthRefresh.patchClaude(
+            raw: raw,
+            accessToken: "access-new",
+            refreshToken: "refresh-new",
+            expiresAtMs: 1_800_028_800_000,
+            previousAccess: "access-old",
+            previousRefresh: "refresh-old",
+            previousExpiresAtMs: nil
+        ))
+        XCTAssertFalse(patched.contains("\n"), patched)
+        XCTAssertFalse(patched.contains("\": "), patched)
+        let auth = try CredentialReaders.parseClaudeAuth(patched, account: "tester", service: "svc")
+        XCTAssertEqual(auth.accessToken, "access-new")
+        XCTAssertEqual(auth.refreshToken, "refresh-new")
+        XCTAssertEqual(auth.expiresAtMs, 1_800_028_800_000)
+        XCTAssertTrue(patched.contains(#""note":"keep me""#), patched)
+        XCTAssertTrue(patched.contains(#""mcpOAuth":{"accessToken":"other"}"#), patched)
+    }
+
     func testCodexRenewalLeavesTheAPIKeyAlone() async throws {
         let folder = try makeFolder()
         let file = folder.appendingPathComponent("auth.json")

@@ -201,7 +201,8 @@ enum OAuthRefresh {
            ) {
             return surgical
         }
-        return rewriteObject(raw) { root in
+        // Compact, as Claude Code writes its Keychain item.
+        return rewriteObject(raw, pretty: false) { root in
             let expires = NSNumber(value: Int64(expiresAtMs.rounded()))
             if var nested = root["claudeAiOauth"] as? [String: Any] {
                 writeToken(accessToken, camel: "accessToken", snake: "access_token", into: &nested)
@@ -374,13 +375,19 @@ enum OAuthRefresh {
         }
     }
 
-    private static func rewriteObject(_ raw: String, _ edit: (inout [String: Any]) -> [String: Any]?) -> String? {
+    /// The whole login parsed, edited, and written out again. `pretty` indents it, as the CLIs'
+    /// auth files are.
+    private static func rewriteObject(_ raw: String, pretty: Bool = true, _ edit: (inout [String: Any]) -> [String: Any]?) -> String? {
+        var options: JSONSerialization.WritingOptions = [.sortedKeys, .withoutEscapingSlashes]
+        if pretty {
+            options.insert(.prettyPrinted)
+        }
         guard let data = raw.data(using: .utf8),
               let parsed = try? JSONSerialization.jsonObject(with: data),
               var root = parsed as? [String: Any],
               let edited = edit(&root),
               JSONSerialization.isValidJSONObject(edited),
-              let out = try? JSONSerialization.data(withJSONObject: edited, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
+              let out = try? JSONSerialization.data(withJSONObject: edited, options: options),
               let text = String(data: out, encoding: .utf8)
         else { return nil }
         return text
