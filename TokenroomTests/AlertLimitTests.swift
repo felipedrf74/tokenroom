@@ -247,6 +247,18 @@ final class AlertLimitTests: XCTestCase {
         XCTAssertEqual(due.map(\.title), [current.title], "Saying when it runs out as of the last reading")
         XCTAssertTrue(due.first?.body.hasPrefix("75% used") == true, due.first?.body ?? "")
 
+        // No newer reading overnight (the check on waking failed): its run-out came and went, so
+        // it doesn't go out in the morning quoting it.
+        var asleep = AlertLedger()
+        let held = try raise(&asleep)
+        asleep.process([], preferences: quiet, now: late.addingTimeInterval(2 * 3600))
+        XCTAssertEqual(asleep.pending.map(\.alert.id), [held.id], "Still ahead of its run-out")
+        asleep.process([], preferences: quiet, now: overnight)
+        XCTAssertEqual(asleep.pending.map(\.alert.id), [held.id], "Within the hour after it")
+        XCTAssertTrue(asleep.due(preferences: quiet, now: morning).isEmpty, "Its run-out came and went overnight")
+        asleep.process([], preferences: quiet, now: morning)
+        XCTAssertTrue(asleep.pending.isEmpty)
+
         // No longer on course before the reset: dropped, and back on course it can warn again.
         var eased = AlertLedger()
         _ = try raise(&eased)
