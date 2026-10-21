@@ -671,6 +671,31 @@ final class AlertTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testAChoiceChangedOnAMacKeepsTheSharedTimeZone() throws {
+        // The shared copy has the iPhone's zone; this Mac is somewhere else.
+        let phoneZone = TimeZone.current.identifier == "Pacific/Chatham" ? "Asia/Kathmandu" : "Pacific/Chatham"
+        let suite = "tokenroom.tests.\(Self.self)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = AppSettings(defaults: defaults)
+        var shared = preferences
+        shared.timeZoneID = phoneZone
+        shared.updatedAt = now
+        settings.alertPreferences = shared
+        let store = QuotaStore(settings: settings, clients: [], cache: SnapshotCache(directory: try makeFolder()))
+
+        store.updateAlertPreferences({ $0.resets = false }, now: now.addingTimeInterval(60))
+        let mac = settings.alertPreferences
+        XCTAssertFalse(mac.resets)
+        XCTAssertEqual(mac.updatedAt, now.addingTimeInterval(60))
+        XCTAssertEqual(mac.timeZoneID, phoneZone, "Quiet hours stay the iPhone's night")
+        let resolution = AlertPreferencesSync.resolve(base: shared, local: mac, remote: shared)
+        XCTAssertTrue(resolution.needsPublish)
+        XCTAssertEqual(resolution.preferences.timeZoneID, phoneZone, "And so does the shared copy")
+    }
+
     func testTheCopyChangedLastWins() {
         var mac = AlertPreferences()
         mac.touch(now: now, timeZone: TimeZone(identifier: "Europe/Madrid")!)

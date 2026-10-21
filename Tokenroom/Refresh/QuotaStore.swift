@@ -452,7 +452,8 @@ final class QuotaStore {
         var preferences = settings.alertPreferences
         change(&preferences)
         guard preferences != settings.alertPreferences else { return }
-        preferences.touch(now: now)
+        // Dated only: quiet hours keep the shared copy's time zone, the iPhone's.
+        preferences.updatedAt = now
         settings.alertPreferences = preferences
         guard relay != nil else { return }
         Task { _ = await currentAlertPreferences() }
