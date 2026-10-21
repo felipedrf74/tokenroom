@@ -631,6 +631,67 @@ final class FeedTests: XCTestCase {
         XCTAssertTrue(read.isComplete)
     }
 
+    func testGoogleDeepMindAndGeminiShowAPostTheyShareOnce() throws {
+        let gemini = try XCTUnwrap(FeedSource.catalog.first { $0.id == "gemini" })
+        let deepmind = try XCTUnwrap(FeedSource.catalog.first { $0.id == "deepmind" })
+        var cache = NewsCache()
+        cache.items = [
+            "gemini": [
+                FeedItem(id: "g1", title: "Gemini 3 Flash is here", link: URL(string: "https://blog.google/products/gemini/gemini-3-flash/?utm_source=rss"), published: utc(2026, 10, 20, 15), source: "Google Gemini"),
+                FeedItem(id: "g2", title: "Try Gemini in Chrome", link: URL(string: "https://blog.google/products/gemini/gemini-in-chrome/"), published: utc(2026, 10, 19), source: "Google Gemini"),
+            ],
+            "deepmind": [
+                FeedItem(id: "d1", title: "Gemini 3 Flash: frontier intelligence built for speed", link: URL(string: "https://deepmind.google/discover/blog/gemini-3-flash/"), published: utc(2026, 10, 20, 16), source: "Google DeepMind"),
+                FeedItem(id: "d2", title: "Try Gemini in Chrome", link: URL(string: "https://www.blog.google/products/gemini/gemini-in-chrome"), published: utc(2026, 10, 19, 1), source: "Google DeepMind"),
+                FeedItem(id: "d3", title: "AlphaFold at five", link: URL(string: "https://deepmind.google/discover/blog/alphafold-at-five/"), published: utc(2026, 10, 18), source: "Google DeepMind"),
+            ],
+        ]
+        let shown = cache.announcements(from: [gemini, deepmind])
+        XCTAssertEqual(shown.count, 3, "The same post on both blogs shows once, however its link is written")
+        XCTAssertNotNil(shown.first { $0.title.contains("Gemini 3 Flash") }?.alsoIn, "…noting the other blog")
+        XCTAssertNotNil(shown.first { $0.title == "Try Gemini in Chrome" }?.alsoIn)
+        XCTAssertTrue(shown.contains { $0.title == "AlphaFold at five" })
+
+        // Changelogs link each entry to its own anchor on one page: those stay apart.
+        var anchors = NewsCache()
+        let cursor = try XCTUnwrap(FeedSource.catalog.first { $0.id == "cursor" })
+        anchors.items["cursor"] = (1...3).map { FeedItem(id: "c\($0)", title: "Release \($0)", link: URL(string: "https://cursor.com/changelog#1-\($0)"), published: utc(2026, 10, $0), source: "Cursor") }
+        XCTAssertEqual(anchors.announcements(from: [cursor]).count, 3)
+    }
+
+    func testOpenCodesPullRequestArtifactsAreLeftOut() throws {
+        let opencode = try XCTUnwrap(FeedSource.catalog.first { $0.id == "opencode" })
+        let atom = Data("""
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><id>a</id><title>PR #38252 verification videos</title><link href="https://github.com/anomalyco/opencode/releases/tag/pr-38252"/><updated>2026-10-21T00:00:00Z</updated></entry>
+          <entry><id>b</id><title>v1.2.28</title><link href="https://github.com/anomalyco/opencode/releases/tag/v1.2.28"/><updated>2026-10-20T00:00:00Z</updated></entry>
+        </feed>
+        """.utf8)
+        XCTAssertEqual(FeedParser.items(from: atom, source: opencode).map(\.title), ["v1.2.28"])
+    }
+
+    func testTheSkillsLogShowsADaysUpdatesOnceAndWholeWords() throws {
+        let skills = try XCTUnwrap(FeedSource.catalog.first { $0.id == "claude-skills" })
+        func entry(_ sha: String, _ title: String, _ time: String) -> String {
+            "<entry><id>tag:github.com,2008:Grit::Commit/\(sha)</id><link rel=\"alternate\" href=\"https://github.com/anthropics/skills/commit/\(sha)\"/><title>\(title)</title><updated>\(time)</updated></entry>"
+        }
+        let atom = Data("""
+        <feed xmlns="http://www.w3.org/2005/Atom">
+        \(entry("a3", "Update claude-api skill: add guidance for structured outp…", "2026-10-21T18:00:00Z"))
+        \(entry("a2", "Update claude-api skill (#1601)", "2026-10-21T12:00:00Z"))
+        \(entry("p1", "Update pdf skill (#1600)", "2026-10-21T11:00:00Z"))
+        \(entry("n1", "Add discernment-nudge skill (#1553)", "2026-10-21T10:00:00Z"))
+        \(entry("a1", "Update claude-api skill (#1590)", "2026-10-20T09:00:00Z"))
+        </feed>
+        """.utf8)
+        let items = FeedParser.items(from: atom, source: skills)
+        XCTAssertEqual(items.map { $0.id.components(separatedBy: "/").last }, ["a3", "p1", "n1", "a1"], "One row per thing updated a day, the newest; a new skill always shows")
+        XCTAssertEqual(items.first?.displayTitle, "Update claude-api skill: add guidance for structured…", "GitHub's cut word goes; the ellipsis stays")
+        XCTAssertEqual(FeedParser.wholeWords("Short title"), "Short title")
+        XCTAssertEqual(FeedParser.wholeWords("Trailing space …"), "Trailing space…")
+        XCTAssertEqual(FeedParser.wholeWords("Onewordcutoff…"), "Onewordcutoff…", "Nothing to cut back to")
+    }
+
     func testCommitsWithTheSameMessageStayApartAndShowWithoutTheirPullRequestNumber() throws {
         func entry(_ sha: String, _ title: String, _ day: Int) -> String {
             """

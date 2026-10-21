@@ -81,8 +81,8 @@ struct NewsCache: Codable, Equatable, Sendable {
             let keys: [String]
             if item.kind == .officialAnnouncement {
                 // A feed whose entries share titles (commits) is matched by link and ID only.
-                let byTitle = feeds[feed]?.repeatsTitles == true ? "item \(feed)|\(item.id)" : "title \(product) \(item.duplicateKey)"
-                keys = [item.link.map { "official link \($0.absoluteString)" }, item.canonicalID, byTitle].compactMap { $0 }
+                let byTitle = feeds[feed]?.isCommitLog == true ? "item \(feed)|\(item.id)" : "title \(product) \(item.duplicateKey)"
+                keys = [item.link.map { "official link \(Self.linkKey($0))" }, item.link.flatMap(Self.googlePostKey), item.canonicalID, byTitle].compactMap { $0 }
             } else { keys = ["item \(feed)|\(item.id)"] }
             let matches = Set(keys.compactMap { positions[$0] })
             if let position = matches.min(), var winner = kept[position] {
@@ -111,6 +111,31 @@ struct NewsCache: Codable, Equatable, Sendable {
             keptFeeds.append(feed)
         }
         return Array(kept.compactMap { $0 }.sorted(by: newestFirst).prefix(limit))
+    }
+
+    /// A link as the same page however it's written: host case and `www.`, a trailing slash, and
+    /// tracking parameters (`utm_…`) aside. The fragment stays: changelogs link each entry to its
+    /// own anchor on one page.
+    static func linkKey(_ url: URL) -> String {
+        guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: true) else { return url.absoluteString }
+        parts.scheme = parts.scheme?.lowercased()
+        parts.host = parts.host.map { host in
+            let host = host.lowercased()
+            return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        }
+        if parts.path.count > 1, parts.path.hasSuffix("/") { parts.path.removeLast() }
+        let query = parts.queryItems?.filter { !$0.name.lowercased().hasPrefix("utm_") }
+        parts.queryItems = query?.isEmpty == true ? nil : query
+        return parts.string ?? url.absoluteString
+    }
+
+    /// Google posts some stories on both its Keyword blog and DeepMind's, under the same slug
+    /// (`blog.google/…/gemini-3/`, `deepmind.google/…/gemini-3/`): one post, shown once.
+    static func googlePostKey(_ url: URL) -> String? {
+        guard let host = url.host?.lowercased(), ["blog.google", "deepmind.google"].contains(host) else { return nil }
+        let slug = url.pathComponents.last { $0 != "/" }?.lowercased() ?? ""
+        guard slug.count > 3, !["blog", "discover", "technology", "products"].contains(slug) else { return nil }
+        return "google post \(slug)"
     }
 
     /// A feed's name as a place an entry also appeared: "Claude Code releases", or "Claude Code
