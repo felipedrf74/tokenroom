@@ -92,9 +92,11 @@ News follows, saved metadata and read state stay on this device. They are not re
 ## What Tokenroom does not store or send
 
 - another tool's login, beyond the short-lived Claude, Grok Build, and Codex recovery described above (on the iPhone, a future phone login would be Tokenroom’s own item on that iPhone, not a copy of another tool’s login and not the Mac’s recovery item)
-- private account email addresses, display names, account IDs, or organization names. Public publisher and skill-owner names are intentionally retained as News attribution
+- private account email addresses, display names, account IDs, or organization names, beyond the iCloud account fingerprint described below. Public publisher and skill-owner names are intentionally retained as News attribution
 - prompts, chats, or file contents
 - payment details
+
+If you delete Tokenroom's data in iCloud settings, each Mac and iPhone that notices remembers it, so it doesn't put the data back on its own. To tell which iCloud account it was for, it keeps a short one-way fingerprint of the anonymous ID CloudKit gives Tokenroom for that account (the first 8 hex characters of its SHA-256), in that device's local settings: the app's own preferences on a Mac, the App Group settings on an iPhone. It's kept only after such a deletion, and removed when you start again (turning Send readings to iCloud off and on on the Mac, or Delete Tokenroom Data from iCloud on the iPhone) or when Tokenroom finds its data back. It never leaves the device and is never put in an iCloud record.
 
 Tokenroom does not send traffic through a third party. Its usage requests identify themselves as Tokenroom, except two that must look like the tool whose login they use: Claude's usage call sends Claude Code's client name, and Devin's sends the Devin app's client details with its key. Renewing Claude, Grok Build, or Codex calls that tool's own token host with the refresh token already on this Mac.
 
