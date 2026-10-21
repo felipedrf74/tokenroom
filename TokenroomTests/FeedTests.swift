@@ -334,6 +334,64 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(result.cache.unreadable, ["claude-code"])
     }
 
+    func testADocumentWithNoEntriesKeepsWhatWasCached() async {
+        defer { unstubNetwork() }
+        let cached = [FeedItem(id: "old", title: "2.1.282", link: URL(string: "https://example.com/2-1-282"), published: utc(2026, 9, 24), source: "Claude Code")]
+        let now = utc(2026, 9, 25, 12)
+        for body in ["<error>rate limited</error>", "<html><body><p>Sign in to the Wi-Fi</p></body></html>", "<rss version=\"2.0\"><channel><title>Changelog</title></channel></rss>"] {
+            stubNetwork { request in request.url == ModelFeed.url ? (200, Self.noModels) : (200, Data(body.utf8)) }
+            var cache = NewsCache()
+            cache.items["claude-code"] = cached
+            let result = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], now: now).cache
+            XCTAssertEqual(result.items["claude-code"]?.map(\.id), ["old"], "\(body) leaves the last items")
+            XCTAssertEqual(result.unreadable, ["claude-code"], "\(body) is a failed read")
+            XCTAssertNil(result.sourceChecks?["claude-code"]?.succeededAt, "\(body) isn't a successful check")
+        }
+
+        // An empty feed is taken at its word only when nothing was cached.
+        let fresh = await NewsFetcher.refresh(NewsCache(), sources: [claudeCode], following: [], now: now).cache
+        XCTAssertEqual(fresh.items["claude-code"], [])
+        XCTAssertNil(fresh.unreadable)
+        XCTAssertEqual(fresh.sourceChecks?["claude-code"]?.succeededAt, now)
+    }
+
+    func testAFeedOfOnlyPrereleasesKeepsTheLastReleases() async {
+        defer { unstubNetwork() }
+        let alphas = Data("""
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><id>tag:example,2008:Repository/1/v0.158.0-alpha.2</id><updated>2026-09-25T10:00:00Z</updated><link rel="alternate" href="https://example.com/v0.158.0-alpha.2"/><title>0.158.0-alpha.2</title></entry>
+          <entry><id>tag:example,2008:Repository/1/v0.158.0-alpha.1</id><updated>2026-09-25T09:00:00Z</updated><link rel="alternate" href="https://example.com/v0.158.0-alpha.1"/><title>0.158.0-alpha.1</title></entry>
+        </feed>
+        """.utf8)
+        stubNetwork { request in request.url == ModelFeed.url ? (200, Self.noModels) : (200, alphas) }
+        let releases = FeedSource(id: "codex-releases", name: "Codex", url: URL(string: "https://example.com/releases.atom")!, skipsPrereleases: true)
+        var cache = NewsCache()
+        cache.items[releases.id] = [FeedItem(id: "v0.157.0", title: "0.157.0", link: URL(string: "https://example.com/v0.157.0"), published: utc(2026, 9, 24), source: "Codex")]
+        let now = utc(2026, 9, 25, 12)
+        let result = await NewsFetcher.refresh(cache, sources: [releases], following: [], now: now).cache
+        XCTAssertEqual(result.items[releases.id]?.map(\.id), ["v0.157.0"], "Nothing left after skipping pre-releases: the last releases stay")
+        XCTAssertNil(result.unreadable, "The feed was read")
+        XCTAssertEqual(result.sourceChecks?[releases.id]?.succeededAt, now)
+    }
+
+    func testAPartialReadKeepsToAFeedsUsualLength() async {
+        defer { unstubNetwork() }
+        let now = utc(2026, 9, 25, 12)
+        var cache = NewsCache()
+        cache.items["long"] = (0..<FeedParser.itemLimit).map { index in
+            FeedItem(id: "old-\(index)", title: "Old \(index)", link: URL(string: "https://example.com/old-\(index)"), published: utc(2026, 9, 1).addingTimeInterval(Double(index) * 3600), source: "Long")
+        }
+        let fresh = (0..<5).map { "<item><title>New \($0)</title><link>https://example.com/new-\($0)</link><pubDate>Thu, 24 Sep 2026 1\($0):00:00 GMT</pubDate></item>" }.joined()
+        let cut = Data("<rss version=\"2.0\"><channel>\(fresh)<item><title>Cut off".utf8)
+        stubNetwork { request in request.url == ModelFeed.url ? (200, Self.noModels) : (200, cut) }
+        let source = FeedSource(id: "long", name: "Long", url: URL(string: "https://example.com/long.xml")!)
+        let items = await NewsFetcher.refresh(cache, sources: [source], following: [], now: now).cache.items["long"] ?? []
+        XCTAssertEqual(items.count, FeedParser.itemLimit, "What arrived joins the last copy, up to a feed's usual length")
+        XCTAssertEqual(items.prefix(5).map(\.title), ["New 4", "New 3", "New 2", "New 1", "New 0"])
+        XCTAssertFalse(items.contains { $0.id == "old-0" || $0.id == "old-4" }, "The oldest give way")
+        XCTAssertEqual(items.last?.id, "old-5")
+    }
+
     func testFailedChecksWaitBeforeAskingAgain() async {
         defer { unstubNetwork() }
         stubNetwork { _ in (503, Data()) }

@@ -251,9 +251,10 @@ enum FeedParser {
         read(data, source: source).items
     }
 
-    /// The feed's items, and whether the whole document parsed. One cut short at the size limit,
-    /// or broken, still gives the items that ended before the break.
-    static func read(_ data: Data, source: FeedSource) -> (items: [FeedItem], isComplete: Bool) {
+    /// The feed's items, whether the whole document parsed as a feed, and how many entries it had
+    /// before any were left out. One cut short at the size limit, or broken, still gives the items
+    /// that ended before the break.
+    static func read(_ data: Data, source: FeedSource) -> (items: [FeedItem], isComplete: Bool, entries: Int) {
         let delegate = FeedXMLDelegate(source: source)
         let parser = XMLParser(data: data.prefix(source.sizeLimit))
         parser.delegate = delegate
@@ -266,7 +267,7 @@ enum FeedParser {
             .filter { item in source.linkContains.map { item.link?.absoluteString.contains($0) == true } ?? true }
             .filter { !source.suppressesRepeatedTitles || titles.insert($0.title.lowercased()).inserted }
             .prefix(itemLimit)
-        return (Array(items), parsed && delegate.isFeed && data.count <= source.sizeLimit)
+        return (Array(items), parsed && delegate.isFeed && data.count <= source.sizeLimit, delegate.items.count)
     }
 
     /// An entry's link if it's a web page, resolved against the feed. Other schemes

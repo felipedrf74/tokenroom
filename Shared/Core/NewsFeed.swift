@@ -278,16 +278,21 @@ enum NewsFetcher {
                     let read = FeedParser.read(data, source: source)
                     let previousItems = cache.items[source.id] ?? []
                     let items = firstSeen(read.items, previous: previousItems, now: now)
-                    if read.isComplete, !isTruncated {
-                        cache.items[source.id] = items
+                    // A feed with no entries at all where some were cached isn't taken at its
+                    // word: a server's placeholder would clear the list.
+                    if read.isComplete, !isTruncated, read.entries > 0 || previousItems.isEmpty {
+                        // Every entry left out (a run of pre-releases): the last ones stay.
+                        cache.items[source.id] = items.isEmpty ? previousItems : items
                         cache.validators[key] = validator
                         success = true
                     } else {
-                        // A partial response supplements the last complete copy, never deletes it.
+                        // A partial response supplements the last complete copy, never deletes it,
+                        // and keeps to a feed's usual length.
                         let ids = Set(items.map(\.id))
                         if !items.isEmpty || cache.items[source.id] != nil {
-                            cache.items[source.id] = (items + previousItems.filter { !ids.contains($0.id) })
+                            cache.items[source.id] = Array((items + previousItems.filter { !ids.contains($0.id) })
                                 .sorted { ($0.published ?? .distantPast) > ($1.published ?? .distantPast) }
+                                .prefix(FeedParser.itemLimit))
                         }
                         cache.validators[key] = nil
                     }
