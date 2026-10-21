@@ -321,6 +321,57 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(second.cache.validators[source.url.absoluteString]?.etag, "\"v1\"")
     }
 
+    func testFeedsHaveLongerToDownloadThanAProviderCheck() throws {
+        TokenroomHTTP.overrideSession(nil)
+        let session = NewsFetcher.session
+        let configuration = session.configuration
+        XCTAssertGreaterThan(NewsFetcher.downloadTimeout, TokenroomHTTP.timeout)
+        XCTAssertEqual(configuration.timeoutIntervalForResource, NewsFetcher.downloadTimeout, "Room for a 4 MB changelog on a slow network")
+        XCTAssertEqual(configuration.timeoutIntervalForRequest, TokenroomHTTP.timeout, "A stalled download still ends soon")
+        XCTAssertEqual(configuration.httpAdditionalHeaders?["User-Agent"] as? String, TokenroomIdentity.userAgent)
+        XCTAssertNil(configuration.httpCookieStorage)
+        XCTAssertEqual(TokenroomHTTP.defaultSession.configuration.timeoutIntervalForResource, TokenroomHTTP.timeout, "Providers keep theirs")
+
+        // The shared session's redirect rules come along: never to cleartext.
+        let delegate = try XCTUnwrap(session.delegate as? any URLSessionTaskDelegate)
+        let original = URLRequest(url: URL(string: "https://example.invalid/feed.xml")!)
+        let task = session.dataTask(with: original) // Kept suspended: no networking.
+        defer { task.cancel() }
+        let response = try XCTUnwrap(HTTPURLResponse(url: original.url!, statusCode: 301, httpVersion: "HTTP/1.1", headerFields: nil))
+        let answers = LockedBox<[URLRequest?]>([])
+        for destination in ["http://example.invalid/feed.xml", "https://feeds.example.invalid/feed.xml"] {
+            delegate.urlSession?(session, task: task, willPerformHTTPRedirection: response, newRequest: URLRequest(url: URL(string: destination)!)) { answers.value.append($0) }
+        }
+        XCTAssertEqual(answers.value.map { $0?.url?.absoluteString }, [nil, "https://feeds.example.invalid/feed.xml"])
+
+        let stub = URLSession(configuration: .ephemeral)
+        TokenroomHTTP.overrideSession(stub)
+        defer { TokenroomHTTP.overrideSession(nil) }
+        XCTAssertTrue(NewsFetcher.session === stub, "A session tests swap in is used as it is")
+    }
+
+    func testAFeedCutOffPartwayShowsWhatArrived() async {
+        defer { unstubNetwork() }
+        let partial = Data("<rss version=\"2.0\"><channel><item><title>Arrived</title><link>https://example.com/arrived</link><pubDate>Thu, 24 Sep 2026 12:00:00 GMT</pubDate></item><item><title>Cut".utf8)
+        StubURLProtocol.reset()
+        StubURLProtocol.handler = { request in request.url == ModelFeed.url ? (200, Self.noModels) : (200, partial) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [CutOffFeedProtocol.self]
+        TokenroomHTTP.overrideSession(URLSession(configuration: configuration))
+
+        guard case let .body(data, _, isTruncated) = await NewsFetcher.get(claudeCode.url, validator: nil) else {
+            return XCTFail("What arrived before the time ran out is kept")
+        }
+        XCTAssertEqual(data, partial)
+        XCTAssertTrue(isTruncated)
+
+        let now = utc(2026, 9, 25, 12)
+        let cache = await NewsFetcher.refresh(NewsCache(), sources: [claudeCode], following: [], now: now).cache
+        XCTAssertEqual(cache.items["claude-code"]?.map(\.title), ["Arrived"], "It shows, as a feed past its size limit does")
+        XCTAssertEqual(cache.unreadable, ["claude-code"], "…and says it couldn't read the rest")
+        XCTAssertEqual(cache.sourceChecks?["claude-code"]?.failedAt, now)
+    }
+
     func testABrokenFeedKeepsWhatItHad() async {
         defer { unstubNetwork() }
         let page = Data("<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body>Down for maintenance</body></html>".utf8)
@@ -955,6 +1006,32 @@ final class StubETagProtocol: URLProtocol, @unchecked Sendable {
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: data)
         client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+/// Like StubURLProtocol, but a feed's body is cut off by a timeout a moment after what the handler
+/// gives has arrived. The content type is set, so the session doesn't hold a short body back to
+/// sniff it.
+private final class CutOffFeedProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        StubURLProtocol.requests.append(request)
+        let (status, data) = StubURLProtocol.handler?(request) ?? (404, Data())
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/rss+xml"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        if request.url == ModelFeed.url {
+            client?.urlProtocolDidFinishLoading(self)
+        } else {
+            let client = client
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) {
+                client?.urlProtocol(self, didFailWithError: URLError(.timedOut))
+            }
+        }
     }
 
     override func stopLoading() {}

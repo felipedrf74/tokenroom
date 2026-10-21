@@ -179,9 +179,30 @@ enum NewsFetcher {
         var isAllowed: @MainActor @Sendable () -> Bool = { true }
     }
 
+    /// Feeds run to megabytes (`FeedSource.sizeLimit`), so a download has this long on a slow
+    /// network, not a provider check's `TokenroomHTTP.timeout`; a pause longer than that still
+    /// ends it sooner.
+    static let downloadTimeout: TimeInterval = 60
+
+    /// The session News reads through: `TokenroomHTTP`'s settings and redirect rules, with
+    /// `downloadTimeout` for the whole download. A session tests swap into `TokenroomHTTP` is
+    /// used as it is.
+    static var session: URLSession {
+        let shared = TokenroomHTTP.session
+        return shared === TokenroomHTTP.defaultSession ? downloadSession : shared
+    }
+
+    private static let downloadSession: URLSession = {
+        // A copy: no cookies, no cache, Tokenroom's user agent, the same wait between packets.
+        let configuration = TokenroomHTTP.defaultSession.configuration
+        configuration.timeoutIntervalForResource = downloadTimeout
+        return URLSession(configuration: configuration, delegate: FeedRedirectDelegate(), delegateQueue: nil)
+    }()
+
     /// What a GET got back.
     enum Answer: Sendable {
-        /// The body, up to the size limit; `isTruncated` when it went on past it.
+        /// The body, up to the size limit; `isTruncated` when it went on past it, or was cut off
+        /// partway.
         case body(Data, NewsCache.Validator, isTruncated: Bool)
         /// 304: the cached copy is current.
         case notModified
@@ -383,7 +404,8 @@ enum NewsFetcher {
     }
 
     /// A conditional GET that reads at most `sizeLimit` bytes: a longer body stops there instead
-    /// of loading whole.
+    /// of loading whole. One cut off partway (the time ran out, the network dropped) gives what
+    /// arrived, as one past its limit does.
     @MainActor static func get(_ url: URL, validator: NewsCache.Validator?, sizeLimit: Int = FeedParser.sizeLimit) async -> Answer {
         guard !Task.isCancelled else { return .unreachable }
         var request = URLRequest(url: url)
@@ -397,7 +419,7 @@ enum NewsFetcher {
             request.setValue(lastModified, forHTTPHeaderField: "If-Modified-Since")
         }
         do {
-            let (bytes, response) = try await TokenroomHTTP.session.bytes(for: request)
+            let (bytes, response) = try await session.bytes(for: request)
             guard let http = response as? HTTPURLResponse else {
                 bytes.task.cancel()
                 return .unreachable
@@ -408,12 +430,18 @@ enum NewsFetcher {
             }
             var data = Data()
             var isTruncated = false
-            for try await byte in bytes {
-                guard data.count < sizeLimit else {
-                    isTruncated = true
-                    break
+            do {
+                for try await byte in bytes {
+                    guard data.count < sizeLimit else {
+                        isTruncated = true
+                        break
+                    }
+                    data.append(byte)
                 }
-                data.append(byte)
+            } catch {
+                // A cancelled check isn't a failure, and nothing at all is no answer.
+                guard !Task.isCancelled, !data.isEmpty else { return .unreachable }
+                isTruncated = true
             }
             if isTruncated {
                 // The rest of the body is never downloaded.
@@ -427,6 +455,20 @@ enum NewsFetcher {
         } catch {
             return .unreachable
         }
+    }
+}
+
+/// The redirect rules `TokenroomHTTP.defaultSession` applies, for News's own session: a feed may
+/// move to another HTTPS host, never to cleartext or a URL carrying credentials.
+private final class FeedRedirectDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        completionHandler(TokenroomRedirectPolicy.allows(original: task.originalRequest, current: task.currentRequest, redirected: request) ? request : nil)
     }
 }
 
