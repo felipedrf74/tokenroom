@@ -820,6 +820,27 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(FeedParser.wholeWords("Onewordcutoff…"), "Onewordcutoff…", "Nothing to cut back to")
     }
 
+    /// A day's commits fold by the thing they update, not the word after "Update": "the docx
+    /// skill" and "the pdf skill" are two things, as are "docs for" two different ones.
+    func testADaysUpdatesFoldOnlyWhenTheyUpdateTheSameThing() throws {
+        let skills = try XCTUnwrap(FeedSource.catalog.first { $0.id == "claude-skills" })
+        func entry(_ sha: String, _ title: String, _ time: String) -> String {
+            "<entry><id>tag:github.com,2008:Grit::Commit/\(sha)</id><link rel=\"alternate\" href=\"https://github.com/anthropics/skills/commit/\(sha)\"/><title>\(title)</title><updated>\(time)</updated></entry>"
+        }
+        let atom = Data("""
+        <feed xmlns="http://www.w3.org/2005/Atom">
+        \(entry("d3", "Update the docx skill: handle tracked changes", "2026-10-21T17:00:00Z"))
+        \(entry("d2", "Update the docx skill (#1610)", "2026-10-21T15:00:00Z"))
+        \(entry("d1", "Update docx skill (#1609)", "2026-10-21T14:00:00Z"))
+        \(entry("p1", "Update the pdf skill (#1608)", "2026-10-21T11:00:00Z"))
+        \(entry("g2", "Update docs for the xlsx skill (#1606)", "2026-10-21T10:00:00Z"))
+        \(entry("g1", "Update docs for skill authoring (#1605)", "2026-10-21T09:00:00Z"))
+        </feed>
+        """.utf8)
+        let items = FeedParser.items(from: atom, source: skills)
+        XCTAssertEqual(items.map { $0.id.components(separatedBy: "/").last }, ["d3", "p1", "g2", "g1"], "The docx skill's three updates show once, the newest; the pdf skill and each docs change show")
+    }
+
     func testCommitsWithTheSameMessageStayApartAndShowWithoutTheirPullRequestNumber() throws {
         func entry(_ sha: String, _ title: String, _ day: Int) -> String {
             """
