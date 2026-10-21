@@ -60,7 +60,7 @@ On first launch after the rename from Headroom, Tokenroom copies Headroom’s se
 
 ## iPhone and Apple Watch
 
-When iPhone sync is on, the signed Mac app writes the same readings as `snapshots.json`, plus the hourly history (including the currency and last check time of balance samples), to a private database in your iCloud account. Only your devices signed in to that account can read it. Turning iPhone sync off stops new writes.
+When iPhone sync is on, the signed Mac app writes the same readings as `snapshots.json`, plus the hourly history (including the currency and last check time of balance samples), to a private database in your iCloud account. Only your devices signed in to that account can read it. Turning iPhone sync off stops new writes; one already on its way when you turn it off may still finish.
 
 On iPhone, Tokenroom keeps:
 

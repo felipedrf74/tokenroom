@@ -7,18 +7,14 @@ final class RelayPublisherTests: XCTestCase {
     private var suites: [String] = []
 
     override func tearDown() {
-        for name in suites {
-            UserDefaults(suiteName: name)?.removePersistentDomain(forName: name)
-        }
+        suites.forEach(TestDefaults.remove)
         suites = []
         super.tearDown()
     }
 
     private func makeDefaults() -> UserDefaults {
-        let name = "tokenroom.tests.\(Self.self).\(suites.count)"
+        let (name, defaults) = TestDefaults.make(owner: "\(Self.self)", index: suites.count)
         suites.append(name)
-        let defaults = UserDefaults(suiteName: name)!
-        defaults.removePersistentDomain(forName: name)
         return defaults
     }
 
@@ -75,28 +71,64 @@ final class RelayPublisherTests: XCTestCase {
         await publisher.publish(envelope())
         XCTAssertEqual(cloud.envelopes.count, 2, "Sent again at once: what was sent before is forgotten")
     }
+
+    /// Off stops new writes: alerts not yet sent stay queued. The one already out may still land.
+    @MainActor
+    func testTurningSyncOffStopsTheAlertsNotYetSent() async {
+        let cloud = StandInCloud(holdsAlerts: 1)
+        let publisher = RelayPublisher(defaults: makeDefaults(), cloud: cloud, iCloudBudget: 5)
+        let alerts = ["a1", "a2", "a3"].map {
+            UsageAlert(id: $0, provider: "claude", kind: .threshold, level: 80, title: "", body: "", isUrgent: false)
+        }
+        let sending = Task { await publisher.sendAlerts(alerts) }
+        await waitUntil { cloud.alertStarts == 1 }
+        publisher.isEnabled = false
+        cloud.release()
+        let sent = await sending.value
+        XCTAssertEqual(cloud.savedAlerts, ["a1"])
+        XCTAssertEqual(sent, ["a1"], "a2 and a3 wait in the ledger for sync to come back")
+        XCTAssertEqual(publisher.state, .off)
+    }
 }
 
-/// iCloud as `RelayPublisher` sees it, in memory. The first `holdsPublishes` sends wait until
-/// `release`, whatever the caller does meanwhile, like a call that doesn't answer.
+/// iCloud as `RelayPublisher` sees it, in memory. The first `holdsPublishes` sends, and the first
+/// `holdsAlerts` alert saves, wait until `release`, whatever the caller does meanwhile, like a
+/// call that doesn't answer.
 final class StandInCloud: RelayCloud, @unchecked Sendable {
     private let lock = NSLock()
     private var held: Int
+    private var heldAlerts: Int
     private var isReleased = false
     private var waiting: [CheckedContinuation<Void, Never>] = []
     private var sent: [RelayEnvelope] = []
+    private var alerts: [String] = []
     private var starts = 0
+    private var alertCalls = 0
     private var resets = 0
     private var reads = 0
 
-    init(holdsPublishes: Int = 0) {
+    init(holdsPublishes: Int = 0, holdsAlerts: Int = 0) {
         held = holdsPublishes
+        heldAlerts = holdsAlerts
     }
 
     var envelopes: [RelayEnvelope] { lock.withLock { sent } }
     var publishStarts: Int { lock.withLock { starts } }
+    var savedAlerts: [String] { lock.withLock { alerts } }
+    var alertStarts: Int { lock.withLock { alertCalls } }
     var zoneResets: Int { lock.withLock { resets } }
     var preferenceReads: Int { lock.withLock { reads } }
+
+    private func waitForRelease() async {
+        await withCheckedContinuation { continuation in
+            let now = lock.withLock {
+                if isReleased { return true }
+                waiting.append(continuation)
+                return false
+            }
+            if now { continuation.resume() }
+        }
+    }
 
     func release() {
         let resumed = lock.withLock {
@@ -119,14 +151,7 @@ final class StandInCloud: RelayCloud, @unchecked Sendable {
             return true
         }
         if holds {
-            await withCheckedContinuation { continuation in
-                let now = lock.withLock {
-                    if isReleased { return true }
-                    waiting.append(continuation)
-                    return false
-                }
-                if now { continuation.resume() }
-            }
+            await waitForRelease()
         }
         lock.withLock { sent.append(envelope) }
     }
@@ -143,7 +168,18 @@ final class StandInCloud: RelayCloud, @unchecked Sendable {
     }
 
     func wentOutOnANeighbouringDay(_ alert: UsageAlert, now: Date) async throws -> Bool { false }
-    func saveAlert(_ alert: UsageAlert) async throws {}
+    func saveAlert(_ alert: UsageAlert) async throws {
+        let holds = lock.withLock {
+            alertCalls += 1
+            guard heldAlerts > 0 else { return false }
+            heldAlerts -= 1
+            return true
+        }
+        if holds {
+            await waitForRelease()
+        }
+        lock.withLock { alerts.append(alert.id) }
+    }
     func pruneEvents(now: Date) async throws {}
     func saveEvent(id: String, provider: String, level: Int, title: String, body: String, resetsAt: Date?, kind: String, key: String) async throws {}
 
