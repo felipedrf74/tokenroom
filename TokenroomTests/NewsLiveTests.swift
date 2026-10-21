@@ -133,6 +133,62 @@ final class NewsLiveTests: XCTestCase {
         XCTAssertEqual(later.unseenModelCount(now: liveCheck.addingTimeInterval(60)), 1, "Created during the visit, but never on screen")
     }
 
+    /// The Mac's News window counts as on screen (a visit, 5-minute checks) only while someone can
+    /// see it.
+    func testTheMacNewsWindowIsOnScreenOnlyWhenItCanBeSeen() {
+        XCTAssertTrue(AppDelegate.newsIsOnScreen(isVisible: true, isMiniaturized: false, isOccluded: false, appIsHidden: false))
+        XCTAssertFalse(AppDelegate.newsIsOnScreen(isVisible: true, isMiniaturized: true, isOccluded: false, appIsHidden: false), "In the Dock")
+        XCTAssertFalse(AppDelegate.newsIsOnScreen(isVisible: true, isMiniaturized: false, isOccluded: true, appIsHidden: false), "Wholly covered, or on another Space")
+        XCTAssertFalse(AppDelegate.newsIsOnScreen(isVisible: true, isMiniaturized: false, isOccluded: false, appIsHidden: true), "Hidden with the app")
+        XCTAssertFalse(AppDelegate.newsIsOnScreen(isVisible: false, isMiniaturized: false, isOccluded: false, appIsHidden: false), "Closed")
+    }
+
+    /// What a pass has taken in shows while it's still waiting on a slow feed, and a quiet read's
+    /// back catalog isn't new even then.
+    @MainActor
+    func testWhatArrivesShowsBeforeTheWholePassIsDone() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let defaults = makeDefaults()
+        defaults.set(now.addingTimeInterval(-3600).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt)
+        let folder = try makeFolder()
+        var checked = NewsCache()
+        checked.modelsFetchedAt = now.addingTimeInterval(-60)
+        checked.sourceChecks = Dictionary(uniqueKeysWithValues: FeedSource.catalog.filter { $0.id != "cursor" }.map { ($0.id, NewsCache.SourceCheck(succeededAt: now.addingTimeInterval(-60))) })
+        checked.save(to: folder)
+        let held = LockedBox(true)
+        let published = LockedBox(false)
+        let news = NewsStore(defaults: defaults, directory: folder, now: now, fetch: { request in
+            var partial = request.cache
+            // Cursor is read for the first time: its recent post is back catalog.
+            partial.items["cursor"] = [FeedItem(id: "c", title: "Cursor post", link: URL(string: "https://example.com/c"), published: now.addingTimeInterval(-600), source: "Cursor", firstSeenAt: now.addingTimeInterval(-600))]
+            await request.publish(partial)
+            published.value = true
+            while held.value { try? await Task.sleep(for: .milliseconds(5)) }
+            return NewsFetcher.Result(cache: partial, newModels: [])
+        }, notify: { _, _, _ in })
+        let pass = Task { await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: now) }
+        while !published.value { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertTrue(news.isRefreshing, "The pass is still waiting")
+        XCTAssertEqual(news.allAnnouncements.first { $0.sourceID == "cursor" }?.title, "Cursor post", "…but what came in shows")
+        XCTAssertEqual(news.unseenAnnouncementCount, 0, "…and a first read's back catalog isn't new meanwhile either")
+        held.value = false
+        await pass.value
+        XCTAssertEqual(news.unseenAnnouncementCount, 0)
+    }
+
+    /// A feed read seven minutes ago, while the next 5-minute check is under way, is still
+    /// current; one read twenty minutes ago is delayed.
+    func testSourcesStayCurrentWhileTheNextCheckIsUnderWay() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let sources = Array(FeedSource.catalog.prefix(2))
+        var cache = NewsCache()
+        cache.sourceChecks = [sources[0].id: .init(succeededAt: now.addingTimeInterval(-7 * 60)), sources[1].id: .init(succeededAt: now.addingTimeInterval(-20 * 60))]
+        let summary = NewsSourceFreshness(cache: cache, sources: sources, now: now)
+        XCTAssertEqual(summary.currentCount, 1)
+        XCTAssertEqual(summary.delayedCount, 1)
+        XCTAssertGreaterThan(NewsSourceFreshness.currentInterval, NewsFetcher.liveInterval + NewsFetcher.downloadTimeout)
+    }
+
     /// A live check under way (it doesn't notify) when a notifying background refresh comes in:
     /// the models the live check finds are taken off the list, so it notifies them, unless News
     /// is on screen.

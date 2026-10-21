@@ -111,7 +111,7 @@ final class NewsStore {
         now: Date = .now,
         initialCache: NewsCache? = nil,
         fetch: @escaping @Sendable (NewsFetcher.Request) async -> NewsFetcher.Result = {
-            await NewsFetcher.refresh($0.cache, sources: $0.sources, following: $0.vendors, maxAge: $0.maxAge, now: $0.now, forcedSources: $0.forcedSources, quietSources: $0.quietSources, isAllowed: $0.isAllowed)
+            await NewsFetcher.refresh($0.cache, sources: $0.sources, following: $0.vendors, maxAge: $0.maxAge, now: $0.now, forcedSources: $0.forcedSources, quietSources: $0.quietSources, isAllowed: $0.isAllowed, publish: $0.publish)
         },
         notify: @escaping @MainActor ([ModelRelease], AlertPreferences, Date) -> Void = {
             NewsStore.notify($0, preferences: $1, now: $2)
@@ -121,7 +121,9 @@ final class NewsStore {
         self.directory = directory
         self.fetch = fetch
         self.notify = notify
-        cache = initialCache ?? NewsCache.load(from: directory)
+        var loaded = initialCache ?? NewsCache.load(from: directory)
+        loaded.bringDatesBack(to: now)
+        cache = loaded
         // A saved choice, plus labs added to the defaults since it was saved, as with feeds below.
         let knownVendors = (defaults.array(forKey: Keys.knownVendors) as? [String]).map(Set.init) ?? Self.firstDefaultVendors
         followedVendors = (defaults.array(forKey: Keys.vendors) as? [String]).map { Set($0).union(ModelFeed.defaultVendors.subtracting(knownVendors)) } ?? ModelFeed.defaultVendors
@@ -176,7 +178,7 @@ final class NewsStore {
     }
 
     func unseenModelCount(now: Date) -> Int {
-        models().filter { $0.created > seenAt && NewsEditions.isRecentModel($0, now: now) }.count
+        models().filter { $0.newsDate > seenAt && NewsEditions.isRecentModel($0, now: now) }.count
     }
 
     /// Announcements from followed feeds that arrived since News was last opened.
@@ -321,11 +323,45 @@ final class NewsStore {
     private static func newestArrival(in result: NewsCache, since previous: NewsCache, checkedAt: Date) -> Date? {
         let knownModels = Set(previous.models.map(\.id))
         let knownItems = Set(previous.items.flatMap { source, items in items.map { source + "|" + $0.id } })
-        let models = result.models.filter { !knownModels.contains($0.id) }.map(\.created)
+        let models = result.models.filter { !knownModels.contains($0.id) }.map(\.newsDate)
         let items = result.items.flatMap { source, items in
             items.filter { !knownItems.contains(source + "|" + $0.id) }.compactMap(\.newsDate)
         }
         return (models + items).max().map { min($0, checkedAt) }
+    }
+
+    /// A pass's answers as News shows them: identities folded before kept, and what a source read
+    /// quietly brought (`quiet`) dated no later than the visit, so none of it counts as new.
+    private func settled(_ fetched: NewsCache, previous: NewsCache, sources: [FeedSource], quiet: Set<String>, now: Date) -> NewsCache {
+        var cache = fetched
+        cache.retainFoldedIdentities(from: previous, sources: sources)
+        let baseline = min(visitBaseline, now)
+        for source in sources where source.kind == .officialAnnouncement && quiet.contains(source.id) {
+            cache.items[source.id] = cache.items[source.id]?.map { raw in
+                var item = raw
+                item.firstSeenAt = min(item.newsDate ?? baseline, baseline)
+                return item
+            }
+        }
+        for source in sources where source.kind != .officialAnnouncement {
+            if let items = cache.items[source.id] {
+                cache.items[source.id] = items.map { raw in
+                    var item = raw
+                    item.sourceID = source.id
+                    item.kind = source.kind
+                    let old = previous.items[source.id]?.first { $0.id == item.id }
+                    // A failed/partial bucket is not a successful first check. Keep that
+                    // source's initial archive quiet even if it was unfollowed while awaiting.
+                    if quiet.contains(source.id) {
+                        item.firstSeenAt = min(old?.newsDate ?? baseline, baseline)
+                    } else {
+                        item.firstSeenAt = old?.newsDate ?? min(item.newsDate ?? now, now)
+                    }
+                    return item
+                }
+            }
+        }
+        return cache
     }
 
     private func performRefresh(_ initial: RefreshRequest) async {
@@ -355,39 +391,16 @@ final class NewsStore {
             // recently it was dated.
             let quiet = Set(checkedSources.filter { previous.check(for: $0).succeededAt == nil || quietSources.contains($0.id) }.map(\.id))
             let requestAllows = request.isAllowed
-            let result = await fetch(.init(cache: cache, sources: checkedSources, vendors: followedVendors, maxAge: request.maxAge, now: request.now, forcedSources: request.forcedSources,
+            let now = request.now
+            // Each feed's answer shows as it arrives, settled as the whole pass's is.
+            let result = await fetch(.init(cache: cache, sources: checkedSources, vendors: followedVendors, maxAge: request.maxAge, now: now, forcedSources: request.forcedSources,
                                            quietSources: quiet,
+                                           publish: { [weak self] partial in
+                                               guard let self else { return }
+                                               self.cache = self.settled(partial, previous: previous, sources: checkedSources, quiet: quiet, now: now)
+                                           },
                                            isAllowed: { [weak self] in self?.allowsRefresh() == true && requestAllows?() != false }))
-            var updated = result.cache
-            updated.retainFoldedIdentities(from: cache, sources: checkedSources)
-            cache = updated
-            for source in checkedSources where source.kind == .officialAnnouncement && quiet.contains(source.id) {
-                let baseline = min(visitBaseline, request.now)
-                cache.items[source.id] = cache.items[source.id]?.map { raw in
-                    var item = raw
-                    item.firstSeenAt = min(item.newsDate ?? baseline, baseline)
-                    return item
-                }
-            }
-            for source in checkedSources where source.kind != .officialAnnouncement {
-                if let items = cache.items[source.id] {
-                    cache.items[source.id] = items.map { raw in
-                        var item = raw
-                        item.sourceID = source.id
-                        item.kind = source.kind
-                        let old = previous.items[source.id]?.first { $0.id == item.id }
-                        let baseline = min(visitBaseline, request.now)
-                        // A failed/partial bucket is not a successful first check. Keep that
-                        // source's initial archive quiet even if it was unfollowed while awaiting.
-                        if quiet.contains(source.id) {
-                            item.firstSeenAt = min(old?.newsDate ?? baseline, baseline)
-                        } else {
-                            item.firstSeenAt = old?.newsDate ?? min(item.newsDate ?? request.now, request.now)
-                        }
-                        return item
-                    }
-                }
-            }
+            cache = settled(result.cache, previous: previous, sources: checkedSources, quiet: quiet, now: now)
             // Once read, a source followed again is read as usual.
             let read = checkedSources.filter { source in
                 cache.check(for: source).succeededAt.map { $0 != previous.check(for: source).succeededAt } ?? false

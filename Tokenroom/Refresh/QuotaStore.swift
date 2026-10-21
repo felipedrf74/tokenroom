@@ -378,7 +378,8 @@ final class QuotaStore {
         await relay?.publishHistory(history.relayHistory(for: relayed), now: now)
         await sendAlerts(for: envelope.providers, now: now)
         await relay?.pruneEventsIfDue(now: now)
-        await refreshNews(now: now)
+        // News checks on its own, so a slow feed doesn't hold up the next round of sharing.
+        Task { [weak self] in await self?.refreshNews(now: now) }
     }
 
     private func refreshNow(providers: [Provider]?) async {

@@ -9,8 +9,12 @@ struct NewsSourceFreshness {
     var failedIDs = Set<String>()
     var totalCount: Int { currentCount + delayedCount + unloadedCount }
 
+    /// How recently a feed must have been read to count as current: two on-screen intervals and a
+    /// download, so feeds don't flip to "delayed" while each check is under way.
+    static let currentInterval = 2 * NewsFetcher.liveInterval + NewsFetcher.downloadTimeout
+
     init(cache: NewsCache, sources: [FeedSource], now: Date = .now,
-         currentInterval: TimeInterval = NewsFetcher.openInterval) {
+         currentInterval: TimeInterval = Self.currentInterval) {
         var seen = Set<String>()
         for source in sources where seen.insert(source.id).inserted {
             let check = cache.check(for: source)

@@ -54,8 +54,9 @@ private struct MobileWindowScene: Scene {
                         store.becameActive()
                         Task {
                             await store.refresh()
-                            // Feeds older than `openInterval` (5 minutes), so the News badge is current on open.
-                            await news.refresh(maxAge: NewsFetcher.openInterval, preferences: store.alertPreferences)
+                            // What's due by News's hourly schedule, so its badge is current. With News on
+                            // screen, its own 5-minute checks (`NewsView`) start as the app comes forward.
+                            await news.refresh(preferences: store.alertPreferences)
                         }
                     case .background:
                         Task { await store.scheduleBackgroundRefresh() }

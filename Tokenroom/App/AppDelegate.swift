@@ -155,16 +155,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.center()
             newsWindow = window
         }
-        if newsWindow?.isVisible != true { store.news?.beginVisit() }
-        store.newsBecameVisible()
+        if newsWindow?.isMiniaturized == true { newsWindow?.deminiaturize(nil) }
         newsWindow?.makeKeyAndOrderFront(nil)
+        // Opened by hand, it's on screen, whatever its occlusion says before it's drawn.
+        setNewsOnScreen(true)
     }
+
+    /// Whether the News window is where someone can see it: open, not in the Dock, not hidden
+    /// with the app, and not wholly covered.
+    nonisolated static func newsIsOnScreen(isVisible: Bool, isMiniaturized: Bool, isOccluded: Bool, appIsHidden: Bool) -> Bool {
+        isVisible && !isMiniaturized && !isOccluded && !appIsHidden
+    }
+
+    private var newsOnScreen = false
+
+    /// A News visit, and the window's 5-minute checks, last while it's on screen: minimized,
+    /// hidden with the app, or wholly covered, the visit ends and the checks pause, so nothing
+    /// arriving then is marked seen; back on screen, the next visit starts and checks resume.
+    private func newsVisibilityChanged() {
+        guard let window = newsWindow else { return }
+        setNewsOnScreen(Self.newsIsOnScreen(isVisible: window.isVisible, isMiniaturized: window.isMiniaturized,
+                                            isOccluded: !window.occlusionState.contains(.visible), appIsHidden: NSApp.isHidden))
+    }
+
+    private func setNewsOnScreen(_ onScreen: Bool) {
+        guard onScreen != newsOnScreen else { return }
+        newsOnScreen = onScreen
+        if onScreen {
+            store.news?.beginVisit()
+            store.newsBecameVisible()
+        } else {
+            store.news?.endVisit()
+            store.newsHidden()
+        }
+    }
+
+    func windowDidMiniaturize(_ notification: Notification) {
+        if notification.object as? NSWindow === newsWindow { newsVisibilityChanged() }
+    }
+
+    func windowDidDeminiaturize(_ notification: Notification) {
+        if notification.object as? NSWindow === newsWindow { newsVisibilityChanged() }
+    }
+
+    func windowDidChangeOcclusionState(_ notification: Notification) {
+        if notification.object as? NSWindow === newsWindow { newsVisibilityChanged() }
+    }
+
+    func applicationDidHide(_ notification: Notification) { newsVisibilityChanged() }
+
+    func applicationDidUnhide(_ notification: Notification) { newsVisibilityChanged() }
 
     func windowWillClose(_ notification: Notification) {
         guard let closing = notification.object as? NSWindow, closing === settingsWindow || closing === newsWindow else { return }
         if closing === newsWindow {
-            store.news?.endVisit()
-            store.newsHidden()
+            setNewsOnScreen(false)
         }
         // Back to a menu-bar extra once no window is left.
         let others = [settingsWindow, newsWindow].compactMap { $0 }.filter { $0 !== closing && $0.isVisible }
