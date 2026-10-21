@@ -17,6 +17,7 @@ final class NewsStore {
         static let voices = "newsVoices"
         static let status = "newsStatusSources"
         static let seenAt = "newsSeenAt"
+        static let quietSources = "newsQuietSources"
     }
 
     /// Tokenroom 2.0's feeds: what a list saved before `Keys.knownSources` existed had offered.
@@ -55,28 +56,38 @@ final class NewsStore {
             defaults.set(followedSources.sorted(), forKey: Keys.sources)
             defaults.set(FeedSource.catalog.map(\.id).sorted(), forKey: Keys.knownSources)
             let added = followedSources.subtracting(oldValue)
-            let uncached = Set(sources.filter { added.contains($0.partOf ?? $0.id) && cache.items[$0.id] == nil }.map(\.id))
-            if !uncached.isEmpty {
-                Task { await refresh(preferences: lastPreferences, notifies: false, forcedSources: uncached) }
-            }
+            startFollowing(sources.filter { added.contains($0.partOf ?? $0.id) })
         }
     }
 
     var followedVoices: Set<String> {
         didSet {
             defaults.set(followedVoices.sorted(), forKey: Keys.voices)
-            fetchAdded(sources.filter { followedVoices.subtracting(oldValue).contains($0.id) })
+            startFollowing(sources.filter { followedVoices.subtracting(oldValue).contains($0.id) })
         }
     }
     var followedStatusSources: Set<String> {
         didSet {
             defaults.set(followedStatusSources.sorted(), forKey: Keys.status)
-            fetchAdded(sources.filter { followedStatusSources.subtracting(oldValue).contains($0.id) })
+            startFollowing(sources.filter { followedStatusSources.subtracting(oldValue).contains($0.id) })
         }
     }
-    private func fetchAdded(_ sources: [FeedSource]) {
-        let ids = Set(sources.filter { cache.items[$0.id] == nil }.map(\.id))
-        if !ids.isEmpty { Task { await refresh(preferences: lastPreferences, notifies: false, forcedSources: ids) } }
+
+    /// Sources followed again while an old copy of them is still cached: their next read is quiet,
+    /// like a first read, so what they published while they weren't followed isn't badged or
+    /// marked New. Saved, so a relaunch before that read doesn't lose it.
+    private var quietSources: Set<String> {
+        didSet { defaults.set(quietSources.sorted(), forKey: Keys.quietSources) }
+    }
+
+    /// Newly followed sources are read at once. One followed before, with its old copy still
+    /// cached, is read quietly (`quietSources`).
+    private func startFollowing(_ added: [FeedSource]) {
+        guard !added.isEmpty else { return }
+        let stale = Set(added.filter { cache.items[$0.id] != nil }.map(\.id))
+        if !stale.isEmpty { quietSources.formUnion(stale) }
+        let ids = Set(added.map(\.id))
+        Task { await refresh(preferences: lastPreferences, notifies: false, forcedSources: ids) }
     }
 
     /// When News was last opened. Items that arrived after it (`FeedItem.newsDate`) count as new.
@@ -98,7 +109,7 @@ final class NewsStore {
         now: Date = .now,
         initialCache: NewsCache? = nil,
         fetch: @escaping @Sendable (NewsFetcher.Request) async -> NewsFetcher.Result = {
-            await NewsFetcher.refresh($0.cache, sources: $0.sources, following: $0.vendors, maxAge: $0.maxAge, now: $0.now, forcedSources: $0.forcedSources, isAllowed: $0.isAllowed)
+            await NewsFetcher.refresh($0.cache, sources: $0.sources, following: $0.vendors, maxAge: $0.maxAge, now: $0.now, forcedSources: $0.forcedSources, quietSources: $0.quietSources, isAllowed: $0.isAllowed)
         },
         notify: @escaping @MainActor ([ModelRelease], AlertPreferences, Date) -> Void = {
             NewsStore.notify($0, preferences: $1, now: $2)
@@ -119,6 +130,7 @@ final class NewsStore {
         followedSources = (defaults.array(forKey: Keys.sources) as? [String]).map { Set($0).union(catalog.subtracting(known)) } ?? catalog
         followedVoices = Set(defaults.stringArray(forKey: Keys.voices) ?? [])
         followedStatusSources = Set(defaults.stringArray(forKey: Keys.status) ?? [])
+        quietSources = Set(defaults.stringArray(forKey: Keys.quietSources) ?? [])
         // A first launch starts from now, so the whole list isn't "new". A time saved ahead of the
         // clock (set while it was wrong) comes back to now, or nothing would be new until then.
         let saved = (defaults.object(forKey: Keys.seenAt) as? Double).map(Date.init(timeIntervalSince1970:))
@@ -334,15 +346,18 @@ final class NewsStore {
             runningIsAllowed = request.isAllowed
             let previous = cache
             let checkedSources = sources
+            // A source never read before (just followed, or new in this release), or followed again
+            // with an old copy cached, brings its back catalog: none of it is new, however
+            // recently it was dated.
+            let quiet = Set(checkedSources.filter { previous.check(for: $0).succeededAt == nil || quietSources.contains($0.id) }.map(\.id))
             let requestAllows = request.isAllowed
             let result = await fetch(.init(cache: cache, sources: checkedSources, vendors: followedVendors, maxAge: request.maxAge, now: request.now, forcedSources: request.forcedSources,
+                                           quietSources: quiet,
                                            isAllowed: { [weak self] in self?.allowsRefresh() == true && requestAllows?() != false }))
             var updated = result.cache
             updated.retainFoldedIdentities(from: cache, sources: checkedSources)
             cache = updated
-            // A tool's feed read for the first time (just followed, or new in this release) brings
-            // its back catalog: none of it is new, however recently it was dated.
-            for source in checkedSources where source.kind == .officialAnnouncement && previous.check(for: source).succeededAt == nil {
+            for source in checkedSources where source.kind == .officialAnnouncement && quiet.contains(source.id) {
                 let baseline = min(visitBaseline, request.now)
                 cache.items[source.id] = cache.items[source.id]?.map { raw in
                     var item = raw
@@ -360,7 +375,7 @@ final class NewsStore {
                         let baseline = min(visitBaseline, request.now)
                         // A failed/partial bucket is not a successful first check. Keep that
                         // source's initial archive quiet even if it was unfollowed while awaiting.
-                        if previous.check(for: source).succeededAt == nil {
+                        if quiet.contains(source.id) {
                             item.firstSeenAt = min(old?.newsDate ?? baseline, baseline)
                         } else {
                             item.firstSeenAt = old?.newsDate ?? min(item.newsDate ?? request.now, request.now)
@@ -369,6 +384,11 @@ final class NewsStore {
                     }
                 }
             }
+            // Once read, a source followed again is read as usual.
+            let read = checkedSources.filter { source in
+                cache.check(for: source).succeededAt.map { $0 != previous.check(for: source).succeededAt } ?? false
+            }
+            if !read.isEmpty, !quietSources.isDisjoint(with: read.map(\.id)) { quietSources.subtract(read.map(\.id)) }
             cache.save(to: directory)
             // What arrived while News is open is seen, so it doesn't come back as a badge; it
             // stays marked New for the rest of this visit (`visitBaseline`). Only what this

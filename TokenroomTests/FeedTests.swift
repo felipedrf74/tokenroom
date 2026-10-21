@@ -109,17 +109,26 @@ final class FeedTests: XCTestCase {
         XCTAssertNil(FeedParser.date(""))
     }
 
-    func testAnUndatedEntryIsDatedWhenItFirstArrives() {
+    func testAnUndatedEntryIsDatedWhenItArrivesAfterTheFirstRead() {
         let now = utc(2026, 9, 25, 12)
+        let older = FeedItem(id: "o", title: "Older", link: nil, published: utc(2026, 9, 20), source: "Claude Code")
         let undated = FeedItem(id: "u", title: "Undated", link: nil, published: nil, source: "Claude Code")
-        let first = NewsFetcher.firstSeen([undated], previous: [], now: now)
-        XCTAssertEqual(first.first?.published, now, "Dated when it first arrives, so it sorts with what came then")
-        XCTAssertEqual(first.first?.sortDate, now)
-        XCTAssertNil(first.first?.publisherPublishedAt, "The publisher's own date stays unknown")
-        let again = NewsFetcher.firstSeen([undated], previous: first, now: now.addingTimeInterval(86_400))
+        let arrived = NewsFetcher.firstSeen([undated, older], previous: [older], now: now)
+        XCTAssertEqual(arrived.first?.published, now, "Dated when it arrives, so it sorts with what came then")
+        XCTAssertEqual(arrived.first?.sortDate, now)
+        XCTAssertNil(arrived.first?.publisherPublishedAt, "The publisher's own date stays unknown")
+        let again = NewsFetcher.firstSeen([undated], previous: arrived, now: now.addingTimeInterval(86_400))
         XCTAssertEqual(again.first?.published, now, "…and keeps that date, still undated in the feed")
         let legacy = NewsFetcher.firstSeen([undated], previous: [undated], now: now)
         XCTAssertNil(legacy.first?.published, "One cached undated by an earlier release isn't dated now")
+
+        // A feed whose dates don't parse: its back catalog doesn't all read as just published.
+        let firstRead = NewsFetcher.firstSeen([undated], previous: [], now: now)
+        XCTAssertNil(firstRead.first?.published, "On a first read an undated entry still sorts last")
+        XCTAssertEqual(firstRead.first?.sortDate, .distantPast)
+        let followedAgain = NewsFetcher.firstSeen([undated], previous: [older], now: now, quiet: true)
+        XCTAssertNil(followedAgain.first?.published, "…and on the quiet read of a feed followed again")
+        XCTAssertEqual(NewsFetcher.firstSeen([older], previous: [], now: now).first?.firstSeenAt, utc(2026, 9, 20), "A quiet read keeps entries' own dates")
     }
 
     func testAtomReleasesDropPrereleasesAndPackagePrefixes() {
@@ -875,6 +884,60 @@ final class FeedTests: XCTestCase {
         for _ in 0..<200 where forced.value.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(forced.value, [["deepmind"]])
         XCTAssertTrue(news.sources.contains { $0.id == "deepmind" })
+    }
+
+    /// Unfollowed for a month while News was in use, then followed again: what the feed and the
+    /// voice published meanwhile is their back catalog, not a flood of New.
+    @MainActor
+    func testFollowingASourceAgainBringsWhatItMissedQuietly() async throws {
+        defer { unstubNetwork() }
+        let now = Date.now
+        let month = now.addingTimeInterval(-30 * 86_400)
+        let voice = try XCTUnwrap(NewsVoice.catalog.first?.feed)
+        let folder = try makeFolder()
+        var cache = readBefore(["claude-code", "claude-code-releases", "codex-releases", voice.id], checkedAt: month)
+        cache.modelsFetchedAt = now.addingTimeInterval(-60)
+        cache.save(to: folder)
+        let defaults = makeDefaults()
+        defaults.set(now.addingTimeInterval(-3600).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt) // Looked an hour ago.
+        defaults.set(FeedSource.catalog.map(\.id).filter { $0 != "codex-releases" }, forKey: NewsStore.Keys.sources)
+        defaults.set(FeedSource.catalog.map(\.id), forKey: NewsStore.Keys.knownSources)
+        let news = NewsStore(defaults: defaults, directory: folder, now: now, notify: { _, _, _ in })
+        XCTAssertFalse(news.followedSources.contains("codex-releases"))
+
+        // Each feed has three posts from the month it wasn't followed, and its old one.
+        let missed = (1...3).map { "<item><title>Missed-\($0)</title><link>https://example.com/Missed-\($0)</link><pubDate>\(Self.rfc822(month.addingTimeInterval(Double($0) * 86_400)))</pubDate></item>" }.joined()
+        let feed = Data("<rss version=\"2.0\"><channel>\(missed)<item><title>Older</title><link>https://example.com/older</link></item></channel></rss>".utf8)
+        let codex = try XCTUnwrap(FeedSource.catalog.first { $0.id == "codex-releases" }).url
+        let followedAgain: Set<URL> = [codex, voice.url]
+        stubNetwork { request in followedAgain.contains(request.url!) ? (200, feed) : (304, Data()) }
+        news.followedSources.insert("codex-releases")
+        news.followedVoices.insert(voice.id)
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: now)
+        for _ in 0..<200 where news.isRefreshing { try await Task.sleep(for: .milliseconds(10)) }
+        for id in ["codex-releases", voice.id] {
+            XCTAssertEqual(news.cache.items[id]?.filter { $0.title.hasPrefix("Missed") }.count, 3, "\(id) was read")
+        }
+        XCTAssertEqual(news.unseenAnnouncementCount, 0, "What they published while unfollowed isn't badged")
+        news.beginVisit(now: now.addingTimeInterval(60))
+        XCTAssertFalse(news.allAnnouncements.contains { news.isNew($0.newsDate) }, "…or marked New")
+        news.endVisit()
+
+        // After that read, what they bring is new again.
+        let next = Data("<rss version=\"2.0\"><channel><item><title>Next</title><link>https://example.com/Next</link><pubDate>\(Self.rfc822(now))</pubDate></item>\(missed)</channel></rss>".utf8)
+        stubNetwork { request in followedAgain.contains(request.url!) ? (200, next) : (304, Data()) }
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: now.addingTimeInterval(120))
+        for _ in 0..<200 where news.isRefreshing { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(news.cache.items["codex-releases"]?.contains { $0.title == "Next" && ($0.newsDate ?? .distantPast) > news.seenAt } == true)
+        XCTAssertTrue(news.cache.items[voice.id]?.contains { $0.title == "Next" && ($0.newsDate ?? .distantPast) > news.seenAt } == true)
+    }
+
+    private static func rfc822(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss 'GMT'"
+        return formatter.string(from: date)
     }
 
     @MainActor
