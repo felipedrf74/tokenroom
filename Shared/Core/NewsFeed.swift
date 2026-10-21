@@ -271,6 +271,8 @@ enum NewsFetcher {
         var forcedSources: Set<String> = []
         /// Sources whose read is quiet, like a first read (`firstSeen`'s `quiet`).
         var quietSources: Set<String> = []
+        /// Shown the cache as each answer is taken in, before the whole pass is done.
+        var publish: @MainActor @Sendable (NewsCache) -> Void = { _ in }
         /// Rechecked before each public GET; already-issued requests may finish normally.
         var isAllowed: @MainActor @Sendable () -> Bool = { true }
     }
@@ -311,7 +313,7 @@ enum NewsFetcher {
     /// Fetches what's due: the model list and each feed every hour, a failed one after its
     /// `retryInterval`, or anything older than `maxAge` when given (opening the tab, pulling to
     /// refresh).
-    static func refresh(_ cache: NewsCache, sources: [FeedSource], following vendors: Set<String>, maxAge: TimeInterval? = nil, now: Date = .now, forcedSources: Set<String> = [], quietSources: Set<String> = [], isAllowed: @escaping @MainActor @Sendable () -> Bool = { true }) async -> Result {
+    static func refresh(_ cache: NewsCache, sources: [FeedSource], following vendors: Set<String>, maxAge: TimeInterval? = nil, now: Date = .now, forcedSources: Set<String> = [], quietSources: Set<String> = [], isAllowed: @escaping @MainActor @Sendable () -> Bool = { true }, publish: @escaping @MainActor @Sendable (NewsCache) -> Void = { _ in }) async -> Result {
         var cache = cache
         // Freeze legacy sources' dates before another source advances the shared timestamp.
         var migrated = cache.sourceChecks ?? [:]
@@ -363,6 +365,10 @@ enum NewsFetcher {
                     unreadable.insert(ModelFeed.id)
                 }
             }
+            // Shown before the feeds are in.
+            var shown = cache
+            shown.unreadable = unreadable.isEmpty ? nil : unreadable
+            await publish(shown)
         }
 
         let due = sources.filter { source in
@@ -374,73 +380,74 @@ enum NewsFetcher {
             let needsExcerptBody = Set(due.filter { source in
                 cache.items[source.id]?.contains { $0.excerpt != nil && $0.excerptIsPlainText != true } == true
             }.map(\.id))
-            let answers = await withTaskGroup(of: (FeedSource, Answer?).self) { group in
+            var anySucceeded = false
+            var anyFailed = false
+            var checks = cache.sourceChecks ?? [:]
+            // Each feed's answer is taken in, and shown (`publish`), as it arrives: a slow feed
+            // doesn't hold the others back.
+            await withTaskGroup(of: (FeedSource, Answer?).self) { group in
                 for source in due {
                     group.addTask {
                         return (source, await permittedGet(source.url, validator: needsExcerptBody.contains(source.id) ? nil : previous[source.url.absoluteString], sizeLimit: source.sizeLimit, isAllowed: isAllowed))
                     }
                 }
-                var answers: [(FeedSource, Answer?)] = []
-                for await answer in group { answers.append(answer) }
-                return answers
-            }
-            var anySucceeded = false
-            var anyFailed = false
-            var checks = cache.sourceChecks ?? [:]
-            for (source, answer) in answers {
-                guard let answer else { continue } // Disabled checks are neither failures nor fresh readings.
-                let key = source.url.absoluteString
-                var check = cache.check(for: source)
-                var success = false
-                var retryAfter: Date?
-                switch answer {
-                case let .body(data, validator, isTruncated):
-                    let read = FeedParser.read(data, source: source)
-                    let previousItems = cache.items[source.id] ?? []
-                    let items = firstSeen(read.items, previous: previousItems, now: now, quiet: quietSources.contains(source.id), previousRead: check.succeededAt)
-                    // A feed with no entries at all where some were cached isn't taken at its
-                    // word: a server's placeholder would clear the list.
-                    if read.isComplete, !isTruncated, read.entries > 0 || previousItems.isEmpty {
-                        // Every entry left out (a run of pre-releases): the last ones stay.
-                        cache.items[source.id] = items.isEmpty ? previousItems : items
-                        cache.validators[key] = validator
-                        success = true
-                    } else {
-                        // A partial response supplements the last complete copy, never deletes it,
-                        // and keeps to a feed's usual length.
-                        let ids = Set(items.map(\.id))
-                        if !items.isEmpty || cache.items[source.id] != nil {
-                            cache.items[source.id] = Array((items + previousItems.filter { !ids.contains($0.id) })
-                                .sorted { ($0.published ?? .distantPast) > ($1.published ?? .distantPast) }
-                                .prefix(FeedParser.itemLimit))
+                for await (source, answer) in group {
+                    guard let answer else { continue } // Disabled checks are neither failures nor fresh readings.
+                    let key = source.url.absoluteString
+                    var check = cache.check(for: source)
+                    var success = false
+                    var retryAfter: Date?
+                    switch answer {
+                    case let .body(data, validator, isTruncated):
+                        let read = FeedParser.read(data, source: source)
+                        let previousItems = cache.items[source.id] ?? []
+                        let items = firstSeen(read.items, previous: previousItems, now: now, quiet: quietSources.contains(source.id), previousRead: check.succeededAt)
+                        // A feed with no entries at all where some were cached isn't taken at its
+                        // word: a server's placeholder would clear the list.
+                        if read.isComplete, !isTruncated, read.entries > 0 || previousItems.isEmpty {
+                            // Every entry left out (a run of pre-releases): the last ones stay.
+                            cache.items[source.id] = items.isEmpty ? previousItems : items
+                            cache.validators[key] = validator
+                            success = true
+                        } else {
+                            // A partial response supplements the last complete copy, never deletes it,
+                            // and keeps to a feed's usual length.
+                            let ids = Set(items.map(\.id))
+                            if !items.isEmpty || cache.items[source.id] != nil {
+                                cache.items[source.id] = Array((items + previousItems.filter { !ids.contains($0.id) })
+                                    .sorted { ($0.published ?? .distantPast) > ($1.published ?? .distantPast) }
+                                    .prefix(FeedParser.itemLimit))
+                            }
+                            cache.validators[key] = nil
                         }
-                        cache.validators[key] = nil
+                    case .notModified:
+                        success = cache.items[source.id] != nil
+                        if !success { cache.validators[key] = nil }
+                    case let .status(_, asked): retryAfter = TokenroomHTTP.retryDate(asked, now: now)
+                    case .unreachable:
+                        if Task.isCancelled { continue }
                     }
-                case .notModified:
-                    success = cache.items[source.id] != nil
-                    if !success { cache.validators[key] = nil }
-                case let .status(_, asked): retryAfter = TokenroomHTTP.retryDate(asked, now: now)
-                case .unreachable:
-                    if Task.isCancelled { continue }
+                    if success {
+                        check.succeededAt = now
+                        check.failedAt = nil
+                        check.failures = nil
+                        check.retryAt = nil
+                        unreadable.remove(source.id)
+                        anySucceeded = true
+                    } else {
+                        check.failedAt = now
+                        check.failures = (check.failures ?? 0) + 1
+                        check.retryAt = allowedRetry(retryAfter, now: now)
+                        unreadable.insert(source.id)
+                        anyFailed = true
+                    }
+                    checks[source.id] = check
+                    cache.sourceChecks = checks
+                    cache.unreadable = unreadable.isEmpty ? nil : unreadable
+                    if anySucceeded { cache.announcementsFetchedAt = now }
+                    await publish(cache)
                 }
-                if success {
-                    check.succeededAt = now
-                    check.failedAt = nil
-                    check.failures = nil
-                    check.retryAt = nil
-                    unreadable.remove(source.id)
-                    anySucceeded = true
-                } else {
-                    check.failedAt = now
-                    check.failures = (check.failures ?? 0) + 1
-                    check.retryAt = allowedRetry(retryAfter, now: now)
-                    unreadable.insert(source.id)
-                    anyFailed = true
-                }
-                checks[source.id] = check
             }
-            cache.sourceChecks = checks
-            if anySucceeded { cache.announcementsFetchedAt = now }
             if anySucceeded || anyFailed { cache.announcementsFailedAt = anyFailed ? now : nil }
         }
         cache.unreadable = unreadable.isEmpty ? nil : unreadable

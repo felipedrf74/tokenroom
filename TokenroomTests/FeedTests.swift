@@ -356,6 +356,26 @@ final class FeedTests: XCTestCase {
         XCTAssertTrue(NewsFetcher.isDue(nil, failedAt: now, failures: 1, retryAt: now.addingTimeInterval(30 * 86_400), interval: 3600, now: now.addingTimeInterval(300)), "A time further off than allowed was saved while the clock was ahead")
     }
 
+    func testEachFeedShowsAsItArrives() async {
+        defer {
+            TokenroomHTTP.overrideSession(nil)
+            StubURLProtocol.reset()
+        }
+        StubURLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [SlowFeedProtocol.self]
+        TokenroomHTTP.overrideSession(URLSession(configuration: configuration))
+        let fast = FeedSource(id: "fast", name: "Fast", url: URL(string: "https://fast.example.com/feed.xml")!)
+        let slow = FeedSource(id: "slow", name: "Slow", url: URL(string: "https://slow.example.com/feed.xml")!)
+        let shown = LockedBox<[[String]]>([])
+        let result = await NewsFetcher.refresh(NewsCache(), sources: [fast, slow], following: [], now: utc(2026, 10, 21, 12), publish: { cache in
+            shown.value.append(cache.items.keys.sorted())
+        })
+        XCTAssertTrue(shown.value.contains(["fast"]), "The fast feed shows before the slow one is in: \(shown.value)")
+        XCTAssertEqual(shown.value.last, ["fast", "slow"])
+        XCTAssertEqual(Set(result.cache.items.keys), ["fast", "slow"])
+    }
+
     func testTheSizeLimitStopsTheDownload() async {
         defer { unstubNetwork() }
         stubNetwork { _ in (200, Data(repeating: UInt8(ascii: "x"), count: 3000)) }
@@ -1529,6 +1549,32 @@ final class StubETagProtocol: URLProtocol, @unchecked Sendable {
 /// Like StubURLProtocol, but a feed's body is cut off by a timeout a moment after what the handler
 /// gives has arrived. The content type is set, so the session doesn't hold a short body back to
 /// sniff it.
+/// Answers at once, except a host starting `slow.`, which answers half a second later.
+private final class SlowFeedProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        StubURLProtocol.requests.append(request)
+        let url = request.url!
+        let body = url == ModelFeed.url ? Data(#"{"data":[]}"#.utf8)
+            : Data("<rss version=\"2.0\"><channel><item><title>\(url.host!)</title><link>https://example.com/\(url.host!)</link></item></channel></rss>".utf8)
+        let respond: @Sendable () -> Void = { [client] in
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/rss+xml"])!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: body)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+        if url.host?.hasPrefix("slow.") == true {
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { respond() }
+        } else {
+            respond()
+        }
+    }
+
+    override func stopLoading() {}
+}
+
 /// Every request answers 429 with `retryAfter` as its Retry-After.
 private final class RetryAfterProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var retryAfter = "7200"
