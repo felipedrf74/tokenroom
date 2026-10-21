@@ -48,7 +48,10 @@ final class NewsLiveTests: XCTestCase {
         XCTAssertEqual(requests.value.count, 3, "On open, then every interval, without a pull or Check Now")
         XCTAssertTrue(requests.value.allSatisfy { $0.maxAge == NewsFetcher.liveInterval }, "Only feeds older than the interval go out")
         XCTAssertEqual(sleeps.value, Array(repeating: NewsFetcher.liveInterval, count: 3))
-        XCTAssertLessThanOrEqual(NewsFetcher.openInterval, 15 * 60, "Opening News shows feeds no older than a quarter of an hour")
+        XCTAssertEqual(NewsFetcher.liveInterval, 5 * 60, "On screen, News checks every five minutes")
+        XCTAssertEqual(NewsFetcher.openInterval, 5 * 60, "Opening News shows feeds no older than five minutes")
+        XCTAssertEqual(NewsFetcher.modelInterval, 3600, "In the background, the model list every hour")
+        XCTAssertEqual(NewsFetcher.announcementInterval, 3600, "…and each feed")
     }
 
     @MainActor
@@ -130,7 +133,7 @@ final class NewsLiveTests: XCTestCase {
         XCTAssertEqual(later.unseenModelCount(now: liveCheck.addingTimeInterval(60)), 1, "Created during the visit, but never on screen")
     }
 
-    /// News opened while another check runs still gets its 15-minute check right after it,
+    /// News opened while another check runs still gets its 5-minute check right after it,
     /// without turning notifications on, and without losing an asked-for check of everything.
     @MainActor
     func testALiveCheckAskedForDuringAnotherPassFollowsIt() async throws {
@@ -238,14 +241,17 @@ final class NewsLiveTests: XCTestCase {
         XCTAssertEqual(news.unseenModelCount(now: turnedOn), 0)
     }
 
-    /// A feed that failed waits out the hour during a visit, as it does in the background; a
+    /// A feed that failed waits out its backoff during a visit, as it does in the background; a
     /// pull or Check Now still goes out at once.
-    func testAFailedFeedWaitsTheHourDuringAVisit() {
+    func testAFailedFeedWaitsItsBackoffDuringAVisit() {
         let failedAt = Date(timeIntervalSince1970: 1_800_000_000)
-        XCTAssertFalse(NewsFetcher.isDue(nil, failedAt: failedAt, interval: NewsFetcher.liveInterval, now: failedAt.addingTimeInterval(NewsFetcher.liveInterval)))
-        XCTAssertTrue(NewsFetcher.isDue(nil, failedAt: failedAt, interval: NewsFetcher.liveInterval, now: failedAt.addingTimeInterval(NewsFetcher.retryInterval)))
-        XCTAssertTrue(NewsFetcher.isDue(nil, failedAt: failedAt, interval: 0, now: failedAt), "Pull to refresh and Check Now")
-        XCTAssertFalse(NewsFetcher.isDue(nil, failedAt: failedAt, interval: NewsFetcher.modelInterval, now: failedAt.addingTimeInterval(1800)))
-        XCTAssertTrue(NewsFetcher.isDue(nil, failedAt: failedAt, interval: NewsFetcher.modelInterval, now: failedAt.addingTimeInterval(NewsFetcher.retryInterval)))
+        XCTAssertEqual(NewsFetcher.retryIntervals, [5 * 60, 15 * 60, 30 * 60, 3600])
+        for (failures, wait) in [(1, 300.0), (2, 900), (3, 1800), (4, 3600), (9, 3600)] {
+            XCTAssertFalse(NewsFetcher.isDue(nil, failedAt: failedAt, failures: failures, interval: NewsFetcher.liveInterval, now: failedAt.addingTimeInterval(wait - 60)), "\(failures) in a row: not before \(wait) s")
+            XCTAssertTrue(NewsFetcher.isDue(nil, failedAt: failedAt, failures: failures, interval: NewsFetcher.liveInterval, now: failedAt.addingTimeInterval(wait)), "\(failures) in a row: after \(wait) s")
+        }
+        XCTAssertTrue(NewsFetcher.isDue(nil, failedAt: failedAt, failures: 9, interval: 0, now: failedAt), "Pull to refresh and Check Now")
+        XCTAssertFalse(NewsFetcher.isDue(nil, failedAt: failedAt, interval: NewsFetcher.modelInterval, now: failedAt.addingTimeInterval(240)))
+        XCTAssertTrue(NewsFetcher.isDue(nil, failedAt: failedAt, interval: NewsFetcher.modelInterval, now: failedAt.addingTimeInterval(300)), "A failure an earlier release saved, without a count, is the first")
     }
 }

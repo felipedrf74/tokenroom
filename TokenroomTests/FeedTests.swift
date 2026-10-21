@@ -453,14 +453,38 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(cache.announcementsFailedAt, now)
         XCTAssertEqual(cache.unreadable, [ModelFeed.id, "claude-code"])
 
-        cache = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], now: now.addingTimeInterval(600)).cache
-        XCTAssertEqual(StubURLProtocol.requests.count, 2, "The next refresh doesn't ask again")
+        XCTAssertEqual(cache.modelsFailures, 1)
+        XCTAssertEqual(cache.sourceChecks?["claude-code"]?.failures, 1)
 
-        cache = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], maxAge: 0, now: now.addingTimeInterval(660)).cache
-        XCTAssertEqual(StubURLProtocol.requests.count, 4, "Asking now (pulling to refresh, Check now) still goes out")
+        // Each failure in a row waits longer: 5 minutes, 15, 30, then an hour.
+        var last = now
+        var expected = 2
+        for (failures, wait) in [(1, 300.0), (2, 900), (3, 1800), (4, 3600), (5, 3600)] {
+            cache = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], now: last.addingTimeInterval(wait - 60)).cache
+            XCTAssertEqual(StubURLProtocol.requests.count, expected, "After \(failures) in a row, not before \(wait) s")
+            last = last.addingTimeInterval(wait)
+            cache = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], now: last).cache
+            expected += 2
+            XCTAssertEqual(StubURLProtocol.requests.count, expected, "After \(failures) in a row, again at \(wait) s")
+            XCTAssertEqual(cache.modelsFailures, failures + 1)
+            XCTAssertEqual(cache.sourceChecks?["claude-code"]?.failures, failures + 1)
+        }
 
-        _ = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], now: now.addingTimeInterval(660 + NewsFetcher.retryInterval))
-        XCTAssertEqual(StubURLProtocol.requests.count, 6, "An hour after the last try, it tries again")
+        cache = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], maxAge: 0, now: last.addingTimeInterval(60)).cache
+        XCTAssertEqual(StubURLProtocol.requests.count, expected + 2, "Asking now (pulling to refresh, Check now) still goes out")
+
+        // An answer starts the count again.
+        StubURLProtocol.handler = { request in request.url == ModelFeed.url ? (200, Self.noModels) : (200, Self.rss("Back", "Thu, 24 Sep 2026 12:00:00 GMT")) }
+        cache = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], maxAge: 0, now: last.addingTimeInterval(120)).cache
+        XCTAssertNil(cache.modelsFailures)
+        XCTAssertNil(cache.sourceChecks?["claude-code"]?.failures)
+        StubURLProtocol.handler = { _ in (503, Data()) }
+        cache = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], maxAge: 0, now: last.addingTimeInterval(180)).cache
+        XCTAssertEqual(cache.sourceChecks?["claude-code"]?.failures, 1)
+        XCTAssertEqual(cache.modelsFailures, 1)
+        let count = StubURLProtocol.requests.count
+        _ = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], now: last.addingTimeInterval(180 + 300)).cache
+        XCTAssertEqual(StubURLProtocol.requests.count, count + 2, "Back to a 5-minute wait")
     }
 
     func testCatalogIsHTTPSAndUnique() {
@@ -879,12 +903,12 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(first.sourceChecks?[good.id]?.succeededAt, now)
         XCTAssertEqual(first.sourceChecks?[failed.id]?.failedAt, now)
         let before = StubURLProtocol.requests.count
-        let second = await NewsFetcher.refresh(first, sources: [good, failed, added], following: [], now: now.addingTimeInterval(600)).cache
+        let second = await NewsFetcher.refresh(first, sources: [good, failed, added], following: [], now: now.addingTimeInterval(240)).cache
         XCTAssertEqual(StubURLProtocol.requests.count, before + 1)
         XCTAssertEqual(StubURLProtocol.requests.last?.url, added.url, "A fresh global timestamp cannot delay an uncached source")
-        _ = await NewsFetcher.refresh(second, sources: [good, failed, added], following: [], now: now.addingTimeInterval(3600))
+        _ = await NewsFetcher.refresh(second, sources: [good, failed, added], following: [], now: now.addingTimeInterval(300))
         XCTAssertEqual(StubURLProtocol.requests.count, before + 2)
-        XCTAssertEqual(StubURLProtocol.requests.last?.url, failed.url, "Only the failed source retries after an hour")
+        XCTAssertEqual(StubURLProtocol.requests.last?.url, failed.url, "Only the failed source retries, after its first 5-minute wait")
     }
 
     func testParsingFailureDoesNotAdvanceSuccessAndRetriesAfterAnHour() async {
@@ -939,6 +963,11 @@ final class FeedTests: XCTestCase {
         let decoded = try RelayEnvelope.decoder.decode(NewsCache.self, from: RelayEnvelope.encoder.encode(cache))
         XCTAssertNil(decoded.sourceChecks)
         XCTAssertEqual(decoded.items, [:])
+        // Written before failures were counted.
+        let legacy = try RelayEnvelope.decoder.decode(NewsCache.self, from: Data(#"{"models":[],"modelsFailedAt":1790000000,"modelState":{"seenIDs":[]},"items":{},"validators":{},"sourceChecks":{"cursor":{"failedAt":1790000000}}}"#.utf8))
+        XCTAssertNil(legacy.modelsFailures)
+        XCTAssertNil(legacy.sourceChecks?["cursor"]?.failures)
+        XCTAssertEqual(legacy.sourceChecks?["cursor"]?.failedAt, Date(timeIntervalSince1970: 1_790_000_000))
     }
 
     func testLegacyFeedDatesDoNotAdvanceWhenANewSourceSucceeds() async {

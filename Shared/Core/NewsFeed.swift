@@ -13,6 +13,9 @@ struct NewsCache: Codable, Equatable, Sendable {
     struct SourceCheck: Codable, Equatable, Sendable {
         var succeededAt: Date?
         var failedAt: Date?
+        /// Failed checks in a row since the last success, for `NewsFetcher.retryInterval`. Nil
+        /// after a success, and in caches from earlier releases.
+        var failures: Int?
     }
     /// Optional for caches written by earlier releases.
     var sourceChecks: [String: SourceCheck]?
@@ -22,6 +25,8 @@ struct NewsCache: Codable, Equatable, Sendable {
     /// When the last check failed (no answer, or an error status), so the next waits
     /// `NewsFetcher.retryInterval` instead of going out on every refresh. Cleared by an answer.
     var modelsFailedAt: Date?
+    /// The model list's failed checks in a row; nil after an answer, and in older caches.
+    var modelsFailures: Int?
     var modelState = ModelFeedState()
     /// Items per feed ID, newest first.
     var items: [String: [FeedItem]] = [:]
@@ -132,6 +137,19 @@ struct NewsCache: Codable, Equatable, Sendable {
         }
     }
 
+    /// The model list answered: checked now, and no longer failing.
+    mutating func modelsSucceeded(at now: Date) {
+        modelsFetchedAt = now
+        modelsFailedAt = nil
+        modelsFailures = nil
+    }
+
+    /// The model list's check failed once more, so the next waits a little longer.
+    mutating func modelsFailed(at now: Date) {
+        modelsFailedAt = now
+        modelsFailures = (modelsFailures ?? 0) + 1
+    }
+
     static func load(from directory: URL?) -> NewsCache {
         guard let url = directory?.appendingPathComponent(fileName),
               let data = try? Data(contentsOf: url),
@@ -150,17 +168,26 @@ struct NewsCache: Codable, Equatable, Sendable {
 }
 
 enum NewsFetcher {
-    static let modelInterval: TimeInterval = 6 * 3600
-    static let announcementInterval: TimeInterval = 12 * 3600
+    /// How often the model list and each feed are checked in the background (the iPhone's
+    /// background refresh, the Mac's sharing loop). Conditional GETs keep an unchanged feed to a 304.
+    static let modelInterval: TimeInterval = 3600
+    static let announcementInterval: TimeInterval = 3600
     /// Opening News (the iPhone tab or the app coming forward, the Mac window) refreshes
     /// anything older than this.
-    static let openInterval: TimeInterval = 15 * 60
+    static let openInterval: TimeInterval = 5 * 60
     /// While News is on screen it checks again this often by itself, so nobody has to pull or
-    /// press Check Now to catch up. Conditional GETs keep an unchanged feed to a 304.
-    static let liveInterval: TimeInterval = 15 * 60
-    /// A failed check waits this long before the next, unless asked for (pulling to refresh,
-    /// Check now), so a server that's down isn't asked on every refresh.
-    static let retryInterval: TimeInterval = 3600
+    /// press Check Now to catch up.
+    static let liveInterval: TimeInterval = 5 * 60
+    /// After a failed check the next waits longer the more checks have failed in a row: 5, 15,
+    /// and 30 minutes, then an hour each time, unless asked for (pulling to refresh, Check Now).
+    /// A server that's down isn't asked on every refresh, and one back up is found soon.
+    static let retryIntervals: [TimeInterval] = [5 * 60, 15 * 60, 30 * 60, 3600]
+
+    /// The wait after `failures` failed checks in a row; a failure an earlier release recorded,
+    /// without a count, is the first.
+    static func retryInterval(afterFailures failures: Int?) -> TimeInterval {
+        retryIntervals[min(max(failures ?? 1, 1), retryIntervals.count) - 1]
+    }
 
     struct Result: Sendable {
         var cache: NewsCache
@@ -212,8 +239,9 @@ enum NewsFetcher {
         case unreachable
     }
 
-    /// Fetches what's due: models every 6 hours, announcements every 12, or anything older than
-    /// `maxAge` when given (opening the tab, pulling to refresh).
+    /// Fetches what's due: the model list and each feed every hour, a failed one after its
+    /// `retryInterval`, or anything older than `maxAge` when given (opening the tab, pulling to
+    /// refresh).
     static func refresh(_ cache: NewsCache, sources: [FeedSource], following vendors: Set<String>, maxAge: TimeInterval? = nil, now: Date = .now, forcedSources: Set<String> = [], isAllowed: @escaping @MainActor @Sendable () -> Bool = { true }) async -> Result {
         var cache = cache
         // Freeze legacy sources' dates before another source advances the shared timestamp.
@@ -225,7 +253,7 @@ enum NewsFetcher {
         var newModels: [ModelRelease] = []
         var unreadable = cache.unreadable ?? []
 
-        if forcedSources.contains(ModelFeed.id) || isDue(cache.modelsFetchedAt, failedAt: cache.modelsFailedAt, interval: maxAge ?? modelInterval, now: now) {
+        if forcedSources.contains(ModelFeed.id) || isDue(cache.modelsFetchedAt, failedAt: cache.modelsFailedAt, failures: cache.modelsFailures, interval: maxAge ?? modelInterval, now: now) {
             let key = ModelFeed.url.absoluteString
             guard let answer = await permittedGet(ModelFeed.url, validator: cache.validators[key], isAllowed: isAllowed) else {
                 return .init(cache: cache, newModels: [])
@@ -237,31 +265,29 @@ enum NewsFetcher {
                     newModels = cache.modelState.takeNew(from: cache.models, following: vendors)
                     cache.validators[key] = validator
                     unreadable.remove(ModelFeed.id)
-                    cache.modelsFetchedAt = now
-                    cache.modelsFailedAt = nil
+                    cache.modelsSucceeded(at: now)
                 } else {
                     // Keeps the last list, and asks for the whole answer next time.
                     cache.validators[key] = nil
                     unreadable.insert(ModelFeed.id)
-                    cache.modelsFailedAt = now
+                    cache.modelsFailed(at: now)
                 }
             case .notModified:
                 if cache.modelsFetchedAt != nil {
-                    cache.modelsFetchedAt = now
-                    cache.modelsFailedAt = nil
+                    cache.modelsSucceeded(at: now)
                     unreadable.remove(ModelFeed.id)
                 } else {
                     cache.validators[key] = nil
-                    cache.modelsFailedAt = now
+                    cache.modelsFailed(at: now)
                     unreadable.insert(ModelFeed.id)
                 }
             case .status:
-                cache.modelsFailedAt = now
+                cache.modelsFailed(at: now)
                 unreadable.insert(ModelFeed.id)
             case .unreachable:
                 // A cancelled refresh (quitting, sleep) isn't a failure.
                 if !Task.isCancelled {
-                    cache.modelsFailedAt = now
+                    cache.modelsFailed(at: now)
                     unreadable.insert(ModelFeed.id)
                 }
             }
@@ -269,7 +295,7 @@ enum NewsFetcher {
 
         let due = sources.filter { source in
             let check = cache.check(for: source)
-            return forcedSources.contains(source.id) || isDue(check.succeededAt, failedAt: check.failedAt, interval: maxAge ?? announcementInterval, now: now)
+            return forcedSources.contains(source.id) || isDue(check.succeededAt, failedAt: check.failedAt, failures: check.failures, interval: maxAge ?? announcementInterval, now: now)
         }
         if !due.isEmpty {
             let previous = cache.validators
@@ -327,10 +353,12 @@ enum NewsFetcher {
                 if success {
                     check.succeededAt = now
                     check.failedAt = nil
+                    check.failures = nil
                     unreadable.remove(source.id)
                     anySucceeded = true
                 } else {
                     check.failedAt = now
+                    check.failures = (check.failures ?? 0) + 1
                     unreadable.insert(source.id)
                     anyFailed = true
                 }
@@ -350,12 +378,12 @@ enum NewsFetcher {
         fetchedAt.map { $0 > now || now.timeIntervalSince($0) >= interval } ?? true
     }
 
-    /// Due by `interval`, and, after a failed check, once `retryInterval` has passed, however
-    /// often News is open or on screen; asking with a `maxAge` of 0 (pulling to refresh, Check
-    /// Now) always goes out.
-    static func isDue(_ fetchedAt: Date?, failedAt: Date?, interval: TimeInterval, now: Date) -> Bool {
+    /// Due by `interval`, and, after `failures` failed checks in a row, once their
+    /// `retryInterval` has passed, however often News is open or on screen; asking with a
+    /// `maxAge` of 0 (pulling to refresh, Check Now) always goes out.
+    static func isDue(_ fetchedAt: Date?, failedAt: Date?, failures: Int? = nil, interval: TimeInterval, now: Date) -> Bool {
         if let failedAt, fetchedAt == nil || failedAt >= fetchedAt! {
-            return isDue(failedAt, interval: interval <= 0 ? 0 : retryInterval, now: now)
+            return isDue(failedAt, interval: interval <= 0 ? 0 : retryInterval(afterFailures: failures), now: now)
         }
         return isDue(fetchedAt, interval: interval, now: now)
     }

@@ -54,7 +54,7 @@ private struct MobileWindowScene: Scene {
                         store.becameActive()
                         Task {
                             await store.refresh()
-                            // Feeds older than an hour, so the News badge is current on open.
+                            // Feeds older than `openInterval` (5 minutes), so the News badge is current on open.
                             await news.refresh(maxAge: NewsFetcher.openInterval, preferences: store.alertPreferences)
                         }
                     case .background:
