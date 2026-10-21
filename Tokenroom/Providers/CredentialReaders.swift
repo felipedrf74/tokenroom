@@ -385,16 +385,21 @@ enum CredentialReaders {
         }
     }
 
-    /// A Claude item that is there but won't be usable, which waiting doesn't change: its secret
-    /// isn't a login, or its own access list was read and doesn't trust `/usr/bin/security`, so
-    /// it's never read. A read that fails now throws `ProviderError.unreachable` instead.
-    struct UnusableClaudeItem: Error, Equatable {}
+    /// A Claude item that is there but can't be used as it is. A read that fails now (a locked
+    /// Keychain, the tool not answering) throws `ProviderError.unreachable` instead.
+    enum UnusableClaudeItem: Error, Equatable {
+        /// Its secret was read in full and isn't a login (Claude Code signed out of it, say).
+        case notALogin
+        /// Its own access list was read and doesn't trust `/usr/bin/security`, so it isn't read.
+        /// That can change (Keychain Access, or Claude Code's Always Allow) with the item as it was.
+        case untrusted
+    }
 
     /// One Claude item by its service and account: the item a saved grant renews, which another
     /// may outrank in `claudeAuth`. Read the same quiet way (access list first, then
     /// `/usr/bin/security` only where it's trusted). Nil when the item isn't there; throws
     /// `unreachable` when it can't be read now, so a grant waiting for it is kept, and
-    /// `UnusableClaudeItem` when it's there but can't take a grant. `access` stands in for the
+    /// `UnusableClaudeItem` when it's there but can't be used as it is. `access` stands in for the
     /// item's own access list, looked up by service and account.
     static func claudeItem(
         service: String,
@@ -407,7 +412,7 @@ enum CredentialReaders {
         if exists(service, account) == false { return nil }
         let policy = access.map { $0(service) } ?? claudeKeyAccess(service: service, account: account)
         guard policy.trustsSecurityTool else {
-            if policy.wasRead { throw UnusableClaudeItem() }
+            if policy.wasRead { throw UnusableClaudeItem.untrusted }
             throw ProviderError.unreachable
         }
         switch security(service, account) {
@@ -416,8 +421,7 @@ enum CredentialReaders {
             do {
                 return try parseClaudeAuth(raw, account: account, service: service)
             } catch {
-                // Read in full, and not a login (Claude Code signed out of it, say).
-                throw UnusableClaudeItem()
+                throw UnusableClaudeItem.notALogin
             }
         case .missing:
             return nil

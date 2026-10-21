@@ -444,8 +444,9 @@ final class ParserTests: XCTestCase {
     }
 
     /// Can't be read now (a locked Keychain, the tool not answering) throws `unreachable`, and a
-    /// grant waits. There but won't be usable (not a login, or its access list, read, doesn't
-    /// trust the tool) throws `UnusableClaudeItem`, and a grant doesn't wait for it.
+    /// grant waits. There but not usable as it is throws `UnusableClaudeItem`: `notALogin`, which a
+    /// grant doesn't wait for, or `untrusted` (its access list, read, doesn't trust the tool),
+    /// which a grant waits for only while it can still rescue the item.
     func testAClaudeItemThatWontBeUsableIsToldApartFromOneNotReadableNow() {
         let trusted: (String) -> CredentialReaders.ClaudeKeyAccess = { _ in
             CredentialReaders.ClaudeKeyAccess(partitions: ["apple-tool:"], hasPartitionList: true, wasRead: true)
@@ -459,21 +460,21 @@ final class ParserTests: XCTestCase {
                     service: "svc", account: "other.name", exists: { _, _ in true }, access: access, security: { _, _ in security }
                 )
                 return found == nil ? "missing" : "found"
-            } catch is CredentialReaders.UnusableClaudeItem {
-                return "unusable"
+            } catch let unusable as CredentialReaders.UnusableClaudeItem {
+                return unusable == .untrusted ? "untrusted" : "not a login"
             } catch {
                 return (error as? ProviderError) == .unreachable ? "not now" : "\(error)"
             }
         }
 
         XCTAssertEqual(outcome(security: .value(#"{"claudeAiOauth":{"accessToken":"tok"}}"#)), "found")
-        XCTAssertEqual(outcome(security: .value(#"{"mcpOAuth":{"accessToken":"other"}}"#)), "unusable", "Not a Claude login")
-        XCTAssertEqual(outcome(security: .value(#"{"claudeAiOauth":"#)), "unusable", "Not JSON")
+        XCTAssertEqual(outcome(security: .value(#"{"mcpOAuth":{"accessToken":"other"}}"#)), "not a login", "Not a Claude login")
+        XCTAssertEqual(outcome(security: .value(#"{"claudeAiOauth":"#)), "not a login", "Not JSON")
         XCTAssertEqual(outcome(security: .unavailable), "not now")
         XCTAssertEqual(outcome(
             access: { _ in CredentialReaders.ClaudeKeyAccess(partitions: ["teamid:EXAMPLE"], hasPartitionList: true, wasRead: true) },
             security: .value(#"{"claudeAiOauth":{"accessToken":"tok"}}"#)
-        ), "unusable", "Its access list was read and doesn't trust the tool")
+        ), "untrusted", "Its access list was read and doesn't trust the tool")
         XCTAssertEqual(outcome(
             access: { _ in CredentialReaders.ClaudeKeyAccess() },
             security: .value(#"{"claudeAiOauth":{"accessToken":"tok"}}"#)

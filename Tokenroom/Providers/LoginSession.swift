@@ -561,8 +561,11 @@ actor LoginSession {
                     return try CredentialReaders.claudeItem(service: service, account: account)
                 }
                 return found.map { .found($0) } ?? .missing
-            } catch is CredentialReaders.UnusableClaudeItem {
-                return .unusable
+            } catch let unusable as CredentialReaders.UnusableClaudeItem {
+                switch unusable {
+                case .notALogin: return .notALogin
+                case .untrusted: return .untrusted
+                }
             } catch {
                 return .unreadable
             }
@@ -728,9 +731,22 @@ actor LoginSession {
         case missing
         /// Can't be read just now (the `security` tool busy, say): the grant waits for it.
         case unreadable
-        /// There, but it can't take the grant, and waiting won't change that: its secret isn't a
-        /// login, or its access list doesn't trust the `security` tool, so it's never read.
-        case unusable
+        /// There, and its secret isn't a login: it can't take the grant, and waiting won't change that.
+        case notALogin
+        /// There, and its access list doesn't trust the `security` tool, so it isn't read. That can
+        /// change with the replaced refresh token still in it (`grantCanStillRescue`).
+        case untrusted
+    }
+
+    /// Until the login a grant replaced has run out, plus the slack, Claude Code hasn't refreshed
+    /// that item itself with the spent refresh token, so writing the grant back can still rescue
+    /// it. That login's expiry isn't recorded. The grant's own access-token expiry is, and it comes
+    /// later: the exchange runs within `lead` of that login's expiry, or once its token was refused,
+    /// and the new token lasts `expires_in` (eight hours). A grant without one can't be written
+    /// back (`apply` needs it).
+    static func grantCanStillRescue(_ pending: LoginRecoveryPending, now: Date) -> Bool {
+        guard let expiresAtMs = pending.expiresAtMs else { return false }
+        return now.timeIntervalSince1970 < expiresAtMs / 1000 + OAuthRefresh.usableSlack
     }
 
     private func renew<Auth: Sendable>(
@@ -762,20 +778,25 @@ actor LoginSession {
             case .unreadable:
                 // Kept for when its item can be read. Only one grant is kept at a time, so no
                 // other login is exchanged meanwhile.
-                let fact = facts(current)
-                if OAuthRefresh.stillUsable(expiresAt: fact.expiresAt, now: now), fact.accessToken != replacing {
-                    return current
+                if let usable = adoptIfUsable(current, facts: facts, replacing: replacing, now: now) {
+                    return usable
                 }
                 throw ProviderError.unreachable
-            case .unusable:
-                // Dropped like a gone item's: it's written only into a login read from its item
-                // that still has the refresh token it replaced, so this one can't take it, and
-                // waiting would hold off renewing the login read first for good. Kept while that
-                // login has the replaced token itself: it's spent, and exchanging it resends it.
-                let fact = facts(current)
-                if fact.refreshToken == saved.previousRefresh {
-                    if OAuthRefresh.stillUsable(expiresAt: fact.expiresAt, now: now), fact.accessToken != replacing {
-                        return current
+            case .untrusted where Self.grantCanStillRescue(saved, now: now):
+                // Its access list can trust the tool again with the spent refresh token still in
+                // it: kept, as for an item not readable now, while writing it back can still help.
+                if let usable = adoptIfUsable(current, facts: facts, replacing: replacing, now: now) {
+                    return usable
+                }
+                throw ProviderError.unreachable
+            case .untrusted, .notALogin:
+                // Dropped like a gone item's: not a login, or untrusted past the time it could be
+                // rescued, so waiting would hold off renewing the login read first for good. Kept
+                // while that login has the replaced token itself: it's spent, and exchanging it
+                // would send it again.
+                if facts(current).refreshToken == saved.previousRefresh {
+                    if let usable = adoptIfUsable(current, facts: facts, replacing: replacing, now: now) {
+                        return usable
                     }
                     throw ProviderError.unreachable
                 }
@@ -839,7 +860,7 @@ actor LoginSession {
                     latest = try await read()
                 case .found(let own):
                     latest = own
-                case .missing, .unreadable, .unusable:
+                case .missing, .unreadable, .untrusted, .notALogin:
                     // Saved, and written into its item on a later try (or dropped then).
                     Self.log.error("Renewal could not be written back for \(provider.rawValue, privacy: .public)")
                     throw ProviderError.unreachable
