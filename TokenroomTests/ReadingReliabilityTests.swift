@@ -311,4 +311,18 @@ final class ReadingReliabilityTests: XCTestCase {
             XCTAssertFalse(line.localizedCaseInsensitiveContains("this iPhone"), line)
         }
     }
+
+    /// A countdown ticks within a day of its reset: the timeline has an entry where it starts.
+    func testWidgetTimelinesStartTheCountdownADayBeforeTheReset() {
+        var reading = item("one", age: 0)
+        reading.provider.windows[0].resetsAt = now.addingTimeInterval(30 * 3600)
+        let cache = ReadingCache(savedAt: now, isSample: false, items: [reading])
+        let dates = cache.presentationDates(after: now, until: now.addingTimeInterval(8 * 3600))
+        let start = now.addingTimeInterval(6 * 3600 + 1)
+        XCTAssertTrue(dates.contains(start), "\(dates)")
+        XCTAssertLessThan(reading.provider.windows[0].resetsAt!.timeIntervalSince(start), ReadingCache.countdownTicksWithin)
+        reading.provider.windows[0].resetsAt = now.addingTimeInterval(3 * 3600)
+        let soon = ReadingCache(savedAt: now, isSample: false, items: [reading]).presentationDates(after: now, until: now.addingTimeInterval(8 * 3600))
+        XCTAssertEqual(soon.filter { $0 < now.addingTimeInterval(3 * 3600) }, [now.addingTimeInterval(3601)], "Only the stale boundary: it already ticks")
+    }
 }

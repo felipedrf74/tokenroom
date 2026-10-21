@@ -53,6 +53,9 @@ extension RelayWindow {
 }
 
 extension ReadingCache {
+    /// Within this long of a reset, countdowns tick ("2:13:05") rather than read "3d 1h".
+    static let countdownTicksWithin: TimeInterval = 86_400
+
     func presented(at date: Date) -> ReadingCache {
         var result = self
         result.items = items.compactMap { item in
@@ -98,11 +101,13 @@ extension ReadingCache {
             .filter { $0 > start && $0 <= end }).sorted()
     }
 
-    /// Timeline entries age readings even if WidgetKit postpones the next network reload.
+    /// Timeline entries age readings even if WidgetKit postpones the next network reload. Each
+    /// reset gets one a day ahead too, as its countdown starts ticking (`countdownTicksWithin`).
     func presentationDates(after now: Date, until horizon: Date) -> [Date] {
         let dates = items.flatMap { item -> [Date] in
             let checked = item.provider.checkedAt ?? item.provider.fetchedAt ?? savedAt
-            return item.provider.windows.compactMap(\.resetsAt) + [
+            let resets = item.provider.windows.compactMap(\.resetsAt)
+            return resets + resets.map { $0.addingTimeInterval(1 - Self.countdownTicksWithin) } + [
                 checked.addingTimeInterval(ReadingFreshness.staleAfter + 1),
                 checked.addingTimeInterval(ReadingFreshness.expiresAfter + 1)
             ]
