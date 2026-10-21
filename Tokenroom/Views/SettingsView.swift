@@ -396,7 +396,8 @@ private struct ProvidersSettings: View {
     private func providerToggle(_ provider: Provider) -> some View {
         Toggle(isOn: Binding(
             get: { store.settings.isEnabled(provider) },
-            set: { store.settings.setEnabled(provider, $0) }
+            // Through the store: one turned on is checked now, and iCloud hears of either.
+            set: { store.setEnabled(provider, $0) }
         )) {
             HStack(spacing: 8) {
                 ProviderIcon(provider: provider, size: 20)
@@ -597,7 +598,7 @@ private struct KeysSettings: View {
                    }) {
                 keySheet = provider
             } onRemoved: {
-                store.settings.setEnabled(provider, false)
+                store.setEnabled(provider, false)
             }
             .padding(.leading, 28)
             BudgetField(label: budgetLabel, currency: unit.uppercased(), resetRevision: budgetClears[provider, default: 0], value: Binding(
@@ -1131,7 +1132,11 @@ private struct MenuBarSettings: View {
                         Text(style.title).tag(style)
                     }
                 }
-                Picker("Refresh every", selection: $store.settings.refreshMinutes) {
+                // Through the store, so the new interval starts now rather than after the old wait.
+                Picker("Refresh every", selection: Binding(
+                    get: { store.settings.refreshMinutes },
+                    set: { store.setRefreshMinutes($0) }
+                )) {
                     Text("5 minutes").tag(5)
                     Text("10 minutes").tag(10)
                     Text("15 minutes").tag(15)
