@@ -957,7 +957,9 @@ struct AlertLedger: Codable, Equatable, Sendable {
     }
 
     /// Drops held alerts that no longer mean anything: too old, turned off since, overtaken by a
-    /// higher level, a run-out past its deadline, or their window already reset.
+    /// higher level, a run-out past its deadline, or their window already reset. A run-out
+    /// dropped at its deadline without having gone out (`releaseRunOutInstance`) no longer holds
+    /// its window, so the window can still warn if it's on course again.
     private mutating func prune(preferences: AlertPreferences, now: Date) {
         sent = sent.filter { now.timeIntervalSince($0.value) < Self.memory }
         shownHere = shownHere.filter { now.timeIntervalSince($0.value) < Self.memory }
@@ -966,9 +968,17 @@ struct AlertLedger: Codable, Equatable, Sendable {
         // Held through at least one whole stretch of quiet hours, however long it is.
         let lifetime = max(Self.pendingLifetime, preferences.quietLength + 3600)
         let delivered = sent
+        let shown = shownHere
         let levels = levelsSent
+        var lapsed: [UsageAlert] = []
         pending.removeAll { item in
-            if now.timeIntervalSince(item.raisedAt) > lifetime || Self.isPastRunOut(item.alert, now: now) { return true }
+            if now.timeIntervalSince(item.raisedAt) > lifetime { return true }
+            if Self.isPastRunOut(item.alert, now: now) {
+                if delivered[item.alert.id] == nil && shown[item.alert.id] == nil {
+                    lapsed.append(item.alert)
+                }
+                return true
+            }
             if !preferences.allows(item.alert) || Self.isSuperseded(item, sent: delivered, levelsSent: levels, going: []) { return true }
             switch item.alert.kind {
             case .threshold, .lowBalance, .bankedExpiring, .runsOut:
@@ -977,6 +987,18 @@ struct AlertLedger: Codable, Equatable, Sendable {
                 return false
             }
         }
+        for alert in lapsed {
+            releaseRunOutInstance(of: alert, now: now)
+        }
+    }
+
+    /// Frees the window a run-out held (`reserveRunOutInstance`), as long as the hold is still
+    /// that alert's instance and not a newer one's.
+    private mutating func releaseRunOutInstance(of alert: UsageAlert, now: Date) {
+        guard let window = alert.window else { return }
+        let key = alert.provider + "/" + window
+        guard let held = runOutInstances[key], AlertRules.instance(held.resetsAt, window: held, now: now) == alert.instance else { return }
+        runOutInstances[key] = nil
     }
 
     static func load(from directory: URL?) -> AlertLedger {

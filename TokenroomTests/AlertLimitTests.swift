@@ -294,6 +294,47 @@ final class AlertLimitTests: XCTestCase {
         XCTAssertTrue(retried.first?.body.hasPrefix("93% used") == true, retried.first?.body ?? "")
     }
 
+    func testARunOutDroppedUnsentAtItsDeadlineLetsTheWindowWarnAgain() throws {
+        var quiet = preferences
+        quiet.quietHours = true
+        quiet.thresholds = [80]
+        let evening = now.addingTimeInterval(10.5 * 3600)
+        let reset = evening.addingTimeInterval(3 * 86_400)
+        let runsOut = evening.addingTimeInterval(3 * 3600)
+        let wake = evening.addingTimeInterval(9 * 3600)
+        let onCourse = week(78, runsOut: evening.addingTimeInterval(16.5 * 3600), reset: reset)
+
+        // 10:30 PM, out at 1:30 AM: not urgent, so it's held for the morning, and the Mac sleeps.
+        var ledger = AlertLedger()
+        ledger.process([week(68, runsOut: runsOut, reset: reset)], preferences: quiet, now: evening)
+        let raised = try XCTUnwrap(ledger.process([week(70, runsOut: runsOut, reset: reset)], preferences: quiet, now: evening).first)
+        XCTAssertEqual(raised.kind, .runsOut)
+        XCTAssertFalse(raised.isUrgent)
+        // 7:30 AM: the check on waking fails, so only a stale reading comes, and the held one is
+        // past its deadline.
+        var stale = week(70, runsOut: runsOut, reset: reset)
+        stale.state = "stale"
+        XCTAssertTrue(ledger.process([stale], preferences: quiet, now: wake).isEmpty)
+        XCTAssertTrue(ledger.pending.isEmpty)
+        // 7:35 AM: a live reading on course to run out at 3:00 PM. Nothing went out this week.
+        let again = ledger.process([onCourse], preferences: quiet, now: wake.addingTimeInterval(300))
+        XCTAssertEqual(again.map(\.kind), [.runsOut], "A run-out that never went out doesn't hold the week")
+        let due = ledger.due(preferences: quiet, now: wake.addingTimeInterval(35 * 60))
+        XCTAssertEqual(due.map(\.id), again.map(\.id))
+        XCTAssertTrue(due.first?.body.hasPrefix("78% used") == true, due.first?.body ?? "")
+
+        // Shown on this Mac, though iCloud didn't take it: the week has had its warning.
+        var shown = AlertLedger()
+        shown.process([week(68, runsOut: runsOut, reset: reset)], preferences: preferences, now: evening)
+        let first = shown.process([week(70, runsOut: runsOut, reset: reset)], preferences: preferences, now: evening)
+        let going = shown.due(preferences: preferences, now: evening)
+        XCTAssertEqual(shown.settle(going, delivery: AlertLedger.Delivery(), showsHere: true, now: evening).map(\.id), first.map(\.id))
+        XCTAssertEqual(shown.pending.map(\.alert.id), first.map(\.id), "Still to go to iCloud")
+        shown.process([], preferences: preferences, now: wake)
+        XCTAssertTrue(shown.pending.isEmpty)
+        XCTAssertTrue(shown.process([onCourse], preferences: preferences, now: wake.addingTimeInterval(300)).isEmpty)
+    }
+
     // MARK: Windows a reading leaves out
 
     func testAWindowMissingFromSomeReadingsStillAlertsWhenItComesBack() {
