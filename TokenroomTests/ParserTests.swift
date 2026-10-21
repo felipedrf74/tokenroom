@@ -400,6 +400,48 @@ final class ParserTests: XCTestCase {
         XCTAssertFalse(auth.countsAsUsableSession(), "Expired, and not renewable here: Sign In runs a real login")
     }
 
+    /// The item a saved grant renews is read by its own service and account, never without the
+    /// account. Gone is nil (the grant has nowhere to go); not readable now throws (it waits).
+    func testAClaudeItemIsReadByItsServiceAndAccount() throws {
+        let trusted: (String) -> CredentialReaders.ClaudeKeyAccess = { _ in
+            CredentialReaders.ClaudeKeyAccess(partitions: ["apple-tool:"], hasPartitionList: true)
+        }
+        var asked: [String?] = []
+        let found = try CredentialReaders.claudeItem(
+            service: "svc", account: "other.name", exists: { _, _ in true }, access: trusted,
+            security: { _, account in
+                asked.append(account)
+                return .value(#"{"accessToken":"tok"}"#)
+            }
+        )
+        XCTAssertEqual(found?.account, "other.name")
+        XCTAssertEqual(found?.service, "svc")
+        XCTAssertEqual(asked, ["other.name"])
+
+        var readGone = false
+        XCTAssertNil(try CredentialReaders.claudeItem(
+            service: "svc", account: "other.name", exists: { _, _ in false }, access: trusted,
+            security: { _, _ in
+                readGone = true
+                return .missing
+            }
+        ))
+        XCTAssertFalse(readGone, "An item that isn't there isn't read")
+        XCTAssertNil(try CredentialReaders.claudeItem(
+            service: "svc", account: "other.name", exists: { _, _ in nil }, access: trusted, security: { _, _ in .missing }
+        ))
+        XCTAssertThrowsError(try CredentialReaders.claudeItem(
+            service: "svc", account: "other.name", exists: { _, _ in true }, access: trusted, security: { _, _ in .unavailable }
+        ))
+        XCTAssertThrowsError(try CredentialReaders.claudeItem(
+            service: "svc", account: "other.name", exists: { _, _ in true },
+            access: { _ in CredentialReaders.ClaudeKeyAccess(hasPartitionList: true) }, security: { _, _ in .value("{}") }
+        ), "Not trusted to read: left unread, and the grant waits")
+        XCTAssertThrowsError(try CredentialReaders.claudeItem(
+            service: "svc", account: "", exists: { _, _ in true }, access: trusted, security: { _, _ in .value("{}") }
+        ))
+    }
+
     func testTheAccountAttributeIsReadFromSecurityOutput() {
         func output(_ acct: String) -> String {
             """
