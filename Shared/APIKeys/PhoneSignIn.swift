@@ -33,6 +33,22 @@ enum PhoneSignIn {
         provider == .grokBot ? .cursor : provider
     }
 
+    /// Whose page the person signs in on: "Claude", "OpenAI", "xAI", "Cursor".
+    static func vendorName(for provider: Provider) -> String {
+        switch sessionOwner(for: provider) {
+        case .claude: "Claude"
+        case .openai: "OpenAI"
+        case .grok: "xAI"
+        case .cursor: "Cursor"
+        default: provider.displayName
+        }
+    }
+
+    /// What the sign-in is for, as the plan is called: "Codex" for OpenAI's.
+    static func planName(for provider: Provider) -> String {
+        provider == .openai ? "Codex" : provider.displayName
+    }
+
     /// The plans one sign-in covers: a provider and every plan sharing its session.
     static func sharingSession(with provider: Provider) -> [Provider] {
         let owner = sessionOwner(for: provider)
@@ -113,8 +129,8 @@ enum PhoneSignIn {
         static let scope = "openid offline_access grok-cli:access"
         static let usageURL = URL(string: "https://cli-chat-proxy.grok.com/v1/billing?format=credits")!
         static let deviceGrant = "urn:ietf:params:oauth:grant-type:device_code"
-        /// RFC 8628's floor for a code's lifetime, when the answer is shorter or leaves it out.
-        static let minimumLifetime: TimeInterval = 10 * 60
+        /// How long to wait for a code when the answer leaves `expires_in` out.
+        static let defaultLifetime: TimeInterval = 10 * 60
     }
 
     enum Cursor {
@@ -295,7 +311,7 @@ enum PhoneSignIn {
             let page = (JSONFlex.string(object["verification_uri_complete"]) ?? JSONFlex.string(object["verification_uri"]))
                 .flatMap(URL.init(string:))
             guard let page, isVendorPage(page, provider: provider) else { return nil }
-            let lifetime = max(JSONFlex.number(object["expires_in"]) ?? 0, Grok.minimumLifetime)
+            let lifetime = JSONFlex.number(object["expires_in"]).flatMap { $0 > 0 ? $0 : nil } ?? Grok.defaultLifetime
             return DeviceCode(
                 provider: provider,
                 userCode: userCode,
@@ -345,12 +361,16 @@ enum PhoneSignIn {
         /// Grok and Cursor: the token answer itself.
         case granted(Data)
         case denied
+        /// Cursor: the person's organization doesn't allow this sign-in.
+        case blockedByPolicy
         case expired
         case failed
     }
 
     static func pollAnswer(provider: Provider, status: Int, data: Data) -> PollAnswer {
         let object = try? JSONFlex.object(from: data)
+        // A busy or failing server while the person signs in: ask less often, don't give up.
+        if status == 429 || (500..<600).contains(status) { return .slowDown }
         if provider == .cursor || provider == .grokBot {
             // 404 until the person has signed in; 403 when their organization doesn't allow it.
             switch status {
@@ -358,7 +378,7 @@ enum PhoneSignIn {
                 let ready = [object?["accessToken"], object?["refreshToken"]].allSatisfy { (JSONFlex.string($0) ?? "").isEmpty == false }
                 return ready ? .granted(data) : .pending
             case 404: return .pending
-            case 403: return .denied
+            case 403: return .blockedByPolicy
             default: return .failed
             }
         }
@@ -448,11 +468,12 @@ enum PhoneSignIn {
     /// What a token host said to a renewal. A grant without a refresh token keeps the one sent:
     /// hosts that don't rotate it may leave it out. Cursor renews with its access token, so a new
     /// one becomes the refresh token too, as Cursor's own app keeps it; its `shouldLogout` is a
-    /// refusal. Any other answer (a 4xx, 429 and 408 included, a 5xx, a success without tokens)
-    /// came after the request reached the host, which may have rotated the token, so it's unclear
-    /// (`unavailable`): the session then waits for a new sign-in rather than send the old refresh
-    /// token again. Only a request that never left the phone is `notDispatched`
-    /// (`PhoneSignInClient.renew`).
+    /// refusal. Any other OAuth error answer (a 4xx whose body names an `error`, RFC 6749 §5.2)
+    /// issued no token, so nothing was rotated and the refresh token is still good
+    /// (`notDispatched`). Anything else after the request reached the host (a 429, a 5xx, a 4xx
+    /// without an OAuth error, a success without tokens) is unclear (`unavailable`): the session
+    /// then waits for a new sign-in rather than send the old refresh token again. A request that
+    /// never left the phone is `notDispatched` too (`PhoneSignInClient.renew`).
     static func refreshAnswer(provider: Provider, status: Int, data: Data, previous: PhoneSession, now: Date) -> PhoneSessionRefresher.Grant {
         let object = try? JSONFlex.object(from: data)
         if (object?["shouldLogout"] as? Bool) == true { return .rejected }
@@ -465,7 +486,9 @@ enum PhoneSignIn {
             return .granted(session)
         }
         let error = object.flatMap { JSONFlex.string($0["error"]) }
-        return error == "invalid_grant" ? .rejected : .unavailable
+        if error == "invalid_grant" { return .rejected }
+        if let error, !error.isEmpty, (400..<500).contains(status), status != 429 { return .notDispatched }
+        return .unavailable
     }
 
     /// Access and refresh tokens, in OAuth's names or Cursor's (`accessToken`, `refreshToken`).

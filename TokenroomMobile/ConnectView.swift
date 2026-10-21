@@ -8,9 +8,14 @@ struct ConnectView: View {
     var store: MobileStore
     var date: Date = .now
     @State private var signingIn: Provider?
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
-        let list = store.connectList(now: date)
+        // A build that can't keep a sign-in (no app-id Keychain group) offers none.
+        let list = store.connectList(now: date).map { entry in
+            guard entry.action == .signIn, store.sessions == nil else { return entry }
+            return (entry.provider, PhoneConnect.Action.needsMac(reason: "Needs Tokenroom on a Mac. This build of Tokenroom can't keep a sign-in on this iPhone."))
+        }
         let signedIn = PhoneSignIn.providers.filter { store.sessionProviders.contains($0) }
         // Plans whose sign-in exists but that aren't on its plan (Grok Bot without it on Cursor).
         let notOnPlan = PhoneSignIn.providers.filter { provider in
@@ -48,9 +53,14 @@ struct ConnectView: View {
                         Button {
                             signingIn = entry.provider
                         } label: {
-                            HStack {
+                            // At the largest text sizes "Sign In" goes under the row, so the name
+                            // isn't broken mid-word.
+                            let layout = typeSize.isAccessibilitySize
+                                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+                                : AnyLayout(HStackLayout())
+                            layout {
                                 ConnectRow(provider: entry.provider, detail: Self.pitch(for: entry.provider))
-                                Spacer(minLength: 8)
+                                if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
                                 Text("Sign In")
                                     .foregroundStyle(.tint)
                             }
@@ -121,7 +131,8 @@ struct ConnectView: View {
     }
 
     private func sessionDetail(for provider: Provider) -> String {
-        if store.refusedSessions.contains(PhoneSignIn.sessionOwner(for: provider)) {
+        if store.refusedSessions.contains(PhoneSignIn.sessionOwner(for: provider))
+            || store.reading(id: provider.rawValue)?.provider.message == PhoneSessionClient.needsSignIn {
             return "Sign in again"
         }
         let sharing = PhoneSignIn.sharingSession(with: provider).filter { $0 != provider }

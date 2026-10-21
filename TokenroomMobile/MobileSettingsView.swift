@@ -32,7 +32,9 @@ struct MobileSettingsView: View {
                 } header: {
                     Text("Readings")
                 } footer: {
-                    Text("Your devices share readings through your iCloud. Providers added with keys can check on this iPhone; other providers check while Tokenroom runs on your Mac. Only usage, reset times, and plan names are sent, never logins or keys.")
+                    Text(store.connectOnIPhone
+                        ? "Your devices share readings through your iCloud. Plans you sign in to and providers added with keys check on this iPhone; others check while Tokenroom runs on your Mac. Only usage, reset times, and plan names are sent, never sign-ins, logins, or keys."
+                        : "Your devices share readings through your iCloud. Providers added with keys can check on this iPhone; other providers check while Tokenroom runs on your Mac. Only usage, reset times, and plan names are sent, never logins or keys.")
                 }
 
                 if !store.sampleMode, !store.readings.isEmpty {

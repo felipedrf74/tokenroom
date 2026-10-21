@@ -165,6 +165,8 @@ final class MobileStore {
     /// off or the build can't name that group: then no plan is read, and none can be signed in to.
     let sessions: PhoneSessionStore?
     private let refresher: PhoneSessionRefresher?
+    /// How a plan's usage request is sent; tests answer it themselves.
+    @ObservationIgnored private let sessionSend: @Sendable (Provider) -> PhoneSessionClient.Send
     let sourceID: String
     @ObservationIgnored private let notificationScheduler: @MainActor @Sendable (UNNotificationRequest) async throws -> Void
     @ObservationIgnored private let platformEffects: MobilePlatformEffects
@@ -236,7 +238,9 @@ final class MobileStore {
         allowsExternalEffects: Bool = true,
         platformEffects: MobilePlatformEffects = .system,
         launchDefaults: UserDefaults = .standard,
-        sessions: PhoneSessionStore? = PhoneSessionAvailability.store()
+        sessions: PhoneSessionStore? = PhoneSessionAvailability.store(),
+        sessionSend: @escaping @Sendable (Provider) -> PhoneSessionClient.Send = PhoneSessionClient.live,
+        sessionRenew: @escaping PhoneSessionRefresher.Post = { await PhoneSignInClient().renew($0, $1) }
     ) {
         self.defaults = defaults
         self.allowsExternalEffects = allowsExternalEffects
@@ -248,11 +252,8 @@ final class MobileStore {
         // A fixture root never touches this device's sign-ins.
         let sessions = connectOnIPhone && allowsExternalEffects ? sessions : nil
         self.sessions = sessions
-        refresher = sessions.map { store in
-            PhoneSessionRefresher(store: store) { provider, session in
-                await PhoneSignInClient().renew(provider, session)
-            }
-        }
+        self.sessionSend = sessionSend
+        refresher = sessions.map { PhoneSessionRefresher(store: $0, post: sessionRenew) }
         // Before the first handover, so the flag travels with the first readings.
         if allowsExternalEffects { platformEffects.setWatchConnectAvailable(connectOnIPhone) }
         self.keys = keys
@@ -645,15 +646,21 @@ final class MobileStore {
     private func readSessions(now: Date) async {
         guard let sessions, let refresher else { return }
         let owners = Array(Set(PhoneSignIn.providers.map(PhoneSignIn.sessionOwner)))
-        let states = await BlockingIO.run {
-            owners.reduce(into: [Provider: PhoneSessionMetadata.State]()) { states, owner in
-                states[owner] = sessions.metadata(for: owner)?.state
+        let lookups = await BlockingIO.run {
+            owners.reduce(into: [Provider: PhoneSessionStore.Lookup]()) { lookups, owner in
+                lookups[owner] = sessions.lookup(for: owner)
             }
         }
-        let signedIn = PhoneSignIn.providers.filter {
-            PhoneConnect.productionAllowlist.contains($0) && states[PhoneSignIn.sessionOwner(for: $0)] != nil
+        // A Keychain that couldn't be read now (locked, busy) isn't a sign-out: a plan listed
+        // before stays listed, and is read on the next pass.
+        let unreadable = Set(lookups.filter { $0.value == .unreadable }.keys)
+        let signedIn = PhoneSignIn.providers.filter { provider in
+            let owner = PhoneSignIn.sessionOwner(for: provider)
+            guard PhoneConnect.productionAllowlist.contains(provider) else { return false }
+            if case .found = lookups[owner] { return true }
+            return unreadable.contains(owner) && sessionProviders.contains(provider)
         }
-        var skipped = notOnPlan.filter { signedIn.contains($0.key) }
+        let skipped = notOnPlan.filter { signedIn.contains($0.key) }
         let gate = keyGate
         let heldOff = { [rateLimitedUntil] (provider: Provider) -> Bool in
             if let until = rateLimitedUntil[provider], until > now { return true }
@@ -669,33 +676,48 @@ final class MobileStore {
             localCheckedAt[provider] = nil
             localFailedAt[provider] = nil
         }
-        refusedSessions = Set(states.filter { $0.value == .rejected }.keys)
+        refusedSessions = Set(lookups.compactMap { owner, lookup -> Provider? in
+            if case .found(let metadata) = lookup, metadata.state == .rejected { return owner }
+            return nil
+        })
         let refused = Set(providers.filter { refusedSessions.contains(PhoneSignIn.sessionOwner(for: $0)) })
         for provider in refused {
             apply(provider, result: .failure(.signedOut(PhoneSessionClient.needsSignIn)), now: now)
         }
-        let due = plan.due.filter { !refused.contains($0) }
-        var earlierAttempts: [Provider: Date] = [:]
-        for provider in due {
-            earlierAttempts[provider] = gate.lastAttempt(provider)
-            gate.recordAttempt(provider, at: now)
+        // Spacing and Retry-After shared with every launch, as the key providers' are.
+        var claims: [Provider: KeyFetchGate.FetchClaim] = [:]
+        for provider in plan.due where !refused.contains(provider) && !unreadable.contains(PhoneSignIn.sessionOwner(for: provider)) {
+            claims[provider] = gate.claim(provider, at: now)
         }
+        guard !claims.isEmpty else { return }
+        // A renewal cut off mid-request leaves the session waiting for a new sign-in: ask iOS for
+        // the time to finish if the app leaves the foreground meanwhile.
+        let endBackgroundWork = platformEffects.beginBackgroundWork("Plan readings")
+        defer { endBackgroundWork() }
+        var newlySkipped: [Provider: Date] = [:]
+        var onPlanAgain: Set<Provider> = []
+        let sessionSend = sessionSend
         await withTaskGroup(of: (Provider, Result<QuotaSnapshot, ProviderError>).self) { group in
-            for provider in due {
+            for (provider, claim) in claims {
                 if localStatuses[provider] == nil, !recheck.contains(provider) {
                     localStatuses[provider] = .loading
                 }
-                let client = PhoneSessionClient(provider: provider, store: sessions, send: PhoneSessionClient.live(provider))
+                let client = PhoneSessionClient(provider: provider, store: sessions, send: sessionSend(provider))
                 let reader = PhoneSessionReader(client: client, refresher: refresher)
                 // A renewal and the reading after it: twice a key's budget. A renewal cut short
-                // still finishes in the refresher, which keeps the new tokens.
+                // still finishes in the refresher, which keeps the new tokens; the claim records
+                // the answer (a 429's wait) when the work ends, whenever that is.
                 group.addTask {
-                    await (provider, TimeLimit.run(2 * TokenroomHTTP.fetchBudget, otherwise: .failure(.unreachable)) { await reader.read(now: now) })
+                    await (provider, TimeLimit.run(2 * TokenroomHTTP.fetchBudget, otherwise: .failure(.unreachable)) {
+                        let result = await reader.read(now: now)
+                        gate.complete(claim, result: result, at: now)
+                        return result
+                    })
                 }
             }
             for await (provider, result) in group {
                 if Task.isCancelled, case .failure = result {
-                    gate.recordAttempt(provider, at: earlierAttempts[provider])
+                    if let claim = claims[provider] { gate.restoreAttempt(claim) }
                     if localStatuses[provider] == .loading {
                         localStatuses[provider] = nil
                     }
@@ -706,10 +728,7 @@ final class MobileStore {
                 let notEntitled: Bool = if case .failure(.notEntitled) = result { true } else { false }
                 let recheckFailed: Bool = if recheck.contains(provider), case .failure = result { true } else { false }
                 if PhoneSignIn.sessionOwner(for: provider) != provider, notEntitled || recheckFailed {
-                    if case .failure(.rateLimited(let until)) = result {
-                        gate.block(provider, until: ProviderStatus.clampedRetry(until, now: now))
-                    }
-                    skipped[provider] = now
+                    newlySkipped[provider] = now
                     localStatuses[provider] = nil
                     localCheckedAt[provider] = nil
                     localFailedAt[provider] = nil
@@ -717,12 +736,16 @@ final class MobileStore {
                     continue
                 }
                 if case .success = result {
-                    skipped[provider] = nil
+                    onPlanAgain.insert(provider)
                 }
                 apply(provider, result: result, now: now)
             }
         }
-        notOnPlan = skipped
+        // Only this pass's own findings: a sign-in made meanwhile may have cleared the list.
+        var current = notOnPlan
+        current.merge(newlySkipped) { $1 }
+        for provider in onPlanAgain { current[provider] = nil }
+        notOnPlan = current
     }
 
     /// Plans left out because they weren't on the plan they ride on, and when that was found.
@@ -1442,7 +1465,7 @@ final class MobileStore {
         let owner = PhoneSignIn.sessionOwner(for: provider)
         try await refresher.replace(owner, with: session, now: now)
         let covered = PhoneSignIn.sharingSession(with: provider)
-        setSessionProviders(Provider.allCases.filter { covered.contains($0) || sessionProviders.contains($0) })
+        setSessionProviders(PhoneSignIn.providers.filter { covered.contains($0) || sessionProviders.contains($0) })
         refusedSessions.remove(owner)
         notOnPlan = notOnPlan.filter { !covered.contains($0.key) }
         for plan in covered {

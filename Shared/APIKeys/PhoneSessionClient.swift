@@ -69,9 +69,11 @@ struct PhoneSessionClient: Sendable {
 }
 
 /// A phone session's reading: renewed first when it's due, and once more when the provider turns
-/// the access token down, so a token the vendor ended early doesn't wait for its expiry date. A
-/// refresh token that's refused, or a session with none left, asks to sign in again, in the
-/// phone's own words rather than the CLI's.
+/// the access token down (at most hourly, `PhoneSessionRefresher.forcedRenewalSpacing`), so a
+/// token the vendor ended early doesn't wait for its expiry date. A refresh token that's refused,
+/// or a session with none left, asks to sign in again, in the phone's own words rather than the
+/// CLI's. A renewal that couldn't reach the token host (offline) is a connection problem, not a
+/// reason to sign in again.
 struct PhoneSessionReader: Sendable {
     var client: PhoneSessionClient
     var refresher: PhoneSessionRefresher
@@ -79,7 +81,8 @@ struct PhoneSessionReader: Sendable {
     func read(now: Date = .now) async -> Result<QuotaSnapshot, ProviderError> {
         // Renewals go to the session's owner: Grok Bot's renews Cursor's.
         let provider = PhoneSignIn.sessionOwner(for: client.provider)
-        switch await refresher.renewIfNeeded(provider, now: now) {
+        var renewal = await refresher.renewIfNeeded(provider, now: now)
+        switch renewal {
         case .rejected, .noSession:
             return .failure(.signedOut(PhoneSessionClient.needsSignIn))
         default:
@@ -87,7 +90,8 @@ struct PhoneSessionReader: Sendable {
         }
         var result = await client.fetch(now: now)
         if case .failure(.expired) = result {
-            switch await refresher.renewIfNeeded(provider, now: now, force: true) {
+            renewal = await refresher.renewIfNeeded(provider, now: now, force: true)
+            switch renewal {
             case .refreshed, .recovered:
                 result = await client.fetch(now: now)
             case .rejected, .noSession:
@@ -97,6 +101,8 @@ struct PhoneSessionReader: Sendable {
             }
         }
         if case .failure(.expired) = result {
+            // The token host couldn't be reached, or the write is still pending: try later.
+            if [.unavailable, .preflightFailed, .pendingWrite].contains(renewal) { return .failure(.unreachable) }
             return .failure(.expired(PhoneSessionClient.needsSignIn))
         }
         return result
@@ -155,6 +161,10 @@ actor PhoneSessionRefresher {
     private var flights: [Provider: Task<Outcome, Never>] = [:]
     /// Providers being signed in again or out (`replace`): no renewal starts meanwhile.
     private var replacing: Set<Provider> = []
+    /// When each provider was last renewed early because its usage endpoint turned the token
+    /// down. An endpoint that keeps doing so gets one early renewal an hour, not one a read.
+    private var forcedAt: [Provider: Date] = [:]
+    static let forcedRenewalSpacing: TimeInterval = 3600
     private let logger = Logger(subsystem: "app.tokenroom.ios", category: "session")
 
     init(store: PhoneSessionStore, allowlist: Set<Provider> = PhoneConnect.productionAllowlist, post: @escaping Post) {
@@ -172,6 +182,10 @@ actor PhoneSessionRefresher {
         guard !replacing.contains(provider) else { return .notDue }
         if let flight = flights[provider] {
             return await flight.value
+        }
+        if force {
+            if let last = forcedAt[provider], (0..<Self.forcedRenewalSpacing).contains(now.timeIntervalSince(last)) { return .notDue }
+            forcedAt[provider] = now
         }
         let flight = Task { await self.renew(provider, now: now, force: force) }
         flights[provider] = flight
@@ -242,11 +256,13 @@ actor PhoneSessionRefresher {
             _ = await flight.value
         }
         pending[provider] = nil
+        forcedAt[provider] = nil
         let store = store
         if let session {
-            // An old renewal's grant must never be recovered over the new sign-in.
+            // An old renewal's grant must never be recovered over the new sign-in: if it can't be
+            // deleted, the sign-in isn't saved.
             try await BlockingIO.run {
-                store.deleteRecovery(for: provider)
+                try store.clearRecovery(for: provider)
                 try store.save(session, for: provider, now: now)
             }
         } else {

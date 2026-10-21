@@ -25,7 +25,7 @@ final class PhoneConnectTests: XCTestCase {
 
     // MARK: Allowlist
 
-    func testTheDefaultDecisionSignsInOnlyClaudeCodexAndGrokBuild() {
+    func testTheDefaultDecisionSignsInOnlyThePlansPhoneSignInReads() {
         XCTAssertEqual(PhoneConnect.productionAllowlist, Set(signsIn))
         XCTAssertEqual(Set(PhoneSignIn.providers), Set(signsIn))
         let liveMac = source(.mac, Provider.allCases, checkedAt: now.addingTimeInterval(-600))

@@ -26,6 +26,7 @@ struct PlanSignInView: View {
     @State private var openedPage = false
     @State private var copied = false
     @State private var work: Task<Void, Never>?
+    @FocusState private var codeFocused: Bool
     private let client = PhoneSignInClient()
 
     var body: some View {
@@ -46,7 +47,8 @@ struct PlanSignInView: View {
                     }
                 }
             }
-            .navigationTitle("Sign In to \(provider.displayName)")
+            .navigationTitle("Sign In to \(PhoneSignIn.planName(for: provider))")
+            .scrollDismissesKeyboard(.interactively)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -80,10 +82,15 @@ struct PlanSignInView: View {
             Text("Safari opens claude.com. Sign in with the account your plan is on, then tap Authorize. Claude shows a code.")
         }
         Section {
-            TextField("Paste the code", text: $pasted, axis: .vertical)
+            TextField("Paste the code", text: $pasted)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .font(.body.monospaced())
+                .focused($codeFocused)
+                .submitLabel(.go)
+                .onSubmit {
+                    if !pasted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { finishClaude() }
+                }
                 .disabled(phase == .finishing)
             PasteButton(payloadType: String.self) { strings in
                 if let first = strings.first { pasted = first }
@@ -98,6 +105,8 @@ struct PlanSignInView: View {
     }
 
     private func finishClaude() {
+        // The keyboard goes, so an error below the field shows.
+        codeFocused = false
         let text = pasted
         let pkce = pkce
         phase = .finishing
@@ -126,7 +135,7 @@ struct PlanSignInView: View {
         switch phase {
         case .waiting(let code) where code.userCode.isEmpty:
             Section {
-                Button("Open \(Self.vendor(for: provider))'s Sign-In Page") {
+                Button("Open \(PhoneSignIn.vendorName(for: provider))'s Sign-In Page") {
                     openURL(code.verificationURL)
                 }
             } header: {
@@ -157,13 +166,13 @@ struct PlanSignInView: View {
                     }
                     .buttonStyle(.bordered)
                 }
-                Button("Open \(Self.vendor(for: provider))'s Page") {
+                Button("Open \(PhoneSignIn.vendorName(for: provider))'s Page") {
                     openURL(code.verificationURL)
                 }
             } header: {
                 Text("Your code")
             } footer: {
-                Text("Sign in on \(Self.vendor(for: provider))'s page and enter this code. Only approve a code you started here; if a website or someone else gave you one, cancel.")
+                Text("Sign in on \(PhoneSignIn.vendorName(for: provider))'s page and enter this code. Only approve a code you started here; if a website or someone else gave you one, cancel.")
             }
             Section {
                 HStack(spacing: 10) {
@@ -222,15 +231,5 @@ struct PlanSignInView: View {
         phase = .finishing
         try await store.saveSession(session, for: provider)
         dismiss()
-    }
-
-    static func vendor(for provider: Provider) -> String {
-        switch provider {
-        case .claude: "Claude"
-        case .openai: "OpenAI"
-        case .grok: "xAI"
-        case .cursor, .grokBot: "Cursor"
-        default: provider.displayName
-        }
     }
 }

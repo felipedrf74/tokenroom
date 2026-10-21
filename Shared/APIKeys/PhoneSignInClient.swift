@@ -23,6 +23,8 @@ struct PhoneSignInClient: Sendable {
         /// The vendor isn't offering a code sign-in (Codex answers 404).
         case notOffered
         case denied
+        /// Cursor: the person's organization doesn't allow this sign-in.
+        case blockedByPolicy
         case expired
         case emptyCode
         case otherSignIn
@@ -32,16 +34,17 @@ struct PhoneSignInClient: Sendable {
         case noRenewal
 
         func message(for provider: Provider) -> String {
-            let name = provider.displayName
+            let vendor = PhoneSignIn.vendorName(for: provider)
             return switch self {
-            case .unreachable: "Couldn't reach \(name). Check the connection, then try again."
-            case .notOffered: "Couldn't start a code sign-in: \(name) isn't offering one right now."
-            case .denied: "Couldn't sign in: the request was turned down on \(name)'s page."
+            case .unreachable: "Couldn't reach \(vendor). Check the connection, then try again."
+            case .notOffered: "Couldn't start a code sign-in: \(vendor) isn't offering one right now."
+            case .denied: "Couldn't sign in: the request was turned down on \(vendor)'s page."
+            case .blockedByPolicy: "Couldn't sign in: your organization doesn't allow signing in to \(vendor) here."
             case .expired: "Couldn't sign in before the code expired. Start again."
-            case .emptyCode: "Couldn't find a code there. Copy the whole code \(name) shows, then paste it."
+            case .emptyCode: "Couldn't find a code there. Copy the whole code \(vendor) shows, then paste it."
             case .otherSignIn: "Couldn't use that code: it's from another sign-in. Start again, then paste the new one."
-            case .refused: "Couldn't finish \(name) sign-in. Start again."
-            case .noRenewal: "Couldn't keep this sign-in: \(name) didn't send a way to renew it."
+            case .refused: "Couldn't finish signing in to \(PhoneSignIn.planName(for: provider)). Start again."
+            case .noRenewal: "Couldn't keep this sign-in: \(vendor) didn't send a way to renew it."
             }
         }
     }
@@ -79,7 +82,8 @@ struct PhoneSignInClient: Sendable {
             case .pending:
                 continue
             case .slowDown:
-                interval += 5
+                // RFC 8628 adds 5 seconds; a busy server gets the same, up to half a minute.
+                interval = min(interval + 5, 30)
             case .authorized(let authorization, let verifier):
                 // The approval is spent once polled: a dropped connection right after it (coming
                 // back from Safari) is tried again rather than asking for a new code.
@@ -96,6 +100,8 @@ struct PhoneSignInClient: Sendable {
                 return try session(from: tokens, provider: code.provider, now: clock())
             case .denied:
                 throw Failure.denied
+            case .blockedByPolicy:
+                throw Failure.blockedByPolicy
             case .expired:
                 throw Failure.expired
             case .failed:

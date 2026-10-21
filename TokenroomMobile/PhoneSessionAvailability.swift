@@ -15,8 +15,8 @@ enum PhoneSessionAvailability {
         )
     }
 
-    /// The store, or nil when the access group can't be trusted. Nothing calls this while
-    /// `PhoneConnect.productionAllowlist` is empty.
+    /// The store, or nil when the access group can't be trusted: then no plan can be signed in to
+    /// on this iPhone (`MobileStore.sessions` is nil, and Settings › Plans offers no Sign In).
     static func store() -> PhoneSessionStore? {
         PhoneSessionStore.make(
             plistValue: Bundle.main.object(forInfoDictionaryKey: infoKey) as? String,

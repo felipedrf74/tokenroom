@@ -353,7 +353,7 @@ private struct EmptyWidget: View {
                 Spacer(minLength: 0)
                 Text(name ?? "No readings yet")
                     .font(.headline)
-                Text(name == nil ? "Open Tokenroom to connect your Mac or add a key." : "No recent reading. Open Tokenroom to refresh this provider.")
+                Text(name == nil ? "Open Tokenroom to connect your Mac, sign in to a plan, or add a key." : "No recent reading. Open Tokenroom to refresh this provider.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -51,7 +51,7 @@ struct OnboardingView: View {
                         NavigationLink {
                             ConnectView(store: store)
                         } label: {
-                            OptionCard(symbol: "person.badge.key", title: "Sign in to a plan", text: "Claude, Codex, and Grok Build sign in right on this iPhone. Cursor and a few others need a Mac.")
+                            OptionCard(symbol: "person.badge.key", title: "Sign in to a plan", text: "Claude, Codex, Grok Build, Cursor, and Grok Bot sign in right on this iPhone. Antigravity and Devin need a Mac.")
                         }
                     }
                     Button {

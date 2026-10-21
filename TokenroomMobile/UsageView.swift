@@ -368,18 +368,23 @@ struct UsageEmptyState: View {
         }
     }
 
+    /// What this iPhone can read by itself: plans it signs in to, when the Plans screen is on.
+    private var onThisIPhone: String {
+        store.connectOnIPhone ? "sign in to a plan or add an API key in Settings" : "add an API key"
+    }
+
     private var content: (title: String, symbol: String, description: String) {
         switch store.relayPhase {
         case .unavailable:
-            ("No readings yet", "key", "This build can't use iCloud. Add an API key to read providers on this iPhone.")
+            ("No readings yet", "key", "This build can't use iCloud. \(onThisIPhone.capitalizedFirst) to read providers on this iPhone.")
         case .noAccount:
-            ("Sign in to iCloud", "icloud.slash", "Use the same Apple Account as your Mac to see its readings, or add an API key.")
+            ("Sign in to iCloud", "icloud.slash", "Use the same Apple Account as your Mac to see its readings, or \(onThisIPhone).")
         case .failed(let message):
-            (message, "exclamationmark.icloud", "Pull down to try again, or add an API key.")
+            (message, "exclamationmark.icloud", "Pull down to try again, or \(onThisIPhone).")
         case .ready where store.needsNewerApp:
             ("Update Tokenroom", "arrow.down.app", "Your Mac sends readings this version can't read yet.")
         default:
-            ("No readings yet", "laptopcomputer.and.iphone", "Open Tokenroom on your Mac, signed in to the same iCloud account: it sends its readings here. Or add an API key to read providers on this iPhone.")
+            ("No readings yet", "laptopcomputer.and.iphone", "Open Tokenroom on your Mac, signed in to the same iCloud account: it sends its readings here. Or \(onThisIPhone) to read providers on this iPhone.")
         }
     }
 }
