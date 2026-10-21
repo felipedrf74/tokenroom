@@ -193,6 +193,33 @@ final class NewsLiveTests: XCTestCase {
         XCTAssertTrue(news.isNew(now.addingTimeInterval(60)), "So what comes next is new")
     }
 
+    /// The iPhone ends a visit when the app goes to the background with News selected
+    /// (`RootView.updateVisit`): what a background check finds then is badged, and marked New
+    /// when the app comes back to News.
+    @MainActor
+    func testABackgroundCheckAfterLeavingNewsLeavesItsFindsNew() async throws {
+        let opened = Date(timeIntervalSince1970: 1_800_000_000)
+        let defaults = makeDefaults()
+        defaults.set(opened.addingTimeInterval(-86_400).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt)
+        let folder = try makeFolder()
+        var checked = NewsCache()
+        checked.modelsFetchedAt = opened.addingTimeInterval(-3600)
+        checked.save(to: folder)
+        let news = NewsStore(defaults: defaults, directory: folder, now: opened, fetch: { request in
+            var cache = request.cache
+            cache.models.append(Self.release("anthropic/claude-background", created: request.now))
+            cache.modelsFetchedAt = request.now
+            return NewsFetcher.Result(cache: cache, newModels: [])
+        }, notify: { _, _, _ in })
+        news.beginVisit(now: opened)
+        news.endVisit() // To the background, News still selected.
+        let background = opened.addingTimeInterval(3600)
+        await news.refresh(preferences: AlertPreferences(), now: background)
+        XCTAssertEqual(news.unseenModelCount(now: background), 1, "Nobody saw it, so it's badged")
+        news.beginVisit(now: background.addingTimeInterval(600)) // Back to the app, on News.
+        XCTAssertTrue(news.isNew(background), "…and marked New when News is back on screen")
+    }
+
     /// Turning News on with the Mac's window open (a visit already under way) marks nothing new.
     @MainActor
     func testTheFirstCheckMarksNothingNewWithNewsOpen() async throws {
