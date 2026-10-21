@@ -148,9 +148,17 @@ final class FeedTests: XCTestCase {
         let items = FeedParser.items(from: atom, source: source)
         XCTAssertEqual(items.map(\.title), ["0.157.0", "2.1.1"])
         XCTAssertEqual(items[0].link?.absoluteString, "https://example.com/releases/tag/v0.157.0")
-        XCTAssertNil(items[0].published, "Missing publication date stays missing")
-        XCTAssertEqual(items[0].updatedAt, utc(2026, 9, 25, 2, 32, 43))
+        XCTAssertEqual(items[0].publisherPublishedAt, utc(2026, 9, 25, 2, 32, 43), "A release dated only by <updated> was released then")
+        XCTAssertEqual(items[0].published, utc(2026, 9, 25, 2, 32, 43))
+        XCTAssertNil(items[0].updatedAt, "…so it doesn't read as \"Updated\"")
         XCTAssertEqual(items[1].published, utc(2026, 9, 24, 7, 45, 5), "published wins over updated")
+        XCTAssertEqual(items[1].updatedAt, utc(2026, 9, 25), "…and an update after it still shows as one")
+
+        // Other feeds keep an <updated> as an update: the publication date stays unknown.
+        let blog = FeedSource(id: "blog", name: "Blog", url: URL(string: "https://example.com/feed.atom")!)
+        let post = FeedParser.items(from: Data("<feed><entry><id>p</id><title>Post</title><link href=\"https://example.com/post\"/><updated>2026-09-25T02:32:43Z</updated></entry></feed>".utf8), source: blog).first
+        XCTAssertNil(post?.publisherPublishedAt)
+        XCTAssertEqual(post?.updatedAt, utc(2026, 9, 25, 2, 32, 43))
     }
 
     func testOnlyAnItemsOwnTitleCounts() {

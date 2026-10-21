@@ -133,6 +133,19 @@ final class NewsLiveTests: XCTestCase {
         XCTAssertEqual(later.unseenModelCount(now: liveCheck.addingTimeInterval(60)), 1, "Created during the visit, but never on screen")
     }
 
+    /// A feed read seven minutes ago, while the next 5-minute check is under way, is still
+    /// current; one read twenty minutes ago is delayed.
+    func testSourcesStayCurrentWhileTheNextCheckIsUnderWay() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let sources = Array(FeedSource.catalog.prefix(2))
+        var cache = NewsCache()
+        cache.sourceChecks = [sources[0].id: .init(succeededAt: now.addingTimeInterval(-7 * 60)), sources[1].id: .init(succeededAt: now.addingTimeInterval(-20 * 60))]
+        let summary = NewsSourceFreshness(cache: cache, sources: sources, now: now)
+        XCTAssertEqual(summary.currentCount, 1)
+        XCTAssertEqual(summary.delayedCount, 1)
+        XCTAssertGreaterThan(NewsSourceFreshness.currentInterval, NewsFetcher.liveInterval + NewsFetcher.downloadTimeout)
+    }
+
     /// A live check under way (it doesn't notify) when a notifying background refresh comes in:
     /// the models the live check finds are taken off the list, so it notifies them, unless News
     /// is on screen.

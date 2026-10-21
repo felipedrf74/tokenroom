@@ -224,6 +224,9 @@ struct FeedSource: Sendable, Identifiable, Equatable {
     var kind: NewsSourceKind = .officialAnnouncement
     /// Legacy tool changelogs suppress repeated titles; people, incidents, and commits never do.
     var suppressesRepeatedTitles: Bool { kind == .officialAnnouncement && !isCommitLog }
+    /// GitHub's release and commit feeds date an entry only by `<updated>`: when it was released
+    /// or committed, so that's its date, shown like any other's rather than as an update.
+    var datesEntriesByUpdate: Bool { url.path.hasSuffix("/releases.atom") || isCommitLog }
 
     /// The name its items show, and fold duplicates under.
     var itemSource: String {
@@ -554,15 +557,20 @@ private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
         guard !cleanTitle.isEmpty else { return }
         let url = link.flatMap { FeedParser.webLink($0, feed: source.url) }
         let id = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        let publishedAt = FeedParser.date(published)
+        let updatedAt = FeedParser.date(updated)
+        // A release or commit dated only by <updated> was released or committed then.
+        let datedByUpdate = publishedAt == nil && updatedAt != nil && source.datesEntriesByUpdate
+        let releasedAt = datedByUpdate ? updatedAt : publishedAt
         items.append(FeedItem(
             id: id.isEmpty ? (url?.absoluteString ?? cleanTitle) : id,
             title: cleanTitle,
             link: url,
-            published: FeedParser.date(published),
+            published: releasedAt,
             source: source.itemSource,
             sourceID: source.id, kind: source.kind,
-            publisherPublishedAt: FeedParser.date(published),
-            updatedAt: FeedParser.date(updated),
+            publisherPublishedAt: releasedAt,
+            updatedAt: datedByUpdate ? nil : updatedAt,
             excerpt: excerpt.isEmpty ? nil : excerpt,
             excerptIsPlainText: true
         ))
