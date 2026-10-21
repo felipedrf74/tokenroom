@@ -334,7 +334,8 @@ enum NewsFetcher {
 
     /// Items dated no later than the check that first saw them: one dated ahead (a wrong time
     /// zone, a post scheduled early) counts as seen once News opens, and a later change to its
-    /// date doesn't make it new again.
+    /// date doesn't make it new again. One without any date is dated when it first arrives, so
+    /// it sorts with what came then rather than last, and keeps that date.
     static func firstSeen(_ items: [FeedItem], previous: [FeedItem], now: Date) -> [FeedItem] {
         let earlier = Dictionary(previous.map { ($0.id, $0) }) { first, _ in first }
         return items.map { incoming in
@@ -343,6 +344,10 @@ enum NewsFetcher {
             if let old { item.aliases = old.aliasIDs.union(item.aliasIDs) }
             item.firstSeenAt = old?.newsDate ?? min(item.publisherPublishedAt ?? item.updatedAt ?? item.published ?? now, now)
             item.published = item.published.map { min($0, old?.published ?? now, now) }
+            if item.published == nil, item.updatedAt == nil {
+                // One cached undated by an earlier release stays so, rather than turning new now.
+                item.published = old == nil ? now : old?.published
+            }
             if item.kind == .officialStatus {
                 let update = FeedItem.StatusUpdate(date: item.updatedAt ?? item.publisherPublishedAt, excerpt: item.excerpt)
                 var updates = old?.observedUpdates ?? []

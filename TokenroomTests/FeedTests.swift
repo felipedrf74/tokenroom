@@ -53,6 +53,20 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(state.takeNew(from: try ModelFeed.releases(from: models), following: ModelFeed.defaultVendors), [], "The first real answer still only remembers what's there")
     }
 
+    func testRetirementsComeFromTheWholeModelList() throws {
+        XCTAssertNil(URLComponents(url: ModelFeed.url, resolvingAgainstBaseURL: false)?.queryItems, "The whole list, not the newest 50")
+        // 55 models a day apart, newest first; two of the five oldest have retirement dates.
+        let entries = (0..<55).map { index in
+            let expires = index == 52 || index == 54 ? #","expiration_date":"2026-10-30""# : ""
+            return #"{"id":"lab/model-\#(index)","name":"Lab: Model \#(index)","created":\#(1_790_000_000 - index * 86_400)\#(expires)}"#
+        }
+        let releases = try ModelFeed.releases(from: Data(#"{"data":[\#(entries.joined(separator: ","))]}"#.utf8))
+        XCTAssertEqual(releases.count, ModelFeed.newestLimit + 2)
+        XCTAssertEqual(releases.prefix(ModelFeed.newestLimit).map(\.id), (0..<50).map { "lab/model-\($0)" }, "The newest 50 for new models")
+        XCTAssertEqual(releases.dropFirst(ModelFeed.newestLimit).map(\.id), ["lab/model-52", "lab/model-54"], "Older models only while they're retiring")
+        XCTAssertEqual(releases.last?.expires, utc(2026, 10, 30))
+    }
+
     // MARK: Announcements
 
     private let claudeCode = FeedSource(id: "claude-code", name: "Claude Code", url: URL(string: "https://example.com/rss.xml")!)
@@ -76,6 +90,36 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(items[0].source, "Claude Code")
         XCTAssertEqual(items[1].id, "https://example.com/remarks", "No guid: the link identifies the item")
         XCTAssertEqual(items[1].published, utc(2026, 9, 23, 12))
+    }
+
+    func testFeedDatesReadTheVariantsFeedsWrite() {
+        XCTAssertEqual(FeedParser.date("Thu, 24 Sep 2026 18:46:38 GMT"), utc(2026, 9, 24, 18, 46, 38))
+        XCTAssertEqual(FeedParser.date("Thu, 24 Sep 2026 18:46:38 +0100"), utc(2026, 9, 24, 17, 46, 38))
+        XCTAssertEqual(FeedParser.date("Thu, 24 Sep 2026 18:46 GMT"), utc(2026, 9, 24, 18, 46), "No seconds")
+        XCTAssertEqual(FeedParser.date("Thu, 24 Sep 26 18:46:38 GMT"), utc(2026, 9, 24, 18, 46, 38), "A two-digit year is this century's, not the year 26")
+        XCTAssertEqual(FeedParser.date("24 Sep 2026 18:46:38 +0000"), utc(2026, 9, 24, 18, 46, 38))
+        XCTAssertEqual(FeedParser.date("2026-09-24T12:00:00Z"), utc(2026, 9, 24, 12))
+        XCTAssertEqual(FeedParser.date("2026-09-24T12:00:00"), utc(2026, 9, 24, 12), "No time zone reads as UTC")
+        XCTAssertEqual(FeedParser.date("2026-09-24 12:00:00Z"), utc(2026, 9, 24, 12), "A space for the T")
+        XCTAssertEqual(FeedParser.date("2026-09-24 12:00:00"), utc(2026, 9, 24, 12))
+        XCTAssertEqual(FeedParser.date("2026-09-24T12:00Z"), utc(2026, 9, 24, 12), "No seconds")
+        XCTAssertEqual(FeedParser.date("2026-09-24T12:00+02:00"), utc(2026, 9, 24, 10))
+        XCTAssertEqual(FeedParser.date(" 2026-09-24 "), utc(2026, 9, 24), "A day alone is its midnight, UTC")
+        XCTAssertNil(FeedParser.date("soon"))
+        XCTAssertNil(FeedParser.date(""))
+    }
+
+    func testAnUndatedEntryIsDatedWhenItFirstArrives() {
+        let now = utc(2026, 9, 25, 12)
+        let undated = FeedItem(id: "u", title: "Undated", link: nil, published: nil, source: "Claude Code")
+        let first = NewsFetcher.firstSeen([undated], previous: [], now: now)
+        XCTAssertEqual(first.first?.published, now, "Dated when it first arrives, so it sorts with what came then")
+        XCTAssertEqual(first.first?.sortDate, now)
+        XCTAssertNil(first.first?.publisherPublishedAt, "The publisher's own date stays unknown")
+        let again = NewsFetcher.firstSeen([undated], previous: first, now: now.addingTimeInterval(86_400))
+        XCTAssertEqual(again.first?.published, now, "…and keeps that date, still undated in the feed")
+        let legacy = NewsFetcher.firstSeen([undated], previous: [undated], now: now)
+        XCTAssertNil(legacy.first?.published, "One cached undated by an earlier release isn't dated now")
     }
 
     func testAtomReleasesDropPrereleasesAndPackagePrefixes() {

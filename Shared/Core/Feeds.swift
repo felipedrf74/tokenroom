@@ -19,10 +19,13 @@ struct ModelRelease: Codable, Equatable, Sendable, Identifiable {
 }
 
 enum ModelFeed {
-    /// Newest first, 50 at a time. No key and no Anthropic-style headers: an
-    /// `anthropic-version` header changes the response shape. About 75 KB, read with the usual
-    /// `FeedParser.sizeLimit`.
-    static let url = URL(string: "https://openrouter.ai/api/v1/models?sort=newest&limit=50")!
+    /// The whole list, since retirements are announced for models of any age, not only the
+    /// newest. No key and no Anthropic-style headers: an `anthropic-version` header changes the
+    /// response shape. About 790 KB in October 2026, read with the usual `FeedParser.sizeLimit`.
+    static let url = URL(string: "https://openrouter.ai/api/v1/models")!
+
+    /// How many of the newest models are kept; older ones stay only while they have a retirement date.
+    static let newestLimit = 50
 
     /// The model list's entry in `NewsCache.unreadable`.
     static let id = "openrouter-models"
@@ -36,8 +39,9 @@ enum ModelFeed {
         "moonshotai": "Moonshot AI", "minimax": "MiniMax", "deepseek": "DeepSeek",
     ]
 
-    /// Releases newest first. Skips aliases (`~vendor/…`, `…-latest`), routers (`openrouter/…`),
-    /// and stealth models; folds variants (`:free`, `:batch`, …) into their base model.
+    /// Releases newest first: the newest `newestLimit`, then older ones OpenRouter will retire.
+    /// Skips aliases (`~vendor/…`, `…-latest`), routers (`openrouter/…`), and stealth models;
+    /// folds variants (`:free`, `:batch`, …) into their base model.
     static func releases(from data: Data) throws -> [ModelRelease] {
         let root = try JSONFlex.object(from: data)
         guard let items = JSONFlex.array(root["data"]) else { throw ProviderError.parse }
@@ -81,7 +85,8 @@ enum ModelFeed {
         // A malformed nonempty catalog must not replace a previously usable list with [];
         // an explicitly empty list, or a list of intentionally excluded aliases, remains valid.
         guard hasValidRecord else { throw ProviderError.parse }
-        return byID.values.map(\.release).sorted { $0.created > $1.created }
+        let newestFirst = byID.values.map(\.release).sorted { $0.created > $1.created }
+        return Array(newestFirst.prefix(newestLimit)) + newestFirst.dropFirst(newestLimit).filter { $0.expires != nil }
     }
 
     private static func contextLength(_ raw: Any?) -> Int? {
@@ -329,6 +334,8 @@ enum FeedParser {
         return result + rest
     }
 
+    /// RSS dates (RFC 822, with or without seconds, two- or four-digit years) and ISO 8601 ones,
+    /// with the variants feeds write: no time zone (read as UTC), a space for the `T`, no seconds.
     static func date(_ text: String) -> Date? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let iso = JSONFlex.parseISO(trimmed) {
@@ -336,7 +343,8 @@ enum FeedParser {
         }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        for format in ["EEE, dd MMM yyyy HH:mm:ss Z", "EEE, dd MMM yyyy HH:mm:ss zzz", "dd MMM yyyy HH:mm:ss Z"] {
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        for format in dateFormats {
             formatter.dateFormat = format
             if let date = formatter.date(from: trimmed) {
                 return date
@@ -344,6 +352,14 @@ enum FeedParser {
         }
         return nil
     }
+
+    /// `yy` reads "26" as 2026 and "2026" as written; `yyyy` would read "26" as the year 26.
+    private static let dateFormats = [
+        "EEE, dd MMM yy HH:mm:ss Z", "EEE, dd MMM yy HH:mm:ss zzz", "EEE, dd MMM yy HH:mm Z", "EEE, dd MMM yy HH:mm zzz",
+        "dd MMM yy HH:mm:ss Z", "dd MMM yy HH:mm Z",
+        "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mmXXXXX", "yyyy-MM-dd'T'HH:mm",
+        "yyyy-MM-dd HH:mm:ssXXXXX", "yyyy-MM-dd HH:mm:ss",
+    ]
 }
 
 private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
