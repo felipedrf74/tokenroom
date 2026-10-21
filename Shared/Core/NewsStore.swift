@@ -331,11 +331,11 @@ final class NewsStore {
     }
 
     /// A pass's answers as News shows them: identities folded before kept, and what a source read
-    /// quietly brought (`quiet`) dated no later than the visit, so none of it counts as new.
-    private func settled(_ fetched: NewsCache, previous: NewsCache, sources: [FeedSource], quiet: Set<String>, now: Date) -> NewsCache {
+    /// quietly brought (`quiet`) dated no later than the visit (`baseline`), so none of it counts
+    /// as new. Folding goes over every entry, up to about 1,300, so it runs off the main actor.
+    @concurrent nonisolated private static func settled(_ fetched: NewsCache, previous: NewsCache, sources: [FeedSource], quiet: Set<String>, baseline: Date, now: Date) async -> NewsCache {
         var cache = fetched
         cache.retainFoldedIdentities(from: previous, sources: sources)
-        let baseline = min(visitBaseline, now)
         for source in sources where source.kind == .officialAnnouncement && quiet.contains(source.id) {
             cache.items[source.id] = cache.items[source.id]?.map { raw in
                 var item = raw
@@ -362,6 +362,11 @@ final class NewsStore {
             }
         }
         return cache
+    }
+
+    /// What a pass has taken in so far, shown before the pass is done.
+    private func show(_ partial: NewsCache, previous: NewsCache, sources: [FeedSource], quiet: Set<String>, now: Date) async {
+        cache = await Self.settled(partial, previous: previous, sources: sources, quiet: quiet, baseline: min(visitBaseline, now), now: now)
     }
 
     private func performRefresh(_ initial: RefreshRequest) async {
@@ -392,15 +397,14 @@ final class NewsStore {
             let quiet = Set(checkedSources.filter { previous.check(for: $0).succeededAt == nil || quietSources.contains($0.id) }.map(\.id))
             let requestAllows = request.isAllowed
             let now = request.now
-            // Each feed's answer shows as it arrives, settled as the whole pass's is.
+            // A feed's new items show as they arrive, settled as the whole pass's are.
             let result = await fetch(.init(cache: cache, sources: checkedSources, vendors: followedVendors, maxAge: request.maxAge, now: now, forcedSources: request.forcedSources,
                                            quietSources: quiet,
                                            publish: { [weak self] partial in
-                                               guard let self else { return }
-                                               self.cache = self.settled(partial, previous: previous, sources: checkedSources, quiet: quiet, now: now)
+                                               await self?.show(partial, previous: previous, sources: checkedSources, quiet: quiet, now: now)
                                            },
                                            isAllowed: { [weak self] in self?.allowsRefresh() == true && requestAllows?() != false }))
-            cache = settled(result.cache, previous: previous, sources: checkedSources, quiet: quiet, now: now)
+            cache = await Self.settled(result.cache, previous: previous, sources: checkedSources, quiet: quiet, baseline: min(visitBaseline, now), now: now)
             // Once read, a source followed again is read as usual.
             let read = checkedSources.filter { source in
                 cache.check(for: source).succeededAt.map { $0 != previous.check(for: source).succeededAt } ?? false

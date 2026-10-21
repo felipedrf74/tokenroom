@@ -376,6 +376,64 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(Set(result.cache.items.keys), ["fast", "slow"])
     }
 
+    private static func rss(_ host: String, _ titles: [String]) -> Data {
+        Data("<rss version=\"2.0\"><channel>\(titles.map { "<item><title>\($0)</title><link>https://\(host)/\($0)</link><pubDate>Wed, 21 Oct 2026 09:00:00 GMT</pubDate></item>" }.joined())</channel></rss>".utf8)
+    }
+
+    /// A pass of mostly unchanged answers (304s, a feed that sends the same entries again, the
+    /// same model list) shows only the feed that changed, once: nothing else is folded or shown.
+    func testAPassOfMostlyUnchangedFeedsShowsOnlyWhatChanged() async {
+        defer { unstubNetwork() }
+        let sources = (0..<20).map { FeedSource(id: "feed\($0)", name: "Feed \($0)", url: URL(string: "https://feed\($0).example.com/rss.xml")!) }
+        let listed = models
+        let changed = LockedBox(false)
+        stubNetwork { request in
+            let host = request.url?.host ?? ""
+            if request.url == ModelFeed.url { return (200, listed) }
+            if changed.value, host == "feed0.example.com" { return (200, Self.rss(host, ["new", "old"])) }
+            // A server that doesn't validate sends the same entries again.
+            if host == "feed1.example.com" { return (200, Self.rss(host, ["old"])) }
+            return request.value(forHTTPHeaderField: "If-None-Match") == "\"v1\"" ? (304, Data()) : (200, Self.rss(host, ["old"]))
+        }
+        let now = utc(2026, 10, 21, 12)
+        var cached = await NewsFetcher.refresh(NewsCache(), sources: sources, following: [], now: now).cache
+        // As NewsStore keeps it.
+        cached.retainFoldedIdentities(from: NewsCache(), sources: sources)
+        changed.value = true
+        let shown = LockedBox<[NewsCache]>([])
+        let later = now.addingTimeInterval(600)
+        let result = await NewsFetcher.refresh(cached, sources: sources, following: [], maxAge: 0, now: later, publish: { cache in
+            shown.value.append(cache)
+        })
+        XCTAssertEqual(shown.value.count, 1, "Only the feed that changed is shown before the pass is done")
+        XCTAssertEqual(shown.value.first?.items["feed0"]?.map(\.title), ["new", "old"])
+        XCTAssertEqual(result.cache.items["feed0"]?.map(\.title), ["new", "old"])
+        XCTAssertEqual(result.cache.items["feed1"], cached.items["feed1"], "The same entries again change nothing")
+        XCTAssertEqual(result.cache.sourceChecks?["feed5"]?.succeededAt, later, "A 304 still counts as a check")
+        XCTAssertEqual(result.cache.modelsFetchedAt, later)
+    }
+
+    /// Feeds that change while one is being shown are shown together next, not one by one.
+    func testFeedsThatChangeWhileOneIsShownAreShownTogether() async {
+        defer { unstubNetwork() }
+        let sources = (0..<5).map { FeedSource(id: "feed\($0)", name: "Feed \($0)", url: URL(string: "https://feed\($0).example.com/rss.xml")!) }
+        stubNetwork { request in
+            request.url == ModelFeed.url ? (200, Self.noModels) : (200, Self.rss(request.url?.host ?? "", ["first"]))
+        }
+        let shown = LockedBox<[[String]]>([])
+        let result = await NewsFetcher.refresh(NewsCache(), sources: sources, following: [], now: utc(2026, 10, 21, 12), publish: { cache in
+            // Showing takes a while (folding a whole store): the other feeds arrive meanwhile.
+            if shown.value.isEmpty {
+                let done = ContinuousClock.now + .milliseconds(300)
+                while ContinuousClock.now < done {}
+            }
+            shown.value.append(cache.items.keys.sorted())
+        })
+        XCTAssertEqual(shown.value.count, 2, "The first feed, then the four that came in while it was shown: \(shown.value)")
+        XCTAssertEqual(shown.value.last, sources.map(\.id).sorted())
+        XCTAssertEqual(Set(result.cache.items.keys), Set(sources.map(\.id)))
+    }
+
     func testTheSizeLimitStopsTheDownload() async {
         defer { unstubNetwork() }
         stubNetwork { _ in (200, Data(repeating: UInt8(ascii: "x"), count: 3000)) }
