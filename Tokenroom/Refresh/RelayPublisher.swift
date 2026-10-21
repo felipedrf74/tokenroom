@@ -176,6 +176,12 @@ final class RelayPublisher {
         set { defaults.set(newValue.flatMap { try? RelayEnvelope.encoder.encode($0) }, forKey: Keys.preferencesBase) }
     }
 
+    /// Whether this Mac's alert choices were ever in step with iCloud's, so its copy may hold
+    /// another device's time zone.
+    var hasSharedAlertPreferences: Bool {
+        preferencesBase != nil
+    }
+
     /// The alert choices to use now, in step with iCloud: a change made on the iPhone is taken,
     /// and one made here goes out on top of the newest shared copy, so neither undoes the
     /// other. While nothing changed here, iCloud is read at most every half hour.

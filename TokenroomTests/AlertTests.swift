@@ -696,29 +696,103 @@ final class AlertTests: XCTestCase {
         }
     }
 
+    // MARK: Quiet hours on a Mac
+
+    /// A Mac in `zone` with these choices saved, on defaults of its own. With `sharedBefore`, its
+    /// iCloud sync (with no container, so nothing leaves the test) was last in step with them.
     @MainActor
-    func testAChoiceChangedOnAMacKeepsTheSharedTimeZone() throws {
-        // The shared copy has the iPhone's zone; this Mac is somewhere else.
-        let phoneZone = TimeZone.current.identifier == "Pacific/Chatham" ? "Asia/Kathmandu" : "Pacific/Chatham"
+    private func mac(_ choices: AlertPreferences, in zone: TimeZone, sharedBefore: Bool) throws -> QuotaStore {
+        // A fixed name: macOS keeps an empty preferences file for every name used.
         let suite = "tokenroom.tests.\(Self.self)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
-        defer { defaults.removePersistentDomain(forName: suite) }
+        addTeardownBlock { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+        if sharedBefore {
+            defaults.set(try RelayEnvelope.encoder.encode(choices), forKey: RelayPublisher.Keys.preferencesBase)
+        }
         let settings = AppSettings(defaults: defaults)
+        settings.alertPreferences = choices
+        let store = QuotaStore(settings: settings, clients: [], cache: SnapshotCache(directory: try makeFolder()),
+                               relay: sharedBefore ? RelayPublisher(defaults: defaults, containerIdentifier: nil) : nil)
+        store.currentTimeZone = { zone }
+        return store
+    }
+
+    @MainActor
+    func testAMacOnItsOwnTakesItsNewTimeZoneForQuietHours() async throws {
+        let lisbon = try XCTUnwrap(TimeZone(identifier: "Europe/Lisbon"))
+        let newYork = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        // Set up in Lisbon, with no iPhone.
+        var choices = preferences
+        choices.timeZoneID = lisbon.identifier
+        choices.quietHours = false
+        choices.updatedAt = now.addingTimeInterval(-86_400)
+        let store = try mac(choices, in: lisbon, sharedBefore: true)
+        _ = await store.currentAlertPreferences()
+        XCTAssertEqual(store.settings.followedTimeZone, lisbon.identifier)
+
+        // Moved to New York: the next refresh takes its zone, without dating it as a choice.
+        store.currentTimeZone = { newYork }
+        let moved = await store.currentAlertPreferences()
+        XCTAssertEqual(moved.timeZoneID, newYork.identifier)
+        XCTAssertEqual(moved.updatedAt, choices.updatedAt)
+        let shared = AlertPreferencesSync.resolve(base: choices, local: moved, remote: choices)
+        XCTAssertTrue(shared.needsPublish, "Shared, like a choice made here")
+        XCTAssertEqual(shared.preferences.timeZoneID, newYork.identifier)
+
+        store.updateAlertPreferences({ $0.quietHours = true }, now: now)
+        let quiet = store.settings.alertPreferences
+        XCTAssertEqual(quiet.timeZoneID, newYork.identifier)
+        XCTAssertTrue(quiet.isQuiet(at: utc(2026, 9, 26, 3)), "23:00 in New York")
+        XCTAssertFalse(quiet.isQuiet(at: utc(2026, 9, 25, 22)), "18:00 in New York, though 23:00 in Lisbon")
+    }
+
+    @MainActor
+    func testAChoiceChangedOnAMacKeepsTheIPhonesTimeZone() async throws {
+        let newYork = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let tokyo = try XCTUnwrap(TimeZone(identifier: "Asia/Tokyo"))
+        // The shared copy has the iPhone's zone; this Mac noted New York's long ago.
         var shared = preferences
-        shared.timeZoneID = phoneZone
+        shared.timeZoneID = tokyo.identifier
         shared.updatedAt = now
-        settings.alertPreferences = shared
-        let store = QuotaStore(settings: settings, clients: [], cache: SnapshotCache(directory: try makeFolder()))
+        let store = try mac(shared, in: newYork, sharedBefore: true)
+        store.settings.followedTimeZone = newYork.identifier
+        let refreshed = await store.currentAlertPreferences()
+        XCTAssertEqual(refreshed.timeZoneID, tokyo.identifier, "This Mac's zone hasn't changed")
 
         store.updateAlertPreferences({ $0.resets = false }, now: now.addingTimeInterval(60))
-        let mac = settings.alertPreferences
-        XCTAssertFalse(mac.resets)
-        XCTAssertEqual(mac.updatedAt, now.addingTimeInterval(60))
-        XCTAssertEqual(mac.timeZoneID, phoneZone, "Quiet hours stay the iPhone's night")
-        let resolution = AlertPreferencesSync.resolve(base: shared, local: mac, remote: shared)
+        let changed = store.settings.alertPreferences
+        XCTAssertFalse(changed.resets)
+        XCTAssertEqual(changed.updatedAt, now.addingTimeInterval(60))
+        XCTAssertEqual(changed.timeZoneID, tokyo.identifier, "Quiet hours stay the iPhone's night")
+        let resolution = AlertPreferencesSync.resolve(base: shared, local: changed, remote: shared)
         XCTAssertTrue(resolution.needsPublish)
-        XCTAssertEqual(resolution.preferences.timeZoneID, phoneZone, "And so does the shared copy")
+        XCTAssertEqual(resolution.preferences.timeZoneID, tokyo.identifier, "And so does the shared copy")
+        let later = await store.currentAlertPreferences()
+        XCTAssertEqual(later.timeZoneID, tokyo.identifier, "And the next refresh")
+    }
+
+    @MainActor
+    func testAMacsFirstLaunchDoesNotOverwriteTheSharedTimeZone() async throws {
+        let lisbon = try XCTUnwrap(TimeZone(identifier: "Europe/Lisbon"))
+        let newYork = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let tokyo = try XCTUnwrap(TimeZone(identifier: "Asia/Tokyo"))
+        // A Mac that has shared the choices before, updated to a build that follows its zone.
+        var shared = preferences
+        shared.timeZoneID = tokyo.identifier
+        shared.updatedAt = now
+        let store = try mac(shared, in: newYork, sharedBefore: true)
+        XCTAssertNil(store.settings.followedTimeZone)
+        let launched = await store.currentAlertPreferences()
+        XCTAssertEqual(launched.timeZoneID, tokyo.identifier, "Launching doesn't undo the iPhone's zone")
+        XCTAssertEqual(store.settings.followedTimeZone, newYork.identifier, "Noted, so a later move is followed")
+
+        // One that never shared them: its own copy takes its zone at once.
+        var own = preferences
+        own.timeZoneID = lisbon.identifier
+        let alone = try mac(own, in: newYork, sharedBefore: false)
+        let first = await alone.currentAlertPreferences()
+        XCTAssertEqual(first.timeZoneID, newYork.identifier)
     }
 
     func testTheCopyChangedLastWins() {
