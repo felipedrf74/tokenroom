@@ -374,6 +374,27 @@ final class RequestTests: XCTestCase {
         }
     }
 
+    /// GitHub's secondary limits may come as a 403 that says so only in its message.
+    func testAGitHubRateLimit403WithoutHeadersIsStillAWait() async {
+        for message in ["You have exceeded a secondary rate limit. Please wait a few minutes before you try again.", "API rate limit exceeded for user ID 1."] {
+            let body = Data("{\"message\":\"\(message)\"}".utf8)
+            stub { _ in (403, body) }
+            do {
+                _ = try await APIKeyClient.copilotSnapshot(key: "placeholder", planName: nil, now: now)
+                XCTFail("should fail")
+            } catch {
+                guard case ProviderError.rateLimited = error else { return XCTFail("\(message): \(error)") }
+            }
+        }
+        stub { _ in (403, Data(#"{"message":"Resource not accessible by personal access token"}"#.utf8)) }
+        do {
+            _ = try await APIKeyClient.copilotSnapshot(key: "placeholder", planName: nil, now: now)
+            XCTFail("should fail")
+        } catch {
+            guard case ProviderError.notEntitled = error else { return XCTFail("The permission: \(error)") }
+        }
+    }
+
     func testCopilotTokensThatCantReadUsageAreNotEntitled() async {
         for status in [403, 404] {
             stub { _ in (status, Data()) }
