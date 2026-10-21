@@ -16,6 +16,9 @@ struct NewsCache: Codable, Equatable, Sendable {
         /// Failed checks in a row since the last success, for `NewsFetcher.retryInterval`. Nil
         /// after a success, and in caches from earlier releases.
         var failures: Int?
+        /// When the feed's server asked to be asked again (Retry-After), as allowed: no
+        /// automatic check goes out before it. Nil after a success.
+        var retryAt: Date?
     }
     /// Optional for caches written by earlier releases.
     var sourceChecks: [String: SourceCheck]?
@@ -27,6 +30,8 @@ struct NewsCache: Codable, Equatable, Sendable {
     var modelsFailedAt: Date?
     /// The model list's failed checks in a row; nil after an answer, and in older caches.
     var modelsFailures: Int?
+    /// When OpenRouter asked to be asked again (Retry-After), as allowed; nil after an answer.
+    var modelsRetryAt: Date?
     var modelState = ModelFeedState()
     /// Items per feed ID, newest first.
     var items: [String: [FeedItem]] = [:]
@@ -144,12 +149,15 @@ struct NewsCache: Codable, Equatable, Sendable {
         modelsFetchedAt = now
         modelsFailedAt = nil
         modelsFailures = nil
+        modelsRetryAt = nil
     }
 
-    /// The model list's check failed once more, so the next waits a little longer.
-    mutating func modelsFailed(at now: Date) {
+    /// The model list's check failed once more, so the next waits a little longer, and no less
+    /// than OpenRouter asked (`retryAfter`).
+    mutating func modelsFailed(at now: Date, retryAfter: Date? = nil) {
         modelsFailedAt = now
         modelsFailures = (modelsFailures ?? 0) + 1
+        modelsRetryAt = NewsFetcher.allowedRetry(retryAfter, now: now)
     }
 
     static func load(from directory: URL?) -> NewsCache {
@@ -189,6 +197,17 @@ enum NewsFetcher {
     /// without a count, is the first.
     static func retryInterval(afterFailures failures: Int?) -> TimeInterval {
         retryIntervals[min(max(failures ?? 1, 1), retryIntervals.count) - 1]
+    }
+
+    /// The longest a server's Retry-After holds a feed off: a feed asking for days is still
+    /// tried again within this.
+    static let longestRetryAfter: TimeInterval = 6 * 3600
+
+    /// A server's Retry-After as the time the next automatic check may go out: kept within
+    /// `longestRetryAfter`, and none for one already past.
+    static func allowedRetry(_ retryAfter: Date?, now: Date) -> Date? {
+        guard let retryAfter, retryAfter > now else { return nil }
+        return min(retryAfter, now.addingTimeInterval(longestRetryAfter))
     }
 
     struct Result: Sendable {
@@ -237,8 +256,8 @@ enum NewsFetcher {
         case body(Data, NewsCache.Validator, isTruncated: Bool)
         /// 304: the cached copy is current.
         case notModified
-        /// An answer with an error status.
-        case status(Int)
+        /// An answer with an error status, and its Retry-After, if any.
+        case status(Int, retryAfter: String?)
         /// No answer.
         case unreachable
     }
@@ -257,7 +276,10 @@ enum NewsFetcher {
         var newModels: [ModelRelease] = []
         var unreadable = cache.unreadable ?? []
 
-        if forcedSources.contains(ModelFeed.id) || isDue(cache.modelsFetchedAt, failedAt: cache.modelsFailedAt, failures: cache.modelsFailures, interval: maxAge ?? modelInterval, now: now) {
+        // The model list has no validators, so every check downloads all of it: it keeps to its
+        // hourly interval while News is open or on screen; only a pull or Check Now asks sooner.
+        let modelAge = maxAge == 0 ? 0 : modelInterval
+        if forcedSources.contains(ModelFeed.id) || isDue(cache.modelsFetchedAt, failedAt: cache.modelsFailedAt, failures: cache.modelsFailures, retryAt: cache.modelsRetryAt, interval: modelAge, now: now) {
             let key = ModelFeed.url.absoluteString
             guard let answer = await permittedGet(ModelFeed.url, validator: cache.validators[key], isAllowed: isAllowed) else {
                 return .init(cache: cache, newModels: [])
@@ -285,8 +307,8 @@ enum NewsFetcher {
                     cache.modelsFailed(at: now)
                     unreadable.insert(ModelFeed.id)
                 }
-            case .status:
-                cache.modelsFailed(at: now)
+            case let .status(_, retryAfter):
+                cache.modelsFailed(at: now, retryAfter: TokenroomHTTP.retryDate(retryAfter, now: now))
                 unreadable.insert(ModelFeed.id)
             case .unreachable:
                 // A cancelled refresh (quitting, sleep) isn't a failure.
@@ -299,7 +321,7 @@ enum NewsFetcher {
 
         let due = sources.filter { source in
             let check = cache.check(for: source)
-            return forcedSources.contains(source.id) || isDue(check.succeededAt, failedAt: check.failedAt, failures: check.failures, interval: maxAge ?? announcementInterval, now: now)
+            return forcedSources.contains(source.id) || isDue(check.succeededAt, failedAt: check.failedAt, failures: check.failures, retryAt: check.retryAt, interval: maxAge ?? announcementInterval, now: now)
         }
         if !due.isEmpty {
             let previous = cache.validators
@@ -324,6 +346,7 @@ enum NewsFetcher {
                 let key = source.url.absoluteString
                 var check = cache.check(for: source)
                 var success = false
+                var retryAfter: Date?
                 switch answer {
                 case let .body(data, validator, isTruncated):
                     let read = FeedParser.read(data, source: source)
@@ -350,7 +373,7 @@ enum NewsFetcher {
                 case .notModified:
                     success = cache.items[source.id] != nil
                     if !success { cache.validators[key] = nil }
-                case .status: break
+                case let .status(_, asked): retryAfter = TokenroomHTTP.retryDate(asked, now: now)
                 case .unreachable:
                     if Task.isCancelled { continue }
                 }
@@ -358,11 +381,13 @@ enum NewsFetcher {
                     check.succeededAt = now
                     check.failedAt = nil
                     check.failures = nil
+                    check.retryAt = nil
                     unreadable.remove(source.id)
                     anySucceeded = true
                 } else {
                     check.failedAt = now
                     check.failures = (check.failures ?? 0) + 1
+                    check.retryAt = allowedRetry(retryAfter, now: now)
                     unreadable.insert(source.id)
                     anyFailed = true
                 }
@@ -383,11 +408,15 @@ enum NewsFetcher {
     }
 
     /// Due by `interval`, and, after `failures` failed checks in a row, once their
-    /// `retryInterval` has passed, however often News is open or on screen; asking with a
-    /// `maxAge` of 0 (pulling to refresh, Check Now) always goes out.
-    static func isDue(_ fetchedAt: Date?, failedAt: Date?, failures: Int? = nil, interval: TimeInterval, now: Date) -> Bool {
+    /// `retryInterval` has passed and no sooner than the server asked (`retryAt`), however often
+    /// News is open or on screen; asking with a `maxAge` of 0 (pulling to refresh, Check Now)
+    /// always goes out.
+    static func isDue(_ fetchedAt: Date?, failedAt: Date?, failures: Int? = nil, retryAt: Date? = nil, interval: TimeInterval, now: Date) -> Bool {
         if let failedAt, fetchedAt == nil || failedAt >= fetchedAt! {
-            return isDue(failedAt, interval: interval <= 0 ? 0 : retryInterval(afterFailures: failures), now: now)
+            guard interval > 0 else { return true }
+            // A time asked for further off than allowed was saved while the clock was ahead.
+            if let retryAt, retryAt > now, retryAt.timeIntervalSince(now) <= longestRetryAfter { return false }
+            return isDue(failedAt, interval: retryInterval(afterFailures: failures), now: now)
         }
         return isDue(fetchedAt, interval: interval, now: now)
     }
@@ -460,6 +489,13 @@ enum NewsFetcher {
         if let lastModified = validator?.lastModified {
             request.setValue(lastModified, forHTTPHeaderField: "If-Modified-Since")
         }
+        return await download(request, sizeLimit: sizeLimit)
+    }
+
+    /// The download itself, off the main actor: its body is read where it arrives, a buffer at a
+    /// time, never with a hop to the main actor for each byte, which made a megabyte take seconds
+    /// and could run a whole answer past `downloadTimeout`.
+    @concurrent private static func download(_ request: URLRequest, sizeLimit: Int) async -> Answer {
         do {
             let (bytes, response) = try await session.bytes(for: request)
             guard let http = response as? HTTPURLResponse else {
@@ -468,19 +504,29 @@ enum NewsFetcher {
             }
             guard (200..<300).contains(http.statusCode) else {
                 bytes.task.cancel()
-                return http.statusCode == 304 ? .notModified : .status(http.statusCode)
+                if http.statusCode == 304 { return .notModified }
+                return .status(http.statusCode, retryAfter: http.value(forHTTPHeaderField: "Retry-After"))
             }
             var data = Data()
+            data.reserveCapacity(min(max(Int(http.expectedContentLength), 0), sizeLimit))
+            var buffer: [UInt8] = []
+            buffer.reserveCapacity(64 * 1024)
             var isTruncated = false
             do {
                 for try await byte in bytes {
-                    guard data.count < sizeLimit else {
+                    guard data.count + buffer.count < sizeLimit else {
                         isTruncated = true
                         break
                     }
-                    data.append(byte)
+                    buffer.append(byte)
+                    if buffer.count == buffer.capacity {
+                        data.append(contentsOf: buffer)
+                        buffer.removeAll(keepingCapacity: true)
+                    }
                 }
+                data.append(contentsOf: buffer)
             } catch {
+                data.append(contentsOf: buffer)
                 // A cancelled check isn't a failure, and nothing at all is no answer.
                 guard !Task.isCancelled, !data.isEmpty else { return .unreachable }
                 isTruncated = true

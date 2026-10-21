@@ -289,6 +289,65 @@ final class FeedTests: XCTestCase {
 
     private static let noModels = Data(#"{"data":[]}"#.utf8)
 
+    func testALargeBodyIsReadWholeAndQuickly() async {
+        defer { unstubNetwork() }
+        // About the size of OpenRouter's whole model list, read through the same GET.
+        let body = Data(repeating: UInt8(ascii: "x"), count: 1_500_000)
+        stubNetwork { _ in (200, body) }
+        let started = Date.now
+        guard case let .body(data, _, isTruncated) = await NewsFetcher.get(URL(string: "https://example.com/models")!, validator: nil) else {
+            return XCTFail("A 200 has a body")
+        }
+        XCTAssertEqual(data.count, body.count)
+        XCTAssertFalse(isTruncated, "A complete body is never marked cut off")
+        XCTAssertLessThan(Date.now.timeIntervalSince(started), 3, "Read off the main actor a buffer at a time, not a hop per byte")
+    }
+
+    func testOnScreenChecksLeaveTheModelListToItsHour() async {
+        defer { unstubNetwork() }
+        stubNetwork { request in request.url == ModelFeed.url ? (200, Self.noModels) : (304, Data()) }
+        let now = utc(2026, 10, 21, 12)
+        var cache = NewsCache()
+        cache.modelsFetchedAt = now.addingTimeInterval(-10 * 60)
+        _ = await NewsFetcher.refresh(cache, sources: [], following: [], maxAge: NewsFetcher.liveInterval, now: now)
+        XCTAssertFalse(StubURLProtocol.requests.contains { $0.url == ModelFeed.url }, "The whole list isn't downloaded again every 5 minutes")
+        _ = await NewsFetcher.refresh(cache, sources: [], following: [], maxAge: NewsFetcher.openInterval, now: now.addingTimeInterval(50 * 60))
+        XCTAssertEqual(StubURLProtocol.requests.filter { $0.url == ModelFeed.url }.count, 1, "…but is once its hour is up")
+        _ = await NewsFetcher.refresh(cache, sources: [], following: [], maxAge: 0, now: now)
+        XCTAssertEqual(StubURLProtocol.requests.filter { $0.url == ModelFeed.url }.count, 2, "A pull or Check Now still asks")
+    }
+
+    func testAFeedThatAsksToWaitIsntAskedSooner() async {
+        defer {
+            TokenroomHTTP.overrideSession(nil)
+            StubURLProtocol.reset()
+        }
+        StubURLProtocol.reset()
+        RetryAfterProtocol.retryAfter = "7200"
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RetryAfterProtocol.self]
+        TokenroomHTTP.overrideSession(URLSession(configuration: configuration))
+        let now = utc(2026, 10, 21, 12)
+        var cache = await NewsFetcher.refresh(NewsCache(), sources: [claudeCode], following: [], now: now).cache
+        XCTAssertEqual(cache.sourceChecks?[claudeCode.id]?.retryAt, now.addingTimeInterval(7200))
+        XCTAssertEqual(cache.modelsRetryAt, now.addingTimeInterval(7200))
+        let asked = StubURLProtocol.requests.count
+        for minutes in [5.0, 30, 60, 119] {
+            cache = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], now: now.addingTimeInterval(minutes * 60)).cache
+        }
+        XCTAssertEqual(StubURLProtocol.requests.count, asked, "Nothing goes out before the two hours it asked for")
+        cache = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], now: now.addingTimeInterval(7200)).cache
+        XCTAssertEqual(StubURLProtocol.requests.count, asked + 2, "…and both go out once they're up")
+        _ = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], maxAge: 0, now: now.addingTimeInterval(7260)).cache
+        XCTAssertEqual(StubURLProtocol.requests.count, asked + 4, "A pull or Check Now still goes out")
+
+        // A server asking for days is tried again within six hours.
+        RetryAfterProtocol.retryAfter = "\(3 * 86_400)"
+        let held = await NewsFetcher.refresh(NewsCache(), sources: [claudeCode], following: [], now: now).cache
+        XCTAssertEqual(held.sourceChecks?[claudeCode.id]?.retryAt, now.addingTimeInterval(NewsFetcher.longestRetryAfter))
+        XCTAssertTrue(NewsFetcher.isDue(nil, failedAt: now, failures: 1, retryAt: now.addingTimeInterval(30 * 86_400), interval: 3600, now: now.addingTimeInterval(300)), "A time further off than allowed was saved while the clock was ahead")
+    }
+
     func testTheSizeLimitStopsTheDownload() async {
         defer { unstubNetwork() }
         stubNetwork { _ in (200, Data(repeating: UInt8(ascii: "x"), count: 3000)) }
@@ -1336,6 +1395,22 @@ final class StubETagProtocol: URLProtocol, @unchecked Sendable {
 /// Like StubURLProtocol, but a feed's body is cut off by a timeout a moment after what the handler
 /// gives has arrived. The content type is set, so the session doesn't hold a short body back to
 /// sniff it.
+/// Every request answers 429 with `retryAfter` as its Retry-After.
+private final class RetryAfterProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var retryAfter = "7200"
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        StubURLProtocol.requests.append(request)
+        let response = HTTPURLResponse(url: request.url!, statusCode: 429, httpVersion: "HTTP/1.1", headerFields: ["Retry-After": Self.retryAfter])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
 private final class CutOffFeedProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
