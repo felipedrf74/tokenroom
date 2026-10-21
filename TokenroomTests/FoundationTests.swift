@@ -111,6 +111,20 @@ final class FoundationTests: XCTestCase {
         XCTAssertEqual(output.stdout.count, 300_000)
     }
 
+    /// A child left running keeps stdout open, so EOF never comes. What the process wrote before
+    /// it exited still counts, and the read stops instead of waiting for the child.
+    func testProcessOutputSurvivesAChildThatKeepsStdoutOpen() {
+        let start = Date()
+        let output = BlockingIO.runProcess(
+            URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", #"echo '{"version":"1.2.3"}'; (sleep 20) &"#],
+            timeout: 5
+        )
+        XCTAssertTrue(output.succeeded)
+        XCTAssertEqual(String(decoding: output.stdout, as: UTF8.self), "{\"version\":\"1.2.3\"}\n")
+        XCTAssertLessThan(Date().timeIntervalSince(start), 4)
+    }
+
     func testProcessIsKilledAfterTimeout() {
         let start = Date()
         let output = BlockingIO.runProcess(URL(fileURLWithPath: "/bin/sleep"), arguments: ["10"], timeout: 0.3)

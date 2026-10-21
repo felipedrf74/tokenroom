@@ -52,17 +52,15 @@ extension BlockingIO {
         let drained = DispatchSemaphore(value: 0)
         let reader = stdout.fileHandleForReading
         DispatchQueue.global(qos: .utility).async {
-            var data = Data()
-            while true {
-                let chunk = reader.availableData
-                if chunk.isEmpty { break }
-                data.append(chunk)
-                if data.count > maxOutput {
+            // Kept chunk by chunk: EOF may never come (below), and what came before it counts.
+            // `read(upToCount:)` throws once the handle is closed, where `availableData` would
+            // raise an exception nothing here can catch.
+            while let chunk = try? reader.read(upToCount: 64 * 1024), !chunk.isEmpty {
+                if collected.append(chunk) > maxOutput {
                     process.terminate()
                     break
                 }
             }
-            collected.set(data)
             drained.signal()
         }
         if let input, let stdin {
@@ -79,8 +77,12 @@ extension BlockingIO {
                 _ = exited.wait(timeout: .now() + 1)
             }
         }
-        // EOF arrives once the process closes stdout; don't wait forever on a lingering child.
-        _ = drained.wait(timeout: .now() + 1)
+        // EOF arrives once everything holding stdout closes it, and a child the process left
+        // running still does. Closing this end ends the read, so the reader doesn't wait on it.
+        if drained.wait(timeout: .now() + 1) == .timedOut {
+            try? reader.close()
+            _ = drained.wait(timeout: .now() + 1)
+        }
         return ProcessOutput(
             status: timedOut ? -1 : process.terminationStatus,
             stdout: collected.data,
@@ -96,8 +98,12 @@ extension BlockingIO {
             lock.withLock { value }
         }
 
-        func set(_ data: Data) {
-            lock.withLock { value = data }
+        /// Adds a chunk; returns how much is held now.
+        func append(_ chunk: Data) -> Int {
+            lock.withLock {
+                value.append(chunk)
+                return value.count
+            }
         }
     }
 }
