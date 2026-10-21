@@ -174,4 +174,25 @@ final class AlertLimitTests: XCTestCase {
         ledger.levelsSent["claude/session/threshold"] = AlertLedger.LevelSent(level: 95, sentAt: now.addingTimeInterval(60))
         XCTAssertTrue(ledger.due(preferences: preferences, now: now.addingTimeInterval(120)).isEmpty)
     }
+
+    // MARK: Windows a reading leaves out
+
+    func testAWindowMissingFromSomeReadingsStillAlertsWhenItComesBack() {
+        // Claude's status line has no Opus window once the last direct read is half an hour old.
+        func opus(_ used: Double) -> RelayWindow {
+            RelayWindow(id: "seven_day_opus", kind: "weekly", title: "Opus weekly", used: used, resetsAt: now.addingTimeInterval(3 * 86_400), periodSec: 7 * 86_400)
+        }
+        var ledger = AlertLedger()
+        ledger.process([claude([session(20, resetsIn: 4 * 3600), opus(70)])], preferences: preferences, now: now)
+        XCTAssertTrue(ledger.process([claude([session(22, resetsIn: 4 * 3600)])], preferences: preferences, now: now.addingTimeInterval(1800)).isEmpty)
+        XCTAssertEqual(ledger.lastSeen["claude"]?.windows.map(\.id), ["session", "seven_day_opus"], "Kept while it's missing")
+
+        let back = ledger.process([claude([session(24, resetsIn: 4 * 3600), opus(96)])], preferences: preferences, now: now.addingTimeInterval(3600))
+        XCTAssertEqual(back.map(\.window), ["seven_day_opus"])
+        XCTAssertEqual(back.map(\.level), [95], "Crossed while it was missing: not a first sight")
+
+        // Still missing once its reset has passed: forgotten, like any window that ended.
+        ledger.process([claude([session(5, resetsIn: 3 * 86_400 + 4 * 3600)])], preferences: preferences, now: now.addingTimeInterval(3 * 86_400 + 60))
+        XCTAssertEqual(ledger.lastSeen["claude"]?.windows.map(\.id), ["session"])
+    }
 }

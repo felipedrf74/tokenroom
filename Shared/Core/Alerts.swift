@@ -726,10 +726,11 @@ struct AlertLedger: Codable, Equatable, Sendable {
 
     /// Raises alerts for these readings and queues them; returns the ones raised now. Readings
     /// that aren't live (stale, expired) don't move `lastSeen`, so a crossing is judged against
-    /// the last real one. A stale reading can still raise the run-out alert once, from a
-    /// run-out the collector already measured, after this ledger has seen the provider live.
-    /// It does not raise a threshold, reset, or balance alert. `samples` holds recent readings
-    /// by provider id, then window id, for the pace of readings without a measured one.
+    /// the last real one, and a window a live reading leaves out stays as it was last seen until
+    /// its reset passes (`remembering`). A stale reading can still raise the run-out alert once,
+    /// from a run-out the collector already measured, after this ledger has seen the provider
+    /// live. It does not raise a threshold, reset, or balance alert. `samples` holds recent
+    /// readings by provider id, then window id, for the pace of readings without a measured one.
     @discardableResult
     mutating func process(_ providers: [RelayProvider], preferences: AlertPreferences, samples: [String: [String: [(date: Date, used: Double)]]] = [:], now: Date = .now) -> [UsageAlert] {
         var fresh: [UsageAlert] = []
@@ -741,7 +742,7 @@ struct AlertLedger: Codable, Equatable, Sendable {
                     fresh.append(alert)
                     pending.append(Pending(alert: alert, raisedAt: now))
                 }
-                lastSeen[provider.id] = provider
+                lastSeen[provider.id] = Self.remembering(provider, over: lastSeen[provider.id], now: now)
             } else if lastSeen[provider.id] != nil {
                 for window in provider.windows where window.isMetered && !window.isAwaitingReading(at: now) {
                     guard let alert = AlertRules.runsOut(provider, window: window, preferences: preferences, samples: samples[provider.id]?[window.id] ?? [], now: now),
@@ -757,6 +758,20 @@ struct AlertLedger: Codable, Equatable, Sendable {
         }
         prune(preferences: preferences, now: now)
         return fresh
+    }
+
+    /// A live reading to remember, with the windows the last one had and this one leaves out
+    /// (Claude's status line carries no Opus or Sonnet window, say) until their reset passes, so
+    /// a crossing made while a window was missing still alerts when it comes back rather than
+    /// counting as its first sight. A window without a reset isn't kept.
+    private static func remembering(_ provider: RelayProvider, over previous: RelayProvider?, now: Date) -> RelayProvider {
+        guard let previous else { return provider }
+        let present = Set(provider.windows.map(\.id))
+        var remembered = provider
+        remembered.windows += previous.windows.filter { window in
+            !present.contains(window.id) && (window.resetsAt.map { $0 > now } ?? false)
+        }
+        return remembered
     }
 
     /// Other alert kinds keep their existing IDs. A run-out is raised once for the logical
