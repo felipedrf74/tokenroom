@@ -415,21 +415,15 @@ final class QuotaStore {
             return
         }
         let relayActive = relay.map { $0.isAvailable && $0.isEnabled } ?? false
-        var delivered: [String] = []
-        var announced: Set<String> = []
+        var delivery: AlertLedger.Delivery?
         if relayActive, let relay {
-            (delivered, announced) = await relay.sendAlerts(due, now: now)
+            delivery = await relay.sendAlerts(due, now: now)
         }
-        if settings.showsAlertsOnMac {
-            let unseen = alertLedger.unshown(due, announced: announced)
-            MacAlerts.post(unseen)
-            alertLedger.markShownHere(unseen.map(\.id), at: now)
+        // Without iCloud there's nowhere else to send them: this Mac showed them, or nothing will.
+        let shown = alertLedger.settle(due, delivery: delivery, showsHere: settings.showsAlertsOnMac, now: now)
+        if !shown.isEmpty {
+            MacAlerts.post(shown)
         }
-        if !relayActive {
-            // Nowhere else to send them: this Mac showed them, or nothing will.
-            delivered = due.map(\.id)
-        }
-        alertLedger.markSent(delivered, at: now)
         alertLedger.save(to: cache.directory)
     }
 

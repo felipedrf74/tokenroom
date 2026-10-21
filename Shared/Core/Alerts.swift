@@ -907,11 +907,23 @@ struct AlertLedger: Codable, Equatable, Sendable {
         pending.removeAll { delivered.contains($0.alert.id) }
     }
 
-    /// Of these due alerts, the ones still to show as notifications on this device: not shown
-    /// here yet, and not `announced` by another device under the neighbouring day, since a second
-    /// balance crossing within a day is quiet.
-    func unshown(_ due: [UsageAlert], announced: Set<String> = []) -> [UsageAlert] {
-        due.filter { shownHere[$0.id] == nil && !announced.contains($0.id) }
+    /// What iCloud did with alerts sent to it: the IDs it took (or already had), and of those the
+    /// ones another device had already announced, which this device doesn't show either.
+    struct Delivery: Equatable, Sendable {
+        var saved: [String] = []
+        var announced: Set<String> = []
+    }
+
+    /// Records how these due alerts went out from a Mac and returns the ones to show on it. With
+    /// iCloud (`delivery`), what it took counts as sent and the rest wait for the next try;
+    /// without, this Mac's notifications are all there is, so every one counts. Shown here: the
+    /// ones not shown here yet and not already announced by another device.
+    mutating func settle(_ due: [UsageAlert], delivery: Delivery?, showsHere: Bool, now: Date = .now) -> [UsageAlert] {
+        let announced = delivery?.announced ?? []
+        let shown = showsHere ? due.filter { shownHere[$0.id] == nil && !announced.contains($0.id) } : []
+        markShownHere(shown.map(\.id), at: now)
+        markSent(delivery?.saved ?? due.map(\.id), at: now)
+        return shown
     }
 
     /// Shown as notifications on this device.

@@ -180,31 +180,46 @@ final class RelayPublisher {
         }
     }
 
-    /// Sends alerts to the iPhone; returns the IDs that went out (or already had), and of those
-    /// the ones another device announced under the neighbouring day, which this Mac doesn't show
-    /// either. The rest stay queued.
-    func sendAlerts(_ alerts: [UsageAlert], now: Date = .now) async -> (saved: [String], announced: Set<String>) {
-        guard let relay, isEnabled else { return ([], []) }
-        if isWaiting(now) { return ([], []) }
-        var saved: [String] = []
-        var announced: Set<String> = []
+    /// Sends alerts to the iPhone (`send`); the ones that didn't go out stay queued.
+    func sendAlerts(_ alerts: [UsageAlert], now: Date = .now) async -> AlertLedger.Delivery {
+        guard let relay, isEnabled else { return .init() }
+        if isWaiting(now) { return .init() }
+        return await Self.send(alerts, wentOutOnANeighbouringDay: { alert in
+            try await relay.wentOutOnANeighbouringDay(alert, now: now)
+        }, save: { alert in
+            try await relay.saveAlert(alert)
+            self.logger.notice("relay alert sent \(alert.kind.rawValue, privacy: .public) \(alert.level, privacy: .public)")
+            return true
+        }, stops: { error in
+            self.handle(error, now: now).stopsBatch
+        })
+    }
+
+    /// The sending behind `sendAlerts`, apart from iCloud: the IDs that went out (or already
+    /// had), and of those the ones another device already announced, which this Mac doesn't show
+    /// either: a balance crossing announced under the neighbouring day, which isn't saved again,
+    /// or one `save` found there already. `stops` says whether a failure ends the batch.
+    static func send(_ alerts: [UsageAlert], wentOutOnANeighbouringDay: (UsageAlert) async throws -> Bool,
+                     save: (UsageAlert) async throws -> Bool, stops: (Error) -> Bool) async -> AlertLedger.Delivery {
+        var delivery = AlertLedger.Delivery()
         for alert in alerts {
             do {
                 // A balance crossing another device announced on the other side of midnight
                 // (UTC) has that day's name; don't announce it again under this one's.
-                if try await relay.wentOutOnANeighbouringDay(alert, now: now) {
-                    saved.append(alert.id)
-                    announced.insert(alert.id)
+                if try await wentOutOnANeighbouringDay(alert) {
+                    delivery.saved.append(alert.id)
+                    delivery.announced.insert(alert.id)
                     continue
                 }
-                try await relay.saveAlert(alert)
-                saved.append(alert.id)
-                logger.notice("relay alert sent \(alert.kind.rawValue, privacy: .public) \(alert.level, privacy: .public)")
+                if try await !save(alert) {
+                    delivery.announced.insert(alert.id)
+                }
+                delivery.saved.append(alert.id)
             } catch {
-                if handle(error, now: now).stopsBatch { break }
+                if stops(error) { break }
             }
         }
-        return (saved, announced)
+        return delivery
     }
 
     /// Once a day, deletes alert records older than two weeks, so they don't pile up in iCloud
