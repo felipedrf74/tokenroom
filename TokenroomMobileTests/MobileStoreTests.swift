@@ -120,41 +120,69 @@ final class MobileStoreTests: XCTestCase {
         XCTAssertEqual(second.filter { $0 == "activities" }.count, 2, "Activity updates still follow complete refreshes")
     }
 
-    /// Widgets and the Watch were given the Mac's live reading, and drew it stale an hour later.
-    /// Three hours on, the Mac wakes and sends the same numbers: widgets reload and the Watch
-    /// gets it, though nothing but check times moved.
+    /// A store with no iCloud whose widget reloads and Watch handovers are counted, as from the
+    /// background. The Mac's readings reach it as a widget's refresh saved them (`fromMac`).
+    @MainActor
+    private func countingStore(defaults: UserDefaults, folder: URL, calls: EffectCalls) -> MobileStore {
+        let effects = MobilePlatformEffects(
+            setWatchConnectAvailable: { _ in }, sendToWatch: { _ in calls.append("watch") },
+            reloadWidgets: { calls.append("widgets") }, applicationIsBackground: { true },
+            updateLiveActivities: { _, _, _, _ in }, makeKeyFetchGate: { KeyFetchGate(defaults: $0, lockDirectory: nil) },
+            scheduleBackgroundRefresh: { _ in }
+        )
+        return MobileStore(defaults: defaults, containerIdentifier: nil, keys: MobileFixtureKeychain().keys,
+            directory: folder, connectOnIPhone: false,
+            notificationScheduler: { _ in XCTFail("No alert exists in this refresh") },
+            platformEffects: effects, launchDefaults: defaults)
+    }
+
+    private func fromMac(checked: Date) -> ReadingCache {
+        let provider = RelayProvider(
+            id: "claude", name: "Claude", shortName: "Claude", monogram: "C", tint: "#D97757", state: "live",
+            checkedAt: checked, fetchedAt: checked, primaryWindowID: "weekly",
+            windows: [RelayWindow(id: "weekly", kind: "weekly", title: "Weekly", used: 42, resetsAt: now.addingTimeInterval(3 * 86_400))]
+        )
+        return ReadingCache(savedAt: checked, isSample: false, items: [ReadingCache.Item(provider: provider, source: "Mac")])
+    }
+
+    /// A Mac awake with unchanged usage sends its heartbeat every 30 minutes, and the iPhone, in
+    /// the background, takes each one. Widgets already show every one of them live: no reload is
+    /// spent on WidgetKit's budget, and the Watch isn't handed the same numbers again.
+    @MainActor
+    func testHeartbeatsWithTheSameNumbersReloadNothingFromTheBackground() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let cacheURL = folder.appendingPathComponent(ReadingCache.fileName)
+        try fromMac(checked: now).save(to: cacheURL)
+        let calls = EffectCalls()
+        let store = countingStore(defaults: defaults, folder: folder, calls: calls)
+        for beat in 1...8 {
+            let date = now.addingTimeInterval(Double(beat) * 30 * 60)
+            try fromMac(checked: date.addingTimeInterval(-60)).save(to: cacheURL)
+            await store.refresh(force: true, now: date)
+        }
+        XCTAssertEqual(calls.all, [], "Four hours of heartbeats: nothing to reload or hand over")
+    }
+
+    /// Widgets and the Watch were given the Mac's live reading; the Mac sleeps for 90 minutes, and
+    /// a refresh meanwhile saves it stale. When it wakes with the same numbers, live again, that's
+    /// one reload from the background and one handover.
     @MainActor
     func testAReadingLiveAgainWithTheSameNumbersReloadsWidgetsAndReachesTheWatch() async throws {
         let defaults = makeDefaults()
         let folder = try makeFolder()
-        let calls = Mutex<[String]>([])
-        let effects = MobilePlatformEffects(
-            setWatchConnectAvailable: { _ in }, sendToWatch: { _ in calls.withLock { $0.append("watch") } },
-            reloadWidgets: { calls.withLock { $0.append("widgets") } }, applicationIsBackground: { true },
-            updateLiveActivities: { _, _, _, _ in }, makeKeyFetchGate: { KeyFetchGate(defaults: $0, lockDirectory: nil) },
-            scheduleBackgroundRefresh: { _ in }
-        )
-        func fromMac(checked: Date) -> ReadingCache {
-            let provider = RelayProvider(
-                id: "claude", name: "Claude", shortName: "Claude", monogram: "C", tint: "#D97757", state: "live",
-                checkedAt: checked, fetchedAt: checked, primaryWindowID: "weekly",
-                windows: [RelayWindow(id: "weekly", kind: "weekly", title: "Weekly", used: 42, resetsAt: now.addingTimeInterval(3 * 86_400))]
-            )
-            return ReadingCache(savedAt: checked, isSample: false, items: [ReadingCache.Item(provider: provider, source: "Mac")])
-        }
         let cacheURL = folder.appendingPathComponent(ReadingCache.fileName)
         try fromMac(checked: now).save(to: cacheURL)
-        let store = MobileStore(defaults: defaults, containerIdentifier: nil, keys: MobileFixtureKeychain().keys,
-            directory: folder, connectOnIPhone: false,
-            notificationScheduler: { _ in XCTFail("No alert exists in this refresh") },
-            platformEffects: effects, launchDefaults: defaults)
-        // The newer reading arrives as a widget's refresh saved it; this store has no iCloud.
-        let woke = now.addingTimeInterval(3 * 3600)
+        let calls = EffectCalls()
+        let store = countingStore(defaults: defaults, folder: folder, calls: calls)
+        await store.refresh(force: true, now: now.addingTimeInterval(70 * 60))
+        XCTAssertEqual(calls.all, [], "Saved stale, as widgets already draw it")
+        let woke = now.addingTimeInterval(90 * 60)
         try fromMac(checked: woke).save(to: cacheURL)
         await store.refresh(force: true, now: woke)
-        let made = calls.withLock { $0 }
+        let made = calls.all
         XCTAssertEqual(made.filter { $0 == "watch" }, ["watch"], "The Watch still shows it stale")
-        XCTAssertEqual(made.filter { $0 == "widgets" }, ["widgets"], "Worth a reload from the background too")
+        XCTAssertEqual(made.filter { $0 == "widgets" }, ["widgets"], "Worth a reload from the background")
     }
 
     @MainActor
@@ -682,4 +710,11 @@ final class MobileStoreTests: XCTestCase {
         XCTAssertEqual(retried, [alert.id])
         XCTAssertEqual(calls.withLock { $0 }, 2)
     }
+}
+
+/// What a store asked of the device, in order.
+private final class EffectCalls: Sendable {
+    private let calls = Mutex<[String]>([])
+    func append(_ call: String) { calls.withLock { $0.append(call) } }
+    var all: [String] { calls.withLock { $0 } }
 }

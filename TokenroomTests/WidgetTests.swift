@@ -118,6 +118,18 @@ final class WidgetTests: XCTestCase {
         XCTAssertFalse(unchanged.shown, "Within the hour, nothing to reload for")
         XCTAssertFalse(unchanged.worthReload)
         XCTAssertTrue(drawn.changes(since: nil, at: now).shown, "A first cache is always shown")
+
+        // A Mac's unchanged heartbeats, every 30 minutes for four hours, each merged and saved:
+        // measured against the last one saved, never a change, so no reload is spent on them.
+        var saved = drawn
+        for beat in 1...8 {
+            let date = now.addingTimeInterval(Double(beat) * 30 * 60)
+            let next = saved.mergingUpdate(handover(at: date.addingTimeInterval(-60)), now: date)
+            let beatChange = next.changes(since: saved, at: date)
+            XCTAssertFalse(beatChange.shown, "Heartbeat \(beat)")
+            XCTAssertFalse(beatChange.worthReload, "Heartbeat \(beat)")
+            saved = next
+        }
     }
 
     private func cache(savedAt: Date, used: Double, isSample: Bool = false) -> ReadingCache {
