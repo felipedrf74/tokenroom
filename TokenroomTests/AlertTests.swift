@@ -510,6 +510,31 @@ final class AlertTests: XCTestCase {
         XCTAssertEqual(AlertRules.neighbouringDayIDs(of: fromOlderBuild), ["evt-deepseek-balance-usd-low-80-d20720", "evt-deepseek-balance-usd-low-80-d20722"])
     }
 
+    func testABalanceCrossingAnnouncedUnderTheNeighbouringDayStaysQuietOnTheMac() throws {
+        var awake = preferences
+        awake.quietHours = false
+        // Another device announced the crossing before midnight (UTC)…
+        let before = try XCTUnwrap(AlertRules.alerts(previous: balance(remaining: 6), current: balance(remaining: 3), preferences: awake, now: utc(2026, 9, 25, 23, 30)).first)
+        let inICloud: Set<String> = [before.id]
+        // …and after a top-up this Mac sees it cross again just after, under the next day's name.
+        let afterMidnight = utc(2026, 9, 26, 0, 30)
+        var ledger = AlertLedger()
+        ledger.process([balance(remaining: 18)], preferences: awake, now: afterMidnight)
+        let again = ledger.process([balance(remaining: 3)], preferences: awake, now: afterMidnight)
+        XCTAssertEqual(again.map(\.kind), [.lowBalance])
+        XCTAssertNotEqual(again.first?.id, before.id)
+        let due = ledger.due(preferences: awake, now: afterMidnight)
+        XCTAssertEqual(due.map(\.id), again.map(\.id))
+
+        // What the relay finds before saving it: the neighbouring day's record is there.
+        let announced = Set(due.filter { !inICloud.isDisjoint(with: AlertRules.neighbouringDayIDs(of: $0)) }.map(\.id))
+        XCTAssertEqual(announced, Set(again.map(\.id)))
+        XCTAssertTrue(ledger.unshown(due, announced: announced).isEmpty, "A second crossing within a day is quiet on the Mac too")
+        XCTAssertEqual(ledger.unshown(due).map(\.id), again.map(\.id), "Announced nowhere: the Mac shows it")
+        ledger.markShownHere(again.map(\.id), at: afterMidnight)
+        XCTAssertTrue(ledger.unshown(due).isEmpty, "Once")
+    }
+
     // MARK: Sharing the choices
 
     func testChoicesMadeOnEachDeviceBothStay() {
@@ -669,6 +694,31 @@ final class AlertTests: XCTestCase {
         for alert in raised {
             XCTAssertFalse(everything.subscribedKeys.contains(alert.shownKey), "An alert an iPhone showed itself never comes back to it as a push")
         }
+    }
+
+    @MainActor
+    func testAChoiceChangedOnAMacKeepsTheSharedTimeZone() throws {
+        // The shared copy has the iPhone's zone; this Mac is somewhere else.
+        let phoneZone = TimeZone.current.identifier == "Pacific/Chatham" ? "Asia/Kathmandu" : "Pacific/Chatham"
+        let suite = "tokenroom.tests.\(Self.self)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = AppSettings(defaults: defaults)
+        var shared = preferences
+        shared.timeZoneID = phoneZone
+        shared.updatedAt = now
+        settings.alertPreferences = shared
+        let store = QuotaStore(settings: settings, clients: [], cache: SnapshotCache(directory: try makeFolder()))
+
+        store.updateAlertPreferences({ $0.resets = false }, now: now.addingTimeInterval(60))
+        let mac = settings.alertPreferences
+        XCTAssertFalse(mac.resets)
+        XCTAssertEqual(mac.updatedAt, now.addingTimeInterval(60))
+        XCTAssertEqual(mac.timeZoneID, phoneZone, "Quiet hours stay the iPhone's night")
+        let resolution = AlertPreferencesSync.resolve(base: shared, local: mac, remote: shared)
+        XCTAssertTrue(resolution.needsPublish)
+        XCTAssertEqual(resolution.preferences.timeZoneID, phoneZone, "And so does the shared copy")
     }
 
     func testTheCopyChangedLastWins() {

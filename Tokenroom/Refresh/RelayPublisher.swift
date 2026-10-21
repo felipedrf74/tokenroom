@@ -174,18 +174,21 @@ final class RelayPublisher {
         }
     }
 
-    /// Sends alerts to the iPhone; returns the IDs that went out (or already had). The rest stay
-    /// queued.
-    func sendAlerts(_ alerts: [UsageAlert], now: Date = .now) async -> [String] {
-        guard let relay, isEnabled else { return [] }
-        if isWaiting(now) { return [] }
+    /// Sends alerts to the iPhone; returns the IDs that went out (or already had), and of those
+    /// the ones another device announced under the neighbouring day, which this Mac doesn't show
+    /// either. The rest stay queued.
+    func sendAlerts(_ alerts: [UsageAlert], now: Date = .now) async -> (saved: [String], announced: Set<String>) {
+        guard let relay, isEnabled else { return ([], []) }
+        if isWaiting(now) { return ([], []) }
         var saved: [String] = []
+        var announced: Set<String> = []
         for alert in alerts {
             do {
                 // A balance crossing another device announced on the other side of midnight
                 // (UTC) has that day's name; don't announce it again under this one's.
                 if try await relay.wentOutOnANeighbouringDay(alert, now: now) {
                     saved.append(alert.id)
+                    announced.insert(alert.id)
                     continue
                 }
                 try await relay.saveAlert(alert)
@@ -195,7 +198,7 @@ final class RelayPublisher {
                 if handle(error, now: now).stopsBatch { break }
             }
         }
-        return saved
+        return (saved, announced)
     }
 
     /// Once a day, deletes alert records older than two weeks, so they don't pile up in iCloud

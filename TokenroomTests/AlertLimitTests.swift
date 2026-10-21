@@ -174,4 +174,106 @@ final class AlertLimitTests: XCTestCase {
         ledger.levelsSent["claude/session/threshold"] = AlertLedger.LevelSent(level: 95, sentAt: now.addingTimeInterval(60))
         XCTAssertTrue(ledger.due(preferences: preferences, now: now.addingTimeInterval(120)).isEmpty)
     }
+
+    func testARunOutGoesOutOnceWhileItsResetJittersOrMoves() throws {
+        // MiniMax and OpenCode Go give resets as seconds from now, so readings of one session can
+        // land either side of a 10-minute boundary.
+        var ledger = AlertLedger()
+        ledger.process([claude([session(55, resetsIn: 2.5 * 3600 + 600)])], preferences: preferences, now: now)
+        let first = ledger.process([claude([session(60, resetsIn: 2.5 * 3600)])], preferences: preferences, now: now)
+        XCTAssertEqual(first.map(\.kind), [.runsOut])
+        ledger.markSent(first.map(\.id), at: now)
+        let jittered = claude([session(62, resetsIn: 2.5 * 3600 + 20 * 60)])
+        let renamed = try XCTUnwrap(AlertRules.runsOut(jittered, window: jittered.windows[0], preferences: preferences, now: now.addingTimeInterval(300)))
+        XCTAssertNotEqual(renamed.id, first.first?.id, "Rounded to another name")
+        XCTAssertTrue(ledger.process([jittered], preferences: preferences, now: now.addingTimeInterval(300)).isEmpty)
+
+        // A weekly reset the provider moved three hours on: the same week, so no second one.
+        var weeks = AlertLedger()
+        weeks.process([claude([weekly(77, resetsIn: 74 * 3600 + 3600)])], preferences: preferences, now: now)
+        let week = weeks.process([claude([weekly(78, resetsIn: 74 * 3600)])], preferences: preferences, now: now)
+        XCTAssertEqual(week.map(\.kind), [.runsOut])
+        weeks.markSent(week.map(\.id), at: now)
+        let moved = claude([weekly(79, resetsIn: 77 * 3600)])
+        let movedName = try XCTUnwrap(AlertRules.runsOut(moved, window: moved.windows[0], preferences: preferences, now: now.addingTimeInterval(600)))
+        XCTAssertNotEqual(movedName.id, week.first?.id)
+        XCTAssertTrue(weeks.process([moved], preferences: preferences, now: now.addingTimeInterval(600)).isEmpty)
+    }
+
+    func testAHeldRunOutGivesWayToANinetyFivePercentAlertGoingOutWithIt() {
+        var ledger = AlertLedger()
+        ledger.process([claude([session(55, resetsIn: 2.5 * 3600 + 600)])], preferences: preferences, now: now)
+        XCTAssertEqual(ledger.process([claude([session(60, resetsIn: 2.5 * 3600)])], preferences: preferences, now: now).map(\.kind), [.runsOut])
+        // iCloud didn't take it; by the next refresh the session is past 95%, and both are due.
+        let later = now.addingTimeInterval(600)
+        let ninetyFive = ledger.process([claude([session(96, resetsIn: 2.5 * 3600)])], preferences: preferences, now: later)
+        XCTAssertEqual(ninetyFive.map(\.level), [95])
+        XCTAssertEqual(ledger.due(preferences: preferences, now: later).map(\.id), ninetyFive.map(\.id), "One notification: the 95% alert says it")
+    }
+
+    func testAHeldRunOutIsDroppedOnceItsRunOutHasPassed() throws {
+        var quiet = preferences
+        quiet.quietHours = true
+        // No 95% alert to say it instead.
+        quiet.thresholds = [80]
+        let late = now.addingTimeInterval(11 * 3600)
+        let runsOut = late.addingTimeInterval(3 * 3600)
+        // A Mac's measured run-out, three hours on and nearly three days before the reset.
+        func week(_ used: Double, runsOut: Date?) -> RelayProvider {
+            claude([RelayWindow(id: "weekly", kind: "weekly", title: "Weekly", used: used, resetsAt: late.addingTimeInterval(3 * 86_400),
+                                periodSec: 7 * 86_400, pace: RelayPace(runsOutAt: runsOut))])
+        }
+        var ledger = AlertLedger()
+        ledger.process([week(68, runsOut: runsOut)], preferences: quiet, now: late)
+        let raised = try XCTUnwrap(ledger.process([week(70, runsOut: runsOut)], preferences: quiet, now: late).first)
+        XCTAssertEqual(raised.kind, .runsOut)
+        XCTAssertEqual(raised.runsOutAt, runsOut)
+        XCTAssertFalse(raised.isUrgent, "Three hours off: it waits for the morning")
+        ledger.process([], preferences: quiet, now: late.addingTimeInterval(2 * 3600))
+        XCTAssertEqual(ledger.pending.map(\.alert.id), [raised.id], "Still ahead of its run-out")
+
+        let morning = late.addingTimeInterval(9 * 3600 + 300)
+        XCTAssertTrue(ledger.due(preferences: quiet, now: morning).isEmpty, "Its run-out came and went overnight")
+        ledger.process([], preferences: quiet, now: morning)
+        XCTAssertTrue(ledger.pending.isEmpty)
+
+        // Used up before the morning: dropped as well.
+        var full = AlertLedger()
+        full.process([week(68, runsOut: runsOut)], preferences: quiet, now: late)
+        XCTAssertEqual(full.process([week(70, runsOut: runsOut)], preferences: quiet, now: late).map(\.kind), [.runsOut])
+        full.process([week(100, runsOut: nil)], preferences: quiet, now: late.addingTimeInterval(3600))
+        XCTAssertFalse(full.pending.contains { $0.alert.kind == .runsOut })
+        XCTAssertFalse(full.due(preferences: quiet, now: morning).contains { $0.kind == .runsOut })
+
+        // Raised from a stale reading once its measured run-out had come: it goes out in the hour
+        // after, while it's urgent, and not later.
+        var stale = AlertLedger()
+        stale.process([week(60, runsOut: nil)], preferences: quiet, now: late)
+        var lagging = week(70, runsOut: late.addingTimeInterval(-20 * 60))
+        lagging.state = "stale"
+        XCTAssertEqual(stale.process([lagging], preferences: quiet, now: late).map(\.kind), [.runsOut])
+        XCTAssertEqual(stale.due(preferences: quiet, now: late.addingTimeInterval(30 * 60)).map(\.kind), [.runsOut], "It just ran out")
+        XCTAssertTrue(stale.due(preferences: preferences, now: late.addingTimeInterval(45 * 60)).isEmpty, "Not later, even outside quiet hours")
+    }
+
+    // MARK: Windows a reading leaves out
+
+    func testAWindowMissingFromSomeReadingsStillAlertsWhenItComesBack() {
+        // Claude's status line has no Opus window once the last direct read is half an hour old.
+        func opus(_ used: Double) -> RelayWindow {
+            RelayWindow(id: "seven_day_opus", kind: "weekly", title: "Opus weekly", used: used, resetsAt: now.addingTimeInterval(3 * 86_400), periodSec: 7 * 86_400)
+        }
+        var ledger = AlertLedger()
+        ledger.process([claude([session(20, resetsIn: 4 * 3600), opus(70)])], preferences: preferences, now: now)
+        XCTAssertTrue(ledger.process([claude([session(22, resetsIn: 4 * 3600)])], preferences: preferences, now: now.addingTimeInterval(1800)).isEmpty)
+        XCTAssertEqual(ledger.lastSeen["claude"]?.windows.map(\.id), ["session", "seven_day_opus"], "Kept while it's missing")
+
+        let back = ledger.process([claude([session(24, resetsIn: 4 * 3600), opus(96)])], preferences: preferences, now: now.addingTimeInterval(3600))
+        XCTAssertEqual(back.map(\.window), ["seven_day_opus"])
+        XCTAssertEqual(back.map(\.level), [95], "Crossed while it was missing: not a first sight")
+
+        // Still missing once its reset has passed: forgotten, like any window that ended.
+        ledger.process([claude([session(5, resetsIn: 3 * 86_400 + 4 * 3600)])], preferences: preferences, now: now.addingTimeInterval(3 * 86_400 + 60))
+        XCTAssertEqual(ledger.lastSeen["claude"]?.windows.map(\.id), ["session"])
+    }
 }

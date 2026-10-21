@@ -414,11 +414,12 @@ final class QuotaStore {
         }
         let relayActive = relay.map { $0.isAvailable && $0.isEnabled } ?? false
         var delivered: [String] = []
+        var announced: Set<String> = []
         if relayActive, let relay {
-            delivered = await relay.sendAlerts(due, now: now)
+            (delivered, announced) = await relay.sendAlerts(due, now: now)
         }
         if settings.showsAlertsOnMac {
-            let unseen = due.filter { alertLedger.shownHere[$0.id] == nil }
+            let unseen = alertLedger.unshown(due, announced: announced)
             MacAlerts.post(unseen)
             alertLedger.markShownHere(unseen.map(\.id), at: now)
         }
@@ -452,7 +453,8 @@ final class QuotaStore {
         var preferences = settings.alertPreferences
         change(&preferences)
         guard preferences != settings.alertPreferences else { return }
-        preferences.touch(now: now)
+        // Dated only: quiet hours keep the shared copy's time zone, the iPhone's.
+        preferences.updatedAt = now
         settings.alertPreferences = preferences
         guard relay != nil else { return }
         Task { _ = await currentAlertPreferences() }
