@@ -79,7 +79,7 @@ final class NewsStore {
         if !ids.isEmpty { Task { await refresh(preferences: lastPreferences, notifies: false, forcedSources: ids) } }
     }
 
-    /// When News was last opened. Items published after it count as new.
+    /// When News was last opened. Items that arrived after it (`FeedItem.newsDate`) count as new.
     private(set) var seenAt: Date {
         didSet { defaults.set(seenAt.timeIntervalSince1970, forKey: Keys.seenAt) }
     }
@@ -119,12 +119,13 @@ final class NewsStore {
         followedSources = (defaults.array(forKey: Keys.sources) as? [String]).map { Set($0).union(catalog.subtracting(known)) } ?? catalog
         followedVoices = Set(defaults.stringArray(forKey: Keys.voices) ?? [])
         followedStatusSources = Set(defaults.stringArray(forKey: Keys.status) ?? [])
-        // A first launch starts from now, so the whole list isn't "new".
-        let saved = defaults.object(forKey: Keys.seenAt) as? Double
-        let seen = saved.map(Date.init(timeIntervalSince1970:)) ?? now
+        // A first launch starts from now, so the whole list isn't "new". A time saved ahead of the
+        // clock (set while it was wrong) comes back to now, or nothing would be new until then.
+        let saved = (defaults.object(forKey: Keys.seenAt) as? Double).map(Date.init(timeIntervalSince1970:))
+        let seen = min(saved ?? now, now)
         seenAt = seen
         visitBaseline = seen
-        if saved == nil {
+        if saved != seen {
             defaults.set(seen.timeIntervalSince1970, forKey: Keys.seenAt)
         }
     }
@@ -164,7 +165,7 @@ final class NewsStore {
         models().filter { $0.created > seenAt && NewsEditions.isRecentModel($0, now: now) }.count
     }
 
-    /// Announcements from followed feeds since News was last opened.
+    /// Announcements from followed feeds that arrived since News was last opened.
     var unseenAnnouncementCount: Int {
         allAnnouncements.filter { ($0.newsDate ?? .distantPast) > seenAt }.count
     }
@@ -319,7 +320,9 @@ final class NewsStore {
             runningIsAllowed = nil
             queuedRefresh = nil
         }
-        if cache.modelsFetchedAt == nil, cache.announcementsFetchedAt == nil, !visitIsOpen {
+        // The first check (turning News on) marks nothing new, even with News open, as the Mac's
+        // window is when News is turned on from it: what it finds was there before.
+        if cache.modelsFetchedAt == nil, cache.announcementsFetchedAt == nil {
             seenAt = max(seenAt, initial.now)
             visitBaseline = seenAt
         }
@@ -337,6 +340,16 @@ final class NewsStore {
             var updated = result.cache
             updated.retainFoldedIdentities(from: cache, sources: checkedSources)
             cache = updated
+            // A tool's feed read for the first time (just followed, or new in this release) brings
+            // its back catalog: none of it is new, however recently it was dated.
+            for source in checkedSources where source.kind == .officialAnnouncement && previous.check(for: source).succeededAt == nil {
+                let baseline = min(visitBaseline, request.now)
+                cache.items[source.id] = cache.items[source.id]?.map { raw in
+                    var item = raw
+                    item.firstSeenAt = min(item.newsDate ?? baseline, baseline)
+                    return item
+                }
+            }
             for source in checkedSources where source.kind != .officialAnnouncement {
                 if let items = cache.items[source.id] {
                     cache.items[source.id] = items.map { raw in

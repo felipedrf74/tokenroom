@@ -454,8 +454,8 @@ final class QuotaStore {
         }
     }
 
-    /// While the News window is open: current on open, then checked every 15 minutes by itself,
-    /// as long as News stays on.
+    /// While the News window is open: current on open, then checked every
+    /// `NewsFetcher.liveInterval` (5 minutes) by itself, as long as News stays on.
     func newsBecameVisible() {
         guard liveNews == nil, let news else { return }
         liveNews = Task { [weak self] in

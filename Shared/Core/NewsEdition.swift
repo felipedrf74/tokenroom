@@ -22,7 +22,7 @@ struct NewsEdition: Equatable, Sendable {
         /// "Changelog", "Releases", "News".
         var kind: String
         var items: [FeedItem]
-        /// Items published since the last visit.
+        /// Items that arrived since the last visit.
         var newCount: Int
     }
 
