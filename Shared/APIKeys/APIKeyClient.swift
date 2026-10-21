@@ -112,20 +112,29 @@ struct APIKeyClient: ProviderClient {
                 // An unknown answer from the Token Plan endpoint: the account may be on the Coding Plan.
             } catch let notIncluded as ProviderError {
                 // No Token Plan lane included (`notEntitled`): the key may be on the Coding Plan.
-                // If that doesn't answer with limits either, the Token Plan's reason stands.
                 guard case .notEntitled = notIncluded else { throw notIncluded }
-                do {
-                    return try await minimaxCodingPlan(key: key, region: region)
-                } catch {
-                    throw notIncluded
-                }
+                return try await minimaxCodingPlan(key: key, region: region, otherwise: notIncluded)
             }
         }
         return try await minimaxCodingPlan(key: key, region: region)
     }
 
-    private static func minimaxCodingPlan(key: String, region: String?) async throws -> QuotaSnapshot {
-        let legacy = try await TokenroomHTTP.get(CodingPlanEndpoint.minimaxRemains(region: region, legacy: true), token: key, provider: .minimax)
-        return try MiniMaxParser.snapshot(from: legacy, legacy: true)
+    /// - Parameter otherwise: the Token Plan's reason, shown when the Coding Plan isn't there
+    ///   (404, 405) or has no limits either. Its other failures (a 429 and its wait, a refused key,
+    ///   an outage) are its own.
+    private static func minimaxCodingPlan(key: String, region: String?, otherwise: ProviderError? = nil) async throws -> QuotaSnapshot {
+        let request = TokenroomHTTP.request(CodingPlanEndpoint.minimaxRemains(region: region, legacy: true), token: key)
+        let (data, response) = try await TokenroomHTTP.data(for: request)
+        if let otherwise, [404, 405].contains(response.statusCode) { throw otherwise }
+        try TokenroomHTTP.check(response, provider: .minimax)
+        do {
+            return try MiniMaxParser.snapshot(from: data, legacy: true)
+        } catch let error as ProviderError {
+            guard let otherwise else { throw error }
+            switch error {
+            case .notEntitled, .parse: throw otherwise
+            default: throw error
+            }
+        }
     }
 }

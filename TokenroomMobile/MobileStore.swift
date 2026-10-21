@@ -871,7 +871,7 @@ final class MobileStore {
             // this launch took.
             guard var standIn, !["signedOut", "expired", "notEntitled"].contains(mine.state),
                   let standInTime = Self.readingTime(standIn),
-                  Self.readingTime(mine).map({ ReadingFreshness.ordering(standInTime, now: now) > $0 }) ?? true
+                  Self.readingTime(mine).map({ ReadingFreshness.ownOrdering(standInTime, now: now) > $0 }) ?? true
             else { return mine }
             if !mine.isLive, let failedAt = localFailedAt[provider], failedAt > standInTime {
                 // This launch's check failed (offline, busy, rate limited) after the saved
@@ -899,7 +899,7 @@ final class MobileStore {
         for provider in (ownRecord?.providers ?? []) + cached {
             guard let time = Self.readingTime(provider), now.timeIntervalSince(time) < Self.standInLimit else { continue }
             if let kept = newest[provider.id], let keptTime = Self.readingTime(kept),
-               ReadingFreshness.ordering(keptTime, now: now) >= ReadingFreshness.ordering(time, now: now) { continue }
+               ReadingFreshness.ownOrdering(keptTime, now: now) >= ReadingFreshness.ownOrdering(time, now: now) { continue }
             newest[provider.id] = provider
         }
         // A key refused or rate limited before its first reading is relayed and saved without a

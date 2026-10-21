@@ -226,6 +226,32 @@ final class CodingPlanTests: XCTestCase {
         }
     }
 
+    /// When the Token Plan includes no lane, the Coding Plan's own failures stay what they are: a
+    /// 429 keeps its wait, a refused key and an outage say so. Only an endpoint not there, or one
+    /// with no limits either, falls back to the Token Plan's reason.
+    func testMiniMaxCodingPlanFailuresAreKeptAfterAnEmptyTokenPlan() async {
+        let empty = Data(#"{"base_resp":{"status_code":0},"data":{"model_remains":[{"model_name":"general","current_interval_total_count":0,"current_interval_usage_count":0,"current_interval_status":3,"current_weekly_total_count":0,"current_weekly_usage_count":0,"current_weekly_status":3}]}}"#.utf8)
+        func failure(_ status: Int, headers: [String: String] = [:]) async -> ProviderError? {
+            StubURLProtocol.headers = headers
+            stub { request in
+                request.url?.path.contains("token_plan") == true ? (200, empty) : (status, Data("{}".utf8))
+            }
+            do {
+                _ = try await APIKeyClient.snapshot(for: .minimax, key: "placeholder", region: nil)
+                return nil
+            } catch {
+                return error as? ProviderError
+            }
+        }
+        guard case .rateLimited(let until)? = await failure(429, headers: ["Retry-After": "120"]) else { return XCTFail("A 429 is a wait") }
+        XCTAssertEqual(until?.timeIntervalSinceNow ?? 0, 120, accuracy: 5, "Its Retry-After kept")
+        let down = await failure(503)
+        XCTAssertEqual(down, .unreachable)
+        let refused = await failure(401)
+        XCTAssertEqual(refused, .expired(Provider.minimax.expiredHint))
+        guard case .notEntitled? = await failure(405) else { return XCTFail("Not there: the Token Plan's reason") }
+    }
+
     func testOpenCodeGoWithoutASubscriptionIsNotAnExpiredKey() async {
         stub { _ in (403, Data(#"{"type":"error","error":{"type":"EntitlementError","message":"OpenCode Go subscription required."}}"#.utf8)) }
         do {

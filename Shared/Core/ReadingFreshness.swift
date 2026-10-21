@@ -3,9 +3,6 @@ import Foundation
 enum ReadingFreshness {
     static let staleAfter: TimeInterval = 3600
     static let expiresAfter: TimeInterval = 7 * 86_400
-    /// How far ahead of this device's clock another device's may run. A reading dated further
-    /// ahead was dated by a clock set wrong, or before this one was set back.
-    static let clockAllowance: TimeInterval = 5 * 60
     /// What every message `present` writes starts with, so a saved one is written again as the
     /// reading ages rather than keeping the age it had when it was saved.
     static let staleMessagePrefix = "Last successful check "
@@ -16,9 +13,9 @@ enum ReadingFreshness {
         var result = provider
         // Older payloads have only an envelope timestamp; keep it with this provider.
         if result.checkedAt == nil, result.fetchedAt == nil { result.checkedAt = checked }
-        // A reading dated ahead of the clock is stale too: it would otherwise count as just
-        // checked until the clock caught up with it.
-        if result.isLive, now.timeIntervalSince(checked) > staleAfter || isAhead(checked, of: now) {
+        // A reading dated ahead of this clock (a collector's clock running fast) is as new as
+        // anything: just checked, until the clock passes its time.
+        if result.isLive, now.timeIntervalSince(checked) > staleAfter {
             result.state = "stale"
             result.message = staleMessage(checked: checked, now: now)
         } else if result.state == "stale", result.message?.hasPrefix(staleMessagePrefix) == true {
@@ -29,20 +26,20 @@ enum ReadingFreshness {
     }
 
     static func staleMessage(checked: Date, now: Date) -> String {
-        isAhead(checked, of: now)
-            ? staleMessagePrefix + "is dated ahead of this device's clock."
-            : staleMessagePrefix + RelativeTime.ago(checked, now: now) + "."
-    }
-
-    /// Whether `date` is further ahead of `now` than another device's clock could be.
-    static func isAhead(_ date: Date, of now: Date) -> Bool {
-        date.timeIntervalSince(now) > clockAllowance
+        staleMessagePrefix + RelativeTime.ago(checked, now: now) + "."
     }
 
     /// `date` for working out which of two readings or caches is newer. One dated ahead of the
-    /// clock never is, or it would win until the clock caught up with it.
+    /// clock (a collector's clock running fast) is as new as anything, and no newer: now. Where two
+    /// tie, the one just arrived wins.
     static func ordering(_ date: Date, now: Date) -> Date {
-        isAhead(date, of: now) ? .distantPast : date
+        min(date, now)
+    }
+
+    /// The same for this device's own times (its readings, its saves): one later than now was
+    /// taken before its clock was set back, so anything taken now is newer.
+    static func ownOrdering(_ date: Date, now: Date) -> Date {
+        date > now ? .distantPast : date
     }
 }
 
@@ -72,7 +69,8 @@ extension ReadingCache {
 
     /// Membership comes from the newest envelope; older envelopes may advance retained readings,
     /// but cannot reintroduce removed providers or remove newly added ones. A cache or reading
-    /// dated ahead of `now` (saved before the clock was set back) never counts as the newer one.
+    /// dated ahead of `now` counts as now (`ReadingFreshness.ordering`), so a cache saved before
+    /// this clock was set back doesn't keep its membership against the next one.
     func mergingUpdate(_ incoming: ReadingCache, now: Date = .now) -> ReadingCache {
         guard !isSample, !incoming.isSample else { return incoming }
         if let reconciled = reconcilingSourceUpdate(incoming, now: now) { return reconciled }

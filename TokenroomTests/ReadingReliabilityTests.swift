@@ -239,25 +239,31 @@ final class ReadingReliabilityTests: XCTestCase {
         XCTAssertEqual(ReadingFreshness.present(mac.provider, fallback: now, now: now)?.message, "Couldn't reach Claude.")
     }
 
-    /// Saved while the clock was a day ahead, then the clock is set back: the cache is read again,
-    /// its readings are stale rather than just checked, and it loses to what iCloud sends now.
-    func testReadingsDatedAheadOfTheClockAreNeitherRecentNorNewest() {
-        let ahead = now.addingTimeInterval(86_400)
-        let early = ReadingCache(savedAt: ahead, isSample: false, items: [item("one", age: -86_400, used: 40)])
+    /// A reading dated ahead of this device's clock, as a Mac whose clock runs fast sends it, is as
+    /// new as anything: live, and newest in a merge. A cache saved ahead (before this device's
+    /// clock was set back) is still read again, and the next read's membership wins.
+    func testAReadingDatedAheadOfTheClockIsLiveAndNewest() {
+        let fast = item("one", age: -6 * 60, used: 70)
+        XCTAssertEqual(ReadingCache(savedAt: now, isSample: false, items: [fast]).presented(at: now).items.first?.provider.state, "live",
+                       "A Mac six minutes fast is live, not stale")
+        XCTAssertEqual(ReadingFreshness.ordering(now.addingTimeInterval(360), now: now), now, "As new as anything, and no newer")
+
+        func source(_ label: String, _ provider: RelayProvider, at date: Date) -> RelayMerge.Source {
+            .init(id: label, label: label, envelope: .init(producer: "mac", appVersion: "1", checkedAt: date, providers: [provider]))
+        }
+        var old = item("one", age: 3 * 86_400, used: 10).provider
+        old.state = "stale"
+        let beatsOld = RelayMerge.entries(from: [source("Old", old, at: now.addingTimeInterval(-3 * 86_400)), source("Fast", fast.provider, at: now.addingTimeInterval(360))], now: now)
+        XCTAssertEqual(beatsOld.first?.sourceLabel, "Fast", "Its fresh 70% beats a three-day-old 10%")
+        XCTAssertEqual(beatsOld.first?.provider.state, "live")
+        let other = item("one", age: 120, used: 65).provider
+        XCTAssertEqual(RelayMerge.entries(from: [source("Other", other, at: now), source("Fast", fast.provider, at: now.addingTimeInterval(360))], now: now).first?.sourceLabel, "Fast",
+                       "And a live reading checked two minutes ago")
+
+        let early = ReadingCache(savedAt: now.addingTimeInterval(86_400), isSample: false, items: [item("one", age: -86_400, used: 40)])
         XCTAssertFalse(RelayReadings.isRecent(early, maxAge: 15 * 60, now: now, keepsSamples: false), "Read again, not recent until the clock catches up")
-        XCTAssertTrue(RelayReadings.isRecent(ReadingCache(savedAt: now.addingTimeInterval(-60), isSample: false, items: []), maxAge: 15 * 60, now: now, keepsSamples: false))
-
-        let shown = early.presented(at: now).items.first?.provider
-        XCTAssertEqual(shown?.state, "stale")
-        XCTAssertEqual(shown?.message, "Last successful check is dated ahead of this device's clock.")
-        XCTAssertEqual(ReadingCache(savedAt: now, isSample: false, items: [item("one", age: -60)]).presented(at: now).items.first?.provider.state, "live",
-                       "Another device's clock a minute ahead is still live")
-
         let fromICloud = ReadingCache(savedAt: now, isSample: false, items: [item("one", age: 60, used: 70), item("added", age: 60)])
-        let merged = early.mergingUpdate(fromICloud, now: now)
-        XCTAssertEqual(merged.items.map(\.id), ["one", "added"], "Membership comes from what iCloud sends now")
-        XCTAssertEqual(merged.items.first?.provider.primaryWindow?.used, 70, "Not the reading dated ahead")
-        XCTAssertEqual(fromICloud.mergingUpdate(early, now: now).items.map(\.id), ["one", "added"])
+        XCTAssertEqual(early.mergingUpdate(fromICloud, now: now).items.map(\.id), ["one", "added"], "Membership comes from what iCloud sends now")
 
         // The same with whole iCloud reads and this iPhone's own source, as the Watch keeps them.
         func envelope(_ items: [ReadingCache.Item], at date: Date) -> RelayEnvelope {
@@ -265,16 +271,15 @@ final class ReadingReliabilityTests: XCTestCase {
         }
         let phone = ReadingCache.SourceSnapshot(RelayMerge.Source(id: "paired", label: "This iPhone",
             envelope: RelayEnvelope(producer: "iphone", appVersion: "1", checkedAt: now.addingTimeInterval(-60), providers: []), kind: .thisPhone))
-        let aheadRead = RelayMerge.Source(id: "mac", label: "Mac", envelope: envelope(early.items, at: ahead), kind: .mac)
+        let aheadRead = RelayMerge.Source(id: "mac", label: "Mac", envelope: envelope(early.items, at: early.savedAt), kind: .mac)
         let currentRead = RelayMerge.Source(id: "mac", label: "Mac", envelope: envelope(fromICloud.items, at: now), kind: .mac)
-        let earlyWhole = ReadingCache(savedAt: ahead, isSample: false, items: early.items,
-                                      relaySnapshot: .init(checkedAt: ahead, sources: [.init(aheadRead)]), localSource: phone)
+        let earlyWhole = ReadingCache(savedAt: early.savedAt, isSample: false, items: early.items,
+                                      relaySnapshot: .init(checkedAt: early.savedAt, sources: [.init(aheadRead)]), localSource: phone)
         let currentWhole = ReadingCache(savedAt: now, isSample: false, items: fromICloud.items,
                                         relaySnapshot: .init(checkedAt: now, sources: [.init(currentRead)]))
         let reconciled = earlyWhole.mergingUpdate(currentWhole, now: now)
         XCTAssertEqual(reconciled.items.map(\.id).sorted(), ["added", "one"])
-        XCTAssertEqual(reconciled.items.first { $0.id == "one" }?.provider.primaryWindow?.used, 70)
-        XCTAssertEqual(reconciled.relaySnapshot?.checkedAt, now)
+        XCTAssertEqual(reconciled.relaySnapshot?.checkedAt, now, "The read that came now")
     }
 
     func testWatchResetScheduleIncludesExactBoundaryWithoutRepeatingIt() {

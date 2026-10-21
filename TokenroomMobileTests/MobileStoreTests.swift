@@ -164,6 +164,25 @@ final class MobileStoreTests: XCTestCase {
         XCTAssertEqual(calls.all, [], "Four hours of heartbeats: nothing to reload or hand over")
     }
 
+    /// The same from a Mac whose clock runs six minutes fast: its readings are live, not "dated
+    /// ahead", so each heartbeat isn't a reading come back to life.
+    @MainActor
+    func testHeartbeatsFromAMacWithAFastClockReloadNothing() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let cacheURL = folder.appendingPathComponent(ReadingCache.fileName)
+        try fromMac(checked: now.addingTimeInterval(6 * 60)).save(to: cacheURL)
+        let calls = EffectCalls()
+        let store = countingStore(defaults: defaults, folder: folder, calls: calls)
+        for beat in 1...8 {
+            let date = now.addingTimeInterval(Double(beat) * 30 * 60)
+            try fromMac(checked: date.addingTimeInterval(6 * 60)).save(to: cacheURL)
+            await store.refresh(force: true, now: date)
+        }
+        XCTAssertEqual(calls.all, [], "Four hours of heartbeats: nothing to reload or hand over")
+        XCTAssertEqual(store.readings.first?.provider.state, "live")
+    }
+
     /// Widgets and the Watch were given the Mac's live reading; the Mac sleeps for 90 minutes, and
     /// a refresh meanwhile saves it stale. When it wakes with the same numbers, live again, that's
     /// one reload from the background and one handover.

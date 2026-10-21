@@ -188,12 +188,39 @@ final class RelayTests: XCTestCase {
         calls.withLock { $0 = [] }
         try await save(as: "acct-b")
         XCTAssertEqual(calls.withLock { $0 }, ["ensure", "modify"], "B's zone is made as for any account")
-        XCTAssertFalse(deletion.isRecorded, "Recorded for another account, so forgotten")
+        XCTAssertTrue(deletion.stands(for: "acct-a"), "A's deletion is kept for A")
+        XCTAssertTrue(deletion.stands(for: nil), "When the account signed in can't be told, it stands, to be safe")
+    }
 
+    /// Recorded for account A, then account B signs in for a while, then A again: A's deletion is
+    /// still there, so the Mac doesn't make A's zone again and send a week of history back.
+    func testADeletionIsKeptForItsAccountAcrossAnotherSigningIn() throws {
+        let defaults = try zoneDefaults("accounts")
+        RelayZoneDeletion(defaults: defaults).mark(for: "acct-a")
+        XCTAssertFalse(RelayZoneDeletion(defaults: defaults).stands(for: "acct-b"), "B deleted nothing")
+        XCTAssertTrue(RelayZoneDeletion(defaults: defaults).stands(for: "acct-a"), "A's, still, once A is back")
+    }
+
+    /// A deletion seen when the account couldn't be told holds for this launch, but isn't saved
+    /// for every account to come.
+    func testADeletionForAnAccountThatCouldntBeToldIsntSavedForEveryAccount() throws {
+        let defaults = try zoneDefaults("unknown")
+        let deletion = RelayZoneDeletion(defaults: defaults)
         deletion.mark(for: nil)
-        XCTAssertTrue(deletion.stands(for: "acct-b"), "Recorded without knowing the account: it stands, to be safe")
-        deletion.mark(for: "acct-a")
-        XCTAssertTrue(deletion.stands(for: nil), "Nor when the account signed in can't be told")
+        XCTAssertTrue(deletion.stands(for: nil), "This launch doesn't make the zone again")
+        XCTAssertFalse(RelayZoneDeletion(defaults: defaults).stands(for: "acct-b"), "A later launch, signed in to B, isn't held back")
+    }
+
+    /// The user turns the Mac's sync off and on while a read that will find the zone deleted is
+    /// under way: what that read found was from before, and isn't recorded.
+    func testADeletionFoundByAReadFromBeforeTheUserStartedAgainIsntRecorded() async throws {
+        let deletion = RelayZoneDeletion(defaults: try zoneDefaults("inflight"))
+        let deleted = try await deletion.read(account: { "acct-a" }, { () async throws -> [String: Int] in
+            deletion.clear()
+            throw CKError(.userDeletedZone)
+        })
+        XCTAssertNil(deleted)
+        XCTAssertFalse(deletion.stands(for: "acct-a"))
     }
 
     /// After the user deletes Tokenroom's data in iCloud settings, the zone reads as empty: the

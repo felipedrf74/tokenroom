@@ -146,6 +146,7 @@ actor CloudRelay {
         zoneReader = reader
         accountObserver = RelayAccountObserver(name: .CKAccountChanged) {
             epoch.invalidate()
+            zoneDeletion.forgetUnattributed()
         }
     }
 
@@ -153,8 +154,8 @@ actor CloudRelay {
         let status = try await container.accountStatus()
         if status == .noAccount {
             accountEpoch.invalidate(); await zoneReader.invalidate(); zoneReady = false
-            // The next account starts afresh: the deletion was the last one's.
-            zoneDeletion.clear()
+            // Deletions found for an account stay with it, for when it signs in again.
+            zoneDeletion.forgetUnattributed()
         }
         return status
     }
@@ -188,13 +189,14 @@ actor CloudRelay {
 
     /// The shared alert preferences, or nil before either device has saved any.
     func alertPreferences() async throws -> AlertPreferences? {
+        let started = zoneDeletion.generation
         do {
             let record = try await database.record(for: CKRecord.ID(recordName: Self.alertPreferencesRecord, zoneID: Self.zoneID))
             return (record[Field.payload] as? Data).flatMap { try? RelayEnvelope.decoder.decode(AlertPreferences.self, from: $0) }
         } catch let error as CKError where error.code == .unknownItem || error.code == .zoneNotFound {
             return nil
         } catch {
-            throw await notingDeletion(error)
+            throw await notingDeletion(error, since: started)
         }
     }
 
@@ -263,10 +265,11 @@ actor CloudRelay {
     }
 
     /// `error`, noted first when it says the user deleted the zone in iCloud settings.
-    private func notingDeletion(_ error: any Error) async -> any Error {
+    /// - Parameter generation: `zoneDeletion.generation` as the call that failed began.
+    private func notingDeletion(_ error: any Error, since generation: Int) async -> any Error {
         if RelayZoneDeletion.isUserDeletedZone(error) {
             zoneReady = false
-            zoneDeletion.mark(for: await currentAccount())
+            zoneDeletion.mark(for: await currentAccount(), since: generation)
         }
         return error
     }
@@ -422,6 +425,7 @@ extension CloudRelay {
 
     private func writeDelivery(_ data: Data, record: CKRecord, event: AlertDeliveryCoordinator.Receipt?,
                                alert: UsageAlert, epoch: UUID) async throws {
+        let started = zoneDeletion.generation
         try checkAlertAccount(epoch)
         record[Field.payload] = data
         var records = [record]
@@ -442,7 +446,7 @@ extension CloudRelay {
             // userDeletedZone remains an error; it is never automatically recreated here.
             throw error
         } catch {
-            throw await notingDeletion(error)
+            throw await notingDeletion(error, since: started)
         }
         try checkAlertAccount(epoch)
     }
@@ -541,7 +545,7 @@ extension CloudRelay {
         let results = try await database.modifyRecordZones(saving: [], deleting: [Self.zoneID])
         zoneReady = false
         // The user's own choice: the zone is made again for what this device sends next.
-        zoneDeletion.clear()
+        zoneDeletion.clear(for: await currentAccount())
         for (_, result) in results.deleteResults {
             guard case .failure(let error) = result else { continue }
             // Already gone, from this device or from iCloud settings: nothing left to delete.
@@ -556,9 +560,9 @@ extension CloudRelay {
     /// Makes the next save create the zone again. For after the user deleted Tokenroom's iCloud
     /// data in Settings: CloudKit then refuses saves until the zone is re-created, which should
     /// only happen when the user asks (turning sync back on).
-    func resetZone() {
+    func resetZone() async {
         zoneReady = false
-        zoneDeletion.clear()
+        zoneDeletion.clear(for: await currentAccount())
     }
 
     /// `.allKeys` replaces by name; `.ifServerRecordUnchanged` creates or checks a fetched change tag.
@@ -723,6 +727,7 @@ extension CloudRelay {
     }
 
     private func saveSubscriptions(_ subscriptions: [CKSubscription]) async throws {
+        let started = zoneDeletion.generation
         do {
             let results = try await database.modifySubscriptions(saving: subscriptions, deleting: [])
             for (_, result) in results.saveResults {
@@ -731,54 +736,94 @@ extension CloudRelay {
                 }
             }
         } catch {
-            throw await notingDeletion(error)
+            throw await notingDeletion(error, since: started)
         }
     }
 }
 #endif
 
-/// That the user deleted Tokenroom's zone in iCloud settings, as this device last found, and for
-/// which iCloud account: remembered in its defaults, so a later launch doesn't make the zone again
-/// on its own the first time it saves. CloudKit asks apps to leave that to the user. It ends with
-/// the user's own choice (`CloudRelay.resetZone`, the Mac's sync turned back on; `deleteAllData`,
-/// the iPhone's Delete), or when the zone is found back, made by that choice on another device: a
-/// read that finds records in it, or a save that goes in. Recorded for another account, it doesn't
-/// stand: that account didn't delete anything. Signing out of iCloud ends it too. UserDefaults is
-/// thread-safe, which Swift can't see.
+/// That the user deleted Tokenroom's zone in iCloud settings, as this device found, for each
+/// iCloud account it found it for: remembered in its defaults by the account's fingerprint, so a
+/// later launch doesn't make the zone again on its own the first time it saves (CloudKit asks
+/// apps to leave that to the user), and another account signing in for a while doesn't make it
+/// forget. Found while the account couldn't be told, it holds for this launch and this account
+/// only, and isn't saved. It ends with the user's own choice (`CloudRelay.resetZone`, the Mac's
+/// sync turned back on; `deleteAllData`, the iPhone's Delete), or when the zone is found back,
+/// made by that choice on another device: a read that finds records in it, or a save that goes
+/// in. A deletion found by an operation that began before it last ended isn't recorded.
+/// UserDefaults is thread-safe, which Swift can't see.
 struct RelayZoneDeletion: @unchecked Sendable {
-    static let key = "relayZoneDeletedByUser"
+    static let key = "relayZoneDeletedForAccounts"
+    static let generationKey = "relayZoneDeletionGeneration"
     private let defaults: UserDefaults
+    private let unattributed = Flag()
 
     init(defaults: UserDefaults) {
         self.defaults = defaults
     }
 
+    private var accounts: [String] {
+        defaults.stringArray(forKey: Self.key) ?? []
+    }
+
     /// Whether a deletion is recorded at all, for any account. When none is, nothing needs to know
     /// which account is signed in.
     var isRecorded: Bool {
-        defaults.object(forKey: Self.key) != nil
+        unattributed.isSet || !accounts.isEmpty
+    }
+
+    /// Moves each time the deletion ends, so an operation that began before can tell.
+    var generation: Int {
+        defaults.integer(forKey: Self.generationKey)
     }
 
     /// Whether the deletion stands for the account signed in now (`account`: its fingerprint, nil
-    /// when it couldn't be told). One recorded for another account doesn't, and is forgotten. When
-    /// either account couldn't be told, it stands: making the zone again is what's to be avoided.
+    /// when it couldn't be told, when any recorded deletion stands, to be safe).
     func stands(for account: String?) -> Bool {
-        guard let recorded = defaults.object(forKey: Self.key) else { return false }
-        guard let recorded = recorded as? String, !recorded.isEmpty, let account else { return true }
-        guard recorded == account else {
-            clear()
-            return false
+        if unattributed.isSet { return true }
+        guard let account else { return !accounts.isEmpty }
+        return accounts.contains(account)
+    }
+
+    /// - Parameters:
+    ///   - account: the fingerprint of the account signed in; nil when it couldn't be told, which
+    ///     holds for this launch only.
+    ///   - generation: `generation` as the operation that found it began; a deletion found from
+    ///     before it last ended isn't recorded.
+    func mark(for account: String?, since generation: Int? = nil) {
+        if let generation, generation != self.generation { return }
+        guard let account, !account.isEmpty else {
+            unattributed.isSet = true
+            return
         }
-        return true
+        guard !accounts.contains(account) else { return }
+        defaults.set(accounts + [account], forKey: Self.key)
     }
 
-    /// - Parameter account: the fingerprint of the account signed in, nil when it couldn't be told.
-    func mark(for account: String?) {
-        defaults.set(account ?? "", forKey: Self.key)
+    /// Ends the deletion for `account`, or for every account when it can't be told.
+    func clear(for account: String? = nil) {
+        unattributed.isSet = false
+        if let account {
+            let left = accounts.filter { $0 != account }
+            if left.isEmpty { defaults.removeObject(forKey: Self.key) } else { defaults.set(left, forKey: Self.key) }
+        } else {
+            defaults.removeObject(forKey: Self.key)
+        }
+        defaults.set(generation &+ 1, forKey: Self.generationKey)
     }
 
-    func clear() {
-        defaults.removeObject(forKey: Self.key)
+    /// The account changed or signed out: one found while the account couldn't be told was the
+    /// last one's.
+    func forgetUnattributed() {
+        unattributed.isSet = false
+    }
+
+    private final class Flag: Sendable {
+        private let value = Mutex(false)
+        var isSet: Bool {
+            get { value.withLock { $0 } }
+            set { value.withLock { $0 = newValue } }
+        }
     }
 
     /// Whether `error` says the user deleted the zone, itself or for one record of a batch.
@@ -797,12 +842,13 @@ struct RelayZoneDeletion: @unchecked Sendable {
         account: @Sendable () async -> String?,
         _ read: @Sendable () async throws -> Records
     ) async throws -> Records? {
+        let started = generation
         do {
             let records = try await read()
-            if !records.isEmpty { clear() }
+            if !records.isEmpty, isRecorded { clear(for: await account()) }
             return records
         } catch where Self.isUserDeletedZone(error) {
-            mark(for: await account())
+            mark(for: await account(), since: started)
             return nil
         }
     }
@@ -818,15 +864,19 @@ struct RelayZoneDeletion: @unchecked Sendable {
         zoneBack: @Sendable () async -> Void,
         zoneGone: @Sendable () async -> Void
     ) async throws {
-        if isRecorded, stands(for: await account()) {
-            do {
-                try await modify()
-            } catch where Self.isUserDeletedZone(error) || (error as? CKError)?.code == .zoneNotFound {
-                throw CKError(.userDeletedZone)
+        let started = generation
+        if isRecorded {
+            let signedIn = await account()
+            if stands(for: signedIn) {
+                do {
+                    try await modify()
+                } catch where Self.isUserDeletedZone(error) || (error as? CKError)?.code == .zoneNotFound {
+                    throw CKError(.userDeletedZone)
+                }
+                clear(for: signedIn)
+                await zoneBack()
+                return
             }
-            clear()
-            await zoneBack()
-            return
         }
         try await ensureZone()
         do {
@@ -837,7 +887,7 @@ struct RelayZoneDeletion: @unchecked Sendable {
             try await modify()
         } catch where Self.isUserDeletedZone(error) {
             await zoneGone()
-            mark(for: await account())
+            mark(for: await account(), since: started)
             throw error
         }
     }
