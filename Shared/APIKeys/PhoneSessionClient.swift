@@ -90,8 +90,8 @@ struct PhoneSessionReader: Sendable {
         }
         var result = await client.fetch(now: now)
         if case .failure(.expired) = result {
-            renewal = await refresher.renewIfNeeded(provider, now: now, force: true)
-            switch renewal {
+            let forced = await refresher.renewIfNeeded(provider, now: now, force: true)
+            switch forced {
             case .refreshed, .recovered:
                 result = await client.fetch(now: now)
             case .rejected, .noSession:
@@ -99,6 +99,9 @@ struct PhoneSessionReader: Sendable {
             default:
                 break
             }
+            // An early renewal held back by its hourly spacing says nothing new: the first
+            // renewal's outcome (offline, say) still explains the expired token.
+            if forced != .notDue { renewal = forced }
         }
         if case .failure(.expired) = result {
             // The token host couldn't be reached, or the write is still pending: try later.
@@ -123,7 +126,9 @@ actor PhoneSessionRefresher {
         case granted(PhoneSession)
         /// `invalid_grant`: the refresh token is no good.
         case rejected
-        /// The sender can prove that no request was dispatched. Safe to retry the old token.
+        /// No token was issued: the sender can prove no request was dispatched, or the host
+        /// answered with an OAuth error other than `invalid_grant` (RFC 6749 §5.2). Safe to
+        /// retry the old token.
         case notDispatched
         /// An unreachable/invalid answer after a request may have rotated the token. Never
         /// implies the old refresh token is safe to send again.

@@ -478,6 +478,11 @@ final class PhoneSignInTests: XCTestCase {
         let result = await PhoneSessionReader(client: usage, refresher: refresher).read(now: now)
         XCTAssertEqual(result, .failure(.unreachable))
         XCTAssertEqual(store.metadata(for: .claude)?.state, .ready, "The session is fine; the network wasn't")
+        // Still offline later that hour, when the early renewal is spaced out: the same.
+        for minutes in [5, 30] {
+            let later = await PhoneSessionReader(client: usage, refresher: refresher).read(now: now.addingTimeInterval(Double(minutes) * 60))
+            XCTAssertEqual(later, .failure(.unreachable), "\(minutes) minutes on")
+        }
     }
 
     func testAnEndpointThatKeepsRefusingTheTokenGetsOneEarlyRenewalAnHour() async throws {
