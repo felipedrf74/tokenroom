@@ -165,7 +165,7 @@ final class PhoneSignInTests: XCTestCase {
         XCTAssertEqual(fields["scope"], "openid offline_access grok-cli:access")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/x-www-form-urlencoded")
         XCTAssertNil(PhoneSignIn.deviceCodeRequest(for: .claude), "Claude pastes a code instead")
-        XCTAssertNil(PhoneSignIn.deviceCodeRequest(for: .cursor))
+        XCTAssertNil(PhoneSignIn.deviceCodeRequest(for: .cursor), "Cursor's sign-in is made on the iPhone")
     }
 
     func testPollAnswers() {
@@ -244,13 +244,13 @@ final class PhoneSignInTests: XCTestCase {
 
     func testARenewalWithoutARefreshTokenKeepsTheOneSent() {
         let previous = PhoneSession(accessToken: "old", refreshToken: "keep-me", expiresAt: now, tokenURL: PhoneSignIn.Grok.tokenURL, clientID: PhoneSignIn.Grok.clientID)
-        let grant = PhoneSignIn.refreshAnswer(status: 200, data: Self.json(["access_token": "new", "expires_in": 3600]), previous: previous, now: now)
+        let grant = PhoneSignIn.refreshAnswer(provider: .grok, status: 200, data: Self.json(["access_token": "new", "expires_in": 3600]), previous: previous, now: now)
         guard case .granted(let session) = grant else { return XCTFail("\(grant)") }
         XCTAssertEqual(session.accessToken, "new")
         XCTAssertEqual(session.refreshToken, "keep-me")
         XCTAssertEqual(session.expiresAt, now.addingTimeInterval(3600))
-        XCTAssertEqual(PhoneSignIn.refreshAnswer(status: 400, data: Self.json(["error": "invalid_grant"]), previous: previous, now: now), .rejected)
-        XCTAssertEqual(PhoneSignIn.refreshAnswer(status: 503, data: Data(), previous: previous, now: now), .unavailable)
+        XCTAssertEqual(PhoneSignIn.refreshAnswer(provider: .grok, status: 400, data: Self.json(["error": "invalid_grant"]), previous: previous, now: now), .rejected)
+        XCTAssertEqual(PhoneSignIn.refreshAnswer(provider: .grok, status: 503, data: Data(), previous: previous, now: now), .unavailable)
     }
 
     func testClaudeRenewsAtItsSecondHostWhenTheFirstIsDown() async {
@@ -271,6 +271,156 @@ final class PhoneSignInTests: XCTestCase {
         XCTAssertEqual(Self.form(grok[0]), ["grant_type": "refresh_token", "refresh_token": "r", "client_id": "c"])
     }
 
+    // MARK: Cursor and Grok Bot
+
+    func testCursorsSignInPageCarriesOnlyTheChallenge() throws {
+        let code = PhoneSignIn.cursorLogin(now: now)
+        let items = Dictionary(uniqueKeysWithValues: try XCTUnwrap(URLComponents(url: code.verificationURL, resolvingAgainstBaseURL: false)?.queryItems).map { ($0.name, $0.value ?? "") })
+        XCTAssertEqual(code.verificationURL.host, "cursor.com")
+        XCTAssertEqual(code.verificationURL.path, "/loginDeepControl")
+        XCTAssertEqual(items["challenge"], PhoneSignIn.PKCE(verifier: code.verifier, state: "").challenge)
+        XCTAssertEqual(items["uuid"], code.handle)
+        XCTAssertEqual(items["mode"], "login")
+        XCTAssertNil(items["verifier"], "The verifier only goes with polling, from this iPhone")
+        XCTAssertTrue(code.userCode.isEmpty, "Nothing to type: the person just signs in")
+        XCTAssertEqual(code.expiresAt, now.addingTimeInterval(PhoneSignIn.Cursor.loginLifetime))
+        let poll = PhoneSignIn.pollRequest(code)
+        XCTAssertEqual(poll.httpMethod, "GET")
+        let pollItems = Dictionary(uniqueKeysWithValues: try XCTUnwrap(URLComponents(url: try XCTUnwrap(poll.url), resolvingAgainstBaseURL: false)?.queryItems).map { ($0.name, $0.value ?? "") })
+        XCTAssertEqual(pollItems, ["uuid": code.handle, "verifier": code.verifier])
+        XCTAssertNotEqual(PhoneSignIn.cursorLogin(now: now).handle, code.handle)
+    }
+
+    func testCursorsPollAnswers() {
+        XCTAssertEqual(PhoneSignIn.pollAnswer(provider: .cursor, status: 404, data: Data()), .pending)
+        XCTAssertEqual(PhoneSignIn.pollAnswer(provider: .cursor, status: 200, data: Self.json(["authId": "auth0|x"])), .pending)
+        XCTAssertEqual(PhoneSignIn.pollAnswer(provider: .cursor, status: 403, data: Self.json(["error": "policy"])), .denied)
+        XCTAssertEqual(PhoneSignIn.pollAnswer(provider: .grokBot, status: 500, data: Data()), .failed)
+        let tokens = Self.json(["accessToken": "a", "refreshToken": "r", "authId": "auth0|person"])
+        XCTAssertEqual(PhoneSignIn.pollAnswer(provider: .cursor, status: 200, data: tokens), .granted(tokens))
+    }
+
+    func testOneCursorSignInCoversGrokBot() async throws {
+        XCTAssertEqual(PhoneSignIn.sessionOwner(for: .grokBot), .cursor)
+        XCTAssertEqual(PhoneSignIn.sessionOwner(for: .cursor), .cursor)
+        XCTAssertEqual(PhoneSignIn.sharingSession(with: .grokBot), [.cursor, .grokBot])
+        XCTAssertEqual(PhoneSignIn.sharingSession(with: .claude), [.claude])
+        let access = Self.jwt(["exp": 1_805_000_000, "sub": "auth0|person"])
+        let client = PhoneSignInClient(send: { _ in (Self.json(["accessToken": access, "refreshToken": "r", "authId": "auth0|person"]), Self.http(200)) }, sleep: { _ in })
+        let code = try await client.startDeviceCode(for: .grokBot, now: now)
+        XCTAssertEqual(code.provider, .cursor, "Grok Bot signs in with Cursor")
+        let session = try await client.waitForApproval(code, clock: { Self.now })
+        XCTAssertEqual(session.clientID, PhoneSignIn.Cursor.clientID)
+        XCTAssertEqual(session.tokenURL, PhoneSignIn.Cursor.tokenURL)
+        XCTAssertEqual(session.expiresAt, Date(timeIntervalSince1970: 1_805_000_000))
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(session), as: UTF8.self).contains("person\"") , "The account id isn't kept")
+    }
+
+    func testCursorRenewsWithItsAccessTokenAndCanAskToSignOut() {
+        let previous = PhoneSession(accessToken: "old", refreshToken: "old", expiresAt: now, tokenURL: PhoneSignIn.Cursor.tokenURL, clientID: PhoneSignIn.Cursor.clientID)
+        let request = PhoneSignIn.refreshRequests(for: previous, provider: .grokBot)
+        XCTAssertEqual(request.map(\.url), [PhoneSignIn.Cursor.tokenURL])
+        XCTAssertEqual(Self.body(request[0])["client_id"] as? String, PhoneSignIn.Cursor.clientID)
+        let grant = PhoneSignIn.refreshAnswer(provider: .cursor, status: 200, data: Self.json(["access_token": "new"]), previous: previous, now: now)
+        guard case .granted(let renewed) = grant else { return XCTFail("\(grant)") }
+        XCTAssertEqual(renewed.accessToken, "new")
+        XCTAssertEqual(renewed.refreshToken, "new", "As Cursor's own app keeps it")
+        XCTAssertEqual(PhoneSignIn.refreshAnswer(provider: .cursor, status: 200, data: Self.json(["shouldLogout": true, "access_token": "x"]), previous: previous, now: now), .rejected)
+    }
+
+    func testCursorAndGrokBotReadTheirOwnDashboards() throws {
+        let cursor = try XCTUnwrap(PhoneSignIn.usageRequest(provider: .cursor, accessToken: "tok"))
+        XCTAssertEqual(cursor.url, PhoneSignIn.Cursor.usageURL)
+        XCTAssertEqual(cursor.httpMethod, "POST")
+        XCTAssertEqual(cursor.value(forHTTPHeaderField: "Connect-Protocol-Version"), "1")
+        XCTAssertEqual(cursor.httpBody, Data("{}".utf8))
+        let bot = try XCTUnwrap(PhoneSignIn.usageRequest(provider: .grokBot, accessToken: "tok"))
+        XCTAssertEqual(bot.url, PhoneSignIn.Cursor.grokBotUsageURL)
+        let notOnPlan = Self.json(["hasNonZeroIncludedLimit": false])
+        XCTAssertThrowsError(try PhoneSignIn.snapshot(provider: .grokBot, from: notOnPlan, fetchedAt: now)) { error in
+            guard case .notEntitled = error as? ProviderError else { return XCTFail("\(error)") }
+        }
+    }
+
+    func testGrokBotReadsWithCursorsSessionAndRenewsIt() async throws {
+        let keychain = FakeKeychain()
+        let store = PhoneSessionStore(accessGroup: "ABCDE12345.app.tokenroom.ios", servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).",
+                                      recoveryService: "app.tokenroom.tests.\(UUID().uuidString).recovery", keychain: keychain.operations)
+        try store.save(PhoneSession(accessToken: "cursor-old", refreshToken: "cursor-old", expiresAt: now.addingTimeInterval(30),
+                                    tokenURL: PhoneSignIn.Cursor.tokenURL, clientID: PhoneSignIn.Cursor.clientID), for: .cursor, now: now)
+        let renewed = LockedBox<[Provider]>([])
+        let refresher = PhoneSessionRefresher(store: store) { provider, old in
+            renewed.value.append(provider)
+            var session = old
+            session.accessToken = "cursor-new"
+            session.expiresAt = Self.now.addingTimeInterval(86_400)
+            return .granted(session)
+        }
+        let sent = LockedBox<String?>(nil)
+        let client = PhoneSessionClient(provider: .grokBot, store: store) { request in
+            sent.value = request.value(forHTTPHeaderField: "Authorization")
+            return .failure(.parse)
+        }
+        _ = await PhoneSessionReader(client: client, refresher: refresher).read(now: now)
+        XCTAssertEqual(renewed.value, [.cursor], "Grok Bot renews Cursor's session, the one it reads with")
+        XCTAssertEqual(sent.value, "Bearer cursor-new")
+        XCTAssertNil(store.metadata(for: .grokBot), "No second copy under Grok Bot")
+    }
+
+    // MARK: Signing out during a renewal
+
+    func testSigningOutWaitsForARenewalAndItCantComeBack() async throws {
+        let keychain = FakeKeychain()
+        let store = PhoneSessionStore(accessGroup: "ABCDE12345.app.tokenroom.ios", servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).",
+                                      recoveryService: "app.tokenroom.tests.\(UUID().uuidString).recovery", keychain: keychain.operations)
+        try store.save(PhoneSession(accessToken: "a", refreshToken: "r", expiresAt: now.addingTimeInterval(30),
+                                    tokenURL: PhoneSignIn.Claude.tokenURLs[0], clientID: PhoneSignIn.Claude.clientID), for: .claude, now: now)
+        let posted = AsyncStream<Void>.makeStream()
+        let release = AsyncStream<Void>.makeStream()
+        let refresher = PhoneSessionRefresher(store: store) { _, old in
+            posted.continuation.yield()
+            for await _ in release.stream { break }
+            var session = old
+            session.accessToken = "renewed"
+            return .granted(session)
+        }
+        let renewal = Task { await refresher.renewIfNeeded(.claude, now: Self.now) }
+        for await _ in posted.stream { break }
+        // Sign out while the token host is still answering.
+        let signOut = Task { try await refresher.replace(.claude, with: nil, now: Self.now) }
+        release.continuation.yield()
+        _ = await renewal.value
+        try await signOut.value
+        XCTAssertNil(store.metadata(for: .claude), "The renewal landed first; signing out removed it")
+        let after = await refresher.renewIfNeeded(.claude, now: Self.now)
+        XCTAssertEqual(after, .noSession)
+    }
+
+    func testCodexRetriesTheExchangeAfterADroppedConnection() async throws {
+        let exchanges = Counter()
+        let client = PhoneSignInClient(send: { request in
+            if request.url == PhoneSignIn.Codex.pollURL {
+                return (Self.json(["authorization_code": "ac", "code_verifier": "cv"]), Self.http(200))
+            }
+            exchanges.increment()
+            if exchanges.count == 1 { throw URLError(.networkConnectionLost) }
+            return (Self.json(["access_token": "a", "refresh_token": "r", "expires_in": 3600]), Self.http(200))
+        }, sleep: { _ in })
+        let code = PhoneSignIn.DeviceCode(provider: .openai, userCode: "ABCD-1234", verificationURL: PhoneSignIn.Codex.verificationURL,
+                                          interval: 5, expiresAt: now.addingTimeInterval(900), handle: "dev-1")
+        let session = try await client.waitForApproval(code, clock: { Self.now })
+        XCTAssertEqual(exchanges.count, 2)
+        XCTAssertEqual(session.refreshToken, "r")
+    }
+
+    func testGrokNamesTheTeamATokenWasIssuedTo() {
+        XCTAssertEqual(PhoneSignIn.grokUser(Self.jwt(["sub": "user-1"])), "user-1")
+        XCTAssertEqual(PhoneSignIn.grokUser(Self.jwt(["sub": "user-1", "principal_type": "User", "principal_id": "user-1"])), "user-1")
+        XCTAssertEqual(PhoneSignIn.grokUser(Self.jwt(["sub": "user-1", "principal_type": "Team", "principal_id": "team-9"])), "team-9")
+        XCTAssertEqual(PhoneSignIn.grokUser(Self.jwt(["principalType": "Organization", "principalId": "org-3"])), "org-3")
+        XCTAssertNil(PhoneSignIn.grokUser("opaque"))
+    }
+
     // MARK: Usage
 
     func testUsageRequestsCarryWhatEachVendorNeedsAndNothingStored() throws {
@@ -287,7 +437,7 @@ final class PhoneSignInTests: XCTestCase {
         let grok = try XCTUnwrap(PhoneSignIn.usageRequest(provider: .grok, accessToken: Self.jwt(["sub": "user-TR"])))
         XCTAssertEqual(grok.value(forHTTPHeaderField: "x-userid"), "user-TR")
         XCTAssertEqual(grok.url, PhoneSignIn.Grok.usageURL)
-        XCTAssertNil(PhoneSignIn.usageRequest(provider: .cursor, accessToken: "tok"))
+        XCTAssertNil(PhoneSignIn.usageRequest(provider: .devin, accessToken: "tok"))
     }
 
     func testTheReaderRenewsOnceWhenTheTokenIsTurnedDown() async throws {

@@ -130,7 +130,8 @@ final class PhoneSessionTests: XCTestCase {
     // MARK: Allowlist
 
     func testProductionAllowlistIsThePlansThatSignIn() {
-        XCTAssertEqual(PhoneConnect.productionAllowlist, [.claude, .openai, .grok])
+        XCTAssertEqual(PhoneConnect.productionAllowlist, [.claude, .openai, .grok, .cursor, .grokBot])
+        XCTAssertEqual(PhoneConnect.productionAllowlist, Set(PhoneSignIn.providers), "Widgets compile the literal; keep it equal")
     }
 
     func testTheClientRefusesEveryProviderOutsideTheAllowlistWithoutARequest() async {
@@ -152,13 +153,13 @@ final class PhoneSessionTests: XCTestCase {
     func testTheRefresherNeverPostsForAProviderOutsideTheAllowlist() async throws {
         let keychain = FakeKeychain()
         let store = makeStore(keychain)
-        try store.save(session("old", expiresIn: 30), for: .cursor, now: now)
+        try store.save(session("old", expiresIn: 30), for: .devin, now: now)
         let posts = Counter()
         let refresher = PhoneSessionRefresher(store: store) { _, _ in
             posts.increment()
             return .unavailable
         }
-        let outcome = await refresher.renewIfNeeded(.cursor, now: now)
+        let outcome = await refresher.renewIfNeeded(.devin, now: now)
         XCTAssertEqual(outcome, .notAllowed)
         XCTAssertEqual(posts.count, 0)
     }

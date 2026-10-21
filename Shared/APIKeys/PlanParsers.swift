@@ -327,3 +327,102 @@ enum GrokParser {
         )
     }
 }
+
+enum CursorParser {
+    static func snapshot(from data: Data, fetchedAt: Date = .now) throws -> QuotaSnapshot {
+        let root = try JSONFlex.object(from: data)
+        let plan = JSONFlex.dictionary(root["planUsage"]) ?? [:]
+        let auto = JSONFlex.number(plan["autoPercentUsed"])
+        let api = JSONFlex.number(plan["apiPercentUsed"])
+        let total = JSONFlex.number(plan["totalPercentUsed"])
+
+        let autoPercent = JSONFlex.clampPercent(auto ?? 0)
+        let apiPercent = JSONFlex.clampPercent(api ?? 0)
+        var used = max(autoPercent, apiPercent)
+        if used == 0, let total {
+            used = JSONFlex.clampPercent(total)
+        }
+        if used == 0,
+           let limit = JSONFlex.number(plan["limit"]), limit > 0,
+           let spend = JSONFlex.number(plan["includedSpend"]) ?? JSONFlex.number(plan["totalSpend"]) {
+            used = JSONFlex.clampPercent(spend / limit * 100)
+        }
+
+        let resetsAt = JSONFlex.date(root["billingCycleEnd"])
+        let startsAt = JSONFlex.date(root["billingCycleStart"])
+        var windows = [
+            QuotaWindow(
+                id: "cycle",
+                kind: .billingCycle,
+                title: "This cycle",
+                usedPercent: used,
+                resetsAt: resetsAt,
+                startsAt: startsAt
+            ),
+        ]
+        if auto != nil {
+            windows.append(
+                QuotaWindow(
+                    id: "cursor-models",
+                    kind: .pool,
+                    title: "Cursor Models",
+                    usedPercent: autoPercent,
+                    resetsAt: resetsAt
+                )
+            )
+        }
+        if api != nil {
+            windows.append(
+                QuotaWindow(
+                    id: "other-models",
+                    kind: .pool,
+                    title: "Other Models",
+                    usedPercent: apiPercent,
+                    resetsAt: resetsAt
+                )
+            )
+        }
+
+        return QuotaSnapshot(
+            provider: .cursor,
+            usedPercent: used,
+            resetsAt: resetsAt,
+            fetchedAt: fetchedAt,
+            primaryTitle: "This cycle",
+            windows: windows
+        )
+    }
+}
+
+enum GrokBotParser {
+    static func snapshot(from data: Data, fetchedAt: Date = .now) throws -> QuotaSnapshot {
+        let root = try JSONFlex.object(from: data)
+        if let included = root["hasNonZeroIncludedLimit"] as? Bool, included == false {
+            throw ProviderError.notEntitled("Grok Bot isn't on this Cursor plan.")
+        }
+        guard let usedRaw = JSONFlex.number(root["usagePercent"]) else {
+            throw ProviderError.parse
+        }
+        let used = JSONFlex.clampPercent(usedRaw)
+        let resetsAt = JSONFlex.date(root["nextResetTimestampUtc"])
+        let plan = JSONFlex.string(root["grokPlanLabel"]).flatMap { $0.isEmpty ? nil : $0 }
+        return QuotaSnapshot(
+            provider: .grokBot,
+            usedPercent: used,
+            resetsAt: resetsAt,
+            fetchedAt: fetchedAt,
+            primaryTitle: "Weekly",
+            windows: [
+                QuotaWindow(
+                    id: "weekly",
+                    kind: .weekly,
+                    title: "Weekly",
+                    usedPercent: used,
+                    resetsAt: resetsAt,
+                    startsAt: JSONFlex.date(root["currentPeriodStart"])
+                ),
+            ],
+            planLabel: plan
+        )
+    }
+}

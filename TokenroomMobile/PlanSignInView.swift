@@ -3,7 +3,8 @@ import UIKit
 
 /// Signs this iPhone in to a plan on the vendor's own page. Claude: open its page in Safari, sign
 /// in, and paste back the code it shows. Codex and Grok Build: show a short code, open the
-/// vendor's page to approve it, and finish on their own once it's approved. The session is saved
+/// vendor's page to approve it, and finish on their own once it's approved. Cursor and Grok Bot:
+/// open Cursor's page, sign in (Grok and X accounts work there), and finish on their own. The session is saved
 /// to this iPhone's Keychain; nothing typed here is a password.
 struct PlanSignInView: View {
     var store: MobileStore
@@ -123,6 +124,25 @@ struct PlanSignInView: View {
 
     @ViewBuilder private var deviceCodeSteps: some View {
         switch phase {
+        case .waiting(let code) where code.userCode.isEmpty:
+            Section {
+                Button("Open \(Self.vendor(for: provider))'s Sign-In Page") {
+                    openURL(code.verificationURL)
+                }
+            } header: {
+                Text("Sign in")
+            } footer: {
+                Text("Safari opens cursor.com. Sign in with the account your plan is on: Continue with Grok or with X works if that's how you signed up. Then come back here.")
+            }
+            Section {
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("Waiting for you to sign in… This finishes on its own.")
+                        .foregroundStyle(.secondary)
+                }
+            } footer: {
+                Text("This sign-in page works for \(code.expiresAt, style: .timer). One sign-in reads both Cursor and Grok Bot.")
+            }
         case .waiting(let code):
             Section {
                 HStack {
@@ -209,6 +229,7 @@ struct PlanSignInView: View {
         case .claude: "Claude"
         case .openai: "OpenAI"
         case .grok: "xAI"
+        case .cursor, .grokBot: "Cursor"
         default: provider.displayName
         }
     }

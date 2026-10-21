@@ -5,9 +5,9 @@ import XCTest
 final class PhoneConnectTests: XCTestCase {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
     /// Providers whose only login is on a Mac, plus Copilot, whose phone path is a token.
-    let neverSignIn: [Provider] = [.grokBot, .cursor, .antigravity, .devin, .copilot]
+    let neverSignIn: [Provider] = [.antigravity, .devin, .copilot]
     /// The plans the iPhone signs in to itself.
-    let signsIn: [Provider] = [.claude, .openai, .grok]
+    let signsIn: [Provider] = [.claude, .openai, .grok, .cursor, .grokBot]
 
     private func reading(_ provider: Provider, checkedAt: Date, used: Double = 40) -> RelayProvider {
         let window = QuotaWindow(id: "weekly", kind: .weekly, title: "Weekly", usedPercent: used, resetsAt: checkedAt.addingTimeInterval(3 * 86_400))
@@ -75,14 +75,15 @@ final class PhoneConnectTests: XCTestCase {
     func testAnotherIPhoneIsNotAMac() {
         let phone = source(.otherPhone, [.claude], checkedAt: now.addingTimeInterval(-60))
         XCTAssertEqual(PhoneConnect.action(for: .claude, sources: [phone], now: now), .signIn)
-        XCTAssertEqual(PhoneConnect.action(for: .cursor, sources: [source(.otherPhone, [.cursor], checkedAt: now.addingTimeInterval(-60))], now: now), .needsMac(reason: PhoneConnect.reason(for: .cursor)))
+        XCTAssertEqual(PhoneConnect.action(for: .devin, sources: [source(.otherPhone, [.devin], checkedAt: now.addingTimeInterval(-60))], now: now), .needsMac(reason: PhoneConnect.reason(for: .devin)))
     }
 
     func testASignedOutMacCardDoesNotCover() {
         var signedOut = RelayProvider(provider: .cursor, status: .signedOut("Sign in to Cursor to see usage."), checkedAt: now.addingTimeInterval(-60))
         signedOut.checkedAt = now.addingTimeInterval(-60)
         let mac = PhoneConnect.CoveringSource(kind: .mac, envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: now, providers: [signedOut]))
-        XCTAssertEqual(PhoneConnect.action(for: .cursor, sources: [mac], now: now), .needsMac(reason: PhoneConnect.reason(for: .cursor)))
+        XCTAssertEqual(PhoneConnect.action(for: .cursor, sources: [mac], now: now), .signIn)
+        XCTAssertEqual(PhoneConnect.action(for: .cursor, sources: [mac], now: now, allowlist: []), .needsMac(reason: PhoneConnect.reason(for: .cursor)))
     }
 
     func testACachedMacReadingStillCoversBeforeICloudAnswers() {

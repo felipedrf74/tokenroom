@@ -3,12 +3,16 @@ import Foundation
 
 /// The plans this iPhone signs in to by itself, with the vendor's own sign-in page: Claude (sign
 /// in in Safari, then paste the code the page shows), Codex and Grok Build (approve a short code
-/// on the vendor's page while Tokenroom waits). The session that comes back is Tokenroom's own,
-/// kept in `PhoneSessionStore`; it isn't a copy of a CLI's login, and nothing here reads one.
+/// on the vendor's page while Tokenroom waits), and Cursor and Grok Bot (sign in on Cursor's page,
+/// which takes a Grok or X account too, while Tokenroom waits). Grok Bot runs on the Cursor
+/// account, so one Cursor sign-in reads both (`sessionOwner`). The session that comes back is
+/// Tokenroom's own, kept in `PhoneSessionStore`; it isn't a copy of a CLI's or an app's login,
+/// and nothing here reads one.
 ///
 /// These are the same public clients, token hosts, and usage endpoints the Mac reads through each
-/// CLI's login (`OAuthRefresh`, `ClaudeClient`, `OpenAIClient`, `GrokClient`). None of them is
-/// documented for other apps, so any of them can change or be refused without notice.
+/// tool's login (`OAuthRefresh`, `ClaudeClient`, `OpenAIClient`, `GrokClient`, `CursorClient`,
+/// `GrokBotClient`). None of them is documented for other apps, so any of them can change or be
+/// refused without notice.
 ///
 /// Pure: requests in, answers parsed. `PhoneSignInClient` sends them.
 enum PhoneSignIn {
@@ -16,12 +20,27 @@ enum PhoneSignIn {
     enum Method: Sendable, Equatable {
         /// Sign in on the vendor's page in Safari, then paste the code it shows.
         case pasteCode
-        /// Approve a short code on the vendor's page while Tokenroom waits.
+        /// Approve a short code, or just sign in, on the vendor's page while Tokenroom waits.
         case deviceCode
     }
 
     /// The plans the iPhone signs in to, in the order the connect screen lists them.
-    static let providers: [Provider] = [.claude, .openai, .grok]
+    static let providers: [Provider] = [.claude, .openai, .grok, .cursor, .grokBot]
+
+    /// Whose session a plan reads with: Grok Bot runs on the Cursor account, so it uses Cursor's.
+    /// A session is kept once, under its owner.
+    static func sessionOwner(for provider: Provider) -> Provider {
+        provider == .grokBot ? .cursor : provider
+    }
+
+    /// The plans one sign-in covers: a provider and every plan sharing its session.
+    static func sharingSession(with provider: Provider) -> [Provider] {
+        let owner = sessionOwner(for: provider)
+        return providers.filter { sessionOwner(for: $0) == owner }
+    }
+
+    /// How often to ask whether a code was approved, when the vendor doesn't say.
+    static let defaultPollInterval: TimeInterval = 5
 
     /// The least time between two readings of one plan from the iPhone: these endpoints aren't
     /// documented for other apps, so coming back to the app doesn't call them every minute.
@@ -30,7 +49,7 @@ enum PhoneSignIn {
     static func method(for provider: Provider) -> Method? {
         switch provider {
         case .claude: .pasteCode
-        case .openai, .grok: .deviceCode
+        case .openai, .grok, .cursor, .grokBot: .deviceCode
         default: nil
         }
     }
@@ -76,9 +95,22 @@ enum PhoneSignIn {
         static let scope = "openid offline_access grok-cli:access"
         static let usageURL = URL(string: "https://cli-chat-proxy.grok.com/v1/billing?format=credits")!
         static let deviceGrant = "urn:ietf:params:oauth:grant-type:device_code"
-        /// RFC 8628's defaults, used when the answer leaves them out.
-        static let defaultInterval: TimeInterval = 5
+        /// RFC 8628's floor for a code's lifetime, when the answer is shorter or leaves it out.
         static let minimumLifetime: TimeInterval = 10 * 60
+    }
+
+    enum Cursor {
+        /// Cursor's sign-in page for its apps; it offers Cursor, Grok, and X accounts.
+        static let loginURL = URL(string: "https://cursor.com/loginDeepControl")!
+        static let pollURL = URL(string: "https://api2.cursor.sh/auth/poll")!
+        static let tokenURL = URL(string: "https://api2.cursor.sh/oauth/token")!
+        static let clientID = "KbZUR41cY7W6zRSdpSUJ7I7mLYBKOCmB"
+        static let usageURL = URL(string: "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage")!
+        static let grokBotUsageURL = URL(string: "https://api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus")!
+        /// How long a sign-in page stays worth waiting for. Cursor doesn't say; its app waits
+        /// as long as it's open.
+        static let loginLifetime: TimeInterval = 10 * 60
+        static let pollInterval: TimeInterval = 2
     }
 
     // MARK: PKCE
@@ -179,8 +211,34 @@ enum PhoneSignIn {
         var verificationURL: URL
         var interval: TimeInterval
         var expiresAt: Date
-        /// What polling sends back: Codex's `device_auth_id`, Grok's `device_code`.
+        /// What polling sends back: Codex's `device_auth_id`, Grok's `device_code`, Cursor's
+        /// sign-in id.
         var handle: String
+        /// Cursor's PKCE verifier, sent with each poll. Empty for the others.
+        var verifier = ""
+    }
+
+    /// Cursor's sign-in: made here, not asked for. The page gets the S256 challenge; polling
+    /// sends the verifier, so only this iPhone can collect the session. No code to type: the
+    /// person just signs in.
+    static func cursorLogin(now: Date) -> DeviceCode {
+        let pkce = PKCE.random()
+        let id = UUID().uuidString.lowercased()
+        var components = URLComponents(url: Cursor.loginURL, resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "challenge", value: pkce.challenge),
+            URLQueryItem(name: "uuid", value: id),
+            URLQueryItem(name: "mode", value: "login"),
+        ]
+        return DeviceCode(
+            provider: .cursor,
+            userCode: "",
+            verificationURL: components.url!,
+            interval: Cursor.pollInterval,
+            expiresAt: now.addingTimeInterval(Cursor.loginLifetime),
+            handle: id,
+            verifier: pkce.verifier
+        )
     }
 
     static func deviceCodeRequest(for provider: Provider) -> URLRequest? {
@@ -210,7 +268,7 @@ enum PhoneSignIn {
                 provider: provider,
                 userCode: userCode,
                 verificationURL: Codex.verificationURL,
-                interval: interval ?? Grok.defaultInterval,
+                interval: interval ?? defaultPollInterval,
                 expiresAt: JSONFlex.date(object["expires_at"]).flatMap { $0 > now ? $0 : nil } ?? now.addingTimeInterval(Codex.codeLifetime),
                 handle: handle
             )
@@ -224,7 +282,7 @@ enum PhoneSignIn {
                 provider: provider,
                 userCode: userCode,
                 verificationURL: page,
-                interval: interval ?? Grok.defaultInterval,
+                interval: interval ?? defaultPollInterval,
                 expiresAt: now.addingTimeInterval(lifetime),
                 handle: handle
             )
@@ -240,6 +298,7 @@ enum PhoneSignIn {
         case .openai: ["openai.com", "chatgpt.com"]
         case .grok: ["x.ai", "grok.com"]
         case .claude: ["claude.ai", "claude.com", "anthropic.com"]
+        case .cursor, .grokBot: ["cursor.com", "cursor.sh"]
         default: []
         }
         return domains.contains { host == $0 || host.hasSuffix("." + $0) }
@@ -247,10 +306,14 @@ enum PhoneSignIn {
 
     static func pollRequest(_ code: DeviceCode) -> URLRequest {
         switch code.provider {
+        case .cursor, .grokBot:
+            var components = URLComponents(url: Cursor.pollURL, resolvingAgainstBaseURL: false)!
+            components.queryItems = [URLQueryItem(name: "uuid", value: code.handle), URLQueryItem(name: "verifier", value: code.verifier)]
+            return TokenroomHTTP.request(components.url!, token: nil)
         case .grok:
-            formRequest(Grok.tokenURL, [("grant_type", Grok.deviceGrant), ("device_code", code.handle), ("client_id", Grok.clientID)])
+            return formRequest(Grok.tokenURL, [("grant_type", Grok.deviceGrant), ("device_code", code.handle), ("client_id", Grok.clientID)])
         default:
-            jsonRequest(Codex.pollURL, ["device_auth_id": code.handle, "user_code": code.userCode])
+            return jsonRequest(Codex.pollURL, ["device_auth_id": code.handle, "user_code": code.userCode])
         }
     }
 
@@ -261,7 +324,7 @@ enum PhoneSignIn {
         case slowDown
         /// Codex: an authorization code, and the verifier OpenAI made for it, to exchange.
         case authorized(code: String, verifier: String)
-        /// Grok: the token answer itself.
+        /// Grok and Cursor: the token answer itself.
         case granted(Data)
         case denied
         case expired
@@ -270,6 +333,17 @@ enum PhoneSignIn {
 
     static func pollAnswer(provider: Provider, status: Int, data: Data) -> PollAnswer {
         let object = try? JSONFlex.object(from: data)
+        if provider == .cursor || provider == .grokBot {
+            // 404 until the person has signed in; 403 when their organization doesn't allow it.
+            switch status {
+            case 200..<300:
+                let ready = [object?["accessToken"], object?["refreshToken"]].allSatisfy { (JSONFlex.string($0) ?? "").isEmpty == false }
+                return ready ? .granted(data) : .pending
+            case 404: return .pending
+            case 403: return .denied
+            default: return .failed
+            }
+        }
         if provider == .openai {
             if (200..<300).contains(status) {
                 guard let code = JSONFlex.string(object?["authorization_code"]), !code.isEmpty,
@@ -305,19 +379,21 @@ enum PhoneSignIn {
     // MARK: Sessions
 
     static func clientID(for provider: Provider) -> String? {
-        switch provider {
+        switch sessionOwner(for: provider) {
         case .claude: Claude.clientID
         case .openai: Codex.clientID
         case .grok: Grok.clientID
+        case .cursor: Cursor.clientID
         default: nil
         }
     }
 
     static func tokenURLs(for provider: Provider) -> [URL] {
-        switch provider {
+        switch sessionOwner(for: provider) {
         case .claude: Claude.tokenURLs
         case .openai: [Codex.tokenURL]
         case .grok: [Grok.tokenURL]
+        case .cursor: [Cursor.tokenURL]
         default: []
         }
     }
@@ -343,6 +419,8 @@ enum PhoneSignIn {
                 formRequest(url, [("grant_type", "refresh_token"), ("refresh_token", session.refreshToken), ("client_id", session.clientID)])
             case .claude:
                 jsonRequest(url, ["grant_type": "refresh_token", "refresh_token": session.refreshToken, "client_id": session.clientID], headers: claudeHeaders)
+            case .cursor, .grokBot:
+                jsonRequest(url, ["grant_type": "refresh_token", "refresh_token": session.refreshToken, "client_id": session.clientID])
             default:
                 jsonRequest(url, ["grant_type": "refresh_token", "refresh_token": session.refreshToken, "client_id": session.clientID])
             }
@@ -350,24 +428,30 @@ enum PhoneSignIn {
     }
 
     /// What a token host said to a renewal. A grant without a refresh token keeps the one sent:
-    /// hosts that don't rotate it may leave it out.
-    static func refreshAnswer(status: Int, data: Data, previous: PhoneSession, now: Date) -> PhoneSessionRefresher.Grant {
+    /// hosts that don't rotate it may leave it out. Cursor renews with its access token, so a new
+    /// one becomes the refresh token too, as Cursor's own app keeps it; its `shouldLogout` is a
+    /// refusal.
+    static func refreshAnswer(provider: Provider, status: Int, data: Data, previous: PhoneSession, now: Date) -> PhoneSessionRefresher.Grant {
+        let object = try? JSONFlex.object(from: data)
+        if (object?["shouldLogout"] as? Bool) == true { return .rejected }
         if (200..<300).contains(status), let tokens = tokens(from: data, now: now) {
             var session = previous
             session.accessToken = tokens.access
-            session.refreshToken = tokens.refresh ?? previous.refreshToken
+            let rotated = sessionOwner(for: provider) == .cursor ? tokens.access : previous.refreshToken
+            session.refreshToken = tokens.refresh ?? rotated
             session.expiresAt = tokens.expiresAt
             return .granted(session)
         }
-        let error = (try? JSONFlex.object(from: data)).flatMap { JSONFlex.string($0["error"]) }
+        let error = object.flatMap { JSONFlex.string($0["error"]) }
         return error == "invalid_grant" ? .rejected : .unavailable
     }
 
+    /// Access and refresh tokens, in OAuth's names or Cursor's (`accessToken`, `refreshToken`).
     private static func tokens(from data: Data, now: Date) -> (access: String, refresh: String?, expiresAt: Date?)? {
         guard let object = try? JSONFlex.object(from: data),
-              let access = JSONFlex.string(object["access_token"]), !access.isEmpty
+              let access = JSONFlex.string(object["access_token"]) ?? JSONFlex.string(object["accessToken"]), !access.isEmpty
         else { return nil }
-        let refresh = JSONFlex.string(object["refresh_token"]).flatMap { $0.isEmpty ? nil : $0 }
+        let refresh = (JSONFlex.string(object["refresh_token"]) ?? JSONFlex.string(object["refreshToken"])).flatMap { $0.isEmpty ? nil : $0 }
         let expiresAt = JSONFlex.number(object["expires_in"]).flatMap { $0 > 0 ? now.addingTimeInterval($0) : nil }
             ?? JSONFlex.number(claims(ofJWT: access)?["exp"]).map { Date(timeIntervalSince1970: $0) }
         return (access, refresh, expiresAt)
@@ -396,9 +480,13 @@ enum PhoneSignIn {
         case .grok:
             url = Grok.usageURL
             headers = [:]
-            if let user = JSONFlex.string(claims(ofJWT: accessToken)?["sub"]), !user.isEmpty {
+            if let user = grokUser(accessToken), !user.isEmpty {
                 headers["x-userid"] = user
             }
+        case .cursor, .grokBot:
+            // Connect RPCs: a POST with an empty JSON message.
+            let url = provider == .cursor ? Cursor.usageURL : Cursor.grokBotUsageURL
+            return TokenroomHTTP.request(url, method: "POST", token: accessToken, headers: ["Connect-Protocol-Version": "1"], body: Data("{}".utf8))
         default:
             return nil
         }
@@ -410,8 +498,22 @@ enum PhoneSignIn {
         case .claude: try ClaudeParser.snapshot(from: data, fetchedAt: fetchedAt)
         case .openai: try OpenAIParser.snapshot(from: data, fetchedAt: fetchedAt)
         case .grok: try GrokParser.snapshot(from: data, fetchedAt: fetchedAt)
+        case .cursor: try CursorParser.snapshot(from: data, fetchedAt: fetchedAt)
+        case .grokBot: try GrokBotParser.snapshot(from: data, fetchedAt: fetchedAt)
         default: throw ProviderError.parse
         }
+    }
+
+    /// The user the Grok CLI names in `x-userid`: the team or organization a token was issued
+    /// to, or else the person (`sub`), as Grok's own login reads them from its tokens.
+    static func grokUser(_ accessToken: String) -> String? {
+        guard let claims = claims(ofJWT: accessToken) else { return nil }
+        let type = JSONFlex.string(claims["principal_type"]) ?? JSONFlex.string(claims["principalType"])
+        let principal = JSONFlex.string(claims["principal_id"]) ?? JSONFlex.string(claims["principalId"])
+        if let principal, !principal.isEmpty, type == "Team" || type == "Organization" {
+            return principal
+        }
+        return JSONFlex.string(claims["sub"])
     }
 
     /// A JWT's claims, unverified: only for reading what the vendor already sent back to it.

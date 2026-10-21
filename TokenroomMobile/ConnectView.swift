@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// The plans this iPhone reads by itself or can't: Claude, Codex, and Grok Build sign in here,
-/// with each one's own sign-in page (`PhoneSignIn`); the rest need Tokenroom on a Mac, or a Mac
-/// already sends them. Providers read with a key (Copilot's fine-grained token included) aren't
+/// The plans this iPhone reads by itself or can't: Claude, Codex, Grok Build, Cursor, and Grok Bot
+/// sign in here, with each one's own sign-in page (`PhoneSignIn`; Grok Bot rides on the Cursor
+/// sign-in); the rest need Tokenroom on a Mac, or a Mac already sends them. Providers read with a key (Copilot's fine-grained token included) aren't
 /// listed: they're on the key card and in API Keys.
 struct ConnectView: View {
     var store: MobileStore
@@ -12,14 +12,19 @@ struct ConnectView: View {
     var body: some View {
         let list = store.connectList(now: date)
         let signedIn = PhoneSignIn.providers.filter { store.sessionProviders.contains($0) }
-        let toSignIn = list.filter { $0.action == .signIn && !signedIn.contains($0.provider) }
+        // Plans whose sign-in exists but that aren't on its plan (Grok Bot without it on Cursor).
+        let notOnPlan = PhoneSignIn.providers.filter { provider in
+            let owner = PhoneSignIn.sessionOwner(for: provider)
+            return owner != provider && store.sessionProviders.contains(owner) && !signedIn.contains(provider)
+        }
+        let toSignIn = list.filter { $0.action == .signIn && !signedIn.contains($0.provider) && !notOnPlan.contains($0.provider) }
             .sorted { (PhoneSignIn.providers.firstIndex(of: $0.provider) ?? 0) < (PhoneSignIn.providers.firstIndex(of: $1.provider) ?? 0) }
         let fromMac = list.filter { $0.action == .fromMac && !signedIn.contains($0.provider) }
         let needsMac = list.filter { entry in
             if case .needsMac = entry.action { true } else { false }
         }
         List {
-            if !signedIn.isEmpty {
+            if !signedIn.isEmpty || !notOnPlan.isEmpty {
                 Section {
                     ForEach(signedIn) { provider in
                         NavigationLink {
@@ -27,6 +32,9 @@ struct ConnectView: View {
                         } label: {
                             ConnectRow(provider: provider, detail: sessionDetail(for: provider))
                         }
+                    }
+                    ForEach(notOnPlan) { provider in
+                        ConnectRow(provider: provider, detail: "Not on your \(PhoneSignIn.sessionOwner(for: provider).displayName) plan. Tokenroom checks again each day.")
                     }
                 } header: {
                     Text("On this iPhone")
@@ -52,7 +60,7 @@ struct ConnectView: View {
                 } header: {
                     Text("Sign in on this iPhone")
                 } footer: {
-                    Text("You sign in on each company's own page; Tokenroom never sees your password. It reads these plans the way their command-line tools do, which those companies don't document for other apps, so a sign-in can stop working without notice. Tokenroom isn't affiliated with Anthropic, OpenAI, or xAI.")
+                    Text("You sign in on each company's own page; Tokenroom never sees your password. It reads these plans the way their own apps and command-line tools do, which those companies don't document for other apps, so a sign-in can stop working without notice. Tokenroom isn't affiliated with Anthropic, OpenAI, xAI, or Cursor.")
                 }
             }
             if !fromMac.isEmpty {
@@ -106,15 +114,19 @@ struct ConnectView: View {
         case .claude: "Pro or Max limits. Sign in on Claude's page, then paste the code it shows."
         case .openai: "ChatGPT plan limits for Codex. Approve a code on OpenAI's page."
         case .grok: "SuperGrok limits for Grok Build. Approve a code on xAI's page."
+        case .cursor: "Cursor plan usage. Sign in on Cursor's page, with Grok or X if that's your account. Reads Grok Bot too."
+        case .grokBot: "Grok Bot runs on your Cursor account. Sign in on Cursor's page, with Grok or X if that's your account."
         default: "Sign in on this iPhone."
         }
     }
 
     private func sessionDetail(for provider: Provider) -> String {
-        if let message = store.reading(id: provider.rawValue)?.provider.message, message == PhoneSessionClient.needsSignIn {
+        if store.refusedSessions.contains(PhoneSignIn.sessionOwner(for: provider)) {
             return "Sign in again"
         }
-        return CollectorKind.thisPhone.phrase
+        let sharing = PhoneSignIn.sharingSession(with: provider).filter { $0 != provider }
+        guard let other = sharing.first, store.sessionProviders.contains(other) else { return CollectorKind.thisPhone.phrase }
+        return "\(CollectorKind.thisPhone.phrase) · same sign-in as \(other.displayName)"
     }
 }
 
@@ -147,7 +159,7 @@ struct PlanSessionView: View {
                 Button("Sign In Again") { signingIn = true }
                 Button("Sign Out on This iPhone", role: .destructive) { confirmsSignOut = true }
             } footer: {
-                Text(error ?? "Signing out deletes this iPhone's sign-in. It doesn't sign you out of \(provider.displayName) anywhere else.")
+                Text(error ?? signOutNote)
             }
         }
         .navigationTitle(provider.displayName)
@@ -158,7 +170,7 @@ struct PlanSessionView: View {
         .sheet(isPresented: $signingIn) {
             PlanSignInView(store: store, provider: provider)
         }
-        .confirmationDialog("Sign out of \(provider.displayName) on this iPhone?", isPresented: $confirmsSignOut, titleVisibility: .visible) {
+        .confirmationDialog("Sign out of \(signOutNames) on this iPhone?", isPresented: $confirmsSignOut, titleVisibility: .visible) {
             Button("Sign Out", role: .destructive) {
                 Task {
                     do {
@@ -170,6 +182,17 @@ struct PlanSessionView: View {
                 }
             }
         }
+    }
+}
+
+extension PlanSessionView {
+    /// The plans one sign-out ends: Cursor's ends Grok Bot's too.
+    var signOutNames: String {
+        PhoneSignIn.sharingSession(with: provider).map(\.displayName).joined(separator: " and ")
+    }
+
+    var signOutNote: String {
+        "Signing out deletes this iPhone's sign-in for \(signOutNames). It doesn't sign you out anywhere else."
     }
 }
 

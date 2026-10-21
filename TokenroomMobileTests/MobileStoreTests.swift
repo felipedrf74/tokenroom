@@ -47,7 +47,9 @@ final class MobileStoreTests: XCTestCase {
             keys: MobileFixtureKeychain().keys,
             directory: folder, connectOnIPhone: false,
             notificationScheduler: { _ in XCTFail("This fixture must not schedule a real notification") },
-            platformEffects: .inert, launchDefaults: defaults
+            platformEffects: .inert, launchDefaults: defaults,
+            // Never this device's real plan sign-ins.
+            sessions: nil
         )
     }
 

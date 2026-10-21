@@ -40,6 +40,8 @@ struct PhoneSignInClient: Sendable {
     // MARK: Device code
 
     func startDeviceCode(for provider: Provider, now: Date = .now) async throws -> PhoneSignIn.DeviceCode {
+        // Cursor's sign-in is made here; there's nothing to ask for first.
+        if PhoneSignIn.sessionOwner(for: provider) == .cursor { return PhoneSignIn.cursorLogin(now: now) }
         guard let request = PhoneSignIn.deviceCodeRequest(for: provider) else { throw Failure.notOffered }
         let (data, response) = try await answer(request)
         if response.statusCode == 404 { throw Failure.notOffered }
@@ -70,7 +72,17 @@ struct PhoneSignInClient: Sendable {
             case .slowDown:
                 interval += 5
             case .authorized(let authorization, let verifier):
-                return try await exchange(PhoneSignIn.codexExchangeRequest(code: authorization, verifier: verifier), provider: code.provider, now: clock())
+                // The approval is spent once polled: a dropped connection right after it (coming
+                // back from Safari) is tried again rather than asking for a new code.
+                let exchange = PhoneSignIn.codexExchangeRequest(code: authorization, verifier: verifier)
+                for attempt in 1...Self.exchangeAttempts {
+                    do {
+                        return try await self.exchange(exchange, provider: code.provider, now: clock())
+                    } catch Failure.unreachable where attempt < Self.exchangeAttempts {
+                        try await sleep(2)
+                    }
+                }
+                throw Failure.unreachable
             case .granted(let tokens):
                 return try session(from: tokens, provider: code.provider, now: clock())
             case .denied:
@@ -82,6 +94,8 @@ struct PhoneSignInClient: Sendable {
             }
         }
     }
+
+    static let exchangeAttempts = 3
 
     // MARK: Claude
 
@@ -103,7 +117,7 @@ struct PhoneSignInClient: Sendable {
         for request in PhoneSignIn.refreshRequests(for: session, provider: provider) {
             guard let answered = try? await answer(request) else { continue }
             let (data, response) = answered
-            switch PhoneSignIn.refreshAnswer(status: response.statusCode, data: data, previous: session, now: now) {
+            switch PhoneSignIn.refreshAnswer(provider: provider, status: response.statusCode, data: data, previous: session, now: now) {
             case .unavailable: continue
             case let grant: return grant
             }
@@ -120,9 +134,9 @@ struct PhoneSignInClient: Sendable {
     }
 
     private func session(from data: Data, provider: Provider, now: Date) throws -> PhoneSession {
-        guard let object = try? JSONFlex.object(from: data), JSONFlex.string(object["access_token"])?.isEmpty == false else {
-            throw Failure.refused
-        }
+        guard let object = try? JSONFlex.object(from: data),
+              (JSONFlex.string(object["access_token"]) ?? JSONFlex.string(object["accessToken"]))?.isEmpty == false
+        else { throw Failure.refused }
         guard let session = PhoneSignIn.session(fromGrant: data, provider: provider, now: now) else { throw Failure.noRenewal }
         return session
     }

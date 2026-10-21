@@ -7,8 +7,8 @@ import Foundation
 ///    `.addKey`, whatever a Mac shows: a pasted key for that provider stays available.
 /// 2. A Mac reading for it that is still live is `.fromMac`. That blocks a second phone login
 ///    only. Another iPhone isn't a Mac; a stale, expired, or signed-out Mac card doesn't count.
-/// 3. A provider on the allowlist is `.signIn`: Claude, Codex, and Grok Build sign in on the
-///    iPhone itself (`PhoneSignIn`).
+/// 3. A provider on the allowlist is `.signIn`: Claude, Codex, Grok Build, Cursor, and Grok Bot
+///    sign in on the iPhone itself (`PhoneSignIn`).
 /// 4. Everything else is `.needsMac`, with the reason as the row's copy and no button.
 ///
 /// It never reads `isUnofficial`: that ignores Copilot's documented token and calls the pasted
@@ -35,7 +35,7 @@ enum PhoneConnect: Sendable {
     /// The only allowlist: the plans `PhoneSignIn` signs in to (widgets compile this file, not
     /// that one; a test keeps the two equal). Taking one out stops its sign-in, renewals, and
     /// reads on the next launch; its session stays in the Keychain until removed.
-    static let productionAllowlist: Set<Provider> = [.claude, .openai, .grok]
+    static let productionAllowlist: Set<Provider> = [.claude, .openai, .grok, .cursor, .grokBot]
 
     static func action(
         for provider: Provider,

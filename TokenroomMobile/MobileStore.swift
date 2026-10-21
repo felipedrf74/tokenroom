@@ -58,6 +58,7 @@ final class MobileStore {
         static let keyedProviders = "keyedProviders"
         /// Read by the widgets too, so they keep this iPhone's plan readings.
         static let sessionProviders = "sessionProviders"
+        static let sessionNotOnPlan = "sessionNotOnPlan"
         static let followedTimeZone = "followedTimeZone"
     }
 
@@ -97,6 +98,8 @@ final class MobileStore {
     /// Plans signed in to on this iPhone: a session in its Keychain, ready or waiting for a new
     /// sign-in after its refresh token was refused.
     private(set) var sessionProviders: [Provider] = []
+    /// Sessions whose refresh token was refused (by their owner), waiting for a new sign-in.
+    private(set) var refusedSessions: Set<Provider> = []
     /// Everything this iPhone reads itself, with a key or a session.
     var localProviders: [Provider] {
         Provider.allCases.filter { keyedProviders.contains($0) || sessionProviders.contains($0) }
@@ -634,30 +637,41 @@ final class MobileStore {
         }
     }
 
-    /// Reads the plans signed in to on this iPhone, each with its own session, renewed first when
-    /// it's due. Spaced and held off after a 429 like the key providers. A session whose refresh
-    /// token was refused shows as signed out, asking to sign in again, without a call.
+    /// Reads the plans signed in to on this iPhone, each with its session (Grok Bot with Cursor's),
+    /// renewed first when it's due. Spaced and held off after a 429 like the key providers. A
+    /// session whose refresh token was refused shows as signed out, asking to sign in again,
+    /// without a call. A plan that rides on another's sign-in and isn't on that plan (Grok Bot
+    /// without it on the Cursor plan) is left out quietly, and asked about again once a day.
     private func readSessions(now: Date) async {
         guard let sessions, let refresher else { return }
-        let found = await BlockingIO.run {
-            PhoneSignIn.providers.compactMap { provider in
-                sessions.metadata(for: provider).map { (provider, $0.state) }
+        let owners = Array(Set(PhoneSignIn.providers.map(PhoneSignIn.sessionOwner)))
+        let states = await BlockingIO.run {
+            owners.reduce(into: [Provider: PhoneSessionMetadata.State]()) { states, owner in
+                states[owner] = sessions.metadata(for: owner)?.state
             }
         }
-        let providers = found.map(\.0).filter { PhoneConnect.productionAllowlist.contains($0) }
+        let signedIn = PhoneSignIn.providers.filter {
+            PhoneConnect.productionAllowlist.contains($0) && states[PhoneSignIn.sessionOwner(for: $0)] != nil
+        }
+        var skipped = notOnPlan
+        skipped = skipped.filter { signedIn.contains($0.key) }
+        let recheck = Set(skipped.filter { !(0..<Self.notOnPlanRecheck).contains(now.timeIntervalSince($0.value)) }.keys)
+        let providers = signedIn.filter { skipped[$0] == nil || recheck.contains($0) }
         setSessionProviders(providers)
         for provider in localStatuses.keys where PhoneSignIn.method(for: provider) != nil && !providers.contains(provider) {
             localStatuses[provider] = nil
             localCheckedAt[provider] = nil
             localFailedAt[provider] = nil
         }
-        let refused = Set(found.filter { $0.1 == .rejected }.map(\.0))
-        for provider in providers where refused.contains(provider) {
+        refusedSessions = Set(states.filter { $0.value == .rejected }.keys)
+        let refused = Set(providers.filter { refusedSessions.contains(PhoneSignIn.sessionOwner(for: $0)) })
+        for provider in refused {
             apply(provider, result: .failure(.signedOut(PhoneSessionClient.needsSignIn)), now: now)
         }
         let gate = keyGate
         let due = providers.filter { provider in
             guard !refused.contains(provider) else { return false }
+            if recheck.contains(provider) { return true }
             if let until = rateLimitedUntil[provider], until > now { return false }
             if let last = gate.lastAttempt(provider), (0..<PhoneSignIn.minimumInterval).contains(now.timeIntervalSince(last)) { return false }
             return !gate.isResting(provider, now: now)
@@ -669,7 +683,7 @@ final class MobileStore {
         }
         await withTaskGroup(of: (Provider, Result<QuotaSnapshot, ProviderError>).self) { group in
             for provider in due {
-                if localStatuses[provider] == nil {
+                if localStatuses[provider] == nil, !recheck.contains(provider) {
                     localStatuses[provider] = .loading
                 }
                 let client = PhoneSessionClient(provider: provider, store: sessions, send: PhoneSessionClient.live(provider))
@@ -688,8 +702,34 @@ final class MobileStore {
                     }
                     continue
                 }
+                if PhoneSignIn.sessionOwner(for: provider) != provider, case .failure(.notEntitled) = result {
+                    skipped[provider] = now
+                    localStatuses[provider] = nil
+                    localCheckedAt[provider] = nil
+                    localFailedAt[provider] = nil
+                    setSessionProviders(sessionProviders.filter { $0 != provider })
+                    continue
+                }
+                if case .success = result {
+                    skipped[provider] = nil
+                }
                 apply(provider, result: result, now: now)
             }
+        }
+        notOnPlan = skipped
+    }
+
+    /// How long a plan found not to be on its sign-in's plan waits before it's asked about again.
+    static let notOnPlanRecheck: TimeInterval = 24 * 3600
+
+    /// Plans left out because they weren't on the plan they ride on, and when that was found.
+    private var notOnPlan: [Provider: Date] {
+        get {
+            let saved = defaults.dictionary(forKey: Keys.sessionNotOnPlan) as? [String: Date] ?? [:]
+            return Dictionary(uniqueKeysWithValues: saved.compactMap { key, value in Provider(rawValue: key).map { ($0, value) } })
+        }
+        set {
+            defaults.set(newValue.isEmpty ? nil : Dictionary(uniqueKeysWithValues: newValue.map { ($0.key.rawValue, $0.value) }), forKey: Keys.sessionNotOnPlan)
         }
     }
 
@@ -1387,19 +1427,27 @@ final class MobileStore {
 
     func sessionMetadata(for provider: Provider) async -> PhoneSessionMetadata? {
         guard let sessions else { return nil }
-        return await BlockingIO.run { sessions.metadata(for: provider) }
+        let owner = PhoneSignIn.sessionOwner(for: provider)
+        return await BlockingIO.run { sessions.metadata(for: owner) }
     }
 
-    /// Keeps a session from a sign-in on this iPhone, and starts reading it. Returns once it's in
-    /// the Keychain, so the sign-in sheet doesn't wait for a refresh that's queued behind another.
+    /// Keeps a session from a sign-in on this iPhone, for the provider and every plan sharing it
+    /// (a Cursor sign-in reads Grok Bot too), and starts reading them. Returns once it's in the
+    /// Keychain, so the sign-in sheet doesn't wait for a refresh that's queued behind another.
     func saveSession(_ session: PhoneSession, for provider: Provider, now: Date = .now) async throws {
-        guard let sessions, PhoneConnect.productionAllowlist.contains(provider) else { throw PhoneSessionStore.SessionError.encoding }
-        try await BlockingIO.run { try sessions.save(session, for: provider, now: now) }
-        setSessionProviders(Provider.allCases.filter { $0 == provider || sessionProviders.contains($0) })
-        localStatuses[provider] = nil
-        localFailedAt[provider] = nil
-        keyGate.reset(provider)
-        rateLimitedUntil[provider] = nil
+        guard let refresher, PhoneConnect.productionAllowlist.contains(provider) else { throw PhoneSessionStore.SessionError.encoding }
+        let owner = PhoneSignIn.sessionOwner(for: provider)
+        try await refresher.replace(owner, with: session, now: now)
+        let covered = PhoneSignIn.sharingSession(with: provider)
+        setSessionProviders(Provider.allCases.filter { covered.contains($0) || sessionProviders.contains($0) })
+        refusedSessions.remove(owner)
+        notOnPlan = notOnPlan.filter { !covered.contains($0.key) }
+        for plan in covered {
+            localStatuses[plan] = nil
+            localFailedAt[plan] = nil
+            keyGate.reset(plan)
+            rateLimitedUntil[plan] = nil
+        }
         publishPolicy.reset()
         hasOnboarded = true
         if sampleMode {
@@ -1408,17 +1456,24 @@ final class MobileStore {
         Task { await refresh(force: true) }
     }
 
-    /// Signs this iPhone out of a plan: its session and any renewal in progress are deleted.
+    /// Signs this iPhone out of a plan, and every plan sharing its session: the session is
+    /// deleted after any renewal under way, so that renewal can't bring it back.
     func removeSession(for provider: Provider) async throws {
-        guard let sessions else { return }
-        try await BlockingIO.run { try sessions.remove(for: provider) }
-        localStatuses[provider] = nil
-        localCheckedAt[provider] = nil
-        localFailedAt[provider] = nil
-        keyGate.reset(provider)
-        rateLimitedUntil[provider] = nil
+        guard let refresher else { return }
+        let owner = PhoneSignIn.sessionOwner(for: provider)
+        try await refresher.replace(owner, with: nil)
+        let covered = PhoneSignIn.sharingSession(with: provider)
+        for plan in covered {
+            localStatuses[plan] = nil
+            localCheckedAt[plan] = nil
+            localFailedAt[plan] = nil
+            keyGate.reset(plan)
+            rateLimitedUntil[plan] = nil
+        }
+        refusedSessions.remove(owner)
+        notOnPlan = notOnPlan.filter { !covered.contains($0.key) }
         // Gone from iCloud on this refresh, as a removed key is.
-        setSessionProviders(sessionProviders.filter { $0 != provider })
+        setSessionProviders(sessionProviders.filter { !covered.contains($0) })
         publishPolicy.reset()
         await refresh(force: true)
     }
