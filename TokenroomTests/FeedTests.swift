@@ -376,6 +376,64 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(Set(result.cache.items.keys), ["fast", "slow"])
     }
 
+    private static func rss(_ host: String, _ titles: [String]) -> Data {
+        Data("<rss version=\"2.0\"><channel>\(titles.map { "<item><title>\($0)</title><link>https://\(host)/\($0)</link><pubDate>Wed, 21 Oct 2026 09:00:00 GMT</pubDate></item>" }.joined())</channel></rss>".utf8)
+    }
+
+    /// A pass of mostly unchanged answers (304s, a feed that sends the same entries again, the
+    /// same model list) shows only the feed that changed, once: nothing else is folded or shown.
+    func testAPassOfMostlyUnchangedFeedsShowsOnlyWhatChanged() async {
+        defer { unstubNetwork() }
+        let sources = (0..<20).map { FeedSource(id: "feed\($0)", name: "Feed \($0)", url: URL(string: "https://feed\($0).example.com/rss.xml")!) }
+        let listed = models
+        let changed = LockedBox(false)
+        stubNetwork { request in
+            let host = request.url?.host ?? ""
+            if request.url == ModelFeed.url { return (200, listed) }
+            if changed.value, host == "feed0.example.com" { return (200, Self.rss(host, ["new", "old"])) }
+            // A server that doesn't validate sends the same entries again.
+            if host == "feed1.example.com" { return (200, Self.rss(host, ["old"])) }
+            return request.value(forHTTPHeaderField: "If-None-Match") == "\"v1\"" ? (304, Data()) : (200, Self.rss(host, ["old"]))
+        }
+        let now = utc(2026, 10, 21, 12)
+        var cached = await NewsFetcher.refresh(NewsCache(), sources: sources, following: [], now: now).cache
+        // As NewsStore keeps it.
+        cached.retainFoldedIdentities(from: NewsCache(), sources: sources)
+        changed.value = true
+        let shown = LockedBox<[NewsCache]>([])
+        let later = now.addingTimeInterval(600)
+        let result = await NewsFetcher.refresh(cached, sources: sources, following: [], maxAge: 0, now: later, publish: { cache in
+            shown.value.append(cache)
+        })
+        XCTAssertEqual(shown.value.count, 1, "Only the feed that changed is shown before the pass is done")
+        XCTAssertEqual(shown.value.first?.items["feed0"]?.map(\.title), ["new", "old"])
+        XCTAssertEqual(result.cache.items["feed0"]?.map(\.title), ["new", "old"])
+        XCTAssertEqual(result.cache.items["feed1"], cached.items["feed1"], "The same entries again change nothing")
+        XCTAssertEqual(result.cache.sourceChecks?["feed5"]?.succeededAt, later, "A 304 still counts as a check")
+        XCTAssertEqual(result.cache.modelsFetchedAt, later)
+    }
+
+    /// Feeds that change while one is being shown are shown together next, not one by one.
+    func testFeedsThatChangeWhileOneIsShownAreShownTogether() async {
+        defer { unstubNetwork() }
+        let sources = (0..<5).map { FeedSource(id: "feed\($0)", name: "Feed \($0)", url: URL(string: "https://feed\($0).example.com/rss.xml")!) }
+        stubNetwork { request in
+            request.url == ModelFeed.url ? (200, Self.noModels) : (200, Self.rss(request.url?.host ?? "", ["first"]))
+        }
+        let shown = LockedBox<[[String]]>([])
+        let result = await NewsFetcher.refresh(NewsCache(), sources: sources, following: [], now: utc(2026, 10, 21, 12), publish: { cache in
+            // Showing takes a while (folding a whole store): the other feeds arrive meanwhile.
+            if shown.value.isEmpty {
+                let done = ContinuousClock.now + .milliseconds(300)
+                while ContinuousClock.now < done {}
+            }
+            shown.value.append(cache.items.keys.sorted())
+        })
+        XCTAssertEqual(shown.value.count, 2, "The first feed, then the four that came in while it was shown: \(shown.value)")
+        XCTAssertEqual(shown.value.last, sources.map(\.id).sorted())
+        XCTAssertEqual(Set(result.cache.items.keys), Set(sources.map(\.id)))
+    }
+
     func testTheSizeLimitStopsTheDownload() async {
         defer { unstubNetwork() }
         stubNetwork { _ in (200, Data(repeating: UInt8(ascii: "x"), count: 3000)) }
@@ -760,6 +818,27 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(FeedParser.wholeWords("Short title"), "Short title")
         XCTAssertEqual(FeedParser.wholeWords("Trailing space …"), "Trailing space…")
         XCTAssertEqual(FeedParser.wholeWords("Onewordcutoff…"), "Onewordcutoff…", "Nothing to cut back to")
+    }
+
+    /// A day's commits fold by the thing they update, not the word after "Update": "the docx
+    /// skill" and "the pdf skill" are two things, as are "docs for" two different ones.
+    func testADaysUpdatesFoldOnlyWhenTheyUpdateTheSameThing() throws {
+        let skills = try XCTUnwrap(FeedSource.catalog.first { $0.id == "claude-skills" })
+        func entry(_ sha: String, _ title: String, _ time: String) -> String {
+            "<entry><id>tag:github.com,2008:Grit::Commit/\(sha)</id><link rel=\"alternate\" href=\"https://github.com/anthropics/skills/commit/\(sha)\"/><title>\(title)</title><updated>\(time)</updated></entry>"
+        }
+        let atom = Data("""
+        <feed xmlns="http://www.w3.org/2005/Atom">
+        \(entry("d3", "Update the docx skill: handle tracked changes", "2026-10-21T17:00:00Z"))
+        \(entry("d2", "Update the docx skill (#1610)", "2026-10-21T15:00:00Z"))
+        \(entry("d1", "Update docx skill (#1609)", "2026-10-21T14:00:00Z"))
+        \(entry("p1", "Update the pdf skill (#1608)", "2026-10-21T11:00:00Z"))
+        \(entry("g2", "Update docs for the xlsx skill (#1606)", "2026-10-21T10:00:00Z"))
+        \(entry("g1", "Update docs for skill authoring (#1605)", "2026-10-21T09:00:00Z"))
+        </feed>
+        """.utf8)
+        let items = FeedParser.items(from: atom, source: skills)
+        XCTAssertEqual(items.map { $0.id.components(separatedBy: "/").last }, ["d3", "p1", "g2", "g1"], "The docx skill's three updates show once, the newest; the pdf skill and each docs change show")
     }
 
     func testCommitsWithTheSameMessageStayApartAndShowWithoutTheirPullRequestNumber() throws {

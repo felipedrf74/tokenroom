@@ -285,8 +285,9 @@ enum NewsFetcher {
         var forcedSources: Set<String> = []
         /// Sources whose read is quiet, like a first read (`firstSeen`'s `quiet`).
         var quietSources: Set<String> = []
-        /// Shown the cache as each answer is taken in, before the whole pass is done.
-        var publish: @MainActor @Sendable (NewsCache) -> Void = { _ in }
+        /// Shown the cache as answers that change what's listed are taken in, before the whole
+        /// pass is done. Each call is awaited before the pass returns, and none overlap.
+        var publish: @Sendable (NewsCache) async -> Void = { _ in }
         /// Rechecked before each public GET; already-issued requests may finish normally.
         var isAllowed: @MainActor @Sendable () -> Bool = { true }
     }
@@ -324,10 +325,16 @@ enum NewsFetcher {
         case unreachable
     }
 
+    /// What a pass's feed checks hand back: a feed's answer, or word that `publish` is done.
+    private enum PassEvent: Sendable {
+        case answer(FeedSource, Answer?)
+        case shown
+    }
+
     /// Fetches what's due: the model list and each feed every hour, a failed one after its
     /// `retryInterval`, or anything older than `maxAge` when given (opening the tab, pulling to
     /// refresh).
-    static func refresh(_ cache: NewsCache, sources: [FeedSource], following vendors: Set<String>, maxAge: TimeInterval? = nil, now: Date = .now, forcedSources: Set<String> = [], quietSources: Set<String> = [], isAllowed: @escaping @MainActor @Sendable () -> Bool = { true }, publish: @escaping @MainActor @Sendable (NewsCache) -> Void = { _ in }) async -> Result {
+    static func refresh(_ cache: NewsCache, sources: [FeedSource], following vendors: Set<String>, maxAge: TimeInterval? = nil, now: Date = .now, forcedSources: Set<String> = [], quietSources: Set<String> = [], isAllowed: @escaping @MainActor @Sendable () -> Bool = { true }, publish: @escaping @Sendable (NewsCache) async -> Void = { _ in }) async -> Result {
         var cache = cache
         // Freeze legacy sources' dates before another source advances the shared timestamp.
         var migrated = cache.sourceChecks ?? [:]
@@ -346,6 +353,7 @@ enum NewsFetcher {
             guard let answer = await permittedGet(ModelFeed.url, validator: cache.validators[key], isAllowed: isAllowed) else {
                 return .init(cache: cache, newModels: [])
             }
+            let listed = cache.models
             switch answer {
             case let .body(data, validator, isTruncated):
                 if !isTruncated, let releases = try? ModelFeed.releases(from: data) {
@@ -379,10 +387,13 @@ enum NewsFetcher {
                     unreadable.insert(ModelFeed.id)
                 }
             }
-            // Shown before the feeds are in.
-            var shown = cache
-            shown.unreadable = unreadable.isEmpty ? nil : unreadable
-            await publish(shown)
+            // A list that changed shows before the feeds are in; the same list again waits for
+            // the pass, so it isn't folded and shown for nothing.
+            if cache.models != listed {
+                var shown = cache
+                shown.unreadable = unreadable.isEmpty ? nil : unreadable
+                await publish(shown)
+            }
         }
 
         let due = sources.filter { source in
@@ -397,17 +408,33 @@ enum NewsFetcher {
             var anySucceeded = false
             var anyFailed = false
             var checks = cache.sourceChecks ?? [:]
-            // Each feed's answer is taken in, and shown (`publish`), as it arrives: a slow feed
-            // doesn't hold the others back.
-            await withTaskGroup(of: (FeedSource, Answer?).self) { group in
+            // Each feed's answer is taken in as it arrives, and one that changes the feed's items
+            // is shown (`publish`) beside the others: a slow feed doesn't hold the rest back. A
+            // 304, or the same items again, isn't shown until the pass is done, and what's taken
+            // in while one answer is being shown is shown next, together, so feeds that change
+            // back to back are folded once rather than once each.
+            await withTaskGroup(of: PassEvent.self) { group in
                 for source in due {
                     group.addTask {
-                        return (source, await permittedGet(source.url, validator: needsExcerptBody.contains(source.id) ? nil : previous[source.url.absoluteString], sizeLimit: source.sizeLimit, isAllowed: isAllowed))
+                        return .answer(source, await permittedGet(source.url, validator: needsExcerptBody.contains(source.id) ? nil : previous[source.url.absoluteString], sizeLimit: source.sizeLimit, isAllowed: isAllowed))
                     }
                 }
-                for await (source, answer) in group {
+                var isShowing = false
+                var unshown = false
+                for await event in group {
+                    guard case let .answer(source, answer) = event else {
+                        isShowing = false
+                        if unshown {
+                            unshown = false
+                            isShowing = true
+                            let shown = cache
+                            group.addTask { await publish(shown); return .shown }
+                        }
+                        continue
+                    }
                     guard let answer else { continue } // Disabled checks are neither failures nor fresh readings.
                     let key = source.url.absoluteString
+                    let listed = cache.items[source.id] ?? []
                     var check = cache.check(for: source)
                     var success = false
                     var retryAfter: Date?
@@ -459,7 +486,14 @@ enum NewsFetcher {
                     cache.sourceChecks = checks
                     cache.unreadable = unreadable.isEmpty ? nil : unreadable
                     if anySucceeded { cache.announcementsFetchedAt = now }
-                    await publish(cache)
+                    guard (cache.items[source.id] ?? []) != listed else { continue }
+                    if isShowing {
+                        unshown = true
+                    } else {
+                        isShowing = true
+                        let shown = cache
+                        group.addTask { await publish(shown); return .shown }
+                    }
                 }
             }
             if anySucceeded || anyFailed { cache.announcementsFailedAt = anyFailed ? now : nil }

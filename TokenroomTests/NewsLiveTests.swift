@@ -176,6 +176,88 @@ final class NewsLiveTests: XCTestCase {
         XCTAssertEqual(news.unseenAnnouncementCount, 0)
     }
 
+    /// Every catalog feed with 30 cached entries, and a pass that has brought 30 newer ones to
+    /// each, so folding goes over 1,320 entries: the most the catalog's feeds can give it. Claude
+    /// Code's changelog and its GitHub releases share versions, Google's two blogs share titles,
+    /// and every entry has a link and an excerpt.
+    private static func fullCatalog(now: Date) -> (cached: NewsCache, arrived: NewsCache, entries: Int) {
+        func items(for source: FeedSource, _ numbers: Range<Int>) -> [FeedItem] {
+            numbers.map { n in
+                let date = now.addingTimeInterval(-Double(60 - n) * 3600)
+                let host = source.url.host ?? "example.com"
+                let title: String
+                let link: String
+                if source.id == "claude-code" {
+                    (title, link) = ("2.1.\(n)", "https://\(host)/docs/en/changelog#2-1-\(n)")
+                } else if source.url.path.hasSuffix("/releases.atom") {
+                    (title, link) = ("v2.1.\(n)", "https://\(host)\(source.url.deletingPathExtension().path)/tag/v2.1.\(n)")
+                } else if source.isCommitLog {
+                    (title, link) = ("Update skill-\(n % 7) skill (#\(1500 + n))", "https://\(host)/anthropics/skills/commit/c\(n)")
+                } else if source.titleFoldGroup != nil {
+                    (title, link) = ("What's new in Gemini, part \(n)", "https://\(host)/blog/whats-new-\(n)-\(source.id)")
+                } else {
+                    (title, link) = ("\(source.name) post \(n): a new feature for developers", "https://\(host)/news/post-\(n)")
+                }
+                return FeedItem(id: link, title: title, link: URL(string: link), published: date, source: source.itemSource,
+                                sourceID: source.id, kind: source.kind, publisherPublishedAt: date, firstSeenAt: date,
+                                excerpt: String(repeating: "What changed, and why it matters to people building with it. ", count: 5),
+                                excerptIsPlainText: true)
+            }
+        }
+        var cached = NewsCache()
+        cached.modelsFetchedAt = now.addingTimeInterval(-60)
+        cached.announcementsFetchedAt = now.addingTimeInterval(-60)
+        cached.sourceChecks = Dictionary(uniqueKeysWithValues: FeedSource.catalog.map { ($0.id, NewsCache.SourceCheck(succeededAt: now.addingTimeInterval(-60))) })
+        var arrived = cached
+        for source in FeedSource.catalog {
+            cached.items[source.id] = items(for: source, 0..<30)
+            arrived.items[source.id] = items(for: source, 30..<60)
+        }
+        return (cached, arrived, FeedSource.catalog.count * 60)
+    }
+
+    private static func milliseconds(_ duration: Duration) -> Double {
+        Double(duration.components.seconds) * 1000 + Double(duration.components.attoseconds) / 1e15
+    }
+
+    /// Showing what a pass has taken in folds the whole store, about 1,300 entries at most. That
+    /// runs off the main actor: the main actor stays free for most of the publish.
+    @MainActor
+    func testShowingAFullCatalogLeavesTheMainActorFree() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let catalog = Self.fullCatalog(now: now)
+        let folder = try makeFolder()
+        catalog.cached.save(to: folder)
+        let timing = LockedBox<(publish: Duration, held: Duration)?>(nil)
+        let news = NewsStore(defaults: makeDefaults(), directory: folder, now: now, fetch: { request in
+            // The main actor ticks every millisecond; the longest gap is how long it was held.
+            let ticking = LockedBox(true)
+            let longest = LockedBox(Duration.zero)
+            let ticker = Task { @MainActor in
+                var last = ContinuousClock.now
+                while ticking.value {
+                    try? await Task.sleep(for: .milliseconds(1))
+                    let tick = ContinuousClock.now
+                    longest.value = max(longest.value, last.duration(to: tick))
+                    last = tick
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+            let start = ContinuousClock.now
+            await request.publish(catalog.arrived)
+            let publish = start.duration(to: .now)
+            ticking.value = false
+            await ticker.value
+            timing.value = (publish, longest.value)
+            return NewsFetcher.Result(cache: catalog.arrived, newModels: [])
+        }, notify: { _, _, _ in })
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: now)
+        let measured = try XCTUnwrap(timing.value)
+        print(String(format: "News publish over %d entries: %.1f ms, main actor held at most %.1f ms", catalog.entries, Self.milliseconds(measured.publish), Self.milliseconds(measured.held)))
+        XCTAssertTrue(news.allAnnouncements.contains { $0.title == "Cursor post 59: a new feature for developers" }, "What arrived shows")
+        XCTAssertLessThan(measured.held, measured.publish / 2, "Folding doesn't hold the main actor for the publish")
+    }
+
     /// A feed read seven minutes ago, while the next 5-minute check is under way, is still
     /// current; one read twenty minutes ago is delayed.
     func testSourcesStayCurrentWhileTheNextCheckIsUnderWay() {

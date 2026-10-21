@@ -332,13 +332,25 @@ enum FeedParser {
         return trimmed.isEmpty ? title : trimmed + "…"
     }
 
-    /// "update claude-api 2026-10-21" for a commit updating one thing that day; nil for others.
+    /// "update claude-api skill 2026-10-21" for a commit updating one thing that day; nil for
+    /// others. The thing is all that follows "Update", up to a colon or a spaced dash, with its
+    /// pull request number and a leading "the" left out: "Update the claude-api skill (#1601)" and
+    /// "Update claude-api skill: add …" update one thing, "Update the pdf skill" another, and
+    /// "Update docs for …" a third, whatever follows "for".
     static func dailyUpdateKey(_ item: FeedItem) -> String? {
         guard let date = item.updatedAt ?? item.publisherPublishedAt ?? item.published,
-              let match = item.title.range(of: #"(?i)^update\s+\S+"#, options: .regularExpression)
+              let update = item.title.range(of: #"(?i)^update\s+"#, options: .regularExpression)
         else { return nil }
+        var thing = item.title[update.upperBound...]
+        if let end = thing.range(of: #":|\s[-–—]\s"#, options: .regularExpression) { thing = thing[..<end.lowerBound] }
+        let words = thing
+            .replacingOccurrences(of: #"\(#\d+\)"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"(?i)^\s*the\s+"#, with: "", options: .regularExpression)
+            .lowercased()
+            .split { $0.isWhitespace || $0 == "…" }
+        guard !words.isEmpty else { return nil }
         let day = Calendar.gregorianUTC.dateComponents([.year, .month, .day], from: date)
-        return "\(item.title[match].lowercased()) \(day.year ?? 0)-\(day.month ?? 0)-\(day.day ?? 0)"
+        return "update \(words.joined(separator: " ")) \(day.year ?? 0)-\(day.month ?? 0)-\(day.day ?? 0)"
     }
 
     /// An entry's link if it's a web page, resolved against the feed. Other schemes
