@@ -169,7 +169,13 @@ struct FeedItem: Codable, Equatable, Sendable, Identifiable {
     var sortDate: Date { publisherPublishedAt ?? updatedAt ?? published ?? .distantPast }
 
     /// Release feeds title entries with a bare version; "Codex 0.157.0" reads better in a list.
+    /// A commit's trailing pull request number ("Add discernment-nudge skill (#1553)") is left
+    /// off; it stays in `title`, so two commits with the same message stay two.
     var displayTitle: String {
+        namedTitle.replacingOccurrences(of: #"\s*\(#\d+\)$"#, with: "", options: .regularExpression)
+    }
+
+    private var namedTitle: String {
         title.range(of: #"^v?\d+(\.\d+)+([-+.][0-9A-Za-z.]+)?$"#, options: .regularExpression) != nil
             ? "\(source) \(title)"
             : title
@@ -179,7 +185,7 @@ struct FeedItem: Codable, Equatable, Sendable, Identifiable {
     /// under the same name ("Claude Code 2.1.282" from the changelog, "Claude Code v2.1.282" from
     /// GitHub). `NewsCache.announcements` compares it within a product only.
     var duplicateKey: String {
-        displayTitle.lowercased().replacingOccurrences(of: #"\sv(?=\d)"#, with: " ", options: .regularExpression)
+        namedTitle.lowercased().replacingOccurrences(of: #"\sv(?=\d)"#, with: " ", options: .regularExpression)
     }
 }
 
@@ -190,19 +196,26 @@ struct FeedSource: Sendable, Identifiable, Equatable {
     var url: URL
     /// The provider it belongs to, for following.
     var provider: Provider?
-    /// Drops pre-release entries (alpha, beta, rc) from release feeds.
+    /// Drops pre-release entries (alpha, beta, rc, nightly, preview, …: `FeedParser.isPrerelease`)
+    /// from release feeds.
     var skipsPrereleases = false
     /// Keeps only entries whose link contains this, e.g. a blog's announcements.
     var linkContains: String? = nil
+    /// Leaves out entries whose title starts with this (ignoring case), e.g. a repository's
+    /// releases of another product it also ships.
+    var skipsTitlePrefix: String? = nil
     /// The most read from the feed, in bytes: a longer one stops there, and shows what it got.
     var sizeLimit = FeedParser.sizeLimit
     /// The feed it belongs to: a second source for the same product, shown under that feed's
     /// name and turned on and off with it.
     var partOf: String? = nil
+    /// Its entries can share a title, as a repository's commits do ("Update pdf skill"), so
+    /// they're told apart by link and ID, never folded or dropped by title.
+    var repeatsTitles = false
 
     var kind: NewsSourceKind = .officialAnnouncement
-    /// Legacy tool changelogs suppress repeated titles; people and incidents never do.
-    var suppressesRepeatedTitles: Bool { kind == .officialAnnouncement }
+    /// Legacy tool changelogs suppress repeated titles; people, incidents, and commits never do.
+    var suppressesRepeatedTitles: Bool { kind == .officialAnnouncement && !repeatsTitles }
 
     /// The name its items show, and fold duplicates under.
     var itemSource: String {
@@ -223,7 +236,7 @@ struct FeedSource: Sendable, Identifiable, Equatable {
         FeedSource(id: "claude-agent-sdk", name: "Claude Agent SDK", url: URL(string: "https://github.com/anthropics/claude-agent-sdk-python/releases.atom")!, provider: .claude, skipsPrereleases: true),
         // The skills repository's commits: each entry is a skill added or updated. Not releases, so
         // nothing is skipped as a pre-release.
-        FeedSource(id: "claude-skills", name: "Claude Skills", url: URL(string: "https://github.com/anthropics/skills/commits/main.atom")!, provider: .claude),
+        FeedSource(id: "claude-skills", name: "Claude Skills", url: URL(string: "https://github.com/anthropics/skills/commits/main.atom")!, provider: .claude, repeatsTitles: true),
         FeedSource(id: "openai-news", name: "OpenAI", url: URL(string: "https://openai.com/news/rss.xml")!, provider: .openai),
         FeedSource(id: "codex-releases", name: "Codex", url: URL(string: "https://github.com/openai/codex/releases.atom")!, provider: .openai, skipsPrereleases: true),
         FeedSource(id: "gemini", name: "Google Gemini", url: URL(string: "https://blog.google/products-and-platforms/products/gemini/rss/")!, provider: .antigravity),
@@ -235,7 +248,9 @@ struct FeedSource: Sendable, Identifiable, Equatable {
         FeedSource(id: "devin", name: "Devin", url: URL(string: "https://docs.devin.ai/desktop/changelog/rss.xml")!, provider: .devin),
         FeedSource(id: "zai", name: "Z.ai", url: URL(string: "https://docs.z.ai/release-notes/new-released/rss.xml")!, provider: .zai),
         FeedSource(id: "kimi-code", name: "Kimi Code", url: URL(string: "https://github.com/MoonshotAI/kimi-code/releases.atom")!, provider: .kimiCode, skipsPrereleases: true),
-        FeedSource(id: "opencode", name: "OpenCode", url: URL(string: "https://github.com/sst/opencode/releases.atom")!, provider: .opencodeGo, skipsPrereleases: true),
+        // sst/opencode redirects here (October 2026). Its `github-v…` releases are its GitHub
+        // integration's, not OpenCode's.
+        FeedSource(id: "opencode", name: "OpenCode", url: URL(string: "https://github.com/anomalyco/opencode/releases.atom")!, provider: .opencodeGo, skipsPrereleases: true, skipsTitlePrefix: "github-v"),
         FeedSource(id: "openrouter", name: "OpenRouter", url: URL(string: "https://openrouter.ai/blog/feed.xml")!, provider: .openrouter, linkContains: "/blog/announcements/"),
         // ChatGPT and Codex product notes: each links to a `#codex-…` anchor, ChatGPT's included.
         // Its `#github-release-…` entries are CLI releases, which `codex-releases` already has.
@@ -275,6 +290,7 @@ enum FeedParser {
         let items = delegate.items
             .filter { !source.skipsPrereleases || !isPrerelease($0.title) }
             .filter { item in source.linkContains.map { item.link?.absoluteString.contains($0) == true } ?? true }
+            .filter { item in source.skipsTitlePrefix.map { !item.title.lowercased().hasPrefix($0.lowercased()) } ?? true }
             .filter { !source.suppressesRepeatedTitles || titles.insert($0.title.lowercased()).inserted }
             .prefix(itemLimit)
         return (Array(items), parsed && delegate.isFeed && data.count <= source.sizeLimit, delegate.items.count)
@@ -291,15 +307,17 @@ enum FeedParser {
         return url
     }
 
-    /// Release titles like `@scope/package@2.1.1` read as the version alone, and a commit's
-    /// trailing pull request number ("Add discernment-nudge skill (#1553)") is left off.
+    /// Release titles like `@scope/package@2.1.1` read as the version alone.
     static func cleanTitle(_ title: String) -> String {
         title.replacingOccurrences(of: #"^@[^/\s]+/[^@\s]+@"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"\s*\(#\d+\)$"#, with: "", options: .regularExpression)
     }
 
+    /// "0.158.0-alpha.14", "2.2.0 beta", "v0.67.0-nightly.20261021.gd00859d6b",
+    /// "v0.66.0-preview.0", "1.0.0-canary.3", "1.2.0.dev1", and a numbered pre-release such as
+    /// "1.0.102-0". The words other than alpha, beta, and rc only count right after a hyphen or a
+    /// dot, so a title that mentions them ("What's next") isn't caught.
     static func isPrerelease(_ title: String) -> Bool {
-        title.range(of: #"(?i)(-|\s)(alpha|beta|rc)(\b|\.|\d)"#, options: .regularExpression) != nil
+        title.range(of: #"(?i)((-|\s)(alpha|beta|rc)|[-.](nightly|preview|canary|dev|next|snapshot))(\b|\.|\d)|\d+\.\d+\.\d+-\d+(\.\d+)*\b"#, options: .regularExpression) != nil
     }
 
     /// HTML elements a title may carry. Other text in angle brackets is kept: "<thinking> blocks",

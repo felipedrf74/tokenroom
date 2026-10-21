@@ -75,7 +75,9 @@ struct NewsCache: Codable, Equatable, Sendable {
             }
             let keys: [String]
             if item.kind == .officialAnnouncement {
-                keys = [item.link.map { "official link \($0.absoluteString)" }, item.canonicalID, "title \(product) \(item.duplicateKey)"].compactMap { $0 }
+                // A feed whose entries share titles (commits) is matched by link and ID only.
+                let byTitle = feeds[feed]?.repeatsTitles == true ? "item \(feed)|\(item.id)" : "title \(product) \(item.duplicateKey)"
+                keys = [item.link.map { "official link \($0.absoluteString)" }, item.canonicalID, byTitle].compactMap { $0 }
             } else { keys = ["item \(feed)|\(item.id)"] }
             let matches = Set(keys.compactMap { positions[$0] })
             if let position = matches.min(), var winner = kept[position] {

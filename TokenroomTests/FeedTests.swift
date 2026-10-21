@@ -505,7 +505,11 @@ final class FeedTests: XCTestCase {
         let changelog = try XCTUnwrap(FeedSource.catalog.first { $0.id == "codex-changelog" })
         XCTAssertEqual(changelog.linkContains, "#codex-", "Its CLI entries repeat codex-releases")
         XCTAssertEqual(changelog.sizeLimit, 4 * 1024 * 1024)
-        XCTAssertTrue(FeedSource.catalog.filter { $0.url.path.hasSuffix("/releases.atom") }.allSatisfy(\.skipsPrereleases), "Release feeds skip pre-releases")
+        let releaseFeeds = FeedSource.catalog.filter { $0.url.path.hasSuffix("/releases.atom") }
+        XCTAssertGreaterThanOrEqual(releaseFeeds.count, 9)
+        for source in releaseFeeds {
+            XCTAssertTrue(source.skipsPrereleases, "\(source.id) is a release feed, so it skips pre-releases")
+        }
         XCTAssertFalse(try XCTUnwrap(FeedSource.catalog.first { $0.id == "claude-skills" }).skipsPrereleases, "A commit feed has no pre-releases to skip")
         XCTAssertTrue(FeedSource.catalog.filter { $0.id != "codex-changelog" }.allSatisfy { $0.sizeLimit == FeedParser.sizeLimit })
     }
@@ -530,21 +534,75 @@ final class FeedTests: XCTestCase {
         XCTAssertTrue(added.allSatisfy { !NewsStore.firstCatalog.contains($0.id) }, "New since 2.0, so a list saved before turns them on")
     }
 
-    func testACommitsPullRequestNumberIsLeftOffItsTitle() throws {
+    func testPrereleasesIncludeNightliesPreviewsAndNumberedOnes() throws {
+        for title in ["v0.67.0-nightly.20261021.gd00859d6b", "v0.66.0-preview.0", "1.0.102-0", "1.0.102-1", "0.158.0-alpha.14",
+                      "2.2.0-rc.1", "2.2.0 beta", "1.0.0-canary.3", "1.2.0.dev1", "3.0.0-next.2", "1.0.0-SNAPSHOT"] {
+            XCTAssertTrue(FeedParser.isPrerelease(title), title)
+        }
+        for title in ["Release v0.65.0", "1.0.102", "v2.1.2", "v0.66.0", "Claude Code 2.1.282", "kimi-code-2.1.1",
+                      "What's next for Gemini", "Developer preview of agents", "2026-10-21 release notes"] {
+            XCTAssertFalse(FeedParser.isPrerelease(title), title)
+        }
+        // Gemini CLI's releases as published: mostly nightlies and previews.
+        let gemini = try XCTUnwrap(FeedSource.catalog.first { $0.id == "gemini-cli" })
+        let atom = Data("""
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><id>n</id><title>v0.67.0-nightly.20261021.gd00859d6b</title><link href="https://github.com/google-gemini/gemini-cli/releases/tag/n"/><updated>2026-10-21T00:00:00Z</updated></entry>
+          <entry><id>p</id><title>v0.66.0-preview.0</title><link href="https://github.com/google-gemini/gemini-cli/releases/tag/p"/><updated>2026-10-20T00:00:00Z</updated></entry>
+          <entry><id>s</id><title>Release v0.65.0</title><link href="https://github.com/google-gemini/gemini-cli/releases/tag/s"/><updated>2026-10-19T00:00:00Z</updated></entry>
+        </feed>
+        """.utf8)
+        XCTAssertEqual(FeedParser.items(from: atom, source: gemini).map(\.title), ["Release v0.65.0"])
+    }
+
+    func testOpenCodeReadsItsNewHomeWithoutItsGitHubIntegrationsReleases() throws {
+        let opencode = try XCTUnwrap(FeedSource.catalog.first { $0.id == "opencode" })
+        XCTAssertEqual(opencode.url.absoluteString, "https://github.com/anomalyco/opencode/releases.atom", "sst/opencode answers with a redirect here")
+        let atom = Data("""
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><id>a</id><title>v1.2.28</title><link href="https://github.com/anomalyco/opencode/releases/tag/v1.2.28"/><updated>2026-10-21T00:00:00Z</updated></entry>
+          <entry><id>b</id><title>github-v1.2.27</title><link href="https://github.com/anomalyco/opencode/releases/tag/github-v1.2.27"/><updated>2026-10-20T00:00:00Z</updated></entry>
+          <entry><id>c</id><title>GitHub-v1.2.26</title><link href="https://github.com/anomalyco/opencode/releases/tag/github-v1.2.26"/><updated>2026-10-19T00:00:00Z</updated></entry>
+          <entry><id>d</id><title>v1.2.27</title><link href="https://github.com/anomalyco/opencode/releases/tag/v1.2.27"/><updated>2026-10-18T00:00:00Z</updated></entry>
+        </feed>
+        """.utf8)
+        XCTAssertEqual(FeedParser.items(from: atom, source: opencode).map(\.displayTitle), ["OpenCode v1.2.28", "OpenCode v1.2.27"])
+        let read = FeedParser.read(atom, source: opencode)
+        XCTAssertEqual(read.entries, 4, "Left out, not missing: the feed is still whole")
+        XCTAssertTrue(read.isComplete)
+    }
+
+    func testCommitsWithTheSameMessageStayApartAndShowWithoutTheirPullRequestNumber() throws {
+        func entry(_ sha: String, _ title: String, _ day: Int) -> String {
+            """
+            <entry><id>tag:github.com,2008:Grit::Commit/\(sha)</id><link type="text/html" rel="alternate" href="https://github.com/anthropics/skills/commit/\(sha)"/>
+              <title>
+                  \(title)
+              </title><updated>2026-10-\(day)T09:00:00Z</updated></entry>
+            """
+        }
         let atom = Data("""
         <feed xmlns="http://www.w3.org/2005/Atom"><title>Recent Commits to skills:main</title>
-          <entry><id>tag:github.com,2008:Grit::Commit/abc123</id><link type="text/html" rel="alternate" href="https://github.com/anthropics/skills/commit/abc123"/>
-            <title>
-                Add discernment-nudge skill (#1553)
-            </title><updated>2026-10-20T09:00:00Z</updated></entry>
-          <entry><id>tag:github.com,2008:Grit::Commit/def456</id><link type="text/html" rel="alternate" href="https://github.com/anthropics/skills/commit/def456"/>
-            <title>Update the (#1) ranking notes</title><updated>2026-10-19T09:00:00Z</updated></entry>
+        \(entry("c162", "Update pdf skill (#162)", 20))
+        \(entry("c140", "Update pdf skill (#140)", 18))
+        \(entry("r2", "Update README.md", 17))
+        \(entry("r1", "Update README.md", 16))
+        \(entry("n1", "Update the (#1) ranking notes", 15))
         </feed>
         """.utf8)
         let skills = try XCTUnwrap(FeedSource.catalog.first { $0.id == "claude-skills" })
         let items = FeedParser.items(from: atom, source: skills)
-        XCTAssertEqual(items.map(\.title), ["Add discernment-nudge skill", "Update the (#1) ranking notes"], "Only a trailing number goes")
-        XCTAssertEqual(items.first?.link?.absoluteString, "https://github.com/anthropics/skills/commit/abc123")
+        XCTAssertEqual(items.map(\.id).map { $0.components(separatedBy: "/").last }, ["c162", "c140", "r2", "r1", "n1"], "Each commit is its own entry, whatever its message")
+        XCTAssertEqual(items.map(\.displayTitle), ["Update pdf skill", "Update pdf skill", "Update README.md", "Update README.md", "Update the (#1) ranking notes"], "Only a trailing pull request number is left off, and only when shown")
+        XCTAssertEqual(items.first?.title, "Update pdf skill (#162)")
+
+        // Read before with the older commits; the newer pdf commit arrives later and is new.
+        var cache = NewsCache()
+        cache.items[skills.id] = NewsFetcher.firstSeen(Array(items.dropFirst()), previous: [], now: utc(2026, 10, 19))
+        cache.items[skills.id] = NewsFetcher.firstSeen(items, previous: cache.items[skills.id] ?? [], now: utc(2026, 10, 21))
+        let shown = cache.announcements(from: [skills])
+        XCTAssertEqual(shown.count, 5, "Nothing folds by title in a commit feed")
+        XCTAssertEqual(shown.first { $0.id.hasSuffix("c162") }?.newsDate, utc(2026, 10, 21), "The new commit counts from when it arrived")
         XCTAssertEqual(FeedParser.cleanTitle("@scope/package@2.1.1"), "2.1.1")
     }
 
