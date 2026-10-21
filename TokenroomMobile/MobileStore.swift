@@ -851,9 +851,11 @@ final class MobileStore {
                 return standIn ?? RelayProvider(provider: provider, status: .loading, checkedAt: nil)
             }
             let mine = RelayProvider(provider: provider, status: budgeted(status, for: provider), checkedAt: localCheckedAt[provider])
+            // One dated ahead of the clock (saved before it was set back) never beats a reading
+            // this launch took.
             guard var standIn, !["signedOut", "expired", "notEntitled"].contains(mine.state),
                   let standInTime = Self.readingTime(standIn),
-                  standInTime > (Self.readingTime(mine) ?? .distantPast)
+                  Self.readingTime(mine).map({ ReadingFreshness.ordering(standInTime, now: now) > $0 }) ?? true
             else { return mine }
             if !mine.isLive, let failedAt = localFailedAt[provider], failedAt > standInTime {
                 // This launch's check failed (offline, busy, rate limited) after the saved
@@ -879,7 +881,8 @@ final class MobileStore {
         var newest: [String: RelayProvider] = [:]
         for provider in (ownRecord?.providers ?? []) + cached {
             guard let time = Self.readingTime(provider), now.timeIntervalSince(time) < Self.standInLimit else { continue }
-            if let kept = newest[provider.id], let keptTime = Self.readingTime(kept), keptTime >= time { continue }
+            if let kept = newest[provider.id], let keptTime = Self.readingTime(kept),
+               ReadingFreshness.ordering(keptTime, now: now) >= ReadingFreshness.ordering(time, now: now) { continue }
             newest[provider.id] = provider
         }
         return newest
