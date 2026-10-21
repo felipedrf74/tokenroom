@@ -39,9 +39,6 @@ struct UsageAlert: Codable, Equatable, Sendable, Identifiable {
     /// A budget alert's text before its countdown, so a held alert can say how long is left
     /// when it goes out rather than when it was raised.
     var detail: String? = nil
-    /// When a run-out alert says the window runs out, so one held past it is dropped rather
-    /// than sent quoting a time already gone. Nil in older alerts.
-    var runsOutAt: Date? = nil
     /// A stale reading's measured run-out. Kept for retry-time urgency; absent in older alerts
     /// and live alerts, whose existing urgency stays unchanged.
     var projectedRunsOutAt: Date? = nil
@@ -503,6 +500,24 @@ enum AlertRules {
               pace.verdict == .ahead, let runsOutAt = pace.runsOutAt,
               isSession || pace.resetsAt.timeIntervalSince(runsOutAt) >= runsOutLongLead
         else { return nil }
+        return runsOut(provider, window: window, pace: pace, runsOutAt: runsOutAt, preferences: preferences, now: now)
+    }
+
+    /// A held run-out alert brought up to a newer reading of its window: when the window runs out
+    /// as of now, or nil once it no longer runs out before its reset (the pace eased, or it's used
+    /// up). It keeps the held alert's ID, so it stays the one alert for that window.
+    static func runsOut(updating alert: UsageAlert, provider: RelayProvider, window: RelayWindow, preferences: AlertPreferences, samples: [(date: Date, used: Double)] = [], now: Date) -> UsageAlert? {
+        guard let pace = UsageRanking.pace(for: window, isStale: !provider.isLive, samples: samples, now: now),
+              let runsOutAt = pace.runsOutAt
+        else { return nil }
+        var updated = runsOut(provider, window: window, pace: pace, runsOutAt: runsOutAt, preferences: preferences, now: now)
+        updated.id = alert.id
+        updated.instance = alert.instance
+        return updated
+    }
+
+    /// The run-out alert for this pace, worded as of now.
+    private static func runsOut(_ provider: RelayProvider, window: RelayWindow, pace: Pace, runsOutAt: Date, preferences: AlertPreferences, now: Date) -> UsageAlert {
         let name = instance(window.resetsAt, window: window, now: now)
         let zone = TimeZone(identifier: preferences.timeZoneID) ?? .current
         var calendar = Calendar(identifier: .gregorian)
@@ -524,18 +539,9 @@ enum AlertRules {
             window: window.id,
             instance: name,
             windowKind: window.kind,
-            runsOutAt: runsOutAt,
             projectedRunsOutAt: pace.isProjected ? runsOutAt : nil,
             identityPeriodSec: window.periodSec
         )
-    }
-
-    /// How long a run-out alert can still go out: until its run-out, or, raised once that had
-    /// come (a stale reading's measured run-out), for the hour after it that it stays urgent.
-    /// Later it would quote a time already gone. Nil for older alerts, which don't say when.
-    static func runsOutDeadline(_ alert: UsageAlert, raisedAt: Date) -> Date? {
-        guard alert.kind == .runsOut, let runsOutAt = alert.runsOutAt ?? alert.projectedRunsOutAt else { return nil }
-        return runsOutAt <= raisedAt ? runsOutAt.addingTimeInterval(3600) : runsOutAt
     }
 
     /// "Resets in 3h 20m."
@@ -743,7 +749,8 @@ struct AlertLedger: Codable, Equatable, Sendable {
     /// Raises alerts for these readings and queues them; returns the ones raised now. Readings
     /// that aren't live (stale, expired) don't move `lastSeen`, so a crossing is judged against
     /// the last real one, and a window a live reading leaves out stays as it was last seen until
-    /// its reset passes (`remembering`). A stale reading can still raise the run-out alert once,
+    /// its reset passes (`remembering`), and a held run-out follows each live reading
+    /// (`refreshHeldRunOuts`). A stale reading can still raise the run-out alert once,
     /// from a run-out the collector already measured, after this ledger has seen the provider
     /// live. It does not raise a threshold, reset, or balance alert. `samples` holds recent
     /// readings by provider id, then window id, for the pace of readings without a measured one.
@@ -752,6 +759,7 @@ struct AlertLedger: Codable, Equatable, Sendable {
         var fresh: [UsageAlert] = []
         for provider in providers {
             if provider.isLive {
+                refreshHeldRunOuts(provider, previous: lastSeen[provider.id], preferences: preferences, samples: samples[provider.id] ?? [:], now: now)
                 for alert in AlertRules.alerts(previous: lastSeen[provider.id], current: provider, preferences: preferences, samples: samples[provider.id] ?? [:], now: now)
                 where sent[alert.id] == nil && !pending.contains(where: { $0.alert.id == alert.id }) && !fresh.contains(where: { $0.id == alert.id })
                     && reserveRunOutInstance(for: alert, provider: provider, now: now) {
@@ -774,6 +782,30 @@ struct AlertLedger: Codable, Equatable, Sendable {
         }
         prune(preferences: preferences, now: now)
         return fresh
+    }
+
+    /// Brings run-outs held for this provider up to its latest live reading: one whose window
+    /// still runs out before its reset says when as of now (and is urgent if that's within the
+    /// hour), so it goes out current after quiet hours or a failed save; one whose window no
+    /// longer does (the pace eased, or it's used up) is dropped, and the window can raise a new
+    /// one if it gets back on course. A window that started over is left to `prune`.
+    private mutating func refreshHeldRunOuts(_ provider: RelayProvider, previous: RelayProvider?, preferences: AlertPreferences, samples: [String: [(date: Date, used: Double)]], now: Date) {
+        var dropped: [String] = []
+        pending = pending.compactMap { item in
+            guard item.alert.kind == .runsOut, item.alert.provider == provider.id, let id = item.alert.window,
+                  let window = provider.windows.first(where: { $0.id == id }), !window.isAwaitingReading(at: now),
+                  let before = previous?.windows.first(where: { $0.id == id }),
+                  AlertRules.isSameInstance(before: before, current: window, now: now)
+            else { return item }
+            guard let updated = AlertRules.runsOut(updating: item.alert, provider: provider, window: window, preferences: preferences, samples: samples[id] ?? [], now: now) else {
+                dropped.append(id)
+                return nil
+            }
+            return Pending(alert: updated, raisedAt: item.raisedAt)
+        }
+        for id in dropped {
+            runOutInstances[provider.id + "/" + id] = nil
+        }
     }
 
     /// A live reading to remember, with the windows the last one had and this one leaves out
@@ -820,14 +852,13 @@ struct AlertLedger: Codable, Equatable, Sendable {
 
     /// Queued alerts that should go out now: urgent ones always, the rest once quiet hours end.
     /// One waiting behind a higher level for the same window (80% held overnight, then 95%)
-    /// doesn't follow it, a run-out whose time has gone doesn't go out, and held ones say how
-    /// long is left as they go out.
+    /// doesn't follow it, and held ones say how long is left as they go out.
     func due(preferences: AlertPreferences, now: Date = .now) -> [UsageAlert] {
         let ready = pending.map { item in
             var item = item
             item.alert = AlertRules.refreshed(item.alert, now: now)
             return item
-        }.filter { preferences.allows($0.alert) && preferences.shouldSend($0.alert, at: now) && !hasRunOut($0, now: now) }
+        }.filter { preferences.allows($0.alert) && preferences.shouldSend($0.alert, at: now) }
         let going = ready.map(\.alert)
         return ready
             .filter { !Self.isSuperseded($0, sent: sent, levelsSent: levelsSent, going: going) }
@@ -855,17 +886,6 @@ struct AlertLedger: Codable, Equatable, Sendable {
             guard level > alert.level, let higher = AlertRules.id(of: alert, atLevel: level) else { return false }
             return sent[higher] != nil || going.contains { $0.id == higher }
         }
-    }
-
-    /// Whether a held run-out has nothing left to warn about: its run-out came and went
-    /// (`AlertRules.runsOutDeadline`), or the window's last live reading has it used up.
-    private func hasRunOut(_ item: Pending, now: Date) -> Bool {
-        guard item.alert.kind == .runsOut else { return false }
-        if let deadline = AlertRules.runsOutDeadline(item.alert, raisedAt: item.raisedAt), deadline <= now {
-            return true
-        }
-        guard let id = item.alert.window, let window = lastSeen[item.alert.provider]?.windows.first(where: { $0.id == id }) else { return false }
-        return window.used >= 100
     }
 
     /// Crossings of a window's levels: `provider/window/kind`, for thresholds and budgets.
@@ -902,7 +922,7 @@ struct AlertLedger: Codable, Equatable, Sendable {
     }
 
     /// Drops held alerts that no longer mean anything: too old, turned off since, overtaken by a
-    /// higher level, a run-out already come or used up, or their window already reset.
+    /// higher level, or their window already reset.
     private mutating func prune(preferences: AlertPreferences, now: Date) {
         sent = sent.filter { now.timeIntervalSince($0.value) < Self.memory }
         shownHere = shownHere.filter { now.timeIntervalSince($0.value) < Self.memory }
@@ -912,9 +932,8 @@ struct AlertLedger: Codable, Equatable, Sendable {
         let lifetime = max(Self.pendingLifetime, preferences.quietLength + 3600)
         let delivered = sent
         let levels = levelsSent
-        let over = Set(pending.filter { hasRunOut($0, now: now) }.map(\.alert.id))
         pending.removeAll { item in
-            if now.timeIntervalSince(item.raisedAt) > lifetime || over.contains(item.alert.id) { return true }
+            if now.timeIntervalSince(item.raisedAt) > lifetime { return true }
             if !preferences.allows(item.alert) || Self.isSuperseded(item, sent: delivered, levelsSent: levels, going: []) { return true }
             switch item.alert.kind {
             case .threshold, .lowBalance, .bankedExpiring, .runsOut:
