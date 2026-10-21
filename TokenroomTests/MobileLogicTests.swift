@@ -308,6 +308,29 @@ final class MobileLogicTests: XCTestCase {
         XCTAssertEqual(entries.first?.sourceLabel, "A")
     }
 
+    /// Mac A's reading is two hours old; Mac B has just found Claude signed out. The faded reading
+    /// stays, and says what Mac B found, so "sign in" isn't lost for a week. Mac B's status from
+    /// before Mac A's reading says nothing new.
+    func testANewerSignInStatusShowsOnAnotherCollectorsFadedReading() {
+        let asleep = now.addingTimeInterval(-2 * 3600)
+        let reading = RelayProvider(provider: .claude, status: .live(snapshot(.claude, used: 70, fetchedAt: asleep)), checkedAt: asleep)
+        let macA = RelayMerge.Source(id: "mac-a", label: "Studio", envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: asleep, providers: [reading]))
+        for status in [ProviderStatus.signedOut("Sign in with claude login."), .expired("Session expired. Sign in with claude login again.", cached: nil), .notEntitled("Not on a plan.")] {
+            let missing = RelayProvider(provider: .claude, status: status, checkedAt: nil)
+            let newer = RelayMerge.Source(id: "mac-b", label: "Laptop", envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: now, providers: [missing]))
+            let shown = ReadingAssembler.assemble(sources: [macA, newer], histories: [:], now: now).connected.first
+            XCTAssertEqual(shown?.source, "Studio", "The reading stays")
+            XCTAssertEqual(shown?.provider.primaryWindow?.used, 70)
+            XCTAssertFalse(shown?.provider.isLive ?? true, "Faded")
+            XCTAssertEqual(shown?.provider.message, missing.message, "\(status.relayState): what the newer check found")
+        }
+        let earlier = RelayMerge.Source(id: "mac-b", label: "Laptop", envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: now.addingTimeInterval(-3 * 3600), providers: [
+            RelayProvider(provider: .claude, status: .signedOut("Sign in with claude login."), checkedAt: nil),
+        ]))
+        XCTAssertEqual(ReadingAssembler.assemble(sources: [macA, earlier], histories: [:], now: now).connected.first?.provider.message,
+                       "Last successful check 2h ago.", "Signed out before Mac A's reading: nothing new")
+    }
+
     /// A key provider this launch hasn't checked, with nothing saved for it, isn't listed as not
     /// connected without a reason, and doesn't hide another collector's reason.
     func testAProviderWaitingForItsFirstCheckIsNeitherConnectedNorNot() {
