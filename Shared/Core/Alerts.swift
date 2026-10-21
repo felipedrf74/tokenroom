@@ -39,8 +39,13 @@ struct UsageAlert: Codable, Equatable, Sendable, Identifiable {
     /// A budget alert's text before its countdown, so a held alert can say how long is left
     /// when it goes out rather than when it was raised.
     var detail: String? = nil
-    /// A stale reading's measured run-out. Kept for retry-time urgency; absent in older alerts
-    /// and live alerts, whose existing urgency stays unchanged.
+    /// When a live run-out alert says the window runs out, as of its latest reading, so one held
+    /// long past it is dropped rather than sent quoting a time already gone
+    /// (`AlertRules.runsOutDeadline`). Nil in older alerts, and in a stale reading's, which has
+    /// `projectedRunsOutAt`.
+    var runsOutAt: Date? = nil
+    /// A stale reading's measured run-out. Kept for retry-time urgency and the deadline; absent
+    /// in older alerts and live alerts, whose existing urgency stays unchanged.
     var projectedRunsOutAt: Date? = nil
     /// The logical reset that owns this alert. For a reset notice this is the ended window,
     /// while `resetsAt` continues to describe the next reset in its presentation.
@@ -539,9 +544,19 @@ enum AlertRules {
             window: window.id,
             instance: name,
             windowKind: window.kind,
+            runsOutAt: pace.isProjected ? nil : runsOutAt,
             projectedRunsOutAt: pace.isProjected ? runsOutAt : nil,
             identityPeriodSec: window.periodSec
         )
+    }
+
+    /// The last moment a held run-out alert can still go out: an hour after the run-out it says,
+    /// as of its latest reading. That's the hour it stays urgent, so one iCloud didn't take is
+    /// still retried; later it would quote a time long gone. Nil for older alerts, which don't
+    /// say when.
+    static func runsOutDeadline(_ alert: UsageAlert) -> Date? {
+        guard alert.kind == .runsOut, let runsOutAt = alert.runsOutAt ?? alert.projectedRunsOutAt else { return nil }
+        return runsOutAt.addingTimeInterval(3600)
     }
 
     /// "Resets in 3h 20m."
@@ -788,7 +803,8 @@ struct AlertLedger: Codable, Equatable, Sendable {
     /// still runs out before its reset says when as of now (and is urgent if that's within the
     /// hour), so it goes out current after quiet hours or a failed save; one whose window no
     /// longer does (the pace eased, or it's used up) is dropped, and the window can raise a new
-    /// one if it gets back on course. A window that started over is left to `prune`.
+    /// one if it gets back on course. A window that started over, and one with no newer reading
+    /// an hour past the run-out it last said (`AlertRules.runsOutDeadline`), are left to `prune`.
     private mutating func refreshHeldRunOuts(_ provider: RelayProvider, previous: RelayProvider?, preferences: AlertPreferences, samples: [String: [(date: Date, used: Double)]], now: Date) {
         var dropped: [String] = []
         pending = pending.compactMap { item in
@@ -852,13 +868,14 @@ struct AlertLedger: Codable, Equatable, Sendable {
 
     /// Queued alerts that should go out now: urgent ones always, the rest once quiet hours end.
     /// One waiting behind a higher level for the same window (80% held overnight, then 95%)
-    /// doesn't follow it, and held ones say how long is left as they go out.
+    /// doesn't follow it, a run-out past its deadline (an hour after the time it says) doesn't go
+    /// out, and held ones say how long is left as they go out.
     func due(preferences: AlertPreferences, now: Date = .now) -> [UsageAlert] {
         let ready = pending.map { item in
             var item = item
             item.alert = AlertRules.refreshed(item.alert, now: now)
             return item
-        }.filter { preferences.allows($0.alert) && preferences.shouldSend($0.alert, at: now) }
+        }.filter { preferences.allows($0.alert) && preferences.shouldSend($0.alert, at: now) && !Self.isPastRunOut($0.alert, now: now) }
         let going = ready.map(\.alert)
         return ready
             .filter { !Self.isSuperseded($0, sent: sent, levelsSent: levelsSent, going: going) }
@@ -886,6 +903,12 @@ struct AlertLedger: Codable, Equatable, Sendable {
             guard level > alert.level, let higher = AlertRules.id(of: alert, atLevel: level) else { return false }
             return sent[higher] != nil || going.contains { $0.id == higher }
         }
+    }
+
+    /// Whether a held run-out is past its deadline (`AlertRules.runsOutDeadline`): sent now, it
+    /// would quote a run-out long gone.
+    private static func isPastRunOut(_ alert: UsageAlert, now: Date) -> Bool {
+        AlertRules.runsOutDeadline(alert).map { $0 <= now } ?? false
     }
 
     /// Crossings of a window's levels: `provider/window/kind`, for thresholds and budgets.
@@ -934,7 +957,7 @@ struct AlertLedger: Codable, Equatable, Sendable {
     }
 
     /// Drops held alerts that no longer mean anything: too old, turned off since, overtaken by a
-    /// higher level, or their window already reset.
+    /// higher level, a run-out past its deadline, or their window already reset.
     private mutating func prune(preferences: AlertPreferences, now: Date) {
         sent = sent.filter { now.timeIntervalSince($0.value) < Self.memory }
         shownHere = shownHere.filter { now.timeIntervalSince($0.value) < Self.memory }
@@ -945,7 +968,7 @@ struct AlertLedger: Codable, Equatable, Sendable {
         let delivered = sent
         let levels = levelsSent
         pending.removeAll { item in
-            if now.timeIntervalSince(item.raisedAt) > lifetime { return true }
+            if now.timeIntervalSince(item.raisedAt) > lifetime || Self.isPastRunOut(item.alert, now: now) { return true }
             if !preferences.allows(item.alert) || Self.isSuperseded(item, sent: delivered, levelsSent: levels, going: []) { return true }
             switch item.alert.kind {
             case .threshold, .lowBalance, .bankedExpiring, .runsOut:
