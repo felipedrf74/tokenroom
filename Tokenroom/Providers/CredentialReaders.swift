@@ -385,6 +385,52 @@ enum CredentialReaders {
         }
     }
 
+    /// One Claude item by its service and account: the item a saved grant renews, which another
+    /// may outrank in `claudeAuth`. Read the same quiet way (access list first, then
+    /// `/usr/bin/security` only where it's trusted). Nil when the item isn't there; throws when it
+    /// can't be read now, so a grant waiting for it is kept.
+    static func claudeItem(
+        service: String,
+        account: String,
+        exists: (String, String) -> Bool? = { claudeItemExists(service: $0, account: $1) },
+        access: (String) -> ClaudeKeyAccess = { claudeKeyAccess(service: $0) },
+        security: (String, String?) -> SecurityPasswordResult = { securityPassword(service: $0, account: $1) }
+    ) throws -> ClaudeAuth? {
+        guard !account.isEmpty else { throw ProviderError.unreachable }
+        if exists(service, account) == false { return nil }
+        guard access(service).trustsSecurityTool else { throw ProviderError.unreachable }
+        switch security(service, account) {
+        case .value(let value):
+            guard let raw = present(value) else { throw ProviderError.unreachable }
+            return try parseClaudeAuth(raw, account: account, service: service)
+        case .missing:
+            return nil
+        case .unavailable:
+            throw ProviderError.unreachable
+        }
+    }
+
+    /// Whether an item with this service and account is in the Keychain, from its attributes
+    /// only: no secret is read and nothing asks. Nil when the Keychain didn't say.
+    static func claudeItemExists(service: String, account: String) -> Bool? {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
+            kSecUseAuthenticationContext as String: context,
+        ]
+        switch KeychainGate.copyMatching(query).0 {
+        case errSecSuccess: return true
+        case errSecItemNotFound: return false
+        default: return nil
+        }
+    }
+
     /// The account attribute of the item `/usr/bin/security` finds for `service` without an
     /// account: the same search, so the same item an account-less read returned. Attributes
     /// only (no `-w` or `-g`), so the secret isn't read and nothing asks. Nil when the item has

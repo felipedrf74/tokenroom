@@ -129,6 +129,9 @@ final class RelayPublisher {
             if case .noAccount = state {
                 guard try await iCloud({ try await relay.accountStatus() }) == .available else { return }
             }
+            // Off is checked before every write, not only on the way in: a write already out may
+            // still land, but none starts after sync was turned off.
+            guard isEnabled else { return }
             try await iCloud { try await relay.publish(sourceID: sourceID, kind: "mac", label: label, envelope: envelope) }
             logger.notice("relay sent \(envelope.providers.count, privacy: .public) providers")
             if !loggedAccount, let fingerprint = try? await iCloud({ try await relay.accountFingerprint() }) {
@@ -208,6 +211,8 @@ final class RelayPublisher {
             preferencesBase = remote ?? resolution.preferences
             return resolution.preferences
         }
+        // Turned off while iCloud was being read: the change made here waits for sync.
+        guard isEnabled else { return local }
         do {
             let saved = try await iCloud { try await relay.syncAlertPreferences(base: base, local: local) }
             preferencesBase = saved.preferences
@@ -228,6 +233,8 @@ final class RelayPublisher {
         var saved: [String] = []
         var announced: Set<String> = []
         for alert in alerts {
+            // Turned off partway: the rest stay queued for when sync is back.
+            guard isEnabled else { break }
             do {
                 // A balance crossing another device announced on the other side of midnight
                 // (UTC) has that day's name; don't announce it again under this one's.
@@ -236,6 +243,7 @@ final class RelayPublisher {
                     announced.insert(alert.id)
                     continue
                 }
+                guard isEnabled else { break }
                 try await iCloud { try await relay.saveAlert(alert) }
                 saved.append(alert.id)
                 logger.notice("relay alert sent \(alert.kind.rawValue, privacy: .public) \(alert.level, privacy: .public)")

@@ -7,10 +7,16 @@ final class RefreshReliabilityTests: XCTestCase {
     private var suites: [String] = []
     private var folders: [URL] = []
 
+    override func setUp() {
+        super.setUp()
+        TokenroomHTTP.overrideSession(nil)
+        StubURLProtocol.reset()
+    }
+
     override func tearDown() {
-        for name in suites {
-            UserDefaults(suiteName: name)?.removePersistentDomain(forName: name)
-        }
+        TokenroomHTTP.overrideSession(nil)
+        StubURLProtocol.reset()
+        suites.forEach(TestDefaults.remove)
         for folder in folders {
             try? FileManager.default.removeItem(at: folder)
         }
@@ -19,15 +25,21 @@ final class RefreshReliabilityTests: XCTestCase {
         super.tearDown()
     }
 
-    /// Named by the class and a count rather than at random: macOS keeps an empty preferences
-    /// file for every name, so runs reuse a few instead of leaving one behind per test.
     private func makeDefaults(enabled: [Provider]) -> UserDefaults {
-        let name = "tokenroom.tests.\(Self.self).\(suites.count)"
+        let (name, defaults) = TestDefaults.make(owner: "\(Self.self)", index: suites.count)
         suites.append(name)
-        let defaults = UserDefaults(suiteName: name)!
-        defaults.removePersistentDomain(forName: name)
         defaults.set(enabled.map(\.rawValue), forKey: "enabledProviders")
         return defaults
+    }
+
+    /// Calls through `TokenroomHTTP` answer with `status`, or fail with `failure` before any
+    /// answer, as the network would.
+    private func network(status: Int = 200, failure: URLError.Code? = nil) {
+        StubURLProtocol.handler = { _ in (status, Data("{}".utf8)) }
+        StubURLProtocol.failure = failure.map { URLError($0) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubURLProtocol.self]
+        TokenroomHTTP.overrideSession(URLSession(configuration: configuration))
     }
 
     private func makeFolder() throws -> URL {
@@ -88,6 +100,25 @@ final class RefreshReliabilityTests: XCTestCase {
         XCTAssertEqual(cursor.calls, 1, "Only the provider turned on")
     }
 
+    /// Turning a provider off and on again isn't a new login: its spacing and Retry-After hold.
+    @MainActor
+    func testTurningAProviderBackOnKeepsItsSpacingAndRetryAfter() async throws {
+        let claude = Scripted(provider: .claude, results: [.success(snapshot(.claude))])
+        let cursor = Scripted(provider: .cursor, results: [.failure(.rateLimited(until: Date().addingTimeInterval(600)))])
+        let store = try makeStore([claude, cursor], enabled: [.claude, .cursor])
+        await store.refresh(force: true)
+        XCTAssertEqual([claude.calls, cursor.calls], [1, 1])
+        for provider in [Provider.claude, .cursor] {
+            await store.setEnabled(provider, false)?.value
+            await store.setEnabled(provider, true)?.value
+        }
+        XCTAssertEqual(claude.calls, 1, "Checked a moment ago: its five minutes hold")
+        XCTAssertEqual(cursor.calls, 1, "No call before its Retry-After")
+        guard case .rateLimited = store.statuses[.cursor] else {
+            return XCTFail("Expected the rate limit kept, got \(String(describing: store.statuses[.cursor]))")
+        }
+    }
+
     /// Turned off in Settings: the iPhone's list loses it with a round sent at once, not at the
     /// timer's next check.
     @MainActor
@@ -129,41 +160,88 @@ final class RefreshReliabilityTests: XCTestCase {
 
     // MARK: Waking
 
-    /// Every call failed to connect (awake before the Wi-Fi): checked once more soon after.
+    /// No call reached the network (awake before the Wi-Fi): checked once more soon after.
     @MainActor
-    func testACheckThatCouldntConnectAtAllIsTriedOnceMore() async throws {
-        let cursor = Scripted(provider: .cursor, results: [.failure(.unreachable), .success(snapshot(.cursor))])
-        let devin = Scripted(provider: .devin, results: [.failure(.unreachable), .success(snapshot(.devin))])
+    func testACheckThatCouldntReachTheNetworkIsTriedOnceMore() async throws {
+        network(failure: .notConnectedToInternet)
+        let cursor = ReachingClient(provider: .cursor, reading: snapshot(.cursor))
+        let devin = ReachingClient(provider: .devin, reading: snapshot(.devin))
         let store = try makeStore([cursor, devin], enabled: [.cursor, .devin])
-        defer { store.stop() }
-        store.offlineRetryDelay = 0.05
+        let gate = TestGate()
+        store.waitBeforeOfflineRetry = { await gate.wait() }
+        defer { gate.open(); store.stop() }
         await store.refresh(force: true)
-        await waitUntil { cursor.calls == 2 && devin.calls == 2 }
-        XCTAssertEqual(cursor.calls, 2)
-        XCTAssertEqual(devin.calls, 2)
-        await waitUntil { store.statuses[.cursor]?.snapshot != nil && store.statuses[.devin]?.snapshot != nil }
+        let retry = try XCTUnwrap(store.offlineRetry)
+        network(status: 200)
+        gate.open()
+        await retry.value
+        XCTAssertEqual([cursor.calls, devin.calls], [2, 2])
         guard case .live = store.statuses[.cursor], case .live = store.statuses[.devin] else {
             return XCTFail("Expected readings after the retry, got \(store.statuses)")
         }
+        XCTAssertNil(store.offlineRetry)
 
         // Once: a retry that still can't connect is left to the timer.
-        let offline = [Scripted(provider: .cursor, results: [.failure(.unreachable)]),
-                       Scripted(provider: .devin, results: [.failure(.unreachable)])]
+        network(failure: .cannotFindHost)
+        let offline = [ReachingClient(provider: .cursor, reading: snapshot(.cursor)), ReachingClient(provider: .devin, reading: snapshot(.devin))]
         let still = try makeStore(offline, enabled: [.cursor, .devin])
         defer { still.stop() }
-        still.offlineRetryDelay = 0.05
+        still.waitBeforeOfflineRetry = {}
         await still.refresh(force: true)
-        await waitUntil(timeout: 0.6) { false }
+        await still.offlineRetry?.value
         XCTAssertEqual(offline.map(\.calls), [2, 2])
+        XCTAssertNil(still.offlineRetry, "No second retry")
 
         // One provider alone can't tell an outage from being offline: no retry.
-        let alone = Scripted(provider: .cursor, results: [.failure(.unreachable)])
+        let alone = ReachingClient(provider: .cursor, reading: snapshot(.cursor))
         let single = try makeStore([alone], enabled: [.cursor])
         defer { single.stop() }
-        single.offlineRetryDelay = 0.05
         await single.refresh(force: true)
-        await waitUntil(timeout: 0.3) { false }
-        XCTAssertEqual(alone.calls, 1)
+        XCTAssertNil(single.offlineRetry)
+    }
+
+    /// A server that answered with an error, or was too slow, was reached: that isn't the Mac
+    /// being offline. No retry, and Claude's five minutes between calls hold.
+    @MainActor
+    func testServerErrorsAndTimeoutsKeepTheSpacingAndArentRetried() async throws {
+        for (status, failure) in [(500, nil), (404, nil), (400, nil), (200, URLError.Code.timedOut)] as [(Int, URLError.Code?)] {
+            network(status: status, failure: failure)
+            let claude = ReachingClient(provider: .claude, reading: snapshot(.claude))
+            let cursor = ReachingClient(provider: .cursor, reading: snapshot(.cursor))
+            let store = try makeStore([claude, cursor], enabled: [.claude, .cursor])
+            let gate = TestGate()
+            store.waitBeforeOfflineRetry = { await gate.wait() }
+            defer { gate.open(); store.stop() }
+            await store.refresh(force: true)
+            XCTAssertNil(store.offlineRetry, "\(status) \(String(describing: failure)) isn't offline")
+            await store.refresh(force: true)
+            XCTAssertEqual(claude.calls, 1, "\(status) \(String(describing: failure)): its server was called, so the spacing holds")
+            XCTAssertEqual(cursor.calls, 2)
+        }
+    }
+
+    /// The retry is an ordinary check: a provider resting after a recent call stays resting.
+    @MainActor
+    func testTheOfflineRetryKeepsEachProvidersSpacing() async throws {
+        network(status: 200)
+        let claude = ReachingClient(provider: .claude, reading: snapshot(.claude))
+        let cursor = ReachingClient(provider: .cursor, reading: snapshot(.cursor))
+        let devin = ReachingClient(provider: .devin, reading: snapshot(.devin))
+        let store = try makeStore([claude, cursor, devin], enabled: [.claude, .cursor, .devin])
+        let gate = TestGate()
+        store.waitBeforeOfflineRetry = { await gate.wait() }
+        defer { gate.open(); store.stop() }
+        await store.refresh(force: true)
+        XCTAssertEqual(claude.calls, 1)
+
+        network(failure: .networkConnectionLost)
+        await store.refresh(force: true)
+        let retry = try XCTUnwrap(store.offlineRetry, "Cursor and Devin couldn't reach the network")
+        network(status: 200)
+        gate.open()
+        await retry.value
+        XCTAssertEqual([cursor.calls, devin.calls], [3, 3])
+        XCTAssertEqual(claude.calls, 1, "Claude, called a moment ago, isn't called by the retry")
     }
 
     /// A share asked for while the round going to sleep cancelled is still ending gets a round of
@@ -244,6 +322,64 @@ final class RefreshReliabilityTests: XCTestCase {
             return XCTFail("Expected the saved reading, got \(String(describing: relaunched.statuses[.openaiOrg]))")
         }
         XCTAssertEqual(rebudgeted.usedPercent, 50, accuracy: 0.001)
+    }
+}
+
+/// Holds whoever waits on it until `open`.
+final class TestGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isOpen = false
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            let now = lock.withLock {
+                if isOpen { return true }
+                waiting.append(continuation)
+                return false
+            }
+            if now { continuation.resume() }
+        }
+    }
+
+    func open() {
+        let resumed = lock.withLock {
+            isOpen = true
+            let resumed = waiting
+            waiting = []
+            return resumed
+        }
+        resumed.forEach { $0.resume() }
+    }
+}
+
+/// Checks through `TokenroomHTTP`, so what the stubbed network does is what the store sees: an
+/// answer of 200 is this reading, any other answer or failure is the client's usual error.
+final class ReachingClient: ProviderClient, @unchecked Sendable {
+    let provider: Provider
+    private let reading: QuotaSnapshot
+    private let lock = NSLock()
+    private var count = 0
+
+    init(provider: Provider, reading: QuotaSnapshot) {
+        self.provider = provider
+        self.reading = reading
+    }
+
+    var calls: Int {
+        lock.withLock { count }
+    }
+
+    func fetch() async -> Result<QuotaSnapshot, ProviderError> {
+        lock.withLock { count += 1 }
+        do {
+            _ = try await TokenroomHTTP.get(URL(string: "https://usage.example.invalid/\(provider.rawValue)")!, token: nil, provider: provider)
+            return .success(reading)
+        } catch let error as ProviderError {
+            return .failure(error)
+        } catch {
+            return .failure(.unreachable)
+        }
     }
 }
 

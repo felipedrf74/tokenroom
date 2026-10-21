@@ -438,6 +438,48 @@ final class LoginSessionTests: XCTestCase {
         XCTAssertTrue(secondTries.isEmpty, "refresh-cli is never sent")
     }
 
+    /// Claude Code can keep more than one item. A grant for one stays saved while another is
+    /// read first, goes into its own item, and the refresh token it replaced is never sent again.
+    func testAClaudeGrantStaysWithItsItemWhenAnotherIsReadFirst() async throws {
+        let items = ClaudeItems([
+            "svc-a|acct-a": claudeJSON,
+            "svc-b|acct-b": #"{"claudeAiOauth":{"accessToken":"b-access","refreshToken":"refresh-b","expiresAt":1800100000000}}"#,
+        ], first: "svc-a|acct-a")
+        let failsOnce = Tally()
+        stub { _ in (200, Data(#"{"access_token":"access-new","refresh_token":"refresh-new","expires_in":28800}"#.utf8)) }
+        let session = LoginSession()
+        let moment = now
+        let renew: @Sendable () async throws -> CredentialReaders.ClaudeAuth = {
+            try await session.claude(now: moment, persistsRecovery: false, load: {
+                try items.first()
+            }, loadItem: { service, account in
+                try items.item(service: service, account: account)
+            }, save: { updated in
+                if failsOnce.next() == 1 { throw ProviderError.unreachable }
+                items.write(updated)
+            })
+        }
+
+        // A is read first and exchanged, and its write fails: the grant is kept.
+        do {
+            _ = try await renew()
+            XCTFail("Expected the write to fail")
+        } catch {
+            XCTAssertEqual(error as? ProviderError, .unreachable)
+        }
+        // B is read first now. The grant still goes into A.
+        items.setFirst("svc-b|acct-b")
+        _ = try await renew()
+        XCTAssertTrue(items.raw("svc-a|acct-a").contains("access-new"), items.raw("svc-a|acct-a"))
+        XCTAssertTrue(items.raw("svc-a|acct-a").contains("refresh-new"))
+        XCTAssertTrue(items.raw("svc-b|acct-b").contains("refresh-b"), "B is left as it was")
+        // A is read first again, and is current: nothing is sent.
+        items.setFirst("svc-a|acct-a")
+        let renewed = try await renew()
+        XCTAssertEqual(renewed.accessToken, "access-new")
+        XCTAssertEqual(grantRequests().count, 1, "refresh-old is sent once")
+    }
+
     func testACurrentClaudeLoginIsReadWithoutAGrant() async throws {
         let raw = """
         {
@@ -693,6 +735,41 @@ private final class Tally: @unchecked Sendable {
             count += 1
             return count
         }
+    }
+}
+
+/// Claude Code's Keychain items, by `service|account`, and which one a read finds first.
+private final class ClaudeItems: @unchecked Sendable {
+    private let lock = NSLock()
+    private var raws: [String: String]
+    private var firstKey: String
+
+    init(_ raws: [String: String], first: String) {
+        self.raws = raws
+        firstKey = first
+    }
+
+    func setFirst(_ key: String) {
+        lock.withLock { firstKey = key }
+    }
+
+    func raw(_ key: String) -> String {
+        lock.withLock { raws[key] ?? "" }
+    }
+
+    func first() throws -> CredentialReaders.ClaudeAuth {
+        let (key, raw) = lock.withLock { (firstKey, raws[firstKey] ?? "") }
+        let parts = key.split(separator: "|").map(String.init)
+        return try CredentialReaders.parseClaudeAuth(raw, account: parts[1], service: parts[0])
+    }
+
+    func item(service: String, account: String) throws -> CredentialReaders.ClaudeAuth? {
+        guard let raw = lock.withLock({ raws["\(service)|\(account)"] }) else { return nil }
+        return try CredentialReaders.parseClaudeAuth(raw, account: account, service: service)
+    }
+
+    func write(_ auth: CredentialReaders.ClaudeAuth) {
+        lock.withLock { raws["\(auth.service)|\(auth.account)"] = auth.rawJSON }
     }
 }
 
