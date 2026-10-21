@@ -14,6 +14,11 @@ struct LoginRecoveryPending: Codable, Sendable, Equatable {
     var expiresAtMs: Double?
     /// The refresh token that was exchanged. The file is patched only while it still has this.
     var previousRefresh: String
+    /// Claude: the Keychain item the exchanged login was read from, its service and the account
+    /// checked before the exchange. The grant goes into that item and no other, whatever a later
+    /// read can or can't look up. Nil in a grant an earlier Tokenroom saved, and for the CLIs' files.
+    var itemService: String? = nil
+    var itemAccount: String? = nil
 }
 
 /// Pure helpers for renewing a CLI login. The actor below does the reading and writing.
@@ -574,13 +579,25 @@ actor LoginSession {
                     idToken: nil,
                     expiresText: nil,
                     expiresAtMs: (now.timeIntervalSince1970 + expiresIn) * 1000,
-                    previousRefresh: auth.refreshToken ?? ""
+                    previousRefresh: auth.refreshToken ?? "",
+                    // `facts` let this login be exchanged only with its account known.
+                    itemService: auth.service,
+                    itemAccount: auth.account.isEmpty ? nil : auth.account
                 )
             },
             apply: { auth, pending in
                 guard (auth.refreshToken ?? "") == pending.previousRefresh else { return .moved(auth) }
-                // A grant saved from an earlier exchange isn't written under a guessed account either.
-                guard CredentialReaders.claudeLoginCanBeRenewedInPlace(auth) else { throw ProviderError.unreachable }
+                // Into the item checked before the exchange. Only a grant saved before items were
+                // recorded takes the account this read found, and none is guessed.
+                let service = pending.itemService ?? auth.service
+                guard let account = pending.itemAccount ?? (auth.account.isEmpty ? nil : auth.account) else {
+                    throw ProviderError.unreachable
+                }
+                // Another item, holding the same refresh token, isn't the one this grant renews.
+                // The grant stays saved, and the login isn't exchanged again.
+                guard auth.service == service, auth.account.isEmpty || auth.account == account else {
+                    throw ProviderError.unreachable
+                }
                 guard let expiresAtMs = pending.expiresAtMs else { throw ProviderError.unreachable }
                 guard let patched = OAuthRefresh.patchClaude(
                     raw: auth.rawJSON,
@@ -591,12 +608,12 @@ actor LoginSession {
                     previousRefresh: auth.refreshToken,
                     previousExpiresAtMs: auth.expiresAtMs
                 ) else { throw ProviderError.unreachable }
-                let updated = try CredentialReaders.parseClaudeAuth(patched, account: auth.account, service: auth.service)
+                let updated = try CredentialReaders.parseClaudeAuth(patched, account: account, service: service)
                 if let save {
                     try await BlockingIO.run { try save(updated) }
                 } else {
                     let wrote = await BlockingIO.run {
-                        CredentialReaders.writeClaudeCredential(service: auth.service, account: auth.account, json: patched)
+                        CredentialReaders.writeClaudeCredential(service: service, account: account, json: patched)
                     }
                     guard wrote else { throw ProviderError.unreachable }
                     CredentialReaders.rememberClaudeAuth(updated)
@@ -724,6 +741,11 @@ actor LoginSession {
 
         var tries = 0
         while tries < 2 {
+            // A second try is for the login read after the first: it's sent only if that one
+            // could have been sent on its own (for Claude, its account is known).
+            if tries > 0, let ready = readySession(current, facts: facts, provider: provider, now: now, replacing: replacing) {
+                return try ready.get()
+            }
             tries += 1
             let exchanged = facts(current).refreshToken
             switch await post(current) {
