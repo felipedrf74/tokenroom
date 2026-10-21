@@ -133,6 +133,16 @@ final class NewsLiveTests: XCTestCase {
         XCTAssertEqual(later.unseenModelCount(now: liveCheck.addingTimeInterval(60)), 1, "Created during the visit, but never on screen")
     }
 
+    /// The Mac's News window counts as on screen (a visit, 5-minute checks) only while someone can
+    /// see it.
+    func testTheMacNewsWindowIsOnScreenOnlyWhenItCanBeSeen() {
+        XCTAssertTrue(AppDelegate.newsIsOnScreen(isVisible: true, isMiniaturized: false, isOccluded: false, appIsHidden: false))
+        XCTAssertFalse(AppDelegate.newsIsOnScreen(isVisible: true, isMiniaturized: true, isOccluded: false, appIsHidden: false), "In the Dock")
+        XCTAssertFalse(AppDelegate.newsIsOnScreen(isVisible: true, isMiniaturized: false, isOccluded: true, appIsHidden: false), "Wholly covered, or on another Space")
+        XCTAssertFalse(AppDelegate.newsIsOnScreen(isVisible: true, isMiniaturized: false, isOccluded: false, appIsHidden: true), "Hidden with the app")
+        XCTAssertFalse(AppDelegate.newsIsOnScreen(isVisible: false, isMiniaturized: false, isOccluded: false, appIsHidden: false), "Closed")
+    }
+
     /// What a pass has taken in shows while it's still waiting on a slow feed, and a quiet read's
     /// back catalog isn't new even then.
     @MainActor
