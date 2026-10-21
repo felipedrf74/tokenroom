@@ -363,6 +363,81 @@ final class LoginSessionTests: XCTestCase {
         XCTAssertEqual(box.raw, original)
     }
 
+    /// The account is checked before the exchange. A read after it that can't look the account up
+    /// (the `security` tool busy past its limit, say) doesn't stop the grant going into that item,
+    /// now or, when the write fails, from the saved grant on the next try. Never under another name.
+    func testAClaudeGrantGoesToTheItemCheckedBeforeTheExchange() async throws {
+        let box = AuthBox(claudeJSON)
+        let reads = Tally()
+        let writes = Writes()
+        stub { _ in (200, Data(#"{"access_token":"access-new","refresh_token":"refresh-new","expires_in":28800}"#.utf8)) }
+        let load: @Sendable () throws -> CredentialReaders.ClaudeAuth = {
+            // The two reads before the exchange find the account; every read after it can't.
+            let account = reads.next() <= 2 ? "other.name" : ""
+            return try CredentialReaders.parseClaudeAuth(box.raw, account: account, service: "svc")
+        }
+
+        let session = LoginSession()
+        let auth = try await session.claude(now: now, persistsRecovery: false, load: load, save: { updated in
+            writes.append(updated)
+            box.raw = updated.rawJSON
+        })
+        XCTAssertEqual(auth.accessToken, "access-new")
+        XCTAssertEqual(writes.items, ["svc|other.name"])
+        XCTAssertEqual(grantRequests().count, 1)
+
+        // The same, when the write fails: the saved grant goes into that item on the next try.
+        let retryBox = AuthBox(claudeJSON)
+        let retryReads = Tally()
+        let retryWrites = Writes()
+        let failsOnce = Tally()
+        StubURLProtocol.requests = []
+        let retryLoad: @Sendable () throws -> CredentialReaders.ClaudeAuth = {
+            let account = retryReads.next() <= 2 ? "other.name" : ""
+            return try CredentialReaders.parseClaudeAuth(retryBox.raw, account: account, service: "svc")
+        }
+        let retrySave: @Sendable (CredentialReaders.ClaudeAuth) throws -> Void = { updated in
+            if failsOnce.next() == 1 { throw ProviderError.unreachable }
+            retryWrites.append(updated)
+            retryBox.raw = updated.rawJSON
+        }
+        let retrying = LoginSession()
+        do {
+            _ = try await retrying.claude(now: now, persistsRecovery: false, load: retryLoad, save: retrySave)
+            XCTFail("Expected the first write to fail")
+        } catch {
+            XCTAssertEqual(error as? ProviderError, .unreachable)
+        }
+        let recovered = try await retrying.claude(now: now, persistsRecovery: false, load: retryLoad, save: retrySave)
+        XCTAssertEqual(recovered.accessToken, "access-new")
+        XCTAssertEqual(retryWrites.items, ["svc|other.name"])
+        XCTAssertFalse(retryWrites.items.contains("svc|\(NSUserName())"))
+        XCTAssertEqual(grantRequests().count, 1, "The saved grant is written without exchanging again")
+    }
+
+    /// After a grant, the login changed under it (Claude Code renewed meanwhile) and its account
+    /// can't be read: the second try isn't sent, as the first wouldn't have been.
+    func testASecondClaudeTryChecksTheAccountAgain() async throws {
+        let reads = Tally()
+        let original = claudeJSON
+        let replaced = #"{"claudeAiOauth":{"accessToken":"cli-access","refreshToken":"refresh-cli","expiresAt":1}}"#
+        stub { _ in (200, Data(#"{"access_token":"access-new","refresh_token":"refresh-new","expires_in":28800}"#.utf8)) }
+        let session = LoginSession()
+        do {
+            _ = try await session.claude(now: now, persistsRecovery: false, load: {
+                reads.next() <= 2
+                    ? try CredentialReaders.parseClaudeAuth(original, account: "other.name", service: "svc")
+                    : try CredentialReaders.parseClaudeAuth(replaced, account: "", service: "svc")
+            }, save: { _ in XCTFail("Nothing is written to a login whose account isn't known") })
+            XCTFail("Expected an expired session")
+        } catch {
+            XCTAssertEqual(error as? ProviderError, .expired(Provider.claude.expiredHint))
+        }
+        XCTAssertEqual(grantRequests().count, 1)
+        let secondTries = StubURLProtocol.requests.filter { requestBody($0).contains("refresh-cli") }
+        XCTAssertTrue(secondTries.isEmpty, "refresh-cli is never sent")
+    }
+
     func testACurrentClaudeLoginIsReadWithoutAGrant() async throws {
         let raw = """
         {
@@ -606,6 +681,31 @@ final class LoginSessionTests: XCTestCase {
 private final class AuthBox: @unchecked Sendable {
     var raw: String
     init(_ raw: String) { self.raw = raw }
+}
+
+/// Counts calls: `next()` returns 1 the first time.
+private final class Tally: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    func next() -> Int {
+        lock.withLock {
+            count += 1
+            return count
+        }
+    }
+}
+
+/// Where each write went, as `service|account`.
+private final class Writes: @unchecked Sendable {
+    private let lock = NSLock()
+    private var written: [String] = []
+
+    var items: [String] { lock.withLock { written } }
+
+    func append(_ auth: CredentialReaders.ClaudeAuth) {
+        lock.withLock { written.append("\(auth.service)|\(auth.account)") }
+    }
 }
 
 private func requestBody(_ request: URLRequest) -> String {
