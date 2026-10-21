@@ -194,6 +194,19 @@ struct ReadingCache: Codable, Equatable, Sendable {
         return hasher.finalize()
     }
 
+    /// `materialHash` as the readings are drawn at `date`, where one checked over an hour before
+    /// is stale. Two caches with the same numbers then differ when one's reading has aged since
+    /// it was saved and the other's is live again: widgets and the Watch still show the first
+    /// one stale.
+    func materialHash(at date: Date) -> Int {
+        presented(at: date).materialHash
+    }
+
+    /// `reloadSignature` as the readings are drawn at `date` (see `materialHash(at:)`).
+    func reloadSignature(at date: Date) -> Int {
+        presented(at: date).reloadSignature
+    }
+
     static var defaultURL: URL? {
         AppGroup.containerURL?.appendingPathComponent(fileName)
     }

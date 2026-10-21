@@ -159,7 +159,9 @@ final class MobileStore {
     private let cacheURL: URL?
     private var publishPolicy = RelayPublishPolicy()
     private var lastHistoryHour: Date?
-    private var lastCacheHash: Int?
+    /// The readings widgets were last reloaded for and the Watch last handed (at launch, the
+    /// saved ones). A new cache is measured against them as they're drawn now.
+    @ObservationIgnored private var lastGivenCache: ReadingCache?
     private var rateLimitedUntil: [Provider: Date] = [:]
     /// When each key provider was last called, shared with the widgets.
     private let keyGate: KeyFetchGate
@@ -200,7 +202,7 @@ final class MobileStore {
     @ObservationIgnored private var localFailedAt: [Provider: Date] = [:]
     /// What the widgets were last reloaded for, as far as a background reload goes (seeded from
     /// the saved readings, so a background launch doesn't reload for what they already show).
-    @ObservationIgnored private var lastReloadSignature: Int?
+    @ObservationIgnored private var lastReloadedCache: ReadingCache?
     /// A reload held back in the background, made when the app comes forward.
     @ObservationIgnored private var reloadHeldBack = false
     @ObservationIgnored private var liveActivityUpdate: Task<Void, Never>?
@@ -659,8 +661,8 @@ final class MobileStore {
         coverage = cache.carriedSources(excluding: Self.localLabel).map(\.source).covering
         // Delivery still compares against what widgets/the Watch last received on disk, so
         // removing an ambiguous legacy meter is propagated on the next successful cache save.
-        lastCacheHash = saved.materialHash
-        lastReloadSignature = saved.reloadSignature
+        lastGivenCache = saved
+        lastReloadedCache = saved
         lastHandoverRunOuts = saved.runOuts
     }
 
@@ -750,14 +752,16 @@ final class MobileStore {
     /// they don't refetch, and they aren't reloaded.
     private func saveCache(_ cache: ReadingCache) {
         guard allowsExternalEffects, let cacheURL else { return }
-        let hash = cache.materialHash
         do {
             guard try PhoneCacheAccess.save(cache, at: cacheURL, defaults: defaults, generation: cacheGeneration) else { return }
         } catch {
             logger.error("cache save failed: \(String(describing: error), privacy: .public)")
             return
         }
-        let changed = hash != lastCacheHash
+        // Both as they're drawn now: widgets and the Watch fade a reading an hour after its
+        // check, so one that faded since it was given out and is live again with the same
+        // numbers is a change for them.
+        let changed = cache.materialHash(at: cache.savedAt) != lastGivenCache?.materialHash(at: cache.savedAt)
         let runOuts = cache.runOuts
         // The Watch shows a Mac's measured run-out, which widgets don't: one that moved an
         // hour goes to it too.
@@ -770,7 +774,7 @@ final class MobileStore {
             lastHandoverRunOuts = runOuts
         }
         guard changed else { return }
-        lastCacheHash = hash
+        lastGivenCache = cache
         reloadWidgets(for: cache)
     }
 
@@ -780,12 +784,12 @@ final class MobileStore {
     /// reads this cache, or for the app to come forward.
     private func reloadWidgets(for cache: ReadingCache) {
         guard allowsExternalEffects else { return }
-        let signature = cache.reloadSignature
-        guard !platformEffects.applicationIsBackground() || signature != lastReloadSignature else {
+        let matters = cache.reloadSignature(at: cache.savedAt) != lastReloadedCache?.reloadSignature(at: cache.savedAt)
+        guard !platformEffects.applicationIsBackground() || matters else {
             reloadHeldBack = true
             return
         }
-        lastReloadSignature = signature
+        lastReloadedCache = cache
         reloadHeldBack = false
         platformEffects.reloadWidgets()
     }
@@ -1226,10 +1230,10 @@ final class MobileStore {
 
     /// A silent push: a Mac sent new readings. Returns whether what this iPhone shows changed.
     func refreshForPush() async -> Bool {
-        let before = lastCacheHash
+        let before = lastGivenCache
         // Keys on this iPhone can wait for a full refresh.
         await refresh(force: true, includeKeys: false)
-        return lastCacheHash != before
+        return lastGivenCache != before
     }
 
     func scheduleBackgroundRefresh(now: Date = .now) async {

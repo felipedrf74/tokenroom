@@ -73,6 +73,28 @@ final class WidgetTests: XCTestCase {
         XCTAssertEqual(early.materialHash, late.materialHash, "Nor a send")
     }
 
+    /// Widgets were given a live reading, which they fade an hour later as they draw it. Three
+    /// hours on, the Mac wakes and sends the same numbers, live again: that's a change to reload
+    /// widgets for and hand the Watch, though nothing but check times moved.
+    func testAReadingLiveAgainWithTheSameNumbersIsAChangeForWidgetsAndTheWatch() {
+        func given(at date: Date) -> ReadingCache {
+            var provider = reading([window("weekly", used: 40, resetsIn: 3 * 86_400)])
+            provider.checkedAt = date
+            provider.fetchedAt = date
+            return ReadingCache(savedAt: date, isSample: false, items: [ReadingCache.Item(provider: provider, source: "Mac")])
+        }
+        let earlier = given(at: now)
+        let woke = now.addingTimeInterval(3 * 3600)
+        let again = given(at: woke)
+        XCTAssertEqual(again.materialHash, earlier.materialHash, "Check times alone don't count")
+        XCTAssertNotEqual(again.materialHash(at: woke), earlier.materialHash(at: woke), "Widgets show the earlier one stale by now")
+        XCTAssertNotEqual(again.reloadSignature(at: woke), earlier.reloadSignature(at: woke), "Worth a reload from the background too")
+
+        let soon = now.addingTimeInterval(10 * 60)
+        XCTAssertEqual(given(at: soon).materialHash(at: soon), earlier.materialHash(at: soon), "Within the hour, nothing to reload for")
+        XCTAssertEqual(given(at: soon).reloadSignature(at: soon), earlier.reloadSignature(at: soon))
+    }
+
     private func cache(savedAt: Date, used: Double, isSample: Bool = false) -> ReadingCache {
         let provider = reading([window("weekly", used: used, resetsIn: 3 * 86_400)])
         return ReadingCache(savedAt: savedAt, isSample: isSample, items: [ReadingCache.Item(provider: provider, source: "Mac")])
