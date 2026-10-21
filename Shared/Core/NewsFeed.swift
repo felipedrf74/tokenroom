@@ -168,6 +168,27 @@ struct NewsCache: Codable, Equatable, Sendable {
         return cache
     }
 
+    /// Dates saved while the clock was ahead come back to `now`, so what they mark doesn't stay
+    /// new or badged after a visit until the clock catches up.
+    mutating func bringDatesBack(to now: Date) {
+        for (id, feed) in items where feed.contains(where: { ($0.firstSeenAt ?? .distantPast) > now || ($0.published ?? .distantPast) > now }) {
+            items[id] = feed.map { item in
+                var item = item
+                item.firstSeenAt = item.firstSeenAt.map { min($0, now) }
+                item.published = item.published.map { min($0, now) }
+                return item
+            }
+        }
+        if models.contains(where: { $0.newsDate > now || $0.created > now }) {
+            models = models.map { model in
+                var model = model
+                model.created = min(model.created, now)
+                model.firstSeenAt = model.firstSeenAt.map { min($0, now) }
+                return model
+            }
+        }
+    }
+
     func save(to directory: URL?) {
         guard let url = directory?.appendingPathComponent(Self.fileName),
               let data = try? RelayEnvelope.encoder.encode(self)
@@ -287,7 +308,7 @@ enum NewsFetcher {
             switch answer {
             case let .body(data, validator, isTruncated):
                 if !isTruncated, let releases = try? ModelFeed.releases(from: data) {
-                    cache.models = firstSeen(releases, previous: cache.models, now: now)
+                    cache.models = firstSeen(releases, previous: cache.models, now: now, previousRead: cache.modelsFetchedAt)
                     newModels = cache.modelState.takeNew(from: cache.models, following: vendors)
                     cache.validators[key] = validator
                     unreadable.remove(ModelFeed.id)
@@ -351,7 +372,7 @@ enum NewsFetcher {
                 case let .body(data, validator, isTruncated):
                     let read = FeedParser.read(data, source: source)
                     let previousItems = cache.items[source.id] ?? []
-                    let items = firstSeen(read.items, previous: previousItems, now: now, quiet: quietSources.contains(source.id))
+                    let items = firstSeen(read.items, previous: previousItems, now: now, quiet: quietSources.contains(source.id), previousRead: check.succeededAt)
                     // A feed with no entries at all where some were cached isn't taken at its
                     // word: a server's placeholder would clear the list.
                     if read.isComplete, !isTruncated, read.entries > 0 || previousItems.isEmpty {
@@ -421,6 +442,11 @@ enum NewsFetcher {
         return isDue(fetchedAt, interval: interval, now: now)
     }
 
+    /// An entry dated this long before its feed's previous successful read was out by then: it's
+    /// only new to the feed's window (an older post moved up), so it keeps its own date. Two days
+    /// leave room for a post dated by the day that turns up the next.
+    static let arrivalSlack: TimeInterval = 2 * 86_400
+
     /// Items dated no later than the check that first saw them: one dated ahead (a wrong time
     /// zone, a post scheduled early) counts as seen once News opens, and a later change to its
     /// date doesn't make it new again.
@@ -430,8 +456,10 @@ enum NewsFetcher {
     /// date is dated when it arrives, so it sorts with what came then rather than last. A quiet
     /// read (a feed's first, or one followed again: `quiet`, or nothing cached) brings what was
     /// there already, so it has no arrival to go by: its entries keep their own dates, an undated
-    /// one still sorts last, and `NewsStore` keeps them from counting as new.
-    static func firstSeen(_ items: [FeedItem], previous: [FeedItem], now: Date, quiet: Bool = false) -> [FeedItem] {
+    /// one still sorts last, and `NewsStore` keeps them from counting as new. One dated well
+    /// before the feed's previous successful read (`previousRead`, `arrivalSlack`) keeps its own
+    /// date too. A first-seen date saved ahead of the clock comes back to `now`.
+    static func firstSeen(_ items: [FeedItem], previous: [FeedItem], now: Date, quiet: Bool = false, previousRead: Date? = nil) -> [FeedItem] {
         let earlier = Dictionary(previous.map { ($0.id, $0) }) { first, _ in first }
         let isQuiet = quiet || previous.isEmpty
         return items.map { incoming in
@@ -439,7 +467,8 @@ enum NewsFetcher {
             let old = earlier[item.id]
             if let old { item.aliases = old.aliasIDs.union(item.aliasIDs) }
             let dated = min(item.publisherPublishedAt ?? item.updatedAt ?? item.published ?? now, now)
-            item.firstSeenAt = old?.newsDate ?? (isQuiet ? dated : now)
+            let enteredWindow = previousRead.map { dated < $0.addingTimeInterval(-arrivalSlack) } ?? false
+            item.firstSeenAt = min(old?.newsDate ?? (isQuiet || enteredWindow ? dated : now), now)
             item.published = item.published.map { min($0, old?.published ?? now, now) }
             if item.published == nil, item.updatedAt == nil {
                 // One cached undated by an earlier release stays so, rather than turning new now.
@@ -455,12 +484,17 @@ enum NewsFetcher {
         }
     }
 
-    /// Releases dated no later than the check that first saw them, newest first.
-    static func firstSeen(_ releases: [ModelRelease], previous: [ModelRelease], now: Date) -> [ModelRelease] {
-        let earlier = Dictionary(previous.map { ($0.id, $0.created) }) { first, _ in first }
+    /// Releases dated no later than the check that first saw them, newest first, each noting when
+    /// it arrived (`firstSeenAt`) as announcements do: the list's first read, and a model created
+    /// well before the list's previous read (`previousRead`, `arrivalSlack`), keep their own dates.
+    static func firstSeen(_ releases: [ModelRelease], previous: [ModelRelease], now: Date, previousRead: Date? = nil) -> [ModelRelease] {
+        let earlier = Dictionary(previous.map { ($0.id, $0) }) { first, _ in first }
         return releases.map { release in
             var release = release
-            release.created = min(release.created, earlier[release.id] ?? now, now)
+            let old = earlier[release.id]
+            release.created = min(release.created, old?.created ?? now, now)
+            let enteredList = previousRead.map { release.created < $0.addingTimeInterval(-arrivalSlack) } ?? false
+            release.firstSeenAt = min(old?.newsDate ?? (previous.isEmpty || enteredList ? release.created : now), now)
             return release
         }
         .sorted { $0.created > $1.created }

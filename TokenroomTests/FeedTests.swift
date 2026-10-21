@@ -1057,6 +1057,71 @@ final class FeedTests: XCTestCase {
         return formatter.string(from: date)
     }
 
+    /// An older post that newly enters the feed's 30-entry window was out before the last read,
+    /// so it isn't new; a post dated by the day that turns up a few hours later still is.
+    func testAnOldEntryEnteringTheWindowKeepsItsOwnDate() async {
+        defer { unstubNetwork() }
+        let now = utc(2026, 10, 21, 14)
+        var cache = readBefore(["claude-code"], checkedAt: now.addingTimeInterval(-3600))
+        cache.items["claude-code"] = [FeedItem(id: "https://example.com/older", title: "Older", link: URL(string: "https://example.com/older"), published: utc(2026, 10, 19), source: "Claude Code")]
+        let feed = Data("""
+        <rss version="2.0"><channel>
+          <item><title>Midnight</title><link>https://example.com/midnight</link><pubDate>Wed, 21 Oct 2026 00:00:00 GMT</pubDate></item>
+          <item><title>Older</title><link>https://example.com/older</link><pubDate>Mon, 19 Oct 2026 00:00:00 GMT</pubDate></item>
+          <item><title>Ten-days-old</title><link>https://example.com/ten-days-old</link><pubDate>Sun, 11 Oct 2026 12:00:00 GMT</pubDate></item>
+        </channel></rss>
+        """.utf8)
+        stubNetwork { request in request.url == ModelFeed.url ? (304, Data()) : (200, feed) }
+        let items = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], now: now).cache.items["claude-code"] ?? []
+        XCTAssertEqual(items.first { $0.title == "Ten-days-old" }?.newsDate, utc(2026, 10, 11, 12), "Out ten days before the last read: not new")
+        XCTAssertEqual(items.first { $0.title == "Midnight" }?.newsDate, now, "Dated by the day, arrived since the last read: new")
+    }
+
+    /// A model listed after the last visit though created before it is new, as an announcement
+    /// is; an old model newly in the list (one OpenRouter will retire) isn't.
+    @MainActor
+    func testAModelListedAfterTheLastVisitIsNew() async throws {
+        defer { unstubNetwork() }
+        let now = Date.now
+        let folder = try makeFolder()
+        var cache = readBefore([], checkedAt: now.addingTimeInterval(-3600))
+        cache.models = [ModelRelease(id: "anthropic/claude-a", name: "Anthropic: A", vendor: "anthropic", created: now.addingTimeInterval(-86_400), contextLength: nil, promptPrice: nil, completionPrice: nil, expires: nil)]
+        cache.save(to: folder)
+        let defaults = makeDefaults()
+        defaults.set(now.addingTimeInterval(-1800).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt) // Looked half an hour ago.
+        let news = NewsStore(defaults: defaults, directory: folder, now: now, notify: { _, _, _ in })
+        func model(_ id: String, _ created: Date, expires: String = "") -> String {
+            #"{"id":"anthropic/\#(id)","name":"Anthropic: \#(id)","created":\#(Int(created.timeIntervalSince1970))\#(expires)}"#
+        }
+        let list = Data(#"{"data":[\#(model("claude-b", now.addingTimeInterval(-7200))),\#(model("claude-a", now.addingTimeInterval(-86_400))),\#(model("claude-old", now.addingTimeInterval(-90 * 86_400), expires: #","expiration_date":"2026-12-31""#))]}"#.utf8)
+        stubNetwork { request in request.url == ModelFeed.url ? (200, list) : (304, Data()) }
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: now)
+        XCTAssertEqual(news.models().first { $0.id == "anthropic/claude-b" }?.newsDate, now, "Created two hours ago, listed now")
+        XCTAssertEqual(news.unseenModelCount(now: now), 1, "Badged, though created before the last look")
+        news.beginVisit(now: now.addingTimeInterval(60))
+        XCTAssertTrue(news.isNew(news.models().first { $0.id == "anthropic/claude-b" }?.newsDate))
+        XCTAssertFalse(news.isNew(news.models().first { $0.id == "anthropic/claude-old" }?.newsDate), "An old model newly listed isn't new")
+    }
+
+    /// Dates saved while the clock was ahead don't keep a badge through visits.
+    @MainActor
+    func testFirstSeenDatesAheadOfTheClockComeBackToNow() throws {
+        let now = Date.now
+        let folder = try makeFolder()
+        var cache = readBefore(["claude-code", "claude-code-releases"], checkedAt: now.addingTimeInterval(-3600))
+        cache.items["claude-code"]?.append(FeedItem(id: "ahead", title: "Ahead", link: URL(string: "https://example.com/ahead"), published: now.addingTimeInterval(2 * 86_400), source: "Claude Code", firstSeenAt: now.addingTimeInterval(2 * 86_400)))
+        cache.models = [ModelRelease(id: "anthropic/claude-ahead", name: "Anthropic: Ahead", vendor: "anthropic", created: now.addingTimeInterval(2 * 86_400), contextLength: nil, promptPrice: nil, completionPrice: nil, expires: nil)]
+        cache.save(to: folder)
+        let defaults = makeDefaults()
+        defaults.set(now.addingTimeInterval(-3600).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt)
+        let news = NewsStore(defaults: defaults, directory: folder, now: now, notify: { _, _, _ in })
+        news.beginVisit(now: now)
+        news.endVisit()
+        XCTAssertEqual(news.unseenAnnouncementCount, 0, "Seen on the visit, not badged again until the clock catches up")
+        XCTAssertEqual(news.unseenModelCount(now: now), 0)
+        XCTAssertEqual(news.allAnnouncements.first { $0.id == "ahead" }?.newsDate, now)
+    }
+
     @MainActor
     func testASourcesFirstReadMarksNothingNew() async throws {
         defer { unstubNetwork() }

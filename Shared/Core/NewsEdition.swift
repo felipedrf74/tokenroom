@@ -64,7 +64,7 @@ enum NewsEditions {
         let more = Array(recent.dropFirst(top == nil ? 0 : 1).prefix(moreModelsLimit))
         return NewsEdition(
             digest: NewsEdition.Digest(
-                models: recent.filter { $0.created > since }.count,
+                models: recent.filter { $0.newsDate > since }.count,
                 updates: announcements.filter { ($0.newsDate ?? .distantPast) > since }.count,
                 retiring: soon.count
             ),

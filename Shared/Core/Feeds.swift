@@ -16,6 +16,12 @@ struct ModelRelease: Codable, Equatable, Sendable, Identifiable {
     var completionPrice: Double?
     /// When OpenRouter will retire it, if announced.
     var expires: Date?
+    /// When this device first saw it in the list, so a model listed after the last visit though
+    /// created before it is still new. Nil in caches from earlier releases.
+    var firstSeenAt: Date? = nil
+
+    /// What decides whether it's new: when it arrived, else when it was created.
+    var newsDate: Date { firstSeenAt ?? created }
 }
 
 enum ModelFeed {

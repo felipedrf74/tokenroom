@@ -121,7 +121,9 @@ final class NewsStore {
         self.directory = directory
         self.fetch = fetch
         self.notify = notify
-        cache = initialCache ?? NewsCache.load(from: directory)
+        var loaded = initialCache ?? NewsCache.load(from: directory)
+        loaded.bringDatesBack(to: now)
+        cache = loaded
         // A saved choice, plus labs added to the defaults since it was saved, as with feeds below.
         let knownVendors = (defaults.array(forKey: Keys.knownVendors) as? [String]).map(Set.init) ?? Self.firstDefaultVendors
         followedVendors = (defaults.array(forKey: Keys.vendors) as? [String]).map { Set($0).union(ModelFeed.defaultVendors.subtracting(knownVendors)) } ?? ModelFeed.defaultVendors
@@ -176,7 +178,7 @@ final class NewsStore {
     }
 
     func unseenModelCount(now: Date) -> Int {
-        models().filter { $0.created > seenAt && NewsEditions.isRecentModel($0, now: now) }.count
+        models().filter { $0.newsDate > seenAt && NewsEditions.isRecentModel($0, now: now) }.count
     }
 
     /// Announcements from followed feeds that arrived since News was last opened.
@@ -321,7 +323,7 @@ final class NewsStore {
     private static func newestArrival(in result: NewsCache, since previous: NewsCache, checkedAt: Date) -> Date? {
         let knownModels = Set(previous.models.map(\.id))
         let knownItems = Set(previous.items.flatMap { source, items in items.map { source + "|" + $0.id } })
-        let models = result.models.filter { !knownModels.contains($0.id) }.map(\.created)
+        let models = result.models.filter { !knownModels.contains($0.id) }.map(\.newsDate)
         let items = result.items.flatMap { source, items in
             items.filter { !knownItems.contains(source + "|" + $0.id) }.compactMap(\.newsDate)
         }

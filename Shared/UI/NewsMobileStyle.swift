@@ -216,7 +216,7 @@ struct MobileNewsModelCard: View {
                             if let expires = model.expires {
                                 Label("Retires \(expires.formatted(date: .abbreviated, time: .omitted))", systemImage: "hourglass")
                                     .font(.caption).foregroundStyle(TokenroomTokens.accentText)
-                            } else if NewsEditions.isRecentModel(model), news.isNew(model.created) { NewBadge() }
+                            } else if NewsEditions.isRecentModel(model), news.isNew(model.newsDate) { NewBadge() }
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }.frame(minHeight: 44).multilineTextAlignment(.leading).contentShape(Rectangle())
                 }.buttonStyle(.plain)
