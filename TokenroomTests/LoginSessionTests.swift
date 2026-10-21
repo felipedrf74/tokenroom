@@ -480,6 +480,144 @@ final class LoginSessionTests: XCTestCase {
         XCTAssertEqual(grantRequests().count, 1, "refresh-old is sent once")
     }
 
+    /// A grant waits while its own item can't be read just now. An item that's there but won't be
+    /// usable (here its secret is no longer a login) can't take the grant: it mustn't hold off
+    /// renewing the login read first for good, and the refresh token it replaced is never sent again.
+    func testAClaudeGrantDoesNotHoldOffAnotherLoginWhenItsItemWontBeUsable() async throws {
+        let items = ClaudeItems([
+            "svc-a|acct-a": claudeJSON,
+            // Within a minute of expiry: it can't be used as it is.
+            "svc-b|acct-b": #"{"claudeAiOauth":{"accessToken":"b-access","refreshToken":"refresh-old-b","expiresAt":1800000030000}}"#,
+        ], first: "svc-a|acct-a")
+        let notNow = Toggle()
+        let failsOnce = Tally()
+        stub { request in
+            requestBody(request).contains("refresh-old-b")
+                ? (200, Data(#"{"access_token":"b-new","refresh_token":"refresh-new-b","expires_in":28800}"#.utf8))
+                : (200, Data(#"{"access_token":"access-new","refresh_token":"refresh-new","expires_in":28800}"#.utf8))
+        }
+        let session = LoginSession()
+        let moment = now
+        let renew: @Sendable () async throws -> CredentialReaders.ClaudeAuth = {
+            try await session.claude(now: moment, persistsRecovery: false, load: {
+                try items.first()
+            }, loadItem: { service, account in
+                // The production read of one item, with the Keychain and the `security` tool faked.
+                try CredentialReaders.claudeItem(
+                    service: service,
+                    account: account,
+                    exists: { _, _ in true },
+                    access: { _ in CredentialReaders.ClaudeKeyAccess(partitions: ["apple-tool:"], hasPartitionList: true) },
+                    security: { service, account in
+                        notNow.isOn ? .unavailable : .value(items.raw("\(service)|\(account ?? "")"))
+                    }
+                )
+            }, save: { updated in
+                if failsOnce.next() == 1 { throw ProviderError.unreachable }
+                items.write(updated)
+            })
+        }
+        func exchanged(_ refresh: String) -> Int {
+            StubURLProtocol.requests.filter { requestBody($0).contains("\"refresh_token\":\"\(refresh)\"") }.count
+        }
+
+        // A is exchanged and its write fails: the grant is kept.
+        do {
+            _ = try await renew()
+            XCTFail("Expected the write to fail")
+        } catch {
+            XCTAssertEqual(error as? ProviderError, .unreachable)
+        }
+        // B is read first, and A can't be read just now: the grant waits, and B isn't exchanged.
+        items.setFirst("svc-b|acct-b")
+        notNow.set(true)
+        do {
+            _ = try await renew()
+            XCTFail("Expected to wait for A")
+        } catch {
+            XCTAssertEqual(error as? ProviderError, .unreachable)
+        }
+        XCTAssertEqual(exchanged("refresh-old-b"), 0)
+
+        // A can be read, but Claude Code signed out of it: its secret isn't a login. B is renewed.
+        notNow.set(false)
+        items.set("svc-a|acct-a", raw: #"{"mcpOAuth":{"accessToken":"other"}}"#)
+        let renewed = try await renew()
+        XCTAssertEqual(renewed.accessToken, "b-new")
+        XCTAssertTrue(items.raw("svc-b|acct-b").contains("refresh-new-b"), items.raw("svc-b|acct-b"))
+        XCTAssertEqual(items.raw("svc-a|acct-a"), #"{"mcpOAuth":{"accessToken":"other"}}"#, "A is left as it is")
+        XCTAssertEqual(exchanged("refresh-old-b"), 1)
+        XCTAssertEqual(exchanged("refresh-old"), 1, "refresh-old is sent once")
+    }
+
+    /// A grant whose item won't be usable (here its access list stops trusting the `security`
+    /// tool) is still kept while the login read first has the refresh token it replaced: that
+    /// token is spent, and exchanging it would send it again. Once that login moves on, it's renewed.
+    func testAClaudeGrantIsKeptWhileTheLoginReadFirstHasTheTokenItReplaced() async throws {
+        let items = ClaudeItems([
+            "svc-a|acct-a": claudeJSON,
+            // A copy of A's login.
+            "svc-b|acct-b": #"{"claudeAiOauth":{"accessToken":"access-old","refreshToken":"refresh-old","expiresAt":1}}"#,
+        ], first: "svc-a|acct-a")
+        let untrusted = Toggle()
+        let failsOnce = Tally()
+        stub { request in
+            requestBody(request).contains("refresh-old-b")
+                ? (200, Data(#"{"access_token":"b-new","refresh_token":"refresh-new-b","expires_in":28800}"#.utf8))
+                : (200, Data(#"{"access_token":"access-new","refresh_token":"refresh-new","expires_in":28800}"#.utf8))
+        }
+        let session = LoginSession()
+        let moment = now
+        let renew: @Sendable () async throws -> CredentialReaders.ClaudeAuth = {
+            try await session.claude(now: moment, persistsRecovery: false, load: {
+                try items.first()
+            }, loadItem: { service, account in
+                try CredentialReaders.claudeItem(
+                    service: service,
+                    account: account,
+                    exists: { _, _ in true },
+                    access: { service in
+                        untrusted.isOn && service == "svc-a"
+                            ? CredentialReaders.ClaudeKeyAccess(partitions: ["teamid:EXAMPLE"], hasPartitionList: true, wasRead: true)
+                            : CredentialReaders.ClaudeKeyAccess(partitions: ["apple-tool:"], hasPartitionList: true, wasRead: true)
+                    },
+                    security: { service, account in .value(items.raw("\(service)|\(account ?? "")")) }
+                )
+            }, save: { updated in
+                if failsOnce.next() == 1 { throw ProviderError.unreachable }
+                items.write(updated)
+            })
+        }
+        func exchanged(_ refresh: String) -> Int {
+            StubURLProtocol.requests.filter { requestBody($0).contains("\"refresh_token\":\"\(refresh)\"") }.count
+        }
+
+        do {
+            _ = try await renew()
+            XCTFail("Expected the write to fail")
+        } catch {
+            XCTAssertEqual(error as? ProviderError, .unreachable)
+        }
+        // A no longer trusts the tool, and B, read first, still has the spent refresh token.
+        untrusted.set(true)
+        items.setFirst("svc-b|acct-b")
+        do {
+            _ = try await renew()
+            XCTFail("Expected B to be left alone")
+        } catch {
+            XCTAssertEqual(error as? ProviderError, .unreachable)
+        }
+        XCTAssertEqual(exchanged("refresh-old"), 1, "refresh-old is sent once")
+        XCTAssertTrue(items.raw("svc-b|acct-b").contains("\"refresh-old\""), "Nothing is written into B")
+
+        // Claude Code signed in to B again: the grant is dropped, and B is renewed.
+        items.set("svc-b|acct-b", raw: #"{"claudeAiOauth":{"accessToken":"b-access","refreshToken":"refresh-old-b","expiresAt":1}}"#)
+        let renewed = try await renew()
+        XCTAssertEqual(renewed.accessToken, "b-new")
+        XCTAssertEqual(exchanged("refresh-old"), 1)
+        XCTAssertEqual(exchanged("refresh-old-b"), 1)
+    }
+
     func testACurrentClaudeLoginIsReadWithoutAGrant() async throws {
         let raw = """
         {
@@ -770,6 +908,22 @@ private final class ClaudeItems: @unchecked Sendable {
 
     func write(_ auth: CredentialReaders.ClaudeAuth) {
         lock.withLock { raws["\(auth.service)|\(auth.account)"] = auth.rawJSON }
+    }
+
+    /// What another writer (Claude Code) leaves in an item.
+    func set(_ key: String, raw: String) {
+        lock.withLock { raws[key] = raw }
+    }
+}
+
+private final class Toggle: @unchecked Sendable {
+    private let lock = NSLock()
+    private var on = false
+
+    var isOn: Bool { lock.withLock { on } }
+
+    func set(_ value: Bool) {
+        lock.withLock { on = value }
     }
 }
 

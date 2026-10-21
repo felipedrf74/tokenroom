@@ -561,6 +561,8 @@ actor LoginSession {
                     return try CredentialReaders.claudeItem(service: service, account: account)
                 }
                 return found.map { .found($0) } ?? .missing
+            } catch is CredentialReaders.UnusableClaudeItem {
+                return .unusable
             } catch {
                 return .unreadable
             }
@@ -726,6 +728,9 @@ actor LoginSession {
         case missing
         /// Can't be read just now (the `security` tool busy, say): the grant waits for it.
         case unreadable
+        /// There, but it can't take the grant, and waiting won't change that: its secret isn't a
+        /// login, or its access list doesn't trust the `security` tool, so it's never read.
+        case unusable
     }
 
     private func renew<Auth: Sendable>(
@@ -762,6 +767,20 @@ actor LoginSession {
                     return current
                 }
                 throw ProviderError.unreachable
+            case .unusable:
+                // Dropped like a gone item's: it's written only into a login read from its item
+                // that still has the refresh token it replaced, so this one can't take it, and
+                // waiting would hold off renewing the login read first for good. Kept while that
+                // login has the replaced token itself: it's spent, and exchanging it resends it.
+                let fact = facts(current)
+                if fact.refreshToken == saved.previousRefresh {
+                    if OAuthRefresh.stillUsable(expiresAt: fact.expiresAt, now: now), fact.accessToken != replacing {
+                        return current
+                    }
+                    throw ProviderError.unreachable
+                }
+                await forget(provider, persists: persistsRecovery)
+                target = nil
             }
             if let target {
                 let fact = facts(target)
@@ -820,8 +839,8 @@ actor LoginSession {
                     latest = try await read()
                 case .found(let own):
                     latest = own
-                case .missing, .unreadable:
-                    // Saved, and written into its item on a later try.
+                case .missing, .unreadable, .unusable:
+                    // Saved, and written into its item on a later try (or dropped then).
                     Self.log.error("Renewal could not be written back for \(provider.rawValue, privacy: .public)")
                     throw ProviderError.unreachable
                 }

@@ -443,6 +443,43 @@ final class ParserTests: XCTestCase {
         ))
     }
 
+    /// Can't be read now (a locked Keychain, the tool not answering) throws `unreachable`, and a
+    /// grant waits. There but won't be usable (not a login, or its access list, read, doesn't
+    /// trust the tool) throws `UnusableClaudeItem`, and a grant doesn't wait for it.
+    func testAClaudeItemThatWontBeUsableIsToldApartFromOneNotReadableNow() {
+        let trusted: (String) -> CredentialReaders.ClaudeKeyAccess = { _ in
+            CredentialReaders.ClaudeKeyAccess(partitions: ["apple-tool:"], hasPartitionList: true, wasRead: true)
+        }
+        func outcome(
+            access: @escaping (String) -> CredentialReaders.ClaudeKeyAccess = trusted,
+            security: CredentialReaders.SecurityPasswordResult
+        ) -> String {
+            do {
+                let found = try CredentialReaders.claudeItem(
+                    service: "svc", account: "other.name", exists: { _, _ in true }, access: access, security: { _, _ in security }
+                )
+                return found == nil ? "missing" : "found"
+            } catch is CredentialReaders.UnusableClaudeItem {
+                return "unusable"
+            } catch {
+                return (error as? ProviderError) == .unreachable ? "not now" : "\(error)"
+            }
+        }
+
+        XCTAssertEqual(outcome(security: .value(#"{"claudeAiOauth":{"accessToken":"tok"}}"#)), "found")
+        XCTAssertEqual(outcome(security: .value(#"{"mcpOAuth":{"accessToken":"other"}}"#)), "unusable", "Not a Claude login")
+        XCTAssertEqual(outcome(security: .value(#"{"claudeAiOauth":"#)), "unusable", "Not JSON")
+        XCTAssertEqual(outcome(security: .unavailable), "not now")
+        XCTAssertEqual(outcome(
+            access: { _ in CredentialReaders.ClaudeKeyAccess(partitions: ["teamid:EXAMPLE"], hasPartitionList: true, wasRead: true) },
+            security: .value(#"{"claudeAiOauth":{"accessToken":"tok"}}"#)
+        ), "unusable", "Its access list was read and doesn't trust the tool")
+        XCTAssertEqual(outcome(
+            access: { _ in CredentialReaders.ClaudeKeyAccess() },
+            security: .value(#"{"claudeAiOauth":{"accessToken":"tok"}}"#)
+        ), "not now", "Its access list couldn't be read (a locked Keychain, say)")
+    }
+
     func testTheAccountAttributeIsReadFromSecurityOutput() {
         func output(_ acct: String) -> String {
             """
