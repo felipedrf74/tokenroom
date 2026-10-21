@@ -12,6 +12,8 @@ final class QuotaStore {
     /// Presentation time advances independently of network polling and publishes reset/age changes.
     private(set) var presentationNow = Date.now
     var lastAttempt: Date?
+    /// When the timer's next check is due. Nil until `start`.
+    private(set) var nextTimedCheck: Date?
     var isRefreshing = false
     var settings: AppSettings
     var showsLegacyNotice: Bool
@@ -47,6 +49,11 @@ final class QuotaStore {
     private var sharing: Task<Void, Never>?
     /// Keeps News current while its window is open.
     private var liveNews: Task<Void, Never>?
+    /// The one check more after a check that couldn't connect at all (`offlineRetryDelay`).
+    private var offlineRetry: Task<Void, Never>?
+    /// How long after a check where every call failed to connect it's tried once more: the Mac
+    /// woke before its Wi-Fi, and the timer's next check can be half an hour away.
+    var offlineRetryDelay: TimeInterval = 45
     private var shareAgain = false
     private var snapshotsDirty = false
     private let logger = Logger(subsystem: TokenroomIdentity.bundleID, category: "refresh")
@@ -96,13 +103,7 @@ final class QuotaStore {
                 await self?.relay?.sendTestAlert()
             }
             #endif
-            while !Task.isCancelled {
-                guard let self else { return }
-                let nanoseconds = UInt64(max(self.settings.refreshInterval, 60) * 1_000_000_000)
-                try? await Task.sleep(nanoseconds: nanoseconds)
-                if Task.isCancelled { return }
-                await self.refresh()
-            }
+            await self?.checkOnTimer()
         }
         schedulePresentationClock()
         wakeTask = Task { [weak self] in
@@ -115,13 +116,44 @@ final class QuotaStore {
         sleepTask = Task { [weak self] in
             let notifications = NSWorkspace.shared.notificationCenter.notifications(named: NSWorkspace.willSleepNotification)
             for await _ in notifications {
-                // Calls cut off by sleep would come back as failures. Cancelled, they don't
-                // count, and the refresh on waking checks again.
-                self?.inFlight?.cancel()
-                self?.followUp?.cancel()
-                self?.sharing?.cancel()
+                self?.willSleep()
             }
         }
+    }
+
+    /// A check every "Refresh every", until cancelled.
+    private func checkOnTimer() async {
+        while !Task.isCancelled {
+            let interval = max(settings.refreshInterval, 60)
+            nextTimedCheck = Date().addingTimeInterval(interval)
+            try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+            if Task.isCancelled { return }
+            await refresh()
+        }
+    }
+
+    /// A new "Refresh every" starts the timer's wait over at once, instead of after the wait
+    /// under way, which could be the old 30 minutes.
+    func setRefreshMinutes(_ minutes: Int) {
+        guard settings.refreshMinutes != minutes else { return }
+        settings.refreshMinutes = minutes
+        guard loopTask != nil else { return }
+        // A timer check under way finishes: its calls are out, and cancelling it here doesn't
+        // reach them.
+        loopTask?.cancel()
+        loopTask = Task { [weak self] in
+            await self?.checkOnTimer()
+        }
+    }
+
+    /// Calls cut off by sleep would come back as failures. Cancelled, they don't count, and the
+    /// refresh on waking checks again.
+    func willSleep() {
+        inFlight?.cancel()
+        followUp?.cancel()
+        sharing?.cancel()
+        offlineRetry?.cancel()
+        offlineRetry = nil
     }
 
     func stop() {
@@ -129,6 +161,7 @@ final class QuotaStore {
         presentationTask = nil
         loopTask?.cancel()
         loopTask = nil
+        nextTimedCheck = nil
         wakeTask?.cancel()
         wakeTask = nil
         sleepTask?.cancel()
@@ -139,6 +172,8 @@ final class QuotaStore {
         followUp = nil
         sharing?.cancel()
         sharing = nil
+        offlineRetry?.cancel()
+        offlineRetry = nil
         signIn.cancel()
     }
 
@@ -219,6 +254,22 @@ final class QuotaStore {
         await refresh(force: true, providers: [provider])
     }
 
+    /// A provider turned on or off in Settings. One turned on is checked now rather than at the
+    /// timer's next check, within its usual spacing and Retry-After (the login didn't change).
+    /// Either way the iPhone's list changes with the next round sent to iCloud, which goes out
+    /// at once instead of waiting out the minute since the last send.
+    func setEnabled(_ provider: Provider, _ isOn: Bool) {
+        guard settings.isEnabled(provider) != isOn else { return }
+        settings.setEnabled(provider, isOn)
+        Task {
+            if isOn {
+                await refresh(force: true, providers: [provider])
+            }
+            relay?.providersChanged()
+            await share()
+        }
+    }
+
     private func joinFollowUp(after running: Task<Void, Never>, providers: [Provider]?) -> Task<Void, Never> {
         if let providers, let asked = followUpProviders {
             followUpProviders = asked.union(providers)
@@ -270,8 +321,15 @@ final class QuotaStore {
     /// Sends readings, history, and alerts to iCloud and checks News, one round at a time and
     /// outside the check, so a slow iCloud doesn't hold up the next check. A check that finishes
     /// meanwhile leaves one more round, with the newest readings then.
-    private func share() async {
+    func share() async {
         if let sharing {
+            // A round going to sleep cancelled doesn't go round again: this request gets a round
+            // of its own once that one has ended (or joins one another request started).
+            if sharing.isCancelled {
+                await sharing.value
+                await share()
+                return
+            }
             shareAgain = true
             await sharing.value
             return
@@ -353,6 +411,7 @@ final class QuotaStore {
                 for provider in unreachable {
                     lastAttemptAt[provider] = earlierAttempts[provider]
                 }
+                retryOnceOnline(unreachable)
             }
         }
         guard !Task.isCancelled else { return }
@@ -376,6 +435,23 @@ final class QuotaStore {
         persistLiveSnapshots()
         cache.saveChecked(checkedAt)
         history.saveIfNeeded()
+    }
+
+    /// No call connected (the Mac woke before its Wi-Fi): these are checked once more a little
+    /// later, rather than showing and sharing the readings from before the sleep until the
+    /// timer's next check. Once: a retry that can't connect either leaves it to the timer.
+    private func retryOnceOnline(_ providers: [Provider]) {
+        guard offlineRetry == nil else { return }
+        let delay = offlineRetryDelay
+        offlineRetry = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(max(0, delay) * 1_000_000_000))
+            // Cancelled by sleep or quitting: whoever cancelled it already let it go.
+            guard let self, !Task.isCancelled else { return }
+            await self.refresh(force: true, providers: providers)
+            if !Task.isCancelled {
+                self.offlineRetry = nil
+            }
+        }
     }
 
     /// While the News window is open: current on open, then checked every 15 minutes by itself,
@@ -544,9 +620,11 @@ final class QuotaStore {
             guard settings.isEnabled(provider), settings.showsInMenuBar(provider) else { return nil }
             let status = presentationStatus(for: provider, at: now)
             switch status {
-            case .signedOut, .notEntitled, .expired(_, nil), .rateLimited(_, nil), .unreachable(nil):
+            case .signedOut, .notEntitled, .expired(_, nil), .unreachable(nil):
                 return nil
-            case .loading:
+            case .loading, .rateLimited(_, nil):
+                // Connected, with no reading yet (a 429 can come before the first): a placeholder,
+                // so the menu bar lists what the popover does.
                 return MenuMeter(
                     provider: provider,
                     valueText: "--",
@@ -665,9 +743,11 @@ final class QuotaStore {
         budgetUnit(for: provider, region: region).uppercased()
     }
 
-    /// Re-applies the provider's budget to its last reading.
+    /// Re-applies the provider's budget to the reading its status holds, whichever status that
+    /// is. A status without one stays without: an expired session's reading, once its 24 hours
+    /// are up, doesn't come back with a new budget.
     func budgetDidChange(for provider: Provider) {
-        guard let raw = rawSnapshots[provider] else { return }
+        guard let raw = rawSnapshots[provider], statuses[provider]?.snapshot != nil else { return }
         let snapshot = raw.applyingBudget(reference: settings.budgetReference(for: provider))
         switch statuses[provider] {
         case .live: statuses[provider] = .live(snapshot)

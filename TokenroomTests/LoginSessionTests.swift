@@ -342,6 +342,27 @@ final class LoginSessionTests: XCTestCase {
         XCTAssertEqual(box.raw, original)
     }
 
+    /// An item found without its account can't be updated in place: exchanging its refresh token
+    /// would use it up while Claude Code keeps the old one.
+    func testAClaudeLoginWithoutItsAccountIsNotExchanged() async throws {
+        let box = AuthBox(claudeJSON)
+        let original = box.raw
+        stub { _ in (200, Data(#"{"access_token":"access-new","refresh_token":"refresh-new","expires_in":28800}"#.utf8)) }
+        let session = LoginSession()
+        do {
+            _ = try await session.claude(now: now, persistsRecovery: false, load: {
+                try CredentialReaders.parseClaudeAuth(box.raw, account: "", service: "svc")
+            }, save: { updated in
+                box.raw = updated.rawJSON
+            })
+            XCTFail("Expected an expired session")
+        } catch {
+            XCTAssertEqual(error as? ProviderError, .expired(Provider.claude.expiredHint))
+        }
+        XCTAssertTrue(grantRequests().isEmpty, "The refresh token isn't spent")
+        XCTAssertEqual(box.raw, original)
+    }
+
     func testACurrentClaudeLoginIsReadWithoutAGrant() async throws {
         let raw = """
         {
@@ -379,6 +400,29 @@ final class LoginSessionTests: XCTestCase {
         XCTAssertTrue(patched.contains("\"note\": \"keep me\""), patched)
         XCTAssertTrue(patched.contains("1800028800000"), patched)
         XCTAssertFalse(patched.contains("access-old"), patched)
+    }
+
+    /// A login the in-place edit can't patch (here, no expiry to replace) is rewritten whole, and
+    /// compactly, the way Claude Code writes its Keychain item.
+    func testAClaudeLoginRewrittenWholeStaysCompact() throws {
+        let raw = #"{"mcpOAuth":{"accessToken":"other"},"claudeAiOauth":{"accessToken":"access-old","refreshToken":"refresh-old"},"note":"keep me"}"#
+        let patched = try XCTUnwrap(OAuthRefresh.patchClaude(
+            raw: raw,
+            accessToken: "access-new",
+            refreshToken: "refresh-new",
+            expiresAtMs: 1_800_028_800_000,
+            previousAccess: "access-old",
+            previousRefresh: "refresh-old",
+            previousExpiresAtMs: nil
+        ))
+        XCTAssertFalse(patched.contains("\n"), patched)
+        XCTAssertFalse(patched.contains("\": "), patched)
+        let auth = try CredentialReaders.parseClaudeAuth(patched, account: "tester", service: "svc")
+        XCTAssertEqual(auth.accessToken, "access-new")
+        XCTAssertEqual(auth.refreshToken, "refresh-new")
+        XCTAssertEqual(auth.expiresAtMs, 1_800_028_800_000)
+        XCTAssertTrue(patched.contains(#""note":"keep me""#), patched)
+        XCTAssertTrue(patched.contains(#""mcpOAuth":{"accessToken":"other"}"#), patched)
     }
 
     func testCodexRenewalLeavesTheAPIKeyAlone() async throws {
