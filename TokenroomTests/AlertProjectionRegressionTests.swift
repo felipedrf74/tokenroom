@@ -53,9 +53,8 @@ final class AlertProjectionRegressionTests: XCTestCase {
         // A failed delivery can leave this pending through a relaunch.
         ledger = try RelayEnvelope.decoder.decode(AlertLedger.self, from: RelayEnvelope.encoder.encode(ledger))
         let later = now.addingTimeInterval(2 * 3600)
-        let retried = AlertRules.refreshed(try XCTUnwrap(ledger.pending.first).alert, now: later)
+        let retried = try XCTUnwrap(ledger.due(preferences: preferences, now: later).first)
         XCTAssertFalse(retried.isUrgent, "A projection over an hour in the past must no longer interrupt quiet hours")
-        XCTAssertTrue(ledger.due(preferences: preferences, now: later).isEmpty, "Nor go out at all: it would quote a run-out long gone")
         var quiet = preferences
         quiet.quietHours = true
         XCTAssertTrue(ledger.due(preferences: quiet, now: later).isEmpty)

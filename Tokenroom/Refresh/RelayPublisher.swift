@@ -12,7 +12,8 @@ protocol RelayCloud: Sendable {
     func alertPreferences() async throws -> AlertPreferences?
     func syncAlertPreferences(base: AlertPreferences?, local: AlertPreferences) async throws -> AlertPreferencesSync.Resolution
     func wentOutOnANeighbouringDay(_ alert: UsageAlert, now: Date) async throws -> Bool
-    func saveAlert(_ alert: UsageAlert) async throws
+    /// True when this call announced it; false when another device already had.
+    func saveAlert(_ alert: UsageAlert) async throws -> Bool
     func pruneEvents(now: Date) async throws
     func saveEvent(id: String, provider: String, level: Int, title: String, body: String, resetsAt: Date?, kind: String, key: String) async throws
     func resetZone() async
@@ -224,34 +225,53 @@ final class RelayPublisher {
         }
     }
 
-    /// Sends alerts to the iPhone; returns the IDs that went out (or already had), and of those
-    /// the ones another device announced under the neighbouring day, which this Mac doesn't show
-    /// either. The rest stay queued.
-    func sendAlerts(_ alerts: [UsageAlert], now: Date = .now) async -> (saved: [String], announced: Set<String>) {
-        guard let relay, isEnabled else { return ([], []) }
-        if isWaiting(now) { return ([], []) }
-        var saved: [String] = []
-        var announced: Set<String> = []
+    /// Sends alerts to the iPhone (`send`); the ones that didn't go out stay queued.
+    func sendAlerts(_ alerts: [UsageAlert], now: Date = .now) async -> AlertLedger.Delivery {
+        guard let relay, isEnabled else { return .init() }
+        if isWaiting(now) { return .init() }
+        return await Self.send(alerts, wentOutOnANeighbouringDay: { alert in
+            try await self.iCloud { try await relay.wentOutOnANeighbouringDay(alert, now: now) }
+        }, save: { alert in
+            let created = try await self.iCloud { try await relay.saveAlert(alert) }
+            self.logger.notice("relay alert sent \(alert.kind.rawValue, privacy: .public) \(alert.level, privacy: .public)")
+            return created
+        }, stops: { error in
+            self.handle(error, now: now).stopsBatch
+        }, continues: {
+            self.isEnabled
+        })
+    }
+
+    /// The sending behind `sendAlerts`, apart from iCloud: the IDs that went out (or already
+    /// had), and of those the ones another device already announced, which this Mac doesn't show
+    /// either: a balance crossing announced under the neighbouring day, which isn't saved again,
+    /// or one `save` found there already. `stops` says whether a failure ends the batch;
+    /// `continues` whether to go on at all (sync still on), asked before each write.
+    static func send(_ alerts: [UsageAlert], wentOutOnANeighbouringDay: (UsageAlert) async throws -> Bool,
+                     save: (UsageAlert) async throws -> Bool, stops: (Error) -> Bool,
+                     continues: () -> Bool = { true }) async -> AlertLedger.Delivery {
+        var delivery = AlertLedger.Delivery()
         for alert in alerts {
             // Turned off partway: the rest stay queued for when sync is back.
-            guard isEnabled else { break }
+            guard continues() else { break }
             do {
                 // A balance crossing another device announced on the other side of midnight
                 // (UTC) has that day's name; don't announce it again under this one's.
-                if try await iCloud({ try await relay.wentOutOnANeighbouringDay(alert, now: now) }) {
-                    saved.append(alert.id)
-                    announced.insert(alert.id)
+                if try await wentOutOnANeighbouringDay(alert) {
+                    delivery.saved.append(alert.id)
+                    delivery.announced.insert(alert.id)
                     continue
                 }
-                guard isEnabled else { break }
-                try await iCloud { try await relay.saveAlert(alert) }
-                saved.append(alert.id)
-                logger.notice("relay alert sent \(alert.kind.rawValue, privacy: .public) \(alert.level, privacy: .public)")
+                guard continues() else { break }
+                if try await !save(alert) {
+                    delivery.announced.insert(alert.id)
+                }
+                delivery.saved.append(alert.id)
             } catch {
-                if handle(error, now: now).stopsBatch { break }
+                if stops(error) { break }
             }
         }
-        return (saved, announced)
+        return delivery
     }
 
     /// Once a day, deletes alert records older than two weeks, so they don't pile up in iCloud

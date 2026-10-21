@@ -331,19 +331,22 @@ extension CloudRelay {
     }
 
     /// Saves an alert, unless a device already has: the subscription fires only when a record is
-    /// created, so one already there means its notification went out. Left as it is, an iPhone's
-    /// claim keeps its `shown:` key, which tells another iPhone that nothing reached it.
-    func saveAlert(_ alert: UsageAlert) async throws {
+    /// created, so one already there means its notification went out. Returns whether this save
+    /// announced it (false: a device already had). Left as it is, an iPhone's claim keeps its
+    /// `shown:` key, which tells another iPhone that nothing reached it.
+    @discardableResult
+    func saveAlert(_ alert: UsageAlert) async throws -> Bool {
         if let scope = AlertDeliveryCoordinator.scope(for: alert) {
-            _ = try await coordinatedDelivery(alert, scope: scope, mode: .pushed)
-            return
+            return try await coordinatedDelivery(alert, scope: scope, mode: .pushed).created
         }
         let record = Self.eventRecord(id: alert.id, provider: alert.provider, level: alert.level, title: alert.title, body: alert.body,
                                       resetsAt: alert.resetsAt, kind: alert.kind.rawValue, key: alert.key)
         do {
             try await save([record], policy: .ifServerRecordUnchanged)
+            return true
         } catch let error as CKError where error.code == .serverRecordChanged {
             // Already sent, by another device.
+            return false
         }
     }
 

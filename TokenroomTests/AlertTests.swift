@@ -510,29 +510,40 @@ final class AlertTests: XCTestCase {
         XCTAssertEqual(AlertRules.neighbouringDayIDs(of: fromOlderBuild), ["evt-deepseek-balance-usd-low-80-d20720", "evt-deepseek-balance-usd-low-80-d20722"])
     }
 
-    func testABalanceCrossingAnnouncedUnderTheNeighbouringDayStaysQuietOnTheMac() throws {
+    @MainActor
+    func testABalanceCrossingAnnouncedUnderTheNeighbouringDayStaysQuietOnTheMac() async throws {
         var awake = preferences
         awake.quietHours = false
         // Another device announced the crossing before midnight (UTC)…
         let before = try XCTUnwrap(AlertRules.alerts(previous: balance(remaining: 6), current: balance(remaining: 3), preferences: awake, now: utc(2026, 9, 25, 23, 30)).first)
-        let inICloud: Set<String> = [before.id]
         // …and after a top-up this Mac sees it cross again just after, under the next day's name.
         let afterMidnight = utc(2026, 9, 26, 0, 30)
-        var ledger = AlertLedger()
-        ledger.process([balance(remaining: 18)], preferences: awake, now: afterMidnight)
-        let again = ledger.process([balance(remaining: 3)], preferences: awake, now: afterMidnight)
-        XCTAssertEqual(again.map(\.kind), [.lowBalance])
-        XCTAssertNotEqual(again.first?.id, before.id)
-        let due = ledger.due(preferences: awake, now: afterMidnight)
-        XCTAssertEqual(due.map(\.id), again.map(\.id))
+        func crossing() -> (AlertLedger, [UsageAlert]) {
+            var ledger = AlertLedger()
+            ledger.process([balance(remaining: 18)], preferences: awake, now: afterMidnight)
+            let again = ledger.process([balance(remaining: 3)], preferences: awake, now: afterMidnight)
+            XCTAssertEqual(again.map(\.kind), [.lowBalance])
+            XCTAssertNotEqual(again.first?.id, before.id)
+            return (ledger, ledger.due(preferences: awake, now: afterMidnight))
+        }
+        // iCloud as this Mac's relay finds it, holding these alert records.
+        func send(_ due: [UsageAlert], records: Set<String>) async -> AlertLedger.Delivery {
+            await RelayPublisher.send(due, wentOutOnANeighbouringDay: { !records.isDisjoint(with: AlertRules.neighbouringDayIDs(of: $0)) },
+                                      save: { !records.contains($0.id) }, stops: { _ in false })
+        }
 
-        // What the relay finds before saving it: the neighbouring day's record is there.
-        let announced = Set(due.filter { !inICloud.isDisjoint(with: AlertRules.neighbouringDayIDs(of: $0)) }.map(\.id))
-        XCTAssertEqual(announced, Set(again.map(\.id)))
-        XCTAssertTrue(ledger.unshown(due, announced: announced).isEmpty, "A second crossing within a day is quiet on the Mac too")
-        XCTAssertEqual(ledger.unshown(due).map(\.id), again.map(\.id), "Announced nowhere: the Mac shows it")
-        ledger.markShownHere(again.map(\.id), at: afterMidnight)
-        XCTAssertTrue(ledger.unshown(due).isEmpty, "Once")
+        var (ledger, due) = crossing()
+        let delivery = await send(due, records: [before.id])
+        XCTAssertEqual(delivery, AlertLedger.Delivery(saved: due.map(\.id), announced: Set(due.map(\.id))), "Not announced again under this day's name")
+        XCTAssertTrue(ledger.settle(due, delivery: delivery, showsHere: true, now: afterMidnight).isEmpty, "A second crossing within a day is quiet on the Mac too")
+        XCTAssertNotNil(ledger.sent[due[0].id], "And it counts as sent")
+
+        // Announced nowhere: iCloud takes it and the Mac shows it, once.
+        (ledger, due) = crossing()
+        let fresh = await send(due, records: [])
+        XCTAssertEqual(fresh, AlertLedger.Delivery(saved: due.map(\.id), announced: []))
+        XCTAssertEqual(ledger.settle(due, delivery: fresh, showsHere: true, now: afterMidnight).map(\.id), due.map(\.id))
+        XCTAssertTrue(ledger.settle(due, delivery: fresh, showsHere: true, now: afterMidnight).isEmpty, "Shown here once")
     }
 
     // MARK: Sharing the choices

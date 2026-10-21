@@ -211,49 +211,75 @@ final class AlertLimitTests: XCTestCase {
         XCTAssertEqual(ledger.due(preferences: preferences, now: later).map(\.id), ninetyFive.map(\.id), "One notification: the 95% alert says it")
     }
 
-    func testAHeldRunOutIsDroppedOnceItsRunOutHasPassed() throws {
+    /// A weekly limit read as a Mac relays it, with its measured run-out, resetting at `reset`.
+    private func week(_ used: Double, runsOut: Date?, reset: Date) -> RelayProvider {
+        claude([RelayWindow(id: "weekly", kind: "weekly", title: "Weekly", used: used, resetsAt: reset,
+                            periodSec: 7 * 86_400, pace: RelayPace(runsOutAt: runsOut))])
+    }
+
+    func testAHeldRunOutFollowsNewerReadingsAndGoesOutCurrent() throws {
         var quiet = preferences
         quiet.quietHours = true
         // No 95% alert to say it instead.
         quiet.thresholds = [80]
         let late = now.addingTimeInterval(11 * 3600)
-        let runsOut = late.addingTimeInterval(3 * 3600)
-        // A Mac's measured run-out, three hours on and nearly three days before the reset.
-        func week(_ used: Double, runsOut: Date?) -> RelayProvider {
-            claude([RelayWindow(id: "weekly", kind: "weekly", title: "Weekly", used: used, resetsAt: late.addingTimeInterval(3 * 86_400),
-                                periodSec: 7 * 86_400, pace: RelayPace(runsOutAt: runsOut))])
-        }
-        var ledger = AlertLedger()
-        ledger.process([week(68, runsOut: runsOut)], preferences: quiet, now: late)
-        let raised = try XCTUnwrap(ledger.process([week(70, runsOut: runsOut)], preferences: quiet, now: late).first)
-        XCTAssertEqual(raised.kind, .runsOut)
-        XCTAssertEqual(raised.runsOutAt, runsOut)
-        XCTAssertFalse(raised.isUrgent, "Three hours off: it waits for the morning")
-        ledger.process([], preferences: quiet, now: late.addingTimeInterval(2 * 3600))
-        XCTAssertEqual(ledger.pending.map(\.alert.id), [raised.id], "Still ahead of its run-out")
-
+        let reset = late.addingTimeInterval(3 * 86_400)
+        let overnight = late.addingTimeInterval(3.5 * 3600)
         let morning = late.addingTimeInterval(9 * 3600 + 300)
-        XCTAssertTrue(ledger.due(preferences: quiet, now: morning).isEmpty, "Its run-out came and went overnight")
-        ledger.process([], preferences: quiet, now: morning)
-        XCTAssertTrue(ledger.pending.isEmpty)
+        func raise(_ ledger: inout AlertLedger) throws -> UsageAlert {
+            // Out in three hours, nearly three days before the reset: it waits for the morning.
+            ledger.process([week(68, runsOut: late.addingTimeInterval(3 * 3600), reset: reset)], preferences: quiet, now: late)
+            let raised = try XCTUnwrap(ledger.process([week(70, runsOut: late.addingTimeInterval(3 * 3600), reset: reset)], preferences: quiet, now: late).first)
+            XCTAssertEqual(raised.kind, .runsOut)
+            XCTAssertFalse(raised.isUrgent)
+            return raised
+        }
 
-        // Used up before the morning: dropped as well.
+        // Still on course overnight, for later: it goes out in the morning with the newer time.
+        var ledger = AlertLedger()
+        let raised = try raise(&ledger)
+        let later = week(75, runsOut: late.addingTimeInterval(11 * 3600), reset: reset)
+        XCTAssertTrue(ledger.process([later], preferences: quiet, now: overnight).isEmpty)
+        let current = try XCTUnwrap(AlertRules.runsOut(later, window: later.windows[0], preferences: quiet, now: overnight))
+        XCTAssertNotEqual(current.title, raised.title)
+        let due = ledger.due(preferences: quiet, now: morning)
+        XCTAssertEqual(due.map(\.id), [raised.id], "Still the one alert for the window")
+        XCTAssertEqual(due.map(\.title), [current.title], "Saying when it runs out as of the last reading")
+        XCTAssertTrue(due.first?.body.hasPrefix("75% used") == true, due.first?.body ?? "")
+
+        // No longer on course before the reset: dropped, and back on course it can warn again.
+        var eased = AlertLedger()
+        _ = try raise(&eased)
+        eased.process([week(72, runsOut: nil, reset: reset)], preferences: quiet, now: overnight)
+        XCTAssertTrue(eased.pending.isEmpty)
+        XCTAssertTrue(eased.due(preferences: quiet, now: morning).isEmpty)
+        let again = eased.process([week(78, runsOut: late.addingTimeInterval(14 * 3600), reset: reset)], preferences: quiet, now: late.addingTimeInterval(10 * 3600))
+        XCTAssertEqual(again.map(\.kind), [.runsOut])
+
+        // Used up overnight: nothing left to warn about.
         var full = AlertLedger()
-        full.process([week(68, runsOut: runsOut)], preferences: quiet, now: late)
-        XCTAssertEqual(full.process([week(70, runsOut: runsOut)], preferences: quiet, now: late).map(\.kind), [.runsOut])
-        full.process([week(100, runsOut: nil)], preferences: quiet, now: late.addingTimeInterval(3600))
+        _ = try raise(&full)
+        full.process([week(100, runsOut: nil, reset: reset)], preferences: quiet, now: late.addingTimeInterval(3600))
         XCTAssertFalse(full.pending.contains { $0.alert.kind == .runsOut })
         XCTAssertFalse(full.due(preferences: quiet, now: morning).contains { $0.kind == .runsOut })
+    }
 
-        // Raised from a stale reading once its measured run-out had come: it goes out in the hour
-        // after, while it's urgent, and not later.
-        var stale = AlertLedger()
-        stale.process([week(60, runsOut: nil)], preferences: quiet, now: late)
-        var lagging = week(70, runsOut: late.addingTimeInterval(-20 * 60))
-        lagging.state = "stale"
-        XCTAssertEqual(stale.process([lagging], preferences: quiet, now: late).map(\.kind), [.runsOut])
-        XCTAssertEqual(stale.due(preferences: quiet, now: late.addingTimeInterval(30 * 60)).map(\.kind), [.runsOut], "It just ran out")
-        XCTAssertTrue(stale.due(preferences: preferences, now: late.addingTimeInterval(45 * 60)).isEmpty, "Not later, even outside quiet hours")
+    func testAnUrgentRunOutICloudDidNotTakeIsRetried() throws {
+        var choices = preferences
+        choices.thresholds = [95]
+        let reset = now.addingTimeInterval(3 * 86_400)
+        var ledger = AlertLedger()
+        ledger.process([week(68, runsOut: now.addingTimeInterval(600), reset: reset)], preferences: choices, now: now)
+        let raised = try XCTUnwrap(ledger.process([week(70, runsOut: now.addingTimeInterval(600), reset: reset)], preferences: choices, now: now).first)
+        XCTAssertTrue(raised.isUrgent, "Out in ten minutes")
+        // The save failed. Twenty minutes on, with no newer reading, it's tried again.
+        XCTAssertEqual(ledger.due(preferences: choices, now: now.addingTimeInterval(1200)).map(\.id), [raised.id])
+        // A newer reading has it running out now: still urgent, still tried.
+        ledger.process([week(93, runsOut: now.addingTimeInterval(600), reset: reset)], preferences: choices, now: now.addingTimeInterval(1500))
+        let retried = ledger.due(preferences: choices, now: now.addingTimeInterval(1500))
+        XCTAssertEqual(retried.map(\.id), [raised.id])
+        XCTAssertEqual(retried.first?.isUrgent, true)
+        XCTAssertTrue(retried.first?.body.hasPrefix("93% used") == true, retried.first?.body ?? "")
     }
 
     // MARK: Windows a reading leaves out

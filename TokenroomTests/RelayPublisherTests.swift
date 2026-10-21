@@ -168,7 +168,7 @@ final class StandInCloud: RelayCloud, @unchecked Sendable {
     }
 
     func wentOutOnANeighbouringDay(_ alert: UsageAlert, now: Date) async throws -> Bool { false }
-    func saveAlert(_ alert: UsageAlert) async throws {
+    func saveAlert(_ alert: UsageAlert) async throws -> Bool {
         let holds = lock.withLock {
             alertCalls += 1
             guard heldAlerts > 0 else { return false }
@@ -179,6 +179,7 @@ final class StandInCloud: RelayCloud, @unchecked Sendable {
             await waitForRelease()
         }
         lock.withLock { alerts.append(alert.id) }
+        return true
     }
     func pruneEvents(now: Date) async throws {}
     func saveEvent(id: String, provider: String, level: Int, title: String, body: String, resetsAt: Date?, kind: String, key: String) async throws {}
