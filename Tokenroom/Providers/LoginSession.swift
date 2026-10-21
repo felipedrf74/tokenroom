@@ -539,7 +539,7 @@ actor LoginSession {
             facts: { auth in
                 let expiry = auth.expiresAtMs.map { Date(timeIntervalSince1970: $0 / 1000) }
                 // Exchange only when the new login can be written back into the same item.
-                let canRefresh = auth.canRefresh(at: now) && CredentialReaders.claudeLoginCanBeRenewedInPlace()
+                let canRefresh = auth.canRefresh(at: now) && CredentialReaders.claudeLoginCanBeRenewedInPlace(auth)
                 return Facts(accessToken: auth.accessToken, refreshToken: auth.refreshToken ?? "", expiresAt: expiry, canRefresh: canRefresh)
             },
             post: { auth in
@@ -572,6 +572,8 @@ actor LoginSession {
             },
             apply: { auth, pending in
                 guard (auth.refreshToken ?? "") == pending.previousRefresh else { return .moved(auth) }
+                // A grant saved from an earlier exchange isn't written under a guessed account either.
+                guard CredentialReaders.claudeLoginCanBeRenewedInPlace(auth) else { throw ProviderError.unreachable }
                 guard let expiresAtMs = pending.expiresAtMs else { throw ProviderError.unreachable }
                 guard let patched = OAuthRefresh.patchClaude(
                     raw: auth.rawJSON,

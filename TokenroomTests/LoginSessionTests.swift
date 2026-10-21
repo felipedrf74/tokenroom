@@ -342,6 +342,27 @@ final class LoginSessionTests: XCTestCase {
         XCTAssertEqual(box.raw, original)
     }
 
+    /// An item found without its account can't be updated in place: exchanging its refresh token
+    /// would use it up while Claude Code keeps the old one.
+    func testAClaudeLoginWithoutItsAccountIsNotExchanged() async throws {
+        let box = AuthBox(claudeJSON)
+        let original = box.raw
+        stub { _ in (200, Data(#"{"access_token":"access-new","refresh_token":"refresh-new","expires_in":28800}"#.utf8)) }
+        let session = LoginSession()
+        do {
+            _ = try await session.claude(now: now, persistsRecovery: false, load: {
+                try CredentialReaders.parseClaudeAuth(box.raw, account: "", service: "svc")
+            }, save: { updated in
+                box.raw = updated.rawJSON
+            })
+            XCTFail("Expected an expired session")
+        } catch {
+            XCTAssertEqual(error as? ProviderError, .expired(Provider.claude.expiredHint))
+        }
+        XCTAssertTrue(grantRequests().isEmpty, "The refresh token isn't spent")
+        XCTAssertEqual(box.raw, original)
+    }
+
     func testACurrentClaudeLoginIsReadWithoutAGrant() async throws {
         let raw = """
         {

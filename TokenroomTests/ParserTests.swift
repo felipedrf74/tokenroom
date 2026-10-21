@@ -228,10 +228,11 @@ final class ParserTests: XCTestCase {
                 return .value(" {\"ok\":true} ")
             }
         )
-        XCTAssertEqual(secret, "{\"ok\":true}")
+        XCTAssertEqual(secret, CredentialReaders.ClaudeSecret(value: "{\"ok\":true}", account: "tester"))
         XCTAssertEqual(silentCalls, 0)
         XCTAssertEqual(securityCalls, 1)
-        XCTAssertTrue(CredentialReaders.claudeLoginCanBeRenewedInPlace())
+        let auth = try? CredentialReaders.parseClaudeAuth(#"{"accessToken":"tok"}"#, account: secret?.account ?? "", service: "Claude Code-credentials")
+        XCTAssertTrue(auth.map(CredentialReaders.claudeLoginCanBeRenewedInPlace) ?? false)
     }
 
     func testClaudeUpdateKeepsTheAccessListAndStaysOffTheArgumentsWhenItFits() {
@@ -340,10 +341,115 @@ final class ParserTests: XCTestCase {
             security: { _, account in
                 accounts.append(account)
                 return account == nil ? .value("token") : .missing
+            },
+            itemAccount: { _ in "other.name" }
+        )
+        XCTAssertEqual(secret?.value, "token")
+        XCTAssertEqual(accounts, ["tester", nil])
+    }
+
+    /// The item found without this Mac's user name is filed under another account; renewing it
+    /// under the user name would add a second item and leave Claude Code's with a used-up token.
+    func testAClaudeItemFoundWithoutTheAccountKeepsItsOwnAccount() throws {
+        var lookedUp: [String] = []
+        let secret = try XCTUnwrap(CredentialReaders.readClaudeSecret(
+            service: "Claude Code-credentials",
+            account: "tester",
+            access: { _ in CredentialReaders.ClaudeKeyAccess(partitions: ["apple-tool:"], hasPartitionList: true) },
+            security: { _, account in account == nil ? .value(#"{"accessToken":"tok"}"#) : .missing },
+            itemAccount: { service in
+                lookedUp.append(service)
+                return "other.name"
+            }
+        ))
+        XCTAssertEqual(secret.account, "other.name")
+        XCTAssertEqual(lookedUp, ["Claude Code-credentials"])
+        let auth = try CredentialReaders.parseClaudeAuth(secret.value, account: secret.account ?? "", service: "Claude Code-credentials")
+        XCTAssertEqual(auth.account, "other.name")
+        XCTAssertTrue(CredentialReaders.claudeLoginCanBeRenewedInPlace(auth))
+
+        var direct: [String] = []
+        let found = CredentialReaders.readClaudeSecret(
+            service: "Claude Code-credentials",
+            account: "tester",
+            access: { _ in CredentialReaders.ClaudeKeyAccess(partitions: ["apple-tool:"], hasPartitionList: true) },
+            security: { _, _ in .value("token") },
+            itemAccount: { service in
+                direct.append(service)
+                return nil
             }
         )
-        XCTAssertEqual(secret, "token")
-        XCTAssertEqual(accounts, ["tester", nil])
+        XCTAssertEqual(found?.account, "tester")
+        XCTAssertTrue(direct.isEmpty, "An item read under the account needs no lookup")
+    }
+
+    func testAClaudeItemWhoseAccountCantBeReadIsNotRenewedInPlace() throws {
+        let secret = try XCTUnwrap(CredentialReaders.readClaudeSecret(
+            service: "Claude Code-credentials",
+            account: "tester",
+            access: { _ in CredentialReaders.ClaudeKeyAccess(trustedPaths: ["/usr/bin/security"]) },
+            security: { _, account in
+                account == nil ? .value(#"{"claudeAiOauth":{"accessToken":"tok","refreshToken":"r","expiresAt":1}}"#) : .missing
+            },
+            itemAccount: { _ in nil }
+        ))
+        XCTAssertNil(secret.account)
+        let auth = try CredentialReaders.parseClaudeAuth(secret.value, account: secret.account ?? "", service: "Claude Code-credentials")
+        XCTAssertFalse(CredentialReaders.claudeLoginCanBeRenewedInPlace(auth))
+        XCTAssertTrue(auth.canRefresh)
+        XCTAssertFalse(auth.countsAsUsableSession(), "Expired, and not renewable here: Sign In runs a real login")
+    }
+
+    func testTheAccountAttributeIsReadFromSecurityOutput() {
+        func output(_ acct: String) -> String {
+            """
+            keychain: "/tmp/test.keychain-db"
+            class: "genp"
+            attributes:
+                0x00000007 <blob>="Claude Code-credentials"
+                \(acct)
+                "svce"<blob>="Claude Code-credentials"
+            """
+        }
+        XCTAssertEqual(CredentialReaders.accountAttribute(inSecurityOutput: output(#""acct"<blob>="other.name""#)), "other.name")
+        XCTAssertEqual(CredentialReaders.accountAttribute(inSecurityOutput: output(#""acct"<blob>="say "hi"""#)), #"say "hi""#)
+        XCTAssertEqual(
+            CredentialReaders.accountAttribute(inSecurityOutput: output(#""acct"<blob>=0xC39C6EC3AF636F6465  "\303\234n\303\257code""#)),
+            "Ünïcode"
+        )
+        XCTAssertNil(CredentialReaders.accountAttribute(inSecurityOutput: output(#""acct"<blob>=<NULL>"#)))
+        XCTAssertNil(CredentialReaders.accountAttribute(inSecurityOutput: "security: SecKeychainSearchCopyNext: The specified item could not be found"))
+    }
+
+    /// In a throwaway keychain: the account read from the item updates that item, where this
+    /// Mac's user name would have added a second one beside it.
+    func testClaudeWriteUnderTheItemsOwnAccountUpdatesItInPlace() throws {
+        let keychain = FileManager.default.temporaryDirectory.appendingPathComponent("tokenroom-claude-account-\(UUID().uuidString).keychain-db")
+        let password = UUID().uuidString
+        let security = URL(fileURLWithPath: "/usr/bin/security")
+        defer {
+            _ = BlockingIO.runProcess(security, arguments: ["delete-keychain", keychain.path])
+        }
+        XCTAssertTrue(BlockingIO.runProcess(security, arguments: ["create-keychain", "-p", password, keychain.path]).succeeded)
+        XCTAssertTrue(BlockingIO.runProcess(security, arguments: ["unlock-keychain", "-p", password, keychain.path]).succeeded)
+        XCTAssertTrue(BlockingIO.runProcess(security, arguments: ["set-keychain-settings", keychain.path]).succeeded)
+        XCTAssertTrue(BlockingIO.runProcess(security, arguments: [
+            "add-generic-password", "-a", "other.name", "-s", "svc", "-w", #"{"old":true}"#, "-T", "/usr/bin/security", keychain.path,
+        ]).succeeded)
+        func items() -> Int {
+            let dump = BlockingIO.runProcess(security, arguments: ["dump-keychain", keychain.path])
+            return String(decoding: dump.stdout, as: UTF8.self).components(separatedBy: #""svce"<blob>="svc""#).count - 1
+        }
+
+        let account = try XCTUnwrap(CredentialReaders.securityAccount(service: "svc", keychain: keychain.path))
+        XCTAssertEqual(account, "other.name")
+        XCTAssertTrue(CredentialReaders.writeClaudeCredential(service: "svc", account: account, json: #"{"new":true}"#, keychain: keychain.path))
+        XCTAssertEqual(items(), 1, "Updated in place")
+
+        XCTAssertTrue(CredentialReaders.writeClaudeCredential(service: "svc", account: "tester", json: #"{"stray":true}"#, keychain: keychain.path))
+        XCTAssertEqual(items(), 2, "A guessed account adds an item, and the read-back reads that one")
+        let original = BlockingIO.runProcess(security, arguments: ["find-generic-password", "-a", "other.name", "-s", "svc", "-w", keychain.path])
+        XCTAssertEqual(String(decoding: original.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines), #"{"new":true}"#)
     }
 
     func testClaudeRefreshTokenExpiry() throws {

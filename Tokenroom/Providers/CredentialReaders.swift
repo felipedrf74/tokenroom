@@ -232,6 +232,8 @@ enum CredentialReaders {
         var expiresAtMs: Double?
         var refreshExpiresAtMs: Double?
         var rawJSON: String
+        /// The item's own account attribute. Empty when the item was found without one and its
+        /// account couldn't be read (`claudeLoginCanBeRenewedInPlace`).
         var account: String
         var service: String
 
@@ -254,12 +256,13 @@ enum CredentialReaders {
 
         var canRefresh: Bool { canRefresh(at: Date()) }
 
+        /// An expired access token counts only when Tokenroom can renew it in this same item.
         func countsAsUsableSession(now: Date = .now) -> Bool {
             guard !accessToken.isEmpty else { return false }
             if CredentialReaders.renewalIsRejected(.claude, refreshToken: refreshToken ?? "") {
                 return !isExpired(at: now)
             }
-            return !isExpired(at: now) || canRefresh(at: now)
+            return !isExpired(at: now) || (canRefresh(at: now) && CredentialReaders.claudeLoginCanBeRenewedInPlace(self))
         }
     }
 
@@ -320,10 +323,10 @@ enum CredentialReaders {
     private static func readBestClaudeCredential(account: String) -> (raw: String, auth: ClaudeAuth)? {
         var best: (raw: String, auth: ClaudeAuth)?
         for service in claudeCredentialServices() {
-            guard let raw = readClaudeSecret(service: service, account: account) else { continue }
-            guard let auth = try? parseClaudeAuth(raw, account: account, service: service) else { continue }
+            guard let secret = readClaudeSecret(service: service, account: account) else { continue }
+            guard let auth = try? parseClaudeAuth(secret.value, account: secret.account ?? "", service: service) else { continue }
             if best == nil || claudeAuthIsBetter(auth, than: best!.auth) {
-                best = (raw, auth)
+                best = (secret.value, auth)
             }
         }
         return best
@@ -337,6 +340,13 @@ enum CredentialReaders {
         case unavailable
     }
 
+    /// One Claude item's secret, and the account the item is filed under.
+    struct ClaudeSecret: Equatable {
+        var value: String
+        /// Nil when the item was found without an account and its own couldn't be read.
+        var account: String?
+    }
+
     /// A quiet read of one Claude item. The access list is checked before the secret.
     /// The secret is never read with SecItem: that call waits in securityd when this
     /// build is not the trusted-application entry, even if the partition list names
@@ -346,28 +356,77 @@ enum CredentialReaders {
     /// trusted to read is left unread. A read the caller is not allowed to open is
     /// what showed the login-password dialog, and the five-second process limit
     /// then replaced it with another.
+    ///
+    /// An item found by that retry is filed under another account. Its own account is then
+    /// read from its attributes (`itemAccount`, which reads no secret), because the write-back
+    /// finds the item by account: under `account` it would add a second item, and Claude Code
+    /// would keep reading this one, with the refresh token the renewal used up.
     static func readClaudeSecret(
         service: String,
         account: String,
         access: (String) -> ClaudeKeyAccess = { claudeKeyAccess(service: $0) },
         silent: (String, String?) -> String? = { keychainPassword(service: $0, account: $1, promptAllowed: false) },
-        security: (String, String?) -> SecurityPasswordResult = { securityPassword(service: $0, account: $1) }
-    ) -> String? {
+        security: (String, String?) -> SecurityPasswordResult = { securityPassword(service: $0, account: $1) },
+        itemAccount: (String) -> String? = { securityAccount(service: $0) }
+    ) -> ClaudeSecret? {
         _ = silent
         let policy = access(service)
         guard policy.trustsSecurityTool else { return nil }
         switch security(service, account) {
         case .value(let value):
-            return present(value)
+            return present(value).map { ClaudeSecret(value: $0, account: account) }
         case .missing:
             guard !account.isEmpty else { return nil }
-            if case .value(let value) = security(service, nil) {
-                return present(value)
-            }
-            return nil
+            guard case .value(let value) = security(service, nil), let value = present(value) else { return nil }
+            let filed = itemAccount(service).flatMap { $0.isEmpty ? nil : $0 }
+            return ClaudeSecret(value: value, account: filed)
         case .unavailable:
             return nil
         }
+    }
+
+    /// The account attribute of the item `/usr/bin/security` finds for `service` without an
+    /// account: the same search, so the same item an account-less read returned. Attributes
+    /// only (no `-w` or `-g`), so the secret isn't read and nothing asks. Nil when the item has
+    /// no account, or the tool didn't answer.
+    static func securityAccount(service: String, keychain: String? = nil) -> String? {
+        var args = ["find-generic-password", "-s", service]
+        if let keychain {
+            args.append(keychain)
+        }
+        let output = KeychainGate.sync {
+            BlockingIO.runProcess(URL(fileURLWithPath: "/usr/bin/security"), arguments: args)
+        }
+        guard output.succeeded, let text = String(data: output.stdout, encoding: .utf8) else { return nil }
+        return accountAttribute(inSecurityOutput: text)
+    }
+
+    /// `"acct"<blob>="name"` from `find-generic-password`, or `"acct"<blob>=0x…  "…"` when the
+    /// name isn't plain ASCII. `<NULL>` is an item without an account.
+    static func accountAttribute(inSecurityOutput text: String) -> String? {
+        let prefix = "\"acct\"<blob>="
+        for line in text.split(whereSeparator: \.isNewline) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix(prefix) else { continue }
+            let value = trimmed.dropFirst(prefix.count)
+            if value.hasPrefix("0x") {
+                let hex = value.dropFirst(2).prefix(while: \.isHexDigit)
+                guard !hex.isEmpty, hex.count.isMultiple(of: 2) else { return nil }
+                var bytes = Data(capacity: hex.count / 2)
+                var index = hex.startIndex
+                while index < hex.endIndex {
+                    let next = hex.index(index, offsetBy: 2)
+                    guard let byte = UInt8(hex[index..<next], radix: 16) else { return nil }
+                    bytes.append(byte)
+                    index = next
+                }
+                return String(data: bytes, encoding: .utf8).flatMap { $0.isEmpty ? nil : $0 }
+            }
+            guard value.count >= 2, value.hasPrefix("\""), value.hasSuffix("\"") else { return nil }
+            let name = String(value.dropFirst().dropLast())
+            return name.isEmpty ? nil : name
+        }
+        return nil
     }
 
     private static func present(_ value: String?) -> String? {
@@ -761,7 +820,13 @@ enum CredentialReaders {
     /// `-U` and no `-T` keeps that tool and the trusted-application paths, which is what
     /// the read uses. Passing `-T` can replace those paths. Setting a partition list asks
     /// for the keychain password, so this write does not.
-    static func claudeLoginCanBeRenewedInPlace() -> Bool { true }
+    ///
+    /// `-U` finds the item by account and service. Without the item's own account the update
+    /// would add a second item and leave this one, with the used-up refresh token, where
+    /// Claude Code reads it: that login isn't renewed here.
+    static func claudeLoginCanBeRenewedInPlace(_ auth: ClaudeAuth) -> Bool {
+        !auth.account.isEmpty
+    }
 
     /// `security -i` reads one line with a 4096-byte buffer. A longer line is truncated
     /// and must not be sent. A Claude login is larger than that, so it uses the same
@@ -798,7 +863,8 @@ enum CredentialReaders {
     }
 
     static func writeClaudeCredential(service: String, account: String, json: String, keychain: String? = nil) -> Bool {
-        guard !json.isEmpty else { return false }
+        // Without the item's account, `-U` would add an item instead of updating one.
+        guard !json.isEmpty, !account.isEmpty else { return false }
         let update = claudeSecurityUpdate(service: service, account: account, json: json, keychain: keychain)
         let output = KeychainGate.sync {
             BlockingIO.runProcess(
