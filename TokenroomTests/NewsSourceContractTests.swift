@@ -141,7 +141,8 @@ final class NewsSourceContractTests: XCTestCase {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }
         cache.save(to: folder)
-        let store = NewsStore(defaults: defaults, directory: folder, fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
+        let store = NewsStore(defaults: defaults, directory: folder, now: Date(timeIntervalSince1970: 1_800_000_000),
+                              fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
         XCTAssertEqual(store.followedSources, ["codex-releases"])
         XCTAssertTrue(store.followedVoices.isEmpty)
         XCTAssertTrue(store.followedStatusSources.isEmpty)

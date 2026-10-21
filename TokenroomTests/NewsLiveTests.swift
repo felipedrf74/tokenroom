@@ -76,7 +76,7 @@ final class NewsLiveTests: XCTestCase {
         var checked = NewsCache()
         checked.modelsFetchedAt = opened.addingTimeInterval(-3600)
         checked.save(to: folder)
-        let news = NewsStore(defaults: defaults, directory: folder, fetch: { request in
+        let news = NewsStore(defaults: defaults, directory: folder, now: opened, fetch: { request in
             var cache = request.cache
             cache.models = [Self.release("anthropic/claude-arrived", created: request.now)]
             cache.modelsFetchedAt = request.now
@@ -91,7 +91,7 @@ final class NewsLiveTests: XCTestCase {
 
         // Outside a visit, a check's finds still count.
         let later = arrived.addingTimeInterval(86_400)
-        let closed = NewsStore(defaults: defaults, directory: folder, fetch: { request in
+        let closed = NewsStore(defaults: defaults, directory: folder, now: later, fetch: { request in
             var cache = request.cache
             cache.models.append(Self.release("anthropic/claude-later", created: request.now))
             return NewsFetcher.Result(cache: cache, newModels: [])
@@ -172,6 +172,43 @@ final class NewsLiveTests: XCTestCase {
         held.value = false
         await again.value
         XCTAssertEqual(ages.value, [nil, 0])
+    }
+
+    /// A check time or a last look saved while the clock was ahead doesn't hold News back until
+    /// the clock catches up.
+    @MainActor
+    func testDatesSavedAheadOfTheClockDontHoldNewsBack() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let ahead = now.addingTimeInterval(2 * 86_400)
+        XCTAssertTrue(NewsFetcher.isDue(ahead, interval: NewsFetcher.announcementInterval, now: now), "A check dated ahead is due")
+        XCTAssertTrue(NewsFetcher.isDue(nil, failedAt: ahead, interval: NewsFetcher.announcementInterval, now: now), "…and so is a failure dated ahead")
+        XCTAssertFalse(NewsFetcher.isDue(now.addingTimeInterval(-60), interval: NewsFetcher.announcementInterval, now: now))
+
+        let defaults = makeDefaults()
+        defaults.set(ahead.timeIntervalSince1970, forKey: NewsStore.Keys.seenAt)
+        let news = NewsStore(defaults: defaults, directory: try makeFolder(), now: now, fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
+        XCTAssertEqual(news.seenAt, now, "A last look ahead of the clock comes back to now")
+        XCTAssertEqual(news.visitBaseline, now)
+        XCTAssertEqual(defaults.double(forKey: NewsStore.Keys.seenAt), now.timeIntervalSince1970, "…and is saved so")
+        XCTAssertTrue(news.isNew(now.addingTimeInterval(60)), "So what comes next is new")
+    }
+
+    /// Turning News on with the Mac's window open (a visit already under way) marks nothing new.
+    @MainActor
+    func testTheFirstCheckMarksNothingNewWithNewsOpen() async throws {
+        let installed = Date(timeIntervalSince1970: 1_800_000_000)
+        let turnedOn = installed.addingTimeInterval(30 * 86_400)
+        let news = NewsStore(defaults: makeDefaults(), directory: try makeFolder(), now: installed, fetch: { request in
+            var cache = request.cache
+            cache.models = [Self.release("anthropic/claude-since-install", created: turnedOn.addingTimeInterval(-86_400))]
+            cache.modelsFetchedAt = request.now
+            return NewsFetcher.Result(cache: cache, newModels: [])
+        }, notify: { _, _, _ in })
+        news.beginVisit(now: turnedOn.addingTimeInterval(-60)) // The window opened, then News was turned on.
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: turnedOn)
+        XCTAssertEqual(news.visitBaseline, turnedOn)
+        XCTAssertFalse(news.isNew(news.models().first?.created), "Released since install, but there before News was on")
+        XCTAssertEqual(news.unseenModelCount(now: turnedOn), 0)
     }
 
     /// A feed that failed waits out the hour during a visit, as it does in the background; a

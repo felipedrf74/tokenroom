@@ -119,12 +119,13 @@ final class NewsStore {
         followedSources = (defaults.array(forKey: Keys.sources) as? [String]).map { Set($0).union(catalog.subtracting(known)) } ?? catalog
         followedVoices = Set(defaults.stringArray(forKey: Keys.voices) ?? [])
         followedStatusSources = Set(defaults.stringArray(forKey: Keys.status) ?? [])
-        // A first launch starts from now, so the whole list isn't "new".
-        let saved = defaults.object(forKey: Keys.seenAt) as? Double
-        let seen = saved.map(Date.init(timeIntervalSince1970:)) ?? now
+        // A first launch starts from now, so the whole list isn't "new". A time saved ahead of the
+        // clock (set while it was wrong) comes back to now, or nothing would be new until then.
+        let saved = (defaults.object(forKey: Keys.seenAt) as? Double).map(Date.init(timeIntervalSince1970:))
+        let seen = min(saved ?? now, now)
         seenAt = seen
         visitBaseline = seen
-        if saved == nil {
+        if saved != seen {
             defaults.set(seen.timeIntervalSince1970, forKey: Keys.seenAt)
         }
     }
@@ -319,7 +320,9 @@ final class NewsStore {
             runningIsAllowed = nil
             queuedRefresh = nil
         }
-        if cache.modelsFetchedAt == nil, cache.announcementsFetchedAt == nil, !visitIsOpen {
+        // The first check (turning News on) marks nothing new, even with News open, as the Mac's
+        // window is when News is turned on from it: what it finds was there before.
+        if cache.modelsFetchedAt == nil, cache.announcementsFetchedAt == nil {
             seenAt = max(seenAt, initial.now)
             visitBaseline = seenAt
         }

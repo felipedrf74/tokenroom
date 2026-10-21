@@ -344,8 +344,10 @@ enum NewsFetcher {
         return Result(cache: cache, newModels: newModels)
     }
 
+    /// Due once `interval` has passed since `fetchedAt`, or when `fetchedAt` is later than `now`:
+    /// saved while the clock was ahead, it would otherwise hold checks off until then.
     static func isDue(_ fetchedAt: Date?, interval: TimeInterval, now: Date) -> Bool {
-        fetchedAt.map { now.timeIntervalSince($0) >= interval } ?? true
+        fetchedAt.map { $0 > now || now.timeIntervalSince($0) >= interval } ?? true
     }
 
     /// Due by `interval`, and, after a failed check, once `retryInterval` has passed, however
