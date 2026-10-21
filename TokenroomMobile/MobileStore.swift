@@ -240,7 +240,7 @@ final class MobileStore {
             sourceID = "src-\(UUID().uuidString.lowercased())"
             defaults.set(sourceID, forKey: Keys.sourceID)
         }
-        relay = containerIdentifier.map(CloudRelay.init(containerIdentifier:))
+        relay = containerIdentifier.map { CloudRelay(containerIdentifier: $0, zoneDeletion: RelayZoneDeletion(defaults: defaults)) }
         relayPhase = relay == nil ? .unavailable : .idle
         history = HistoryStore(directory: directory)
         self.directory = directory
@@ -397,9 +397,15 @@ final class MobileStore {
             relaySources = contents.sources.filter { $0.id != sourceID }
             relayHistories = contents.histories
             relayEvents = contents.events
-            relayPhase = .ready
             relayRetryAt = nil
             relayReadOnce = true
+            guard !contents.deletedByUser else {
+                // Deleted in iCloud settings: known to hold nothing, so the saved cache's readings
+                // don't stand in, and nothing is sent until the user starts again.
+                handleRelayError(CKError(.userDeletedZone))
+                return
+            }
+            relayPhase = .ready
             adoptPreferences(contents.alertPreferences, readStartedAt: readStartedAt)
         } catch {
             guard relayGeneration == generation, !Task.isCancelled else { return }

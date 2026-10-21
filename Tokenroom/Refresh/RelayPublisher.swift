@@ -79,7 +79,7 @@ final class RelayPublisher {
             defaults.set(sourceID, forKey: Keys.sourceID)
         }
         label = defaults.string(forKey: Keys.label) ?? "Mac"
-        relay = containerIdentifier.map(CloudRelay.init(containerIdentifier:))
+        relay = containerIdentifier.map { CloudRelay(containerIdentifier: $0, zoneDeletion: RelayZoneDeletion(defaults: defaults)) }
         let enabled = defaults.object(forKey: Keys.enabled) as? Bool ?? true
         isEnabled = enabled
         state = relay == nil ? .unavailable : (enabled ? .waiting : .off)

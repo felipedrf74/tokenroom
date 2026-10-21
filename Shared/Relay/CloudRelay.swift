@@ -70,6 +70,9 @@ actor CloudRelay {
         var alertPreferences: AlertPreferences? = nil
         /// Alert record names and when each was created, for pruning.
         var events: [(id: String, createdAt: Date?)] = []
+        /// The user deleted Tokenroom's data in iCloud settings: there's nothing to show, and the
+        /// iPhone says how to start again.
+        var deletedByUser = false
     }
 
     struct Source: Sendable, Identifiable {
@@ -90,14 +93,18 @@ actor CloudRelay {
     private var subscriptionsWrite: Task<Bool, any Error>?
     private let zoneReader: RelayZoneReader<CKRecord.ID, CKRecord, CKServerChangeToken>
     private let accountObserver: RelayAccountObserver
+    private let zoneDeletion: RelayZoneDeletion
 
     private var database: CKDatabase {
         container.privateCloudDatabase
     }
 
     /// Only call when `RelayAvailability` reports the container; CloudKit traps without the entitlement.
-    init(containerIdentifier: String) {
+    /// - Parameter zoneDeletion: where this device remembers that the user deleted Tokenroom's
+    ///   data in iCloud settings; the writers pass their own defaults.
+    init(containerIdentifier: String, zoneDeletion: RelayZoneDeletion = RelayZoneDeletion(defaults: .standard)) {
         self.containerIdentifier = containerIdentifier
+        self.zoneDeletion = zoneDeletion
         let container = CKContainer(identifier: containerIdentifier)
         self.container = container
         let database = container.privateCloudDatabase
@@ -141,7 +148,11 @@ actor CloudRelay {
 
     func accountStatus() async throws -> CKAccountStatus {
         let status = try await container.accountStatus()
-        if status == .noAccount { accountEpoch.invalidate(); await zoneReader.invalidate(); zoneReady = false }
+        if status == .noAccount {
+            accountEpoch.invalidate(); await zoneReader.invalidate(); zoneReady = false
+            // The next account starts afresh: the deletion was the last one's.
+            zoneDeletion.clear()
+        }
         return status
     }
 
@@ -163,6 +174,8 @@ actor CloudRelay {
             return (record[Field.payload] as? Data).flatMap { try? RelayEnvelope.decoder.decode(AlertPreferences.self, from: $0) }
         } catch let error as CKError where error.code == .unknownItem || error.code == .zoneNotFound {
             return nil
+        } catch {
+            throw notingDeletion(error)
         }
     }
 
@@ -170,7 +183,17 @@ actor CloudRelay {
     /// longer make every foreground refresh download the whole retained notification history.
     func contents() async throws -> Contents {
         let epoch = accountEpoch.value
-        let records = try await zoneReader.contents(scope: epoch)
+        let records: [CKRecord.ID: CKRecord]
+        do {
+            records = try await zoneReader.contents(scope: epoch)
+        } catch where RelayZoneDeletion.isUserDeletedZone(error) {
+            // Deleted in iCloud settings: an empty read, so the Watch and widgets stop showing
+            // what was deleted; the iPhone keeps saying how to start again.
+            guard epoch == accountEpoch.value, !Task.isCancelled else { throw CancellationError() }
+            await zoneReader.invalidate()
+            zoneDeletion.mark()
+            return Contents(sources: [], histories: [:], deletedByUser: true)
+        }
         guard epoch == accountEpoch.value, !Task.isCancelled else { throw CancellationError() }
         var sources: [Source] = []
         var histories: [String: RelayHistory] = [:]
@@ -218,6 +241,15 @@ actor CloudRelay {
             }
         }
         return false
+    }
+
+    /// `error`, noted first when it says the user deleted the zone in iCloud settings.
+    private func notingDeletion(_ error: any Error) -> any Error {
+        if RelayZoneDeletion.isUserDeletedZone(error) {
+            zoneReady = false
+            zoneDeletion.mark()
+        }
+        return error
     }
 
     private static func source(from record: CKRecord) -> Source {
@@ -376,6 +408,8 @@ extension CloudRelay {
             // Restart with a fresh revision if the zone disappeared after the reads. A
             // userDeletedZone remains an error; it is never automatically recreated here.
             throw error
+        } catch {
+            throw notingDeletion(error)
         }
         try checkAlertAccount(epoch)
     }
@@ -473,6 +507,8 @@ extension CloudRelay {
     func deleteAllData() async throws {
         let results = try await database.modifyRecordZones(saving: [], deleting: [Self.zoneID])
         zoneReady = false
+        // The user's own choice: the zone is made again for what this device sends next.
+        zoneDeletion.clear()
         for (_, result) in results.deleteResults {
             guard case .failure(let error) = result else { continue }
             // Already gone, from this device or from iCloud settings: nothing left to delete.
@@ -489,10 +525,25 @@ extension CloudRelay {
     /// only happen when the user asks (turning sync back on).
     func resetZone() {
         zoneReady = false
+        zoneDeletion.clear()
     }
 
     /// `.allKeys` replaces by name; `.ifServerRecordUnchanged` creates or checks a fetched change tag.
     private func save(_ records: [CKRecord], policy: CKModifyRecordsOperation.RecordSavePolicy = .allKeys) async throws {
+        if zoneDeletion.isMarked {
+            // Deleted in iCloud settings, this launch or an earlier one: the zone isn't made
+            // again here. Saves go in once it's back, made by the user's choice on another
+            // device (sync turned off and on, or Delete on the iPhone).
+            do {
+                try await modify(records, policy: policy)
+            } catch where RelayZoneDeletion.isUserDeletedZone(error) || (error as? CKError)?.code == .zoneNotFound {
+                throw CKError(.userDeletedZone)
+            }
+            zoneDeletion.clear()
+            zoneReady = true
+            zoneEpoch = accountEpoch.value
+            return
+        }
         try await ensureZone()
         do {
             try await modify(records, policy: policy)
@@ -500,6 +551,8 @@ extension CloudRelay {
             zoneReady = false
             try await ensureZone()
             try await modify(records, policy: policy)
+        } catch {
+            throw notingDeletion(error)
         }
     }
 
@@ -526,6 +579,9 @@ extension CloudRelay {
     private func ensureZone() async throws {
         let epoch = accountEpoch.value
         guard !zoneReady || zoneEpoch != epoch else { return }
+        // CloudKit asks apps not to make a zone the user deleted again on their own; only the
+        // user's choice (`resetZone`, `deleteAllData`) ends the deletion.
+        guard !zoneDeletion.isMarked else { throw CKError(.userDeletedZone) }
         let results = try await database.modifyRecordZones(saving: [CKRecordZone(zoneID: Self.zoneID)], deleting: [])
         for (_, result) in results.saveResults {
             if case .failure(let error) = result {
@@ -649,12 +705,52 @@ extension CloudRelay {
     }
 
     private func saveSubscriptions(_ subscriptions: [CKSubscription]) async throws {
-        let results = try await database.modifySubscriptions(saving: subscriptions, deleting: [])
-        for (_, result) in results.saveResults {
-            if case .failure(let error) = result {
-                throw error
+        do {
+            let results = try await database.modifySubscriptions(saving: subscriptions, deleting: [])
+            for (_, result) in results.saveResults {
+                if case .failure(let error) = result {
+                    throw error
+                }
             }
+        } catch {
+            throw notingDeletion(error)
         }
     }
 }
 #endif
+
+/// That the user deleted Tokenroom's zone in iCloud settings, as this device last found:
+/// remembered in its defaults, so a later launch doesn't make the zone again on its own the first
+/// time it saves. CloudKit asks apps to leave that to the user. Only the user's own choice ends it
+/// (`CloudRelay.resetZone`, the Mac's sync turned back on; `deleteAllData`, the iPhone's Delete),
+/// or the zone found back on a save, made by that choice on another device. Signing out of
+/// iCloud ends it too: the next account didn't delete anything. UserDefaults is thread-safe,
+/// which Swift can't see.
+struct RelayZoneDeletion: @unchecked Sendable {
+    static let key = "relayZoneDeletedByUser"
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults) {
+        self.defaults = defaults
+    }
+
+    var isMarked: Bool {
+        defaults.bool(forKey: Self.key)
+    }
+
+    func mark() {
+        defaults.set(true, forKey: Self.key)
+    }
+
+    func clear() {
+        defaults.removeObject(forKey: Self.key)
+    }
+
+    /// Whether `error` says the user deleted the zone, itself or for one record of a batch.
+    static func isUserDeletedZone(_ error: any Error) -> Bool {
+        guard let error = error as? CKError else { return false }
+        if error.code == .userDeletedZone { return true }
+        guard error.code == .partialFailure else { return false }
+        return error.partialErrorsByItemID?.values.contains(where: isUserDeletedZone) == true
+    }
+}
