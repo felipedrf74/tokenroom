@@ -39,6 +39,8 @@ final class NewsStore {
     private var runningMaxAge: TimeInterval??
     private var runningIsAllowed: (@MainActor @Sendable () -> Bool)?
     private var lastPreferences = AlertPreferences()
+    /// A notifying request arrived while a pass that doesn't notify (a live check) was under way.
+    private var notifyAsked = false
     /// The owning app's policy applies to every entry point, including Follow and Retry.
     @ObservationIgnored var allowsRefresh: @MainActor @Sendable () -> Bool = { true }
 
@@ -292,6 +294,7 @@ final class NewsStore {
                                  (queued?.notifies ?? false) || notifies, now,
                                  (queued?.forcedSources ?? []).union(forcedSources), isAllowed ?? queued?.isAllowed ?? runningIsAllowed)
             }
+            if notifies { notifyAsked = true }
             return
         }
         isRefreshing = true
@@ -328,6 +331,7 @@ final class NewsStore {
     private func performRefresh(_ initial: RefreshRequest) async {
         defer {
             isRefreshing = false
+            notifyAsked = false
             runningMaxAge = nil
             runningIsAllowed = nil
             queuedRefresh = nil
@@ -396,8 +400,14 @@ final class NewsStore {
             if visitIsOpen, let arrival = Self.newestArrival(in: cache, since: previous, checkedAt: request.now) {
                 seenAt = max(seenAt, arrival)
             }
-            if request.notifies, request.preferences.newModels, !result.newModels.isEmpty {
-                notify(result.newModels, request.preferences, request.now)
+            // A notifying request that arrived meanwhile (a background refresh during a live check)
+            // hands this pass its intent: the models it found are now off the list, so no later
+            // pass would find them again. News on screen still doesn't notify.
+            let notifies = request.notifies || (notifyAsked && !visitIsOpen)
+            let preferences = request.notifies ? request.preferences : lastPreferences
+            notifyAsked = false
+            if notifies, preferences.newModels, !result.newModels.isEmpty {
+                notify(result.newModels, preferences, request.now)
             }
             guard let next = queuedRefresh else { break }
             queuedRefresh = nil

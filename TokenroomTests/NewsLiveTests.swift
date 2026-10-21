@@ -116,7 +116,7 @@ final class NewsLiveTests: XCTestCase {
         var checked = NewsCache()
         checked.modelsFetchedAt = opened.addingTimeInterval(-3600)
         checked.save(to: folder)
-        let news = NewsStore(defaults: defaults, directory: folder, fetch: { request in
+        let news = NewsStore(defaults: defaults, directory: folder, now: opened, fetch: { request in
             NewsFetcher.Result(cache: request.cache, newModels: [])
         }, notify: { _, _, _ in })
         news.beginVisit(now: opened)
@@ -124,13 +124,47 @@ final class NewsLiveTests: XCTestCase {
         await news.refresh(maxAge: NewsFetcher.liveInterval, preferences: AlertPreferences(), notifies: false, now: liveCheck)
         news.endVisit()
 
-        let later = NewsStore(defaults: defaults, directory: folder, fetch: { request in
+        let later = NewsStore(defaults: defaults, directory: folder, now: liveCheck.addingTimeInterval(60), fetch: { request in
             var cache = request.cache
             cache.models.append(Self.release("anthropic/claude-missed", created: opened.addingTimeInterval(60)))
             return NewsFetcher.Result(cache: cache, newModels: [])
         }, notify: { _, _, _ in })
         await later.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: liveCheck.addingTimeInterval(60))
         XCTAssertEqual(later.unseenModelCount(now: liveCheck.addingTimeInterval(60)), 1, "Created during the visit, but never on screen")
+    }
+
+    /// A live check under way (it doesn't notify) when a notifying background refresh comes in:
+    /// the models the live check finds are taken off the list, so it notifies them, unless News
+    /// is on screen.
+    @MainActor
+    func testANotifyingRefreshDuringALiveCheckIsntLost() async throws {
+        for newsOnScreen in [false, true] {
+            let held = LockedBox(true)
+            let entered = LockedBox(false)
+            let notified = LockedBox<[[String]]>([])
+            // Everything checked before, so the background refresh asks for nothing fresher.
+            let folder = try makeFolder()
+            var checked = NewsCache()
+            checked.modelsFetchedAt = Date(timeIntervalSince1970: 1_800_000_000)
+            checked.sourceChecks = Dictionary(uniqueKeysWithValues: FeedSource.catalog.map { ($0.id, NewsCache.SourceCheck(succeededAt: checked.modelsFetchedAt)) })
+            checked.save(to: folder)
+            let news = NewsStore(defaults: makeDefaults(), directory: folder, now: Date(timeIntervalSince1970: 1_800_000_000), fetch: { request in
+                entered.value = true
+                while held.value { try? await Task.sleep(for: .milliseconds(5)) }
+                var cache = request.cache
+                cache.modelsFetchedAt = request.now
+                return NewsFetcher.Result(cache: cache, newModels: [Self.release("anthropic/claude-new", created: request.now)])
+            }, notify: { releases, _, _ in notified.value.append(releases.map(\.id)) })
+            var preferences = AlertPreferences()
+            preferences.newModels = true
+            if newsOnScreen { news.beginVisit() }
+            let live = Task { await news.refresh(maxAge: NewsFetcher.liveInterval, preferences: preferences, notifies: false) }
+            while !entered.value { try await Task.sleep(for: .milliseconds(5)) }
+            await news.refresh(preferences: preferences, notifies: true) // The background refresh.
+            held.value = false
+            await live.value
+            XCTAssertEqual(notified.value, newsOnScreen ? [] : [["anthropic/claude-new"]], newsOnScreen ? "News on screen doesn't notify" : "The background refresh's notification isn't lost")
+        }
     }
 
     /// News opened while another check runs still gets its 5-minute check right after it,
