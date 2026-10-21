@@ -130,6 +130,18 @@ final class WidgetTests: XCTestCase {
             XCTAssertFalse(beatChange.worthReload, "Heartbeat \(beat)")
             saved = next
         }
+
+        // The same from a Mac whose clock runs six minutes fast.
+        saved = handover(at: now.addingTimeInterval(6 * 60))
+        for beat in 1...8 {
+            let date = now.addingTimeInterval(Double(beat) * 30 * 60)
+            let next = saved.mergingUpdate(handover(at: date.addingTimeInterval(6 * 60)), now: date)
+            XCTAssertEqual(next.items.first?.provider.checkedAt, date.addingTimeInterval(6 * 60), "Each heartbeat is taken: \(beat)")
+            let beatChange = next.changes(since: saved, at: date)
+            XCTAssertFalse(beatChange.shown, "Fast heartbeat \(beat)")
+            XCTAssertFalse(beatChange.worthReload, "Fast heartbeat \(beat)")
+            saved = next
+        }
     }
 
     private func cache(savedAt: Date, used: Double, isSample: Bool = false) -> ReadingCache {

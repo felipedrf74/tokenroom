@@ -66,8 +66,8 @@ struct ReadingCache: Codable, Equatable, Sendable {
     }
 
     /// Nil leaves the established legacy-cache policy in place when exact provenance is absent.
-    /// A snapshot or cache dated ahead of `now` (saved before the clock was set back) is never
-    /// the newer one.
+    /// A snapshot or cache dated ahead of `now` counts as now (`ReadingFreshness.ordering`), and an
+    /// iCloud read as new as the one kept is taken.
     func reconcilingSourceUpdate(_ incoming: ReadingCache, now: Date = .now) -> ReadingCache? {
         let order = { (date: Date) in ReadingFreshness.ordering(date, now: now) }
         let incomingIsNewer = order(incoming.savedAt) >= order(savedAt)
@@ -102,7 +102,7 @@ struct ReadingCache: Codable, Equatable, Sendable {
         case (nil, let candidate): relay = candidate
         case (let retained, nil): relay = retained
         case (let retained?, let candidate?):
-            relay = order(candidate.checkedAt) > order(retained.checkedAt) ? candidate : retained
+            relay = order(candidate.checkedAt) >= order(retained.checkedAt) ? candidate : retained
         }
         guard let relay, var local, local.envelope.isReadable else { return nil }
 

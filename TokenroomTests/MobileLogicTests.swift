@@ -298,14 +298,14 @@ final class MobileLogicTests: XCTestCase {
         ]))
         XCTAssertEqual(ReadingAssembler.assemble(sources: [older, newer], histories: [:], now: now).disconnected.map(\.provider.message), ["Newer"])
 
-        // Nor does one dated ahead of the clock beat another's that's real.
-        let ahead = RelayProvider(provider: .claude, status: .stale(snapshot(.claude, used: 10, fetchedAt: now.addingTimeInterval(86_400))), checkedAt: now.addingTimeInterval(86_400))
+        // One dated ahead of the clock (a collector's clock running fast) is as new as anything.
+        let ahead = RelayProvider(provider: .claude, status: .stale(snapshot(.claude, used: 10, fetchedAt: now.addingTimeInterval(360))), checkedAt: now.addingTimeInterval(360))
         let real = RelayProvider(provider: .claude, status: .stale(snapshot(.claude, used: 55, fetchedAt: asleep)), checkedAt: asleep)
         let entries = RelayMerge.entries(from: [
             RelayMerge.Source(id: "a", label: "A", envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: now, providers: [ahead])),
             RelayMerge.Source(id: "b", label: "B", envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: now, providers: [real])),
         ], now: now)
-        XCTAssertEqual(entries.first?.sourceLabel, "B")
+        XCTAssertEqual(entries.first?.sourceLabel, "A")
     }
 
     /// A key provider this launch hasn't checked, with nothing saved for it, isn't listed as not
