@@ -39,6 +39,14 @@ final class QuotaStore {
     private var presentationTask: Task<Void, Never>?
     private var wakeTask: Task<Void, Never>?
     private var sleepTask: Task<Void, Never>?
+    private var timeZoneTask: Task<Void, Never>?
+    /// This Mac's time zone now. Foundation keeps the zone it first read for the life of the
+    /// process, so it's read again each time: a change made here after travelling is dated
+    /// in the zone the Mac is in, not the one Tokenroom launched in. Tests pin it.
+    var currentTimeZone: () -> TimeZone = {
+        NSTimeZone.resetSystemTimeZone()
+        return .current
+    }
     /// The check running now.
     private var inFlight: Task<Void, Never>?
     /// One more check after the running one, shared by the forced refreshes asked for meanwhile,
@@ -49,11 +57,16 @@ final class QuotaStore {
     private var sharing: Task<Void, Never>?
     /// Keeps News current while its window is open.
     private var liveNews: Task<Void, Never>?
-    /// The one check more after a check that couldn't connect at all (`offlineRetryDelay`).
-    private var offlineRetry: Task<Void, Never>?
-    /// How long after a check where every call failed to connect it's tried once more: the Mac
+    /// The one check more after a check that couldn't reach the network at all.
+    private(set) var offlineRetry: Task<Void, Never>?
+    /// How long after a check where no call reached the network it's tried once more: the Mac
     /// woke before its Wi-Fi, and the timer's next check can be half an hour away.
-    var offlineRetryDelay: TimeInterval = 45
+    nonisolated static let offlineRetryDelay: TimeInterval = 45
+    /// Waits out `offlineRetryDelay` before that check (returning early when cancelled). Tests
+    /// hold it until they're ready instead.
+    var waitBeforeOfflineRetry: @Sendable () async -> Void = {
+        try? await Task.sleep(nanoseconds: UInt64(QuotaStore.offlineRetryDelay * 1_000_000_000))
+    }
     private var shareAgain = false
     private var snapshotsDirty = false
     private let logger = Logger(subsystem: TokenroomIdentity.bundleID, category: "refresh")
@@ -119,6 +132,14 @@ final class QuotaStore {
                 self?.willSleep()
             }
         }
+        timeZoneTask = Task { [weak self] in
+            let notifications = NotificationCenter.default.notifications(named: .NSSystemTimeZoneDidChange)
+            for await _ in notifications {
+                // Times shown (resets, run-outs, quiet hours) follow the new zone without a relaunch.
+                NSTimeZone.resetSystemTimeZone()
+                self?.ageReadings(at: .now)
+            }
+        }
     }
 
     /// A check every "Refresh every", until cancelled.
@@ -166,6 +187,8 @@ final class QuotaStore {
         wakeTask = nil
         sleepTask?.cancel()
         sleepTask = nil
+        timeZoneTask?.cancel()
+        timeZoneTask = nil
         inFlight?.cancel()
         inFlight = nil
         followUp?.cancel()
@@ -258,10 +281,12 @@ final class QuotaStore {
     /// timer's next check, within its usual spacing and Retry-After (the login didn't change).
     /// Either way the iPhone's list changes with the next round sent to iCloud, which goes out
     /// at once instead of waiting out the minute since the last send.
-    func setEnabled(_ provider: Provider, _ isOn: Bool) {
-        guard settings.isEnabled(provider) != isOn else { return }
+    /// Returns the check and round it starts, nil when nothing changed.
+    @discardableResult
+    func setEnabled(_ provider: Provider, _ isOn: Bool) -> Task<Void, Never>? {
+        guard settings.isEnabled(provider) != isOn else { return nil }
         settings.setEnabled(provider, isOn)
-        Task {
+        return Task {
             if isOn {
                 await refresh(force: true, providers: [provider])
             }
@@ -379,6 +404,7 @@ final class QuotaStore {
                 lastAttemptAt[provider] = now
             }
         }
+        let networkBefore = TokenroomHTTP.networkTally
         await withTaskGroup(of: (Provider, Result<QuotaSnapshot, ProviderError>).self) { group in
             for provider in due {
                 guard let client = clients[provider] else { continue }
@@ -404,10 +430,14 @@ final class QuotaStore {
                 }
                 apply(provider: provider, result: result)
             }
-            // Every call failed to connect: the Mac was offline (awake before its Wi-Fi), so none
-            // of them was a call to space out. One provider alone can't tell an outage from that.
+            // Every call failed, nothing answered meanwhile, and the network said it wasn't there:
+            // the Mac was offline (awake before its Wi-Fi), so none of them was a call to space out.
+            // A server's error or a slow answer reached the provider, and keeps its spacing. One
+            // provider alone can't tell an outage from being offline.
+            let networkAfter = TokenroomHTTP.networkTally
+            let offline = networkAfter.answers == networkBefore.answers && networkAfter.offline > networkBefore.offline
             let called = due.filter { clients[$0] != nil }
-            if called.count >= 2, unreachable.count == called.count {
+            if called.count >= 2, unreachable.count == called.count, offline {
                 for provider in unreachable {
                     lastAttemptAt[provider] = earlierAttempts[provider]
                 }
@@ -442,11 +472,14 @@ final class QuotaStore {
     /// timer's next check. Once: a retry that can't connect either leaves it to the timer.
     private func retryOnceOnline(_ providers: [Provider]) {
         guard offlineRetry == nil else { return }
-        let delay = offlineRetryDelay
+        let wait = waitBeforeOfflineRetry
         offlineRetry = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(max(0, delay) * 1_000_000_000))
+            await wait()
             // Cancelled by sleep or quitting: whoever cancelled it already let it go.
             guard let self, !Task.isCancelled else { return }
+            // An ordinary check of those providers: each one's spacing and Retry-After hold (a
+            // provider called meanwhile rests), and no login is renewed unless it's due. `force`
+            // only keeps it from folding into a check in flight or one moments ago.
             await self.refresh(force: true, providers: providers)
             if !Task.isCancelled {
                 self.offlineRetry = nil
@@ -528,7 +561,7 @@ final class QuotaStore {
         var preferences = settings.alertPreferences
         change(&preferences)
         guard preferences != settings.alertPreferences else { return }
-        preferences.touch(now: now)
+        preferences.touch(now: now, timeZone: currentTimeZone())
         settings.alertPreferences = preferences
         guard relay != nil else { return }
         Task { _ = await currentAlertPreferences() }

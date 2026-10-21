@@ -262,6 +262,7 @@ final class ParserTests: XCTestCase {
         let password = UUID().uuidString
         defer {
             _ = BlockingIO.runProcess(URL(fileURLWithPath: "/usr/bin/security"), arguments: ["delete-keychain", keychain.path])
+            try? FileManager.default.removeItem(at: keychain)
         }
         let created = BlockingIO.runProcess(
             URL(fileURLWithPath: "/usr/bin/security"),
@@ -471,6 +472,7 @@ final class ParserTests: XCTestCase {
         let security = URL(fileURLWithPath: "/usr/bin/security")
         defer {
             _ = BlockingIO.runProcess(security, arguments: ["delete-keychain", keychain.path])
+            try? FileManager.default.removeItem(at: keychain)
         }
         XCTAssertTrue(BlockingIO.runProcess(security, arguments: ["create-keychain", "-p", password, keychain.path]).succeeded)
         XCTAssertTrue(BlockingIO.runProcess(security, arguments: ["unlock-keychain", "-p", password, keychain.path]).succeeded)
