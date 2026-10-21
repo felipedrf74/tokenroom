@@ -385,7 +385,9 @@ final class MobileStore {
                 resetRelayAccount(phase: .noAccount)
                 return
             default:
-                relayPhase = .noAccount
+                // Signed in, but iCloud can't be used now (unsure, to be verified, restricted):
+                // that's said as it is, not as signed out, and what was read stays.
+                relayPhase = .failed(RelayErrorPolicy.unusableAccount(account) ?? "Couldn't reach iCloud.")
                 return
             }
             let readStartedAt = Date()

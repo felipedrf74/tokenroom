@@ -474,6 +474,20 @@ final class MobileLogicTests: XCTestCase {
         XCTAssertTrue(RelayErrorPolicy.Outcome.noAccount.stopsBatch)
     }
 
+    /// Signed in, but iCloud can't be used now: that's said as it is, and only a missing account
+    /// asks the user to sign in.
+    func testAnICloudAccountThatCantBeUsedNowIsntSignedOut() {
+        XCTAssertNil(RelayErrorPolicy.unusableAccount(.available))
+        XCTAssertNil(RelayErrorPolicy.unusableAccount(.noAccount), "Signed out starts afresh")
+        XCTAssertEqual(RelayErrorPolicy.unusableAccount(.couldNotDetermine), "Couldn't reach iCloud.")
+        for status in [CKAccountStatus.couldNotDetermine, .temporarilyUnavailable, .restricted] {
+            let message = RelayErrorPolicy.unusableAccount(status)
+            XCTAssertEqual(message?.hasPrefix("Couldn't"), true, "\(status.rawValue)")
+            XCTAssertFalse(message?.localizedCaseInsensitiveContains("sign in") ?? true, "\(status.rawValue)")
+        }
+        XCTAssertNotEqual(RelayErrorPolicy.unusableAccount(.temporarilyUnavailable), RelayErrorPolicy.unusableAccount(.restricted))
+    }
+
     // MARK: Nothing secret leaves the device
 
     func testNoKeyMaterialReachesAnyRecord() async throws {

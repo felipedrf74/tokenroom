@@ -26,6 +26,24 @@ enum RelayErrorPolicy {
         }
     }
 
+    /// Why an iCloud account that's there can't be used now: nil when it's available or signed
+    /// out (`noAccount`, after which the next account starts afresh). The others keep what was
+    /// read, as any failure does.
+    static func unusableAccount(_ status: CKAccountStatus) -> String? {
+        switch status {
+        case .available, .noAccount:
+            nil
+        case .temporarilyUnavailable:
+            "Couldn't use iCloud until your Apple Account is verified again. Open Settings and tap your name."
+        case .restricted:
+            "Couldn't use iCloud: Screen Time or device management restricts it on this device."
+        case .couldNotDetermine:
+            "Couldn't reach iCloud."
+        @unknown default:
+            "Couldn't reach iCloud."
+        }
+    }
+
     static func outcome(for error: Error, defaultRetry: TimeInterval) -> Outcome {
         if error is CancellationError || (error as? CKError)?.code == .operationCancelled {
             return .cancelled
