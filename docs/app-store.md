@@ -26,8 +26,8 @@ Usage readings now show when each provider was last checked and flag stale data.
 
 | Field | Value |
 |---|---|
-| Name (30) | Tokenroom: AI Usage & Limits |
-| Subtitle (30) | Plan limits, resets & alerts |
+| Name (30) | Tokenroom: AI News & Usage |
+| Subtitle (30) | Usage limits, resets & alerts |
 | Bundle ID | `app.tokenroom.ios` (Watch: `app.tokenroom.ios.watchkitapp`) |
 | SKU | `tokenroom-ios` |
 | Primary category | Utilities |
@@ -105,6 +105,8 @@ Tokenroom isn't affiliated with any of the providers it shows. Their names are u
 Not for 1.0.1, 1.0.2, or 1.0.3; leave their listings and notes as submitted.
 
 The next version can say that the Watch, widgets, and Lock Screen lead with the limit that is closest to running out, and that a pace measured on the Mac stays visible, marked projected, after that Mac sleeps.
+
+- The name and subtitle above (Tokenroom: AI News & Usage; Usage limits, resets & alerts) replace "Tokenroom: AI Usage & Limits" and "Plan limits, resets & alerts". App Store Connect takes a new name only with a new version, so enter them with the next version submitted. The home-screen name stays Tokenroom.
 
 - The iPhone now signs in to Claude, Codex, Grok Build, Cursor, and Grok Bot itself (`PhoneConnect.productionAllowlist`). "Logins never leave your Mac, and keys never leave your iPhone" is no longer the whole story: before the version with plan sign-in is submitted, replace it with "A login you add on your iPhone stays on that iPhone. A login on your Mac stays on your Mac. Only usage, reset times, and plan names sync, through your iCloud." The 1.0.2 listing keeps its text.
 - Review notes for that version should say that Claude, Codex, Grok Build, Cursor, and Grok Bot sign in on each company's own page (Safari for Claude and Cursor, a short code for Codex and Grok Build; Grok Bot uses the Cursor sign-in), that Tokenroom reads only usage with the sign-in, and that the endpoints are the ones each company's command-line tool uses. Sample Data still shows every screen without an account.
