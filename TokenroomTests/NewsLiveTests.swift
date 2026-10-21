@@ -221,13 +221,17 @@ final class NewsLiveTests: XCTestCase {
     }
 
     /// Showing what a pass has taken in folds the whole store, about 1,300 entries at most. That
-    /// runs off the main actor: the main actor stays free for most of the publish.
+    /// runs off the main actor, both while the pass is under way and for its own result. How long
+    /// a publish takes is printed, not asserted: a shared machine's timers can stall.
     @MainActor
-    func testShowingAFullCatalogLeavesTheMainActorFree() async throws {
+    func testShowingAFullCatalogFoldsOffTheMainActor() async throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let catalog = Self.fullCatalog(now: now)
         let folder = try makeFolder()
         catalog.cached.save(to: folder)
+        let folds = LockedBox<[Bool]>([])
+        NewsStore.foldRan = { onMainThread in folds.value.append(onMainThread) }
+        defer { NewsStore.foldRan = nil }
         let timing = LockedBox<(publish: Duration, held: Duration)?>(nil)
         let news = NewsStore(defaults: makeDefaults(), directory: folder, now: now, fetch: { request in
             // The main actor ticks every millisecond; the longest gap is how long it was held.
@@ -255,7 +259,7 @@ final class NewsLiveTests: XCTestCase {
         let measured = try XCTUnwrap(timing.value)
         print(String(format: "News publish over %d entries: %.1f ms, main actor held at most %.1f ms", catalog.entries, Self.milliseconds(measured.publish), Self.milliseconds(measured.held)))
         XCTAssertTrue(news.allAnnouncements.contains { $0.title == "Cursor post 59: a new feature for developers" }, "What arrived shows")
-        XCTAssertLessThan(measured.held, measured.publish / 2, "Folding doesn't hold the main actor for the publish")
+        XCTAssertEqual(folds.value, [false, false], "What arrived, then the pass's result, folded off the main thread")
     }
 
     /// A feed read seven minutes ago, while the next 5-minute check is under way, is still

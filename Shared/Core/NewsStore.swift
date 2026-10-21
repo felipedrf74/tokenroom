@@ -334,6 +334,9 @@ final class NewsStore {
     /// quietly brought (`quiet`) dated no later than the visit (`baseline`), so none of it counts
     /// as new. Folding goes over every entry, up to about 1,300, so it runs off the main actor.
     @concurrent nonisolated private static func settled(_ fetched: NewsCache, previous: NewsCache, sources: [FeedSource], quiet: Set<String>, baseline: Date, now: Date) async -> NewsCache {
+        #if DEBUG
+        foldRan?(pthread_main_np() != 0)
+        #endif
         var cache = fetched
         cache.retainFoldedIdentities(from: previous, sources: sources)
         for source in sources where source.kind == .officialAnnouncement && quiet.contains(source.id) {
@@ -363,6 +366,11 @@ final class NewsStore {
         }
         return cache
     }
+
+    #if DEBUG
+    /// Told, for tests, whether each fold (`settled`) ran on the main thread.
+    nonisolated(unsafe) static var foldRan: (@Sendable (_ onMainThread: Bool) -> Void)?
+    #endif
 
     /// What a pass has taken in so far, shown before the pass is done.
     private func show(_ partial: NewsCache, previous: NewsCache, sources: [FeedSource], quiet: Set<String>, now: Date) async {
