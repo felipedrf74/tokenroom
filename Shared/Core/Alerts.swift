@@ -885,6 +885,13 @@ struct AlertLedger: Codable, Equatable, Sendable {
         pending.removeAll { delivered.contains($0.alert.id) }
     }
 
+    /// Of these due alerts, the ones still to show as notifications on this device: not shown
+    /// here yet, and not `announced` by another device under the neighbouring day, since a second
+    /// balance crossing within a day is quiet.
+    func unshown(_ due: [UsageAlert], announced: Set<String> = []) -> [UsageAlert] {
+        due.filter { shownHere[$0.id] == nil && !announced.contains($0.id) }
+    }
+
     /// Shown as notifications on this device.
     mutating func markShownHere(_ ids: [String], at now: Date = .now) {
         for id in ids {

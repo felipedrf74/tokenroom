@@ -510,6 +510,31 @@ final class AlertTests: XCTestCase {
         XCTAssertEqual(AlertRules.neighbouringDayIDs(of: fromOlderBuild), ["evt-deepseek-balance-usd-low-80-d20720", "evt-deepseek-balance-usd-low-80-d20722"])
     }
 
+    func testABalanceCrossingAnnouncedUnderTheNeighbouringDayStaysQuietOnTheMac() throws {
+        var awake = preferences
+        awake.quietHours = false
+        // Another device announced the crossing before midnight (UTC)…
+        let before = try XCTUnwrap(AlertRules.alerts(previous: balance(remaining: 6), current: balance(remaining: 3), preferences: awake, now: utc(2026, 9, 25, 23, 30)).first)
+        let inICloud: Set<String> = [before.id]
+        // …and after a top-up this Mac sees it cross again just after, under the next day's name.
+        let afterMidnight = utc(2026, 9, 26, 0, 30)
+        var ledger = AlertLedger()
+        ledger.process([balance(remaining: 18)], preferences: awake, now: afterMidnight)
+        let again = ledger.process([balance(remaining: 3)], preferences: awake, now: afterMidnight)
+        XCTAssertEqual(again.map(\.kind), [.lowBalance])
+        XCTAssertNotEqual(again.first?.id, before.id)
+        let due = ledger.due(preferences: awake, now: afterMidnight)
+        XCTAssertEqual(due.map(\.id), again.map(\.id))
+
+        // What the relay finds before saving it: the neighbouring day's record is there.
+        let announced = Set(due.filter { !inICloud.isDisjoint(with: AlertRules.neighbouringDayIDs(of: $0)) }.map(\.id))
+        XCTAssertEqual(announced, Set(again.map(\.id)))
+        XCTAssertTrue(ledger.unshown(due, announced: announced).isEmpty, "A second crossing within a day is quiet on the Mac too")
+        XCTAssertEqual(ledger.unshown(due).map(\.id), again.map(\.id), "Announced nowhere: the Mac shows it")
+        ledger.markShownHere(again.map(\.id), at: afterMidnight)
+        XCTAssertTrue(ledger.unshown(due).isEmpty, "Once")
+    }
+
     // MARK: Sharing the choices
 
     func testChoicesMadeOnEachDeviceBothStay() {
