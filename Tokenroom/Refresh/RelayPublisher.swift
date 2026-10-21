@@ -187,9 +187,9 @@ final class RelayPublisher {
         return await Self.send(alerts, wentOutOnANeighbouringDay: { alert in
             try await relay.wentOutOnANeighbouringDay(alert, now: now)
         }, save: { alert in
-            try await relay.saveAlert(alert)
+            let created = try await relay.saveAlert(alert)
             self.logger.notice("relay alert sent \(alert.kind.rawValue, privacy: .public) \(alert.level, privacy: .public)")
-            return true
+            return created
         }, stops: { error in
             self.handle(error, now: now).stopsBatch
         })
