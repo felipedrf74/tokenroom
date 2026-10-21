@@ -75,6 +75,12 @@ extension RelayProvider {
         state == "live"
     }
 
+    /// Waiting for its first check, with nothing to show or say yet: listed neither as connected
+    /// nor as not connected, and any other collector's status for it wins.
+    var isAwaitingFirstReading: Bool {
+        state == "loading" && windows.isEmpty
+    }
+
     /// Nothing to show: signed out, not on a plan, or failed before a first reading.
     var isDisconnected: Bool {
         switch state {

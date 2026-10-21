@@ -844,11 +844,14 @@ final class MobileStore {
         let saved = savedOwnReadings(now: now)
         let owned = keysRead || defaults.array(forKey: Keys.keyedProviders) != nil
             ? keyedProviders
-            : Provider.allCases.filter { saved[$0.rawValue] != nil }
+            : Provider.allCases.filter { saved.readings[$0.rawValue] != nil || saved.statuses[$0.rawValue] != nil }
         let providers = owned.map { provider -> RelayProvider in
-            let standIn = saved[provider.rawValue]?.applyingBudget(reference: budgetReference(for: provider))
+            let standIn = saved.readings[provider.rawValue]?.applyingBudget(reference: budgetReference(for: provider))
             guard let status = localStatuses[provider], status != .loading else {
-                return standIn ?? RelayProvider(provider: provider, status: .loading, checkedAt: nil)
+                // Not called this launch (resting, a 429 wait, a silent push): with no reading to
+                // stand in, the status it last had says why (a key refused, a 429 before any
+                // reading), rather than "loading", which reads as not connected for no reason.
+                return standIn ?? saved.statuses[provider.rawValue] ?? RelayProvider(provider: provider, status: .loading, checkedAt: nil)
             }
             let mine = RelayProvider(provider: provider, status: budgeted(status, for: provider), checkedAt: localCheckedAt[provider])
             // One dated ahead of the clock (saved before it was set back) never beats a reading
@@ -871,8 +874,9 @@ final class MobileStore {
     }
 
     /// The newest reading of each of this iPhone's providers in its iCloud record and the cache,
-    /// up to a week old.
-    private func savedOwnReadings(now: Date) -> [String: RelayProvider] {
+    /// up to a week old, and for those with none, the status they were last relayed or saved with.
+    /// One dated ahead of the clock (saved before it was set back) is never the newer one.
+    private func savedOwnReadings(now: Date) -> (readings: [String: RelayProvider], statuses: [String: RelayProvider]) {
         let cache = PhoneCacheAccess.load(at: cacheURL, defaults: defaults)
         let cached = cache.map {
             $0.isSample ? [] : ($0.localSource?.envelope.providers
@@ -885,7 +889,20 @@ final class MobileStore {
                ReadingFreshness.ordering(keptTime, now: now) >= ReadingFreshness.ordering(time, now: now) { continue }
             newest[provider.id] = provider
         }
-        return newest
+        // A key refused or rate limited before its first reading is relayed and saved without a
+        // time; its envelope's time says how old that is, and the newer envelope's status wins.
+        let envelopes = [ownRecord, cache?.isSample == false ? cache?.localSource?.envelope : nil]
+            .compactMap { $0 }
+            .filter { (0..<Self.standInLimit).contains(now.timeIntervalSince($0.checkedAt)) }
+            .sorted { $0.checkedAt > $1.checkedAt }
+        var statuses: [String: RelayProvider] = [:]
+        for envelope in envelopes {
+            for provider in envelope.providers where Self.readingTime(provider) == nil && !provider.isAwaitingFirstReading
+                && newest[provider.id] == nil && statuses[provider.id] == nil {
+                statuses[provider.id] = provider
+            }
+        }
+        return (newest, statuses)
     }
 
     private static func readingTime(_ provider: RelayProvider) -> Date? {
@@ -899,7 +916,11 @@ final class MobileStore {
         guard let relay, relayPhase == .ready, !sampleMode, keysRead else { return }
         let published = defaults.bool(forKey: Keys.published)
         guard !keyedProviders.isEmpty || published else { return }
-        let envelope = localEnvelope(now: now)
+        var sending = localEnvelope(now: now)
+        // One still waiting for its first check says nothing yet: sent as "loading", other
+        // devices would list it as not connected, for no reason they could show.
+        sending.providers.removeAll(where: \.isAwaitingFirstReading)
+        let envelope = sending
         if let relayRetryAt, relayRetryAt > now { return }
         if publishPolicy.isDue(envelope, now: now) {
             do {

@@ -12,8 +12,10 @@ enum ReadingAssembler {
     /// - Parameters:
     ///   - sources: every collector's envelope, this iPhone's included.
     ///   - histories: each collector's history, by source ID.
+    /// A provider still waiting for its first check is in neither list: it isn't "not connected",
+    /// and has no reason to give yet.
     static func assemble(sources: [RelayMerge.Source], histories: [String: RelayHistory], now: Date = .now) -> Output {
-        let items = RelayMerge.entries(from: sources, now: now).map { entry in
+        let items = RelayMerge.entries(from: sources, now: now).filter { !$0.provider.isAwaitingFirstReading }.map { entry in
             ReadingCache.Item(
                 provider: entry.provider,
                 source: entry.sourceLabel,

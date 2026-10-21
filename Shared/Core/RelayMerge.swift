@@ -23,21 +23,24 @@ enum RelayMerge {
     /// Collectors silent for longer than this are left out.
     static let maxSourceAge: TimeInterval = 7 * 86_400
 
-    /// A live reading beats a stale, expired, or signed-out one from another collector; among
-    /// equals the most recently checked wins. Sorted with the most used first.
+    /// A live reading beats one that still has windows to show (stale, rate limited, expired
+    /// within its grace), which beats one with none (signed out, not on a plan, failed before a
+    /// first reading), which beats one still waiting for its first check; within each, the most
+    /// recently checked wins. So a collector that isn't signed in doesn't hide another's older
+    /// reading, which shows faded until it ages out. Sorted with the most used first.
     static func entries(from sources: [Source], now: Date = .now) -> [Entry] {
-        var best: [String: (entry: Entry, live: Bool, checked: Date)] = [:]
+        var best: [String: (entry: Entry, rank: Int, checked: Date)] = [:]
         for source in sources where now.timeIntervalSince(source.envelope.checkedAt) <= maxSourceAge {
             for saved in source.envelope.providers {
                 guard let provider = ReadingFreshness.present(saved, fallback: source.envelope.checkedAt, now: now) else { continue }
-                let live = provider.state == "live"
-                let checked = provider.checkedAt ?? provider.fetchedAt ?? source.envelope.checkedAt
-                let candidate = (Entry(provider: provider, sourceID: source.id, sourceLabel: source.label, origin: source.kind), live, checked)
+                let rank = provider.isLive ? 3 : !provider.windows.isEmpty ? 2 : provider.isAwaitingFirstReading ? 0 : 1
+                let checked = ReadingFreshness.ordering(provider.checkedAt ?? provider.fetchedAt ?? source.envelope.checkedAt, now: now)
+                let candidate = (Entry(provider: provider, sourceID: source.id, sourceLabel: source.label, origin: source.kind), rank, checked)
                 guard let current = best[provider.id] else {
                     best[provider.id] = candidate
                     continue
                 }
-                if (live && !current.live) || (live == current.live && checked > current.checked) {
+                if rank > current.rank || (rank == current.rank && checked > current.checked) {
                     best[provider.id] = candidate
                 }
             }
