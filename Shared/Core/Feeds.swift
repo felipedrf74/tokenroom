@@ -218,14 +218,24 @@ struct FeedSource: Sendable, Identifiable, Equatable {
         FeedSource(id: "claude-code", name: "Claude Code", url: URL(string: "https://code.claude.com/docs/en/changelog/rss.xml")!, provider: .claude),
         // The same versions as the changelog, often sooner; one shows when both have it.
         FeedSource(id: "claude-code-releases", name: "Claude Code releases", url: URL(string: "https://github.com/anthropics/claude-code/releases.atom")!, provider: .claude, skipsPrereleases: true, partOf: "claude-code"),
+        // A weekly digest of the changelog, so its own toggle rather than part of it.
+        FeedSource(id: "claude-code-whats-new", name: "Claude Code what's new", url: URL(string: "https://code.claude.com/docs/en/whats-new/rss.xml")!, provider: .claude),
+        FeedSource(id: "claude-agent-sdk", name: "Claude Agent SDK", url: URL(string: "https://github.com/anthropics/claude-agent-sdk-python/releases.atom")!, provider: .claude, skipsPrereleases: true),
+        // The skills repository's commits: each entry is a skill added or updated. Not releases, so
+        // nothing is skipped as a pre-release.
+        FeedSource(id: "claude-skills", name: "Claude Skills", url: URL(string: "https://github.com/anthropics/skills/commits/main.atom")!, provider: .claude),
         FeedSource(id: "openai-news", name: "OpenAI", url: URL(string: "https://openai.com/news/rss.xml")!, provider: .openai),
         FeedSource(id: "codex-releases", name: "Codex", url: URL(string: "https://github.com/openai/codex/releases.atom")!, provider: .openai, skipsPrereleases: true),
         FeedSource(id: "gemini", name: "Google Gemini", url: URL(string: "https://blog.google/products-and-platforms/products/gemini/rss/")!, provider: .antigravity),
+        FeedSource(id: "gemini-cli", name: "Gemini CLI", url: URL(string: "https://github.com/google-gemini/gemini-cli/releases.atom")!, provider: .antigravity, skipsPrereleases: true),
+        FeedSource(id: "deepmind", name: "Google DeepMind", url: URL(string: "https://deepmind.google/blog/rss.xml")!, provider: .antigravity),
         FeedSource(id: "copilot", name: "GitHub Copilot", url: URL(string: "https://github.blog/changelog/label/copilot/feed/")!, provider: .copilot),
+        FeedSource(id: "copilot-cli", name: "Copilot CLI", url: URL(string: "https://github.com/github/copilot-cli/releases.atom")!, provider: .copilot, skipsPrereleases: true),
         FeedSource(id: "cursor", name: "Cursor", url: URL(string: "https://cursor.com/changelog/rss.xml")!, provider: .cursor),
         FeedSource(id: "devin", name: "Devin", url: URL(string: "https://docs.devin.ai/desktop/changelog/rss.xml")!, provider: .devin),
         FeedSource(id: "zai", name: "Z.ai", url: URL(string: "https://docs.z.ai/release-notes/new-released/rss.xml")!, provider: .zai),
         FeedSource(id: "kimi-code", name: "Kimi Code", url: URL(string: "https://github.com/MoonshotAI/kimi-code/releases.atom")!, provider: .kimiCode, skipsPrereleases: true),
+        FeedSource(id: "opencode", name: "OpenCode", url: URL(string: "https://github.com/sst/opencode/releases.atom")!, provider: .opencodeGo, skipsPrereleases: true),
         FeedSource(id: "openrouter", name: "OpenRouter", url: URL(string: "https://openrouter.ai/blog/feed.xml")!, provider: .openrouter, linkContains: "/blog/announcements/"),
         // ChatGPT and Codex product notes: each links to a `#codex-…` anchor, ChatGPT's included.
         // Its `#github-release-…` entries are CLI releases, which `codex-releases` already has.
@@ -281,9 +291,11 @@ enum FeedParser {
         return url
     }
 
-    /// Release titles like `@scope/package@2.1.1` read as the version alone.
+    /// Release titles like `@scope/package@2.1.1` read as the version alone, and a commit's
+    /// trailing pull request number ("Add discernment-nudge skill (#1553)") is left off.
     static func cleanTitle(_ title: String) -> String {
         title.replacingOccurrences(of: #"^@[^/\s]+/[^@\s]+@"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s*\(#\d+\)$"#, with: "", options: .regularExpression)
     }
 
     static func isPrerelease(_ title: String) -> Bool {

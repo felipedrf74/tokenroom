@@ -496,8 +496,47 @@ final class FeedTests: XCTestCase {
         let changelog = try XCTUnwrap(FeedSource.catalog.first { $0.id == "codex-changelog" })
         XCTAssertEqual(changelog.linkContains, "#codex-", "Its CLI entries repeat codex-releases")
         XCTAssertEqual(changelog.sizeLimit, 4 * 1024 * 1024)
-        XCTAssertTrue(FeedSource.catalog.filter { $0.url.host == "github.com" }.allSatisfy(\.skipsPrereleases), "Release feeds skip pre-releases")
+        XCTAssertTrue(FeedSource.catalog.filter { $0.url.path.hasSuffix("/releases.atom") }.allSatisfy(\.skipsPrereleases), "Release feeds skip pre-releases")
+        XCTAssertFalse(try XCTUnwrap(FeedSource.catalog.first { $0.id == "claude-skills" }).skipsPrereleases, "A commit feed has no pre-releases to skip")
         XCTAssertTrue(FeedSource.catalog.filter { $0.id != "codex-changelog" }.allSatisfy { $0.sizeLimit == FeedParser.sizeLimit })
+    }
+
+    /// The official feeds added in October 2026, checked live from the main checkout that day.
+    private static let addedSources: [String: Provider] = [
+        "gemini-cli": .antigravity, "copilot-cli": .copilot, "opencode": .opencodeGo, "claude-code-whats-new": .claude,
+        "claude-agent-sdk": .claude, "claude-skills": .claude, "deepmind": .antigravity,
+    ]
+
+    @MainActor
+    func testTheAddedSourcesAreTogglesWithTheirToolsIcons() throws {
+        let added = FeedSource.catalog.filter { Self.addedSources[$0.id] != nil }
+        XCTAssertEqual(Set(added.map(\.id)), Set(Self.addedSources.keys))
+        for source in added {
+            XCTAssertEqual(source.provider, Self.addedSources[source.id], "\(source.id) shows its tool's icon")
+            XCTAssertNil(source.partOf, "\(source.id) is turned on and off by itself")
+            XCTAssertTrue(FeedSource.toggles.contains(source))
+            XCTAssertEqual(source.kind, .officialAnnouncement)
+        }
+        XCTAssertEqual(Set(added.filter(\.skipsPrereleases).map(\.id)), ["gemini-cli", "copilot-cli", "opencode", "claude-agent-sdk"])
+        XCTAssertTrue(added.allSatisfy { !NewsStore.firstCatalog.contains($0.id) }, "New since 2.0, so a list saved before turns them on")
+    }
+
+    func testACommitsPullRequestNumberIsLeftOffItsTitle() throws {
+        let atom = Data("""
+        <feed xmlns="http://www.w3.org/2005/Atom"><title>Recent Commits to skills:main</title>
+          <entry><id>tag:github.com,2008:Grit::Commit/abc123</id><link type="text/html" rel="alternate" href="https://github.com/anthropics/skills/commit/abc123"/>
+            <title>
+                Add discernment-nudge skill (#1553)
+            </title><updated>2026-10-20T09:00:00Z</updated></entry>
+          <entry><id>tag:github.com,2008:Grit::Commit/def456</id><link type="text/html" rel="alternate" href="https://github.com/anthropics/skills/commit/def456"/>
+            <title>Update the (#1) ranking notes</title><updated>2026-10-19T09:00:00Z</updated></entry>
+        </feed>
+        """.utf8)
+        let skills = try XCTUnwrap(FeedSource.catalog.first { $0.id == "claude-skills" })
+        let items = FeedParser.items(from: atom, source: skills)
+        XCTAssertEqual(items.map(\.title), ["Add discernment-nudge skill", "Update the (#1) ranking notes"], "Only a trailing number goes")
+        XCTAssertEqual(items.first?.link?.absoluteString, "https://github.com/anthropics/skills/commit/abc123")
+        XCTAssertEqual(FeedParser.cleanTitle("@scope/package@2.1.1"), "2.1.1")
     }
 
     // MARK: Titles and duplicates
@@ -779,6 +818,63 @@ final class FeedTests: XCTestCase {
         let edition = NewsEditions.today(models: [], announcements: news.allAnnouncements, retiring: [], since: news.visitBaseline, now: utc(2026, 9, 26, 15))
         XCTAssertEqual(edition.digest.updates, 1)
         XCTAssertEqual(edition.tools.first { $0.sourceID == "claude-code" || $0.source == "Claude Code" }?.newCount, 1)
+    }
+
+    /// Updating to a release with the added feeds: they start on, are read on the next check,
+    /// and their back catalogs, recent posts included, aren't badged or marked New.
+    @MainActor
+    func testTheAddedSourcesStartOnAndTheirBackCatalogsArentNew() async throws {
+        defer { unstubNetwork() }
+        let added = Set(Self.addedSources.keys)
+        let folder = try makeFolder()
+        readBefore(["claude-code", "claude-code-releases"], checkedAt: utc(2026, 10, 20, 9)).save(to: folder)
+        let defaults = makeDefaults()
+        defaults.set(utc(2026, 10, 20, 10).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt)
+        defaults.set(["claude-code"], forKey: NewsStore.Keys.sources)
+        defaults.set(FeedSource.catalog.map(\.id).filter { !added.contains($0) }, forKey: NewsStore.Keys.knownSources)
+        let news = NewsStore(defaults: defaults, directory: folder, notify: { _, _, _ in })
+        XCTAssertEqual(news.followedSources, added.union(["claude-code"]), "Added since the list was saved: they start on")
+
+        let ids = Dictionary(uniqueKeysWithValues: FeedSource.catalog.filter { added.contains($0.id) }.map { ($0.url, $0.id) })
+        // Each one's back catalog has a post from after the last look.
+        stubNetwork { request in
+            guard let url = request.url, let id = ids[url] else { return (304, Data()) }
+            return (200, Self.rss("Archive-\(id)", "Tue, 20 Oct 2026 12:00:00 GMT"))
+        }
+        await news.refresh(preferences: AlertPreferences(), notifies: false, now: utc(2026, 10, 20, 14))
+        for id in added {
+            XCTAssertEqual(news.cache.items[id]?.map(\.title), ["Archive-\(id)"], "\(id) is read on the next check")
+        }
+        XCTAssertEqual(news.unseenAnnouncementCount, 0, "No back catalog is badged")
+        news.beginVisit(now: utc(2026, 10, 20, 15))
+        XCTAssertFalse(news.allAnnouncements.contains { added.contains($0.sourceID ?? "") && news.isNew($0.newsDate) }, "…or marked New")
+        news.endVisit()
+
+        // What they bring after that is new.
+        stubNetwork { request in
+            guard let url = request.url, let id = ids[url] else { return (304, Data()) }
+            return (200, Data("<rss version=\"2.0\"><channel><item><title>Next-\(id)</title><link>https://example.com/Next-\(id)</link><pubDate>Tue, 20 Oct 2026 16:00:00 GMT</pubDate></item><item><title>Archive-\(id)</title><link>https://example.com/Archive-\(id)</link><pubDate>Tue, 20 Oct 2026 12:00:00 GMT</pubDate></item></channel></rss>".utf8))
+        }
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: utc(2026, 10, 20, 17))
+        XCTAssertEqual(news.unseenAnnouncementCount, added.count)
+    }
+
+    /// Turned off, then followed again before it was ever read: the feed is fetched at once.
+    @MainActor
+    func testFollowingAnAddedSourceFetchesItAtOnce() async throws {
+        let defaults = makeDefaults()
+        defaults.set(FeedSource.catalog.map(\.id).filter { $0 != "deepmind" }, forKey: NewsStore.Keys.sources)
+        defaults.set(FeedSource.catalog.map(\.id), forKey: NewsStore.Keys.knownSources)
+        let forced = LockedBox<[Set<String>]>([])
+        let news = NewsStore(defaults: defaults, directory: try makeFolder(), fetch: { request in
+            forced.value.append(request.forcedSources)
+            return .init(cache: request.cache, newModels: [])
+        }, notify: { _, _, _ in })
+        XCTAssertFalse(news.followedSources.contains("deepmind"), "Turned off stays off")
+        news.followedSources.insert("deepmind")
+        for _ in 0..<200 where forced.value.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(forced.value, [["deepmind"]])
+        XCTAssertTrue(news.sources.contains { $0.id == "deepmind" })
     }
 
     @MainActor

@@ -143,7 +143,8 @@ final class NewsSourceContractTests: XCTestCase {
         cache.save(to: folder)
         let store = NewsStore(defaults: defaults, directory: folder, now: Date(timeIntervalSince1970: 1_800_000_000),
                               fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
-        XCTAssertEqual(store.followedSources, ["codex-releases"])
+        let addedSince = Set(FeedSource.catalog.map(\.id)).subtracting(NewsStore.firstCatalog)
+        XCTAssertEqual(store.followedSources, Set(["codex-releases"]).union(addedSince), "The saved choice, plus feeds added since 2.0")
         XCTAssertTrue(store.followedVoices.isEmpty)
         XCTAssertTrue(store.followedStatusSources.isEmpty)
         XCTAssertEqual(store.unseenCount, 0)
