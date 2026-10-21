@@ -697,6 +697,9 @@ final class FeedTests: XCTestCase {
         var checked = NewsCache()
         checked.modelsFetchedAt = utc(2026, 9, 24)
         checked.announcementsFetchedAt = utc(2026, 9, 24)
+        // Read before, so what they bring now is new: a feed's first read marks nothing new.
+        let older = FeedItem(id: "older", title: "Older", link: URL(string: "https://example.com/older"), published: utc(2026, 9, 20), source: "Claude Code")
+        checked.items = ["claude-code": [older], "claude-code-releases": [older]]
         checked.save(to: folder)
         let defaults = makeDefaults()
         defaults.set(utc(2026, 9, 24).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt)
@@ -715,6 +718,79 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(news.announcements.first?.published, now, "Once its date has passed, it keeps the one it arrived with")
         XCTAssertEqual(news.models().first?.created, now)
         XCTAssertEqual(news.unseenCount(now: utc(2026, 9, 28)), 0, "…so it isn't new again")
+    }
+
+    /// Feeds read before, with a cached copy each, as of `checkedAt`.
+    private func readBefore(_ ids: [String], checkedAt: Date) -> NewsCache {
+        var cache = NewsCache()
+        cache.modelsFetchedAt = checkedAt
+        cache.announcementsFetchedAt = checkedAt
+        for id in ids {
+            cache.items[id] = [FeedItem(id: "older", title: "Older", link: URL(string: "https://example.com/older"), published: checkedAt.addingTimeInterval(-86_400), source: id)]
+            cache.sourceChecks = (cache.sourceChecks ?? [:]).merging([id: .init(succeededAt: checkedAt)]) { $1 }
+        }
+        return cache
+    }
+
+    @MainActor
+    func testAnEntryDatedBeforeItArrivedIsStillNew() async throws {
+        defer { unstubNetwork() }
+        let folder = try makeFolder()
+        readBefore(["claude-code", "claude-code-releases"], checkedAt: utc(2026, 9, 26, 9)).save(to: folder)
+        let defaults = makeDefaults()
+        defaults.set(utc(2026, 9, 26, 10).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt) // Looked at 10:00.
+        let news = NewsStore(defaults: defaults, directory: folder, notify: { _, _, _ in })
+        news.followedSources = ["claude-code"]
+        // Dated by the day, so midnight, but only in the feed at 14:00.
+        let feed = Self.rss("Midnight-post", "Sat, 26 Sep 2026 00:00:00 GMT")
+        stubNetwork { request in request.url == ModelFeed.url ? (304, Data()) : (200, feed) }
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: utc(2026, 9, 26, 14))
+        let post = try XCTUnwrap(news.allAnnouncements.first { $0.title == "Midnight-post" })
+        XCTAssertEqual(post.newsDate, utc(2026, 9, 26, 14), "New as of when it arrived")
+        XCTAssertEqual(post.sortDate, utc(2026, 9, 26), "Still sorted and shown by its own date")
+        XCTAssertEqual(news.unseenAnnouncementCount, 1, "Badged, though dated before the last look")
+
+        news.beginVisit(now: utc(2026, 9, 26, 15))
+        XCTAssertTrue(news.isNew(post.newsDate), "…and marked New on the next")
+        let edition = NewsEditions.today(models: [], announcements: news.allAnnouncements, retiring: [], since: news.visitBaseline, now: utc(2026, 9, 26, 15))
+        XCTAssertEqual(edition.digest.updates, 1)
+        XCTAssertEqual(edition.tools.first { $0.sourceID == "claude-code" || $0.source == "Claude Code" }?.newCount, 1)
+    }
+
+    @MainActor
+    func testASourcesFirstReadMarksNothingNew() async throws {
+        defer { unstubNetwork() }
+        let folder = try makeFolder()
+        readBefore(["claude-code", "claude-code-releases"], checkedAt: utc(2026, 9, 26, 9)).save(to: folder)
+        let defaults = makeDefaults()
+        defaults.set(utc(2026, 9, 26, 10).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt)
+        // Saved before Cursor was offered: it starts on, never read.
+        defaults.set(["claude-code"], forKey: NewsStore.Keys.sources)
+        defaults.set(FeedSource.catalog.map(\.id).filter { $0 != "cursor" }, forKey: NewsStore.Keys.knownSources)
+        let news = NewsStore(defaults: defaults, directory: folder, notify: { _, _, _ in })
+        XCTAssertTrue(news.followedSources.contains("cursor"))
+        let cursor = try XCTUnwrap(FeedSource.catalog.first { $0.id == "cursor" }).url
+        // Its back catalog includes a post from after the last look.
+        let archive = Self.rss("Cursor-archive", "Sat, 26 Sep 2026 12:00:00 GMT")
+        stubNetwork { request in
+            if request.url == ModelFeed.url { return (304, Data()) }
+            return request.url == cursor ? (200, archive) : (304, Data())
+        }
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: utc(2026, 9, 26, 14))
+        let old = try XCTUnwrap(news.allAnnouncements.first { $0.title == "Cursor-archive" })
+        XCTAssertEqual(news.unseenAnnouncementCount, 0, "A source's first read brings what it had: none of it is new")
+        news.beginVisit(now: utc(2026, 9, 26, 15))
+        XCTAssertFalse(news.isNew(old.newsDate))
+        news.endVisit()
+
+        let next = Data("<rss version=\"2.0\"><channel><item><title>Cursor-next</title><link>https://example.com/Cursor-next</link><pubDate>Sat, 26 Sep 2026 16:00:00 GMT</pubDate></item><item><title>Cursor-archive</title><link>https://example.com/Cursor-archive</link><pubDate>Sat, 26 Sep 2026 12:00:00 GMT</pubDate></item></channel></rss>".utf8)
+        stubNetwork { request in
+            if request.url == ModelFeed.url { return (304, Data()) }
+            return request.url == cursor ? (200, next) : (304, Data())
+        }
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: utc(2026, 9, 26, 17))
+        XCTAssertEqual(news.unseenAnnouncementCount, 1, "What it brings after that is new")
+        XCTAssertEqual(news.allAnnouncements.first { $0.title == "Cursor-archive" }?.newsDate, old.newsDate, "The archive stays quiet")
     }
 
     @MainActor

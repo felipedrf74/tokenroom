@@ -79,7 +79,7 @@ final class NewsStore {
         if !ids.isEmpty { Task { await refresh(preferences: lastPreferences, notifies: false, forcedSources: ids) } }
     }
 
-    /// When News was last opened. Items published after it count as new.
+    /// When News was last opened. Items that arrived after it (`FeedItem.newsDate`) count as new.
     private(set) var seenAt: Date {
         didSet { defaults.set(seenAt.timeIntervalSince1970, forKey: Keys.seenAt) }
     }
@@ -164,7 +164,7 @@ final class NewsStore {
         models().filter { $0.created > seenAt && NewsEditions.isRecentModel($0, now: now) }.count
     }
 
-    /// Announcements from followed feeds since News was last opened.
+    /// Announcements from followed feeds that arrived since News was last opened.
     var unseenAnnouncementCount: Int {
         allAnnouncements.filter { ($0.newsDate ?? .distantPast) > seenAt }.count
     }
@@ -337,6 +337,16 @@ final class NewsStore {
             var updated = result.cache
             updated.retainFoldedIdentities(from: cache, sources: checkedSources)
             cache = updated
+            // A tool's feed read for the first time (just followed, or new in this release) brings
+            // its back catalog: none of it is new, however recently it was dated.
+            for source in checkedSources where source.kind == .officialAnnouncement && previous.check(for: source).succeededAt == nil {
+                let baseline = min(visitBaseline, request.now)
+                cache.items[source.id] = cache.items[source.id]?.map { raw in
+                    var item = raw
+                    item.firstSeenAt = min(item.newsDate ?? baseline, baseline)
+                    return item
+                }
+            }
             for source in checkedSources where source.kind != .officialAnnouncement {
                 if let items = cache.items[source.id] {
                     cache.items[source.id] = items.map { raw in

@@ -362,13 +362,19 @@ enum NewsFetcher {
     /// zone, a post scheduled early) counts as seen once News opens, and a later change to its
     /// date doesn't make it new again. One without any date is dated when it first arrives, so
     /// it sorts with what came then rather than last, and keeps that date.
+    ///
+    /// `firstSeenAt` is when it reached this device, so an entry dated earlier than it turned up
+    /// (a post dated midnight that arrives in the afternoon) is still new. On a feed's first read
+    /// there's no arrival to go by, so its entries keep their own dates; `NewsStore` makes that
+    /// first read quiet.
     static func firstSeen(_ items: [FeedItem], previous: [FeedItem], now: Date) -> [FeedItem] {
         let earlier = Dictionary(previous.map { ($0.id, $0) }) { first, _ in first }
         return items.map { incoming in
             var item = incoming
             let old = earlier[item.id]
             if let old { item.aliases = old.aliasIDs.union(item.aliasIDs) }
-            item.firstSeenAt = old?.newsDate ?? min(item.publisherPublishedAt ?? item.updatedAt ?? item.published ?? now, now)
+            let dated = min(item.publisherPublishedAt ?? item.updatedAt ?? item.published ?? now, now)
+            item.firstSeenAt = old?.newsDate ?? (previous.isEmpty ? dated : now)
             item.published = item.published.map { min($0, old?.published ?? now, now) }
             if item.published == nil, item.updatedAt == nil {
                 // One cached undated by an earlier release stays so, rather than turning new now.
