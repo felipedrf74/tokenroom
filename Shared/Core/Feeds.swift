@@ -220,6 +220,9 @@ struct FeedSource: Sendable, Identifiable, Equatable {
     /// cuts a long message mid-word, so the cut word goes and the "…" stays; and a day's commits
     /// updating one thing ("Update claude-api skill: …") show as one row, the newest.
     var isCommitLog = false
+    /// Feeds in one group carry some of the same posts under different links and slugs (Google's
+    /// Keyword blog and DeepMind's): the same title within a couple of days is one post.
+    var titleFoldGroup: String? = nil
 
     var kind: NewsSourceKind = .officialAnnouncement
     /// Legacy tool changelogs suppress repeated titles; people, incidents, and commits never do.
@@ -250,9 +253,9 @@ struct FeedSource: Sendable, Identifiable, Equatable {
         FeedSource(id: "claude-skills", name: "Claude Skills", url: URL(string: "https://github.com/anthropics/skills/commits/main.atom")!, provider: .claude, isCommitLog: true),
         FeedSource(id: "openai-news", name: "OpenAI", url: URL(string: "https://openai.com/news/rss.xml")!, provider: .openai),
         FeedSource(id: "codex-releases", name: "Codex", url: URL(string: "https://github.com/openai/codex/releases.atom")!, provider: .openai, skipsPrereleases: true),
-        FeedSource(id: "gemini", name: "Google Gemini", url: URL(string: "https://blog.google/products-and-platforms/products/gemini/rss/")!, provider: .antigravity),
+        FeedSource(id: "gemini", name: "Google Gemini", url: URL(string: "https://blog.google/products-and-platforms/products/gemini/rss/")!, provider: .antigravity, titleFoldGroup: "google"),
         FeedSource(id: "gemini-cli", name: "Gemini CLI", url: URL(string: "https://github.com/google-gemini/gemini-cli/releases.atom")!, provider: .antigravity, skipsPrereleases: true),
-        FeedSource(id: "deepmind", name: "Google DeepMind", url: URL(string: "https://deepmind.google/blog/rss.xml")!, provider: .antigravity),
+        FeedSource(id: "deepmind", name: "Google DeepMind", url: URL(string: "https://deepmind.google/blog/rss.xml")!, provider: .antigravity, titleFoldGroup: "google"),
         FeedSource(id: "copilot", name: "GitHub Copilot", url: URL(string: "https://github.blog/changelog/label/copilot/feed/")!, provider: .copilot),
         FeedSource(id: "copilot-cli", name: "Copilot CLI", url: URL(string: "https://github.com/github/copilot-cli/releases.atom")!, provider: .copilot, skipsPrereleases: true),
         FeedSource(id: "cursor", name: "Cursor", url: URL(string: "https://cursor.com/changelog/rss.xml")!, provider: .cursor),

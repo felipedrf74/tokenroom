@@ -82,7 +82,8 @@ struct NewsCache: Codable, Equatable, Sendable {
             if item.kind == .officialAnnouncement {
                 // A feed whose entries share titles (commits) is matched by link and ID only.
                 let byTitle = feeds[feed]?.isCommitLog == true ? "item \(feed)|\(item.id)" : "title \(product) \(item.duplicateKey)"
-                keys = [item.link.map { "official link \(Self.linkKey($0))" }, item.link.flatMap(Self.googlePostKey), item.canonicalID, byTitle].compactMap { $0 }
+                keys = [item.link.map { "official link \(Self.linkKey($0))" }, item.canonicalID, byTitle].compactMap { $0 }
+                    + (feeds[feed]?.titleFoldGroup.map { Self.groupTitleKeys(item, group: $0) } ?? [])
             } else { keys = ["item \(feed)|\(item.id)"] }
             let matches = Set(keys.compactMap { positions[$0] })
             if let position = matches.min(), var winner = kept[position] {
@@ -129,13 +130,26 @@ struct NewsCache: Codable, Equatable, Sendable {
         return parts.string ?? url.absoluteString
     }
 
-    /// Google posts some stories on both its Keyword blog and DeepMind's, under the same slug
-    /// (`blog.google/…/gemini-3/`, `deepmind.google/…/gemini-3/`): one post, shown once.
-    static func googlePostKey(_ url: URL) -> String? {
-        guard let host = url.host?.lowercased(), ["blog.google", "deepmind.google"].contains(host) else { return nil }
-        let slug = url.pathComponents.last { $0 != "/" }?.lowercased() ?? ""
-        guard slug.count > 3, !["blog", "discover", "technology", "products"].contains(slug) else { return nil }
-        return "google post \(slug)"
+    /// Keys under which feeds of one `FeedSource.titleFoldGroup` (Google's Keyword blog and
+    /// DeepMind's, which post some stories under different links and slugs) fold the same post:
+    /// its title as compared (`comparableTitle`), on its day and the days either side, so copies
+    /// up to two days apart match and a same-titled post weeks later doesn't. Undated entries
+    /// don't fold this way.
+    static func groupTitleKeys(_ item: FeedItem, group: String) -> [String] {
+        guard item.sortDate > .distantPast else { return [] }
+        let day = Int((item.sortDate.timeIntervalSince1970 / 86_400).rounded(.down))
+        let title = comparableTitle(item.title)
+        return (day - 1...day + 1).map { "group \(group) \($0) \(title)" }
+    }
+
+    /// A title as two feeds may write it differently: case, spacing, HTML entities and tags, and
+    /// curly or straight quotes aside.
+    static func comparableTitle(_ title: String) -> String {
+        var text = FeedParser.plainText(title)
+        for (curly, straight) in [("\u{2018}", "'"), ("\u{2019}", "'"), ("\u{201B}", "'"), ("\u{201C}", "\""), ("\u{201D}", "\""), ("\u{201F}", "\"")] {
+            text = text.replacingOccurrences(of: curly, with: straight)
+        }
+        return text.lowercased()
     }
 
     /// A feed's name as a place an entry also appeared: "Claude Code releases", or "Claude Code

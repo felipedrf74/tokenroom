@@ -659,30 +659,72 @@ final class FeedTests: XCTestCase {
         XCTAssertTrue(read.isComplete)
     }
 
+    /// Google's Keyword blog and DeepMind's post some stories under different links and slugs
+    /// (checked live in October 2026): the same title within a couple of days is one row.
     func testGoogleDeepMindAndGeminiShowAPostTheyShareOnce() throws {
         let gemini = try XCTUnwrap(FeedSource.catalog.first { $0.id == "gemini" })
         let deepmind = try XCTUnwrap(FeedSource.catalog.first { $0.id == "deepmind" })
-        var cache = NewsCache()
-        cache.items = [
-            "gemini": [
-                FeedItem(id: "g1", title: "Gemini 3 Flash is here", link: URL(string: "https://blog.google/products/gemini/gemini-3-flash/?utm_source=rss"), published: utc(2026, 10, 20, 15), source: "Google Gemini"),
-                FeedItem(id: "g2", title: "Try Gemini in Chrome", link: URL(string: "https://blog.google/products/gemini/gemini-in-chrome/"), published: utc(2026, 10, 19), source: "Google Gemini"),
-            ],
-            "deepmind": [
-                FeedItem(id: "d1", title: "Gemini 3 Flash: frontier intelligence built for speed", link: URL(string: "https://deepmind.google/discover/blog/gemini-3-flash/"), published: utc(2026, 10, 20, 16), source: "Google DeepMind"),
-                FeedItem(id: "d2", title: "Try Gemini in Chrome", link: URL(string: "https://www.blog.google/products/gemini/gemini-in-chrome"), published: utc(2026, 10, 19, 1), source: "Google DeepMind"),
-                FeedItem(id: "d3", title: "AlphaFold at five", link: URL(string: "https://deepmind.google/discover/blog/alphafold-at-five/"), published: utc(2026, 10, 18), source: "Google DeepMind"),
-            ],
+        let models = "https://blog.google/innovation-and-ai/models-and-research/gemini-models/"
+        // (DeepMind title and link, Keyword blog title and link, hours the blog's copy came later)
+        let pairs: [(String, String, String, String, Double)] = [
+            ("Gemini 4 Argon: Built to solve your hardest problems", "https://deepmind.google/blog/introducing-gemini-4-argon/",
+             "Gemini 4 Argon: Built to solve your hardest problems", models + "introducing-gemini-4-argon-model/", 1),
+            ("Gemini 4 Argon: our next era of frontier intelligence", "https://deepmind.google/blog/gemini-4-argon-our-next-era-of-frontier-intelligence/",
+             "Gemini 4 Argon: our next era of frontier intelligence", models + "gemini-4-argon/", 0.5),
+            ("Gemini 3.8 text-to-speech says hello", "https://deepmind.google/blog/say-hello-to-gemini-38-text-to-speech/",
+             "Gemini 3.8 text-to-speech says hello", models + "gemini-3-8-text-to-speech/", 30),
+            ("Developing Gemini 4 Argon responsibly and safely", "https://deepmind.google/blog/developing-gemini-4-argon-responsibly-and-safely/",
+             "Developing  Gemini 4 Argon responsibly and  safely", "https://blog.google/innovation-and-ai/technology/safety-security/gemini-4-model-safety-security/", 2),
+            ("Introducing Gemini 3.8 Live with Live Avatar", "https://deepmind.google/blog/introducing-gemini-38-live-with-live-avatar/",
+             "introducing Gemini 3.8 Live with Live&#160;Avatar", models + "gemini-3-8-live-avatar/", 3),
+            ("Introducing Gemini 3.8 Live and 3.8 Live Extended Thinking", "https://deepmind.google/blog/introducing-gemini-38-live-and-38-live-extended-thinking/",
+             "Introducing Gemini 3.8 Live and 3.8 Live Extended Thinking", models + "gemini-3-8-live-extended-thinking/", -4),
+            ("Gemini\u{2019}s next chapter", "https://deepmind.google/blog/geminis-next-chapter/",
+             "Gemini's next chapter", models + "next-chapter/", 5),
         ]
-        let shown = cache.announcements(from: [gemini, deepmind])
-        XCTAssertEqual(shown.count, 3, "The same post on both blogs shows once, however its link is written")
-        XCTAssertNotNil(shown.first { $0.title.contains("Gemini 3 Flash") }?.alsoIn, "…noting the other blog")
-        XCTAssertNotNil(shown.first { $0.title == "Try Gemini in Chrome" }?.alsoIn)
-        XCTAssertTrue(shown.contains { $0.title == "AlphaFold at five" })
+        let start = utc(2026, 10, 1, 9)
+        var cache = NewsCache()
+        cache.items["deepmind"] = pairs.enumerated().map { index, pair in
+            FeedItem(id: "d\(index)", title: pair.0, link: URL(string: pair.1), published: start.addingTimeInterval(Double(index) * 86_400 * 3), source: "Google DeepMind")
+        }
+        cache.items["gemini"] = pairs.enumerated().map { index, pair in
+            FeedItem(id: "g\(index)", title: pair.2, link: URL(string: pair.3), published: start.addingTimeInterval(Double(index) * 86_400 * 3 + pair.4 * 3600), source: "Google Gemini")
+        }
+        // Similar but different posts stay two rows, and so does a title used again weeks later.
+        cache.items["deepmind"]?.append(FeedItem(id: "robotics", title: "Gemini 4 Argon for Robotics", link: URL(string: "https://deepmind.google/blog/gemini-4-argon-for-robotics/"), published: utc(2026, 10, 25, 9), source: "Google DeepMind"))
+        cache.items["gemini"]?.append(FeedItem(id: "app", title: "Gemini 4 Argon comes to the Gemini app", link: URL(string: models + "gemini-app-argon/"), published: utc(2026, 10, 25, 10), source: "Google Gemini"))
+        cache.items["deepmind"]?.append(FeedItem(id: "recap-1", title: "Gemini Drop: October", link: URL(string: "https://deepmind.google/blog/gemini-drop/"), published: utc(2026, 9, 1), source: "Google DeepMind"))
+        cache.items["gemini"]?.append(FeedItem(id: "recap-2", title: "Gemini Drop: October", link: URL(string: models + "gemini-drop-october/"), published: utc(2026, 9, 20), source: "Google Gemini"))
 
-        // Changelogs link each entry to its own anchor on one page: those stay apart.
-        var anchors = NewsCache()
+        let shown = cache.announcements(from: [gemini, deepmind])
+        XCTAssertEqual(shown.count, pairs.count + 4, "Each shared post once; the near misses and the later repeat stay apart")
+        for pair in pairs {
+            let rows = shown.filter { NewsCache.comparableTitle($0.title) == NewsCache.comparableTitle(pair.2) }
+            XCTAssertEqual(rows.count, 1, pair.0)
+            XCTAssertNotNil(rows.first?.alsoIn, "\(pair.0) notes the other blog")
+        }
+        XCTAssertTrue(shown.contains { $0.id == "robotics" } && shown.contains { $0.id == "app" }, "Similar titles are different posts")
+        XCTAssertEqual(shown.filter { $0.title == "Gemini Drop: October" }.count, 2, "Nineteen days apart: two posts")
+
+        // The row keeps the earliest arrival, so the second blog catching up doesn't make it new.
+        var arrivals = NewsCache()
+        arrivals.items["deepmind"] = [FeedItem(id: "d", title: "Gemini 4 Argon: Built to solve your hardest problems", link: URL(string: "https://deepmind.google/blog/introducing-gemini-4-argon/"), published: start, source: "Google DeepMind", firstSeenAt: start)]
+        arrivals.items["gemini"] = [FeedItem(id: "g", title: "Gemini 4 Argon: Built to solve your hardest problems", link: URL(string: models + "introducing-gemini-4-argon-model/"), published: start.addingTimeInterval(3600), source: "Google Gemini", firstSeenAt: start.addingTimeInterval(6 * 3600))]
+        XCTAssertEqual(arrivals.announcements(from: [gemini, deepmind]).map(\.newsDate), [start])
+
+        // The fold is these two feeds' only: another tool's same title is its own post.
+        var others = NewsCache()
         let cursor = try XCTUnwrap(FeedSource.catalog.first { $0.id == "cursor" })
+        others.items["gemini"] = [FeedItem(id: "g", title: "Faster agents", link: URL(string: models + "faster-agents/"), published: start, source: "Google Gemini")]
+        others.items["cursor"] = [FeedItem(id: "c", title: "Faster agents", link: URL(string: "https://cursor.com/changelog#faster"), published: start, source: "Cursor")]
+        XCTAssertEqual(others.announcements(from: [gemini, cursor]).count, 2)
+
+        // Links still match however they're written, and changelog anchors stay apart.
+        var links = NewsCache()
+        links.items["gemini"] = [FeedItem(id: "g", title: "Try Gemini in Chrome", link: URL(string: models + "gemini-in-chrome/?utm_source=rss"), published: start, source: "Google Gemini")]
+        links.items["deepmind"] = [FeedItem(id: "d", title: "Gemini comes to Chrome", link: URL(string: "https://www.blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-in-chrome"), published: start.addingTimeInterval(-30 * 86_400), source: "Google DeepMind")]
+        XCTAssertEqual(links.announcements(from: [gemini, deepmind]).count, 1)
+        var anchors = NewsCache()
         anchors.items["cursor"] = (1...3).map { FeedItem(id: "c\($0)", title: "Release \($0)", link: URL(string: "https://cursor.com/changelog#1-\($0)"), published: utc(2026, 10, $0), source: "Cursor") }
         XCTAssertEqual(anchors.announcements(from: [cursor]).count, 3)
     }
