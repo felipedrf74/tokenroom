@@ -175,6 +175,31 @@ final class AlertLimitTests: XCTestCase {
         XCTAssertTrue(ledger.due(preferences: preferences, now: now.addingTimeInterval(120)).isEmpty)
     }
 
+    func testARunOutGoesOutOnceWhileItsResetJittersOrMoves() throws {
+        // MiniMax and OpenCode Go give resets as seconds from now, so readings of one session can
+        // land either side of a 10-minute boundary.
+        var ledger = AlertLedger()
+        ledger.process([claude([session(55, resetsIn: 2.5 * 3600 + 600)])], preferences: preferences, now: now)
+        let first = ledger.process([claude([session(60, resetsIn: 2.5 * 3600)])], preferences: preferences, now: now)
+        XCTAssertEqual(first.map(\.kind), [.runsOut])
+        ledger.markSent(first.map(\.id), at: now)
+        let jittered = claude([session(62, resetsIn: 2.5 * 3600 + 20 * 60)])
+        let renamed = try XCTUnwrap(AlertRules.runsOut(jittered, window: jittered.windows[0], preferences: preferences, now: now.addingTimeInterval(300)))
+        XCTAssertNotEqual(renamed.id, first.first?.id, "Rounded to another name")
+        XCTAssertTrue(ledger.process([jittered], preferences: preferences, now: now.addingTimeInterval(300)).isEmpty)
+
+        // A weekly reset the provider moved three hours on: the same week, so no second one.
+        var weeks = AlertLedger()
+        weeks.process([claude([weekly(77, resetsIn: 74 * 3600 + 3600)])], preferences: preferences, now: now)
+        let week = weeks.process([claude([weekly(78, resetsIn: 74 * 3600)])], preferences: preferences, now: now)
+        XCTAssertEqual(week.map(\.kind), [.runsOut])
+        weeks.markSent(week.map(\.id), at: now)
+        let moved = claude([weekly(79, resetsIn: 77 * 3600)])
+        let movedName = try XCTUnwrap(AlertRules.runsOut(moved, window: moved.windows[0], preferences: preferences, now: now.addingTimeInterval(600)))
+        XCTAssertNotEqual(movedName.id, week.first?.id)
+        XCTAssertTrue(weeks.process([moved], preferences: preferences, now: now.addingTimeInterval(600)).isEmpty)
+    }
+
     // MARK: Windows a reading leaves out
 
     func testAWindowMissingFromSomeReadingsStillAlertsWhenItComesBack() {
