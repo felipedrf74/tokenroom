@@ -109,17 +109,26 @@ final class FeedTests: XCTestCase {
         XCTAssertNil(FeedParser.date(""))
     }
 
-    func testAnUndatedEntryIsDatedWhenItFirstArrives() {
+    func testAnUndatedEntryIsDatedWhenItArrivesAfterTheFirstRead() {
         let now = utc(2026, 9, 25, 12)
+        let older = FeedItem(id: "o", title: "Older", link: nil, published: utc(2026, 9, 20), source: "Claude Code")
         let undated = FeedItem(id: "u", title: "Undated", link: nil, published: nil, source: "Claude Code")
-        let first = NewsFetcher.firstSeen([undated], previous: [], now: now)
-        XCTAssertEqual(first.first?.published, now, "Dated when it first arrives, so it sorts with what came then")
-        XCTAssertEqual(first.first?.sortDate, now)
-        XCTAssertNil(first.first?.publisherPublishedAt, "The publisher's own date stays unknown")
-        let again = NewsFetcher.firstSeen([undated], previous: first, now: now.addingTimeInterval(86_400))
+        let arrived = NewsFetcher.firstSeen([undated, older], previous: [older], now: now)
+        XCTAssertEqual(arrived.first?.published, now, "Dated when it arrives, so it sorts with what came then")
+        XCTAssertEqual(arrived.first?.sortDate, now)
+        XCTAssertNil(arrived.first?.publisherPublishedAt, "The publisher's own date stays unknown")
+        let again = NewsFetcher.firstSeen([undated], previous: arrived, now: now.addingTimeInterval(86_400))
         XCTAssertEqual(again.first?.published, now, "…and keeps that date, still undated in the feed")
         let legacy = NewsFetcher.firstSeen([undated], previous: [undated], now: now)
         XCTAssertNil(legacy.first?.published, "One cached undated by an earlier release isn't dated now")
+
+        // A feed whose dates don't parse: its back catalog doesn't all read as just published.
+        let firstRead = NewsFetcher.firstSeen([undated], previous: [], now: now)
+        XCTAssertNil(firstRead.first?.published, "On a first read an undated entry still sorts last")
+        XCTAssertEqual(firstRead.first?.sortDate, .distantPast)
+        let followedAgain = NewsFetcher.firstSeen([undated], previous: [older], now: now, quiet: true)
+        XCTAssertNil(followedAgain.first?.published, "…and on the quiet read of a feed followed again")
+        XCTAssertEqual(NewsFetcher.firstSeen([older], previous: [], now: now).first?.firstSeenAt, utc(2026, 9, 20), "A quiet read keeps entries' own dates")
     }
 
     func testAtomReleasesDropPrereleasesAndPackagePrefixes() {
@@ -496,7 +505,11 @@ final class FeedTests: XCTestCase {
         let changelog = try XCTUnwrap(FeedSource.catalog.first { $0.id == "codex-changelog" })
         XCTAssertEqual(changelog.linkContains, "#codex-", "Its CLI entries repeat codex-releases")
         XCTAssertEqual(changelog.sizeLimit, 4 * 1024 * 1024)
-        XCTAssertTrue(FeedSource.catalog.filter { $0.url.path.hasSuffix("/releases.atom") }.allSatisfy(\.skipsPrereleases), "Release feeds skip pre-releases")
+        let releaseFeeds = FeedSource.catalog.filter { $0.url.path.hasSuffix("/releases.atom") }
+        XCTAssertGreaterThanOrEqual(releaseFeeds.count, 9)
+        for source in releaseFeeds {
+            XCTAssertTrue(source.skipsPrereleases, "\(source.id) is a release feed, so it skips pre-releases")
+        }
         XCTAssertFalse(try XCTUnwrap(FeedSource.catalog.first { $0.id == "claude-skills" }).skipsPrereleases, "A commit feed has no pre-releases to skip")
         XCTAssertTrue(FeedSource.catalog.filter { $0.id != "codex-changelog" }.allSatisfy { $0.sizeLimit == FeedParser.sizeLimit })
     }
@@ -521,21 +534,75 @@ final class FeedTests: XCTestCase {
         XCTAssertTrue(added.allSatisfy { !NewsStore.firstCatalog.contains($0.id) }, "New since 2.0, so a list saved before turns them on")
     }
 
-    func testACommitsPullRequestNumberIsLeftOffItsTitle() throws {
+    func testPrereleasesIncludeNightliesPreviewsAndNumberedOnes() throws {
+        for title in ["v0.67.0-nightly.20261021.gd00859d6b", "v0.66.0-preview.0", "1.0.102-0", "1.0.102-1", "0.158.0-alpha.14",
+                      "2.2.0-rc.1", "2.2.0 beta", "1.0.0-canary.3", "1.2.0.dev1", "3.0.0-next.2", "1.0.0-SNAPSHOT"] {
+            XCTAssertTrue(FeedParser.isPrerelease(title), title)
+        }
+        for title in ["Release v0.65.0", "1.0.102", "v2.1.2", "v0.66.0", "Claude Code 2.1.282", "kimi-code-2.1.1",
+                      "What's next for Gemini", "Developer preview of agents", "2026-10-21 release notes"] {
+            XCTAssertFalse(FeedParser.isPrerelease(title), title)
+        }
+        // Gemini CLI's releases as published: mostly nightlies and previews.
+        let gemini = try XCTUnwrap(FeedSource.catalog.first { $0.id == "gemini-cli" })
+        let atom = Data("""
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><id>n</id><title>v0.67.0-nightly.20261021.gd00859d6b</title><link href="https://github.com/google-gemini/gemini-cli/releases/tag/n"/><updated>2026-10-21T00:00:00Z</updated></entry>
+          <entry><id>p</id><title>v0.66.0-preview.0</title><link href="https://github.com/google-gemini/gemini-cli/releases/tag/p"/><updated>2026-10-20T00:00:00Z</updated></entry>
+          <entry><id>s</id><title>Release v0.65.0</title><link href="https://github.com/google-gemini/gemini-cli/releases/tag/s"/><updated>2026-10-19T00:00:00Z</updated></entry>
+        </feed>
+        """.utf8)
+        XCTAssertEqual(FeedParser.items(from: atom, source: gemini).map(\.title), ["Release v0.65.0"])
+    }
+
+    func testOpenCodeReadsItsNewHomeWithoutItsGitHubIntegrationsReleases() throws {
+        let opencode = try XCTUnwrap(FeedSource.catalog.first { $0.id == "opencode" })
+        XCTAssertEqual(opencode.url.absoluteString, "https://github.com/anomalyco/opencode/releases.atom", "sst/opencode answers with a redirect here")
+        let atom = Data("""
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><id>a</id><title>v1.2.28</title><link href="https://github.com/anomalyco/opencode/releases/tag/v1.2.28"/><updated>2026-10-21T00:00:00Z</updated></entry>
+          <entry><id>b</id><title>github-v1.2.27</title><link href="https://github.com/anomalyco/opencode/releases/tag/github-v1.2.27"/><updated>2026-10-20T00:00:00Z</updated></entry>
+          <entry><id>c</id><title>GitHub-v1.2.26</title><link href="https://github.com/anomalyco/opencode/releases/tag/github-v1.2.26"/><updated>2026-10-19T00:00:00Z</updated></entry>
+          <entry><id>d</id><title>v1.2.27</title><link href="https://github.com/anomalyco/opencode/releases/tag/v1.2.27"/><updated>2026-10-18T00:00:00Z</updated></entry>
+        </feed>
+        """.utf8)
+        XCTAssertEqual(FeedParser.items(from: atom, source: opencode).map(\.displayTitle), ["OpenCode v1.2.28", "OpenCode v1.2.27"])
+        let read = FeedParser.read(atom, source: opencode)
+        XCTAssertEqual(read.entries, 4, "Left out, not missing: the feed is still whole")
+        XCTAssertTrue(read.isComplete)
+    }
+
+    func testCommitsWithTheSameMessageStayApartAndShowWithoutTheirPullRequestNumber() throws {
+        func entry(_ sha: String, _ title: String, _ day: Int) -> String {
+            """
+            <entry><id>tag:github.com,2008:Grit::Commit/\(sha)</id><link type="text/html" rel="alternate" href="https://github.com/anthropics/skills/commit/\(sha)"/>
+              <title>
+                  \(title)
+              </title><updated>2026-10-\(day)T09:00:00Z</updated></entry>
+            """
+        }
         let atom = Data("""
         <feed xmlns="http://www.w3.org/2005/Atom"><title>Recent Commits to skills:main</title>
-          <entry><id>tag:github.com,2008:Grit::Commit/abc123</id><link type="text/html" rel="alternate" href="https://github.com/anthropics/skills/commit/abc123"/>
-            <title>
-                Add discernment-nudge skill (#1553)
-            </title><updated>2026-10-20T09:00:00Z</updated></entry>
-          <entry><id>tag:github.com,2008:Grit::Commit/def456</id><link type="text/html" rel="alternate" href="https://github.com/anthropics/skills/commit/def456"/>
-            <title>Update the (#1) ranking notes</title><updated>2026-10-19T09:00:00Z</updated></entry>
+        \(entry("c162", "Update pdf skill (#162)", 20))
+        \(entry("c140", "Update pdf skill (#140)", 18))
+        \(entry("r2", "Update README.md", 17))
+        \(entry("r1", "Update README.md", 16))
+        \(entry("n1", "Update the (#1) ranking notes", 15))
         </feed>
         """.utf8)
         let skills = try XCTUnwrap(FeedSource.catalog.first { $0.id == "claude-skills" })
         let items = FeedParser.items(from: atom, source: skills)
-        XCTAssertEqual(items.map(\.title), ["Add discernment-nudge skill", "Update the (#1) ranking notes"], "Only a trailing number goes")
-        XCTAssertEqual(items.first?.link?.absoluteString, "https://github.com/anthropics/skills/commit/abc123")
+        XCTAssertEqual(items.map(\.id).map { $0.components(separatedBy: "/").last }, ["c162", "c140", "r2", "r1", "n1"], "Each commit is its own entry, whatever its message")
+        XCTAssertEqual(items.map(\.displayTitle), ["Update pdf skill", "Update pdf skill", "Update README.md", "Update README.md", "Update the (#1) ranking notes"], "Only a trailing pull request number is left off, and only when shown")
+        XCTAssertEqual(items.first?.title, "Update pdf skill (#162)")
+
+        // Read before with the older commits; the newer pdf commit arrives later and is new.
+        var cache = NewsCache()
+        cache.items[skills.id] = NewsFetcher.firstSeen(Array(items.dropFirst()), previous: [], now: utc(2026, 10, 19))
+        cache.items[skills.id] = NewsFetcher.firstSeen(items, previous: cache.items[skills.id] ?? [], now: utc(2026, 10, 21))
+        let shown = cache.announcements(from: [skills])
+        XCTAssertEqual(shown.count, 5, "Nothing folds by title in a commit feed")
+        XCTAssertEqual(shown.first { $0.id.hasSuffix("c162") }?.newsDate, utc(2026, 10, 21), "The new commit counts from when it arrived")
         XCTAssertEqual(FeedParser.cleanTitle("@scope/package@2.1.1"), "2.1.1")
     }
 
@@ -875,6 +942,60 @@ final class FeedTests: XCTestCase {
         for _ in 0..<200 where forced.value.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(forced.value, [["deepmind"]])
         XCTAssertTrue(news.sources.contains { $0.id == "deepmind" })
+    }
+
+    /// Unfollowed for a month while News was in use, then followed again: what the feed and the
+    /// voice published meanwhile is their back catalog, not a flood of New.
+    @MainActor
+    func testFollowingASourceAgainBringsWhatItMissedQuietly() async throws {
+        defer { unstubNetwork() }
+        let now = Date.now
+        let month = now.addingTimeInterval(-30 * 86_400)
+        let voice = try XCTUnwrap(NewsVoice.catalog.first?.feed)
+        let folder = try makeFolder()
+        var cache = readBefore(["claude-code", "claude-code-releases", "codex-releases", voice.id], checkedAt: month)
+        cache.modelsFetchedAt = now.addingTimeInterval(-60)
+        cache.save(to: folder)
+        let defaults = makeDefaults()
+        defaults.set(now.addingTimeInterval(-3600).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt) // Looked an hour ago.
+        defaults.set(FeedSource.catalog.map(\.id).filter { $0 != "codex-releases" }, forKey: NewsStore.Keys.sources)
+        defaults.set(FeedSource.catalog.map(\.id), forKey: NewsStore.Keys.knownSources)
+        let news = NewsStore(defaults: defaults, directory: folder, now: now, notify: { _, _, _ in })
+        XCTAssertFalse(news.followedSources.contains("codex-releases"))
+
+        // Each feed has three posts from the month it wasn't followed, and its old one.
+        let missed = (1...3).map { "<item><title>Missed-\($0)</title><link>https://example.com/Missed-\($0)</link><pubDate>\(Self.rfc822(month.addingTimeInterval(Double($0) * 86_400)))</pubDate></item>" }.joined()
+        let feed = Data("<rss version=\"2.0\"><channel>\(missed)<item><title>Older</title><link>https://example.com/older</link></item></channel></rss>".utf8)
+        let codex = try XCTUnwrap(FeedSource.catalog.first { $0.id == "codex-releases" }).url
+        let followedAgain: Set<URL> = [codex, voice.url]
+        stubNetwork { request in followedAgain.contains(request.url!) ? (200, feed) : (304, Data()) }
+        news.followedSources.insert("codex-releases")
+        news.followedVoices.insert(voice.id)
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: now)
+        for _ in 0..<200 where news.isRefreshing { try await Task.sleep(for: .milliseconds(10)) }
+        for id in ["codex-releases", voice.id] {
+            XCTAssertEqual(news.cache.items[id]?.filter { $0.title.hasPrefix("Missed") }.count, 3, "\(id) was read")
+        }
+        XCTAssertEqual(news.unseenAnnouncementCount, 0, "What they published while unfollowed isn't badged")
+        news.beginVisit(now: now.addingTimeInterval(60))
+        XCTAssertFalse(news.allAnnouncements.contains { news.isNew($0.newsDate) }, "…or marked New")
+        news.endVisit()
+
+        // After that read, what they bring is new again.
+        let next = Data("<rss version=\"2.0\"><channel><item><title>Next</title><link>https://example.com/Next</link><pubDate>\(Self.rfc822(now))</pubDate></item>\(missed)</channel></rss>".utf8)
+        stubNetwork { request in followedAgain.contains(request.url!) ? (200, next) : (304, Data()) }
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: now.addingTimeInterval(120))
+        for _ in 0..<200 where news.isRefreshing { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(news.cache.items["codex-releases"]?.contains { $0.title == "Next" && ($0.newsDate ?? .distantPast) > news.seenAt } == true)
+        XCTAssertTrue(news.cache.items[voice.id]?.contains { $0.title == "Next" && ($0.newsDate ?? .distantPast) > news.seenAt } == true)
+    }
+
+    private static func rfc822(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss 'GMT'"
+        return formatter.string(from: date)
     }
 
     @MainActor

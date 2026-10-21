@@ -75,7 +75,9 @@ struct NewsCache: Codable, Equatable, Sendable {
             }
             let keys: [String]
             if item.kind == .officialAnnouncement {
-                keys = [item.link.map { "official link \($0.absoluteString)" }, item.canonicalID, "title \(product) \(item.duplicateKey)"].compactMap { $0 }
+                // A feed whose entries share titles (commits) is matched by link and ID only.
+                let byTitle = feeds[feed]?.repeatsTitles == true ? "item \(feed)|\(item.id)" : "title \(product) \(item.duplicateKey)"
+                keys = [item.link.map { "official link \($0.absoluteString)" }, item.canonicalID, byTitle].compactMap { $0 }
             } else { keys = ["item \(feed)|\(item.id)"] }
             let matches = Set(keys.compactMap { positions[$0] })
             if let position = matches.min(), var winner = kept[position] {
@@ -202,6 +204,8 @@ enum NewsFetcher {
         var maxAge: TimeInterval?
         var now: Date
         var forcedSources: Set<String> = []
+        /// Sources whose read is quiet, like a first read (`firstSeen`'s `quiet`).
+        var quietSources: Set<String> = []
         /// Rechecked before each public GET; already-issued requests may finish normally.
         var isAllowed: @MainActor @Sendable () -> Bool = { true }
     }
@@ -242,7 +246,7 @@ enum NewsFetcher {
     /// Fetches what's due: the model list and each feed every hour, a failed one after its
     /// `retryInterval`, or anything older than `maxAge` when given (opening the tab, pulling to
     /// refresh).
-    static func refresh(_ cache: NewsCache, sources: [FeedSource], following vendors: Set<String>, maxAge: TimeInterval? = nil, now: Date = .now, forcedSources: Set<String> = [], isAllowed: @escaping @MainActor @Sendable () -> Bool = { true }) async -> Result {
+    static func refresh(_ cache: NewsCache, sources: [FeedSource], following vendors: Set<String>, maxAge: TimeInterval? = nil, now: Date = .now, forcedSources: Set<String> = [], quietSources: Set<String> = [], isAllowed: @escaping @MainActor @Sendable () -> Bool = { true }) async -> Result {
         var cache = cache
         // Freeze legacy sources' dates before another source advances the shared timestamp.
         var migrated = cache.sourceChecks ?? [:]
@@ -324,7 +328,7 @@ enum NewsFetcher {
                 case let .body(data, validator, isTruncated):
                     let read = FeedParser.read(data, source: source)
                     let previousItems = cache.items[source.id] ?? []
-                    let items = firstSeen(read.items, previous: previousItems, now: now)
+                    let items = firstSeen(read.items, previous: previousItems, now: now, quiet: quietSources.contains(source.id))
                     // A feed with no entries at all where some were cached isn't taken at its
                     // word: a server's placeholder would clear the list.
                     if read.isComplete, !isTruncated, read.entries > 0 || previousItems.isEmpty {
@@ -390,25 +394,27 @@ enum NewsFetcher {
 
     /// Items dated no later than the check that first saw them: one dated ahead (a wrong time
     /// zone, a post scheduled early) counts as seen once News opens, and a later change to its
-    /// date doesn't make it new again. One without any date is dated when it first arrives, so
-    /// it sorts with what came then rather than last, and keeps that date.
+    /// date doesn't make it new again.
     ///
     /// `firstSeenAt` is when it reached this device, so an entry dated earlier than it turned up
-    /// (a post dated midnight that arrives in the afternoon) is still new. On a feed's first read
-    /// there's no arrival to go by, so its entries keep their own dates; `NewsStore` makes that
-    /// first read quiet.
-    static func firstSeen(_ items: [FeedItem], previous: [FeedItem], now: Date) -> [FeedItem] {
+    /// (a post dated midnight that arrives in the afternoon) is still new, and one without any
+    /// date is dated when it arrives, so it sorts with what came then rather than last. A quiet
+    /// read (a feed's first, or one followed again: `quiet`, or nothing cached) brings what was
+    /// there already, so it has no arrival to go by: its entries keep their own dates, an undated
+    /// one still sorts last, and `NewsStore` keeps them from counting as new.
+    static func firstSeen(_ items: [FeedItem], previous: [FeedItem], now: Date, quiet: Bool = false) -> [FeedItem] {
         let earlier = Dictionary(previous.map { ($0.id, $0) }) { first, _ in first }
+        let isQuiet = quiet || previous.isEmpty
         return items.map { incoming in
             var item = incoming
             let old = earlier[item.id]
             if let old { item.aliases = old.aliasIDs.union(item.aliasIDs) }
             let dated = min(item.publisherPublishedAt ?? item.updatedAt ?? item.published ?? now, now)
-            item.firstSeenAt = old?.newsDate ?? (previous.isEmpty ? dated : now)
+            item.firstSeenAt = old?.newsDate ?? (isQuiet ? dated : now)
             item.published = item.published.map { min($0, old?.published ?? now, now) }
             if item.published == nil, item.updatedAt == nil {
                 // One cached undated by an earlier release stays so, rather than turning new now.
-                item.published = old == nil ? now : old?.published
+                item.published = old == nil ? (isQuiet ? nil : now) : old?.published
             }
             if item.kind == .officialStatus {
                 let update = FeedItem.StatusUpdate(date: item.updatedAt ?? item.publisherPublishedAt, excerpt: item.excerpt)
