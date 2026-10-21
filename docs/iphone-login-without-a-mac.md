@@ -4,9 +4,19 @@
 |---|---|
 | Author | (owner) |
 | Date | 2026-10-01 |
-| Status | Draft |
+| Status | Implemented, then changed by the owner on 2026-10-21 (see below) |
 | Repo | `felipedrf74/tokenroom` |
 | Scope | Design only. Not an implementation. Not a Mac 2.2.4 change. Not an App Store submission. |
+
+## Decision change, 2026-10-21
+
+The owner chose Alternative 1 for three providers: the iPhone now signs in to Claude, Codex, and Grok Build itself, so a person with no Mac can read those plans. `PhoneConnect.productionAllowlist` is `[.claude, .openai, .grok]`, and `connectOnIPhone` defaults on. What follows below is the original design, kept for its reasoning; where it says the allowlist is empty or that the phone starts no session, read the paragraphs here instead.
+
+- **Sign-in** (`Shared/APIKeys/PhoneSignIn.swift`, sent by `PhoneSignInClient`, shown by `TokenroomMobile/PlanSignInView.swift`): Claude opens its own sign-in page in Safari (PKCE, `code=true`, redirect `platform.claude.com/oauth/code/callback`, scope `user:profile` only) and the person pastes back the `code#state` it shows; Codex uses OpenAI's device code (`auth.openai.com/api/accounts/deviceauth/…`, approved at `auth.openai.com/codex/device`, then a PKCE exchange whose verifier OpenAI returns); Grok Build uses RFC 8628 at `auth.x.ai` (scope `openid offline_access grok-cli:access`). No embedded web view, no callback URL host, no client secret. The client ids are the vendors' CLI clients, the same ones the Mac renews, which is the terms and App Review risk this document describes under Alternative 1; Anthropic's consumer terms (February 2026) bar third-party apps from offering Claude.ai sign-in, so Claude is the riskiest of the three. Taking a provider out of the allowlist stops its sign-in, renewals, and reads on the next launch.
+- **Storage and renewal** stay as designed: `PhoneSessionStore` in the app-id group, `PhoneSessionRefresher` (`canReplace`, `exchanging`, recovery item), now also renewing once early when the vendor turns an access token down (`PhoneSessionReader`), and keeping the old refresh token when a grant leaves it out. Sessions hold the access and refresh tokens, expiry, token host, and client id only; Codex's workspace and Grok's user header are read from the access token as it's sent.
+- **Reading** (`MobileStore.readSessions`): beside `readKeys` in the same pass, spaced by `KeyFetchGate`; `localProviders` (keys plus sessions) drives the envelope, the three publish gates, history, and alerts, as the "Reading sessions" section planned. Widgets still don't read sessions; they keep this iPhone's plan readings through `sessionProviders` in the App Group.
+- **Parsers** (`ClaudeParser`, `OpenAIParser`, `GrokParser`) moved to `Shared/APIKeys/PlanParsers.swift` so the iPhone compiles them; the Mac's clients use the same ones. The widget extension excludes the sign-in files and parsers.
+- **Copy**: Settings › Plans (`ConnectView`) lists plans signed in on this iPhone, plans to sign in to, plans a Mac covers, and plans that still need a Mac (Grok Bot, Cursor, Antigravity, Devin). `PRIVACY.md`, `README.md`, and the later-listing notes in `docs/app-store.md` say a sign-in made on the iPhone stays on that iPhone.
 
 ## Overview
 

@@ -61,7 +61,13 @@ struct MobileSettingsView: View {
                     }
                     if store.connectOnIPhone {
                         NavigationLink(value: SettingsRoute.connect) {
-                            SettingsRowLabel("Plans that need a Mac", symbol: "laptopcomputer", tint: .indigo)
+                            LabeledContent {
+                                if !store.sessionProviders.isEmpty {
+                                    Text("\(store.sessionProviders.count)")
+                                }
+                            } label: {
+                                SettingsRowLabel("Plans", symbol: "person.badge.key.fill", tint: .indigo)
+                            }
                         }
                     }
                     NavigationLink(value: SettingsRoute.keys) {
@@ -77,7 +83,11 @@ struct MobileSettingsView: View {
                         SettingsRowLabel("Widgets, Live Activity & Watch", symbol: "rectangle.stack.fill", tint: .blue)
                     }
                 } footer: {
-                    Text("Read providers right from this iPhone with API keys. Keys stay in its Keychain; they're never synced or sent to your other devices.")
+                    if store.connectOnIPhone {
+                        Text("Sign in to plans, or add API keys, to read providers right from this iPhone. Sign-ins and keys stay in its Keychain; they're never synced or sent to your other devices.")
+                    } else {
+                        Text("Read providers right from this iPhone with API keys. Keys stay in its Keychain; they're never synced or sent to your other devices.")
+                    }
                 }
 
                 Section {
@@ -86,7 +96,9 @@ struct MobileSettingsView: View {
                     }
                     .disabled(deleting || store.relayPhase == .unavailable || store.relayPhase == .noAccount)
                 } footer: {
-                    Text(deleteError ?? "Removes every Tokenroom reading and history from your iCloud, for all your devices. Keys on this iPhone stay.")
+                    Text(deleteError ?? (store.connectOnIPhone
+                        ? "Removes every Tokenroom reading and history from your iCloud, for all your devices. Keys and sign-ins on this iPhone stay."
+                        : "Removes every Tokenroom reading and history from your iCloud, for all your devices. Keys on this iPhone stay."))
                 }
 
                 Section("About") {

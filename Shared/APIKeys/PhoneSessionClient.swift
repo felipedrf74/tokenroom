@@ -2,31 +2,33 @@ import Foundation
 import os
 
 /// Reads usage with a phone session. The only type allowed to send a phone session's token, and
-/// only for a provider on the allowlist, which is empty in production: for every other provider
-/// it answers signed out without building a request. That keeps a CLI client (`ClaudeClient`,
-/// `OpenAIClient`, `GrokClient`) from being pointed at the store by accident.
+/// only for a provider on the allowlist: for every other provider it answers signed out without
+/// building a request. That keeps a CLI client (`ClaudeClient`, `OpenAIClient`, `GrokClient`),
+/// which reads the Mac's CLI logins, from being pointed at the store by accident.
 struct PhoneSessionClient: Sendable {
     /// Sends the request the client built; the provider's parser turns the answer into a reading.
     typealias Send = @Sendable (URLRequest) async -> Result<QuotaSnapshot, ProviderError>
+    /// The usage request for a provider and an access token.
+    typealias Request = @Sendable (Provider, String) -> URLRequest?
 
     static let notAllowed = "Couldn't start a session for this provider."
     static let needsSignIn = "Couldn't refresh this session. Sign in again."
+    static let cantRead = "Couldn't read this plan's usage with this sign-in."
 
     var provider: Provider
-    /// The vendor's documented usage endpoint for this public client.
-    var usageURL: URL
     var store: PhoneSessionStore
     var allowlist: Set<Provider> = PhoneConnect.productionAllowlist
+    var request: Request = { PhoneSignIn.usageRequest(provider: $0, accessToken: $1) }
     var send: Send
 
     func fetch(now: Date = .now) async -> Result<QuotaSnapshot, ProviderError> {
         guard allowlist.contains(provider) else { return .failure(.signedOut(Self.notAllowed)) }
-        guard TokenroomRedirectPolicy.isSecureEndpoint(usageURL) else { return .failure(.unreachable) }
         let store = store
-        let provider = provider
+        // Grok Bot reads with Cursor's session.
+        let owner = PhoneSignIn.sessionOwner(for: provider)
         guard let session = await BlockingIO.run({
-            guard store.metadata(for: provider)?.state == .ready else { return nil as PhoneSession? }
-            return store.session(for: provider)
+            guard store.metadata(for: owner)?.state == .ready else { return nil as PhoneSession? }
+            return store.session(for: owner)
         }) else {
             return .failure(.signedOut(Self.needsSignIn))
         }
@@ -34,11 +36,67 @@ struct PhoneSessionClient: Sendable {
         if let expiresAt = session.expiresAt, expiresAt.timeIntervalSince(now) <= PhoneSessionRefresher.usableSlack {
             return .failure(.expired(Self.needsSignIn))
         }
-        var request = URLRequest(url: usageURL)
+        guard var request = request(provider, session.accessToken) else { return .failure(.signedOut(Self.notAllowed)) }
+        guard let url = request.url, TokenroomRedirectPolicy.isSecureEndpoint(url) else { return .failure(.unreachable) }
         request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue(TokenroomIdentity.userAgent, forHTTPHeaderField: "User-Agent")
+        if request.value(forHTTPHeaderField: "User-Agent") == nil {
+            request.setValue(TokenroomIdentity.userAgent, forHTTPHeaderField: "User-Agent")
+        }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         return await send(request)
+    }
+
+    /// Sends a usage request and parses the answer with the provider's parser. Only a 401 means
+    /// the access token ended (and is renewed once); a 403 means this sign-in can't read usage,
+    /// which renewing wouldn't change.
+    static func live(_ provider: Provider) -> Send {
+        { request in
+            do {
+                let (data, response) = try await TokenroomHTTP.data(for: request)
+                if response.statusCode == 403 { return .failure(.notEntitled(cantRead)) }
+                try TokenroomHTTP.check(response, provider: provider)
+                return .success(try PhoneSignIn.snapshot(provider: provider, from: data, fetchedAt: .now))
+            } catch let error as ProviderError {
+                return .failure(error)
+            } catch {
+                return .failure(.parse)
+            }
+        }
+    }
+}
+
+/// A phone session's reading: renewed first when it's due, and once more when the provider turns
+/// the access token down, so a token the vendor ended early doesn't wait for its expiry date. A
+/// refresh token that's refused, or a session with none left, asks to sign in again, in the
+/// phone's own words rather than the CLI's.
+struct PhoneSessionReader: Sendable {
+    var client: PhoneSessionClient
+    var refresher: PhoneSessionRefresher
+
+    func read(now: Date = .now) async -> Result<QuotaSnapshot, ProviderError> {
+        // Renewals go to the session's owner: Grok Bot's renews Cursor's.
+        let provider = PhoneSignIn.sessionOwner(for: client.provider)
+        switch await refresher.renewIfNeeded(provider, now: now) {
+        case .rejected, .noSession:
+            return .failure(.signedOut(PhoneSessionClient.needsSignIn))
+        default:
+            break
+        }
+        var result = await client.fetch(now: now)
+        if case .failure(.expired) = result {
+            switch await refresher.renewIfNeeded(provider, now: now, force: true) {
+            case .refreshed, .recovered:
+                result = await client.fetch(now: now)
+            case .rejected, .noSession:
+                return .failure(.signedOut(PhoneSessionClient.needsSignIn))
+            default:
+                break
+            }
+        }
+        if case .failure(.expired) = result {
+            return .failure(.expired(PhoneSessionClient.needsSignIn))
+        }
+        return result
     }
 }
 
@@ -92,6 +150,8 @@ actor PhoneSessionRefresher {
     private let post: Post
     private var pending: [Provider: PhoneSession] = [:]
     private var flights: [Provider: Task<Outcome, Never>] = [:]
+    /// Providers being signed in again or out (`replace`): no renewal starts meanwhile.
+    private var replacing: Set<Provider> = []
     private let logger = Logger(subsystem: "app.tokenroom.ios", category: "session")
 
     init(store: PhoneSessionStore, allowlist: Set<Provider> = PhoneConnect.productionAllowlist, post: @escaping Post) {
@@ -102,12 +162,15 @@ actor PhoneSessionRefresher {
 
     /// One renewal per provider at a time: a second caller waits for the first, so two can't
     /// rotate the same refresh token.
-    func renewIfNeeded(_ provider: Provider, now: Date = .now) async -> Outcome {
+    /// - Parameter force: renew even before the lead time, because the provider turned the access
+    ///   token down.
+    func renewIfNeeded(_ provider: Provider, now: Date = .now, force: Bool = false) async -> Outcome {
         guard allowlist.contains(provider) else { return .notAllowed }
+        guard !replacing.contains(provider) else { return .notDue }
         if let flight = flights[provider] {
             return await flight.value
         }
-        let flight = Task { await self.renew(provider, now: now) }
+        let flight = Task { await self.renew(provider, now: now, force: force) }
         flights[provider] = flight
         let outcome = await flight.value
         flights[provider] = nil
@@ -117,7 +180,7 @@ actor PhoneSessionRefresher {
         return outcome
     }
 
-    private func renew(_ provider: Provider, now: Date) async -> Outcome {
+    private func renew(_ provider: Provider, now: Date, force: Bool) async -> Outcome {
         let store = store
         if let grant = pending[provider] {
             return await storeGrant(grant, for: provider)
@@ -127,7 +190,9 @@ actor PhoneSessionRefresher {
             return await recover(provider, now: now)
         }
         guard let session = await BlockingIO.run({ store.session(for: provider) }) else { return .noSession }
-        guard let expiresAt = session.expiresAt, expiresAt.timeIntervalSince(now) <= Self.lead else { return .notDue }
+        if !force {
+            guard let expiresAt = session.expiresAt, expiresAt.timeIntervalSince(now) <= Self.lead else { return .notDue }
+        }
         let ready = await BlockingIO.run { store.canReplace(provider) && store.setState(.exchanging, for: provider) }
         guard ready else { return .preflightFailed }
         switch await post(provider, session) {
@@ -141,7 +206,11 @@ actor PhoneSessionRefresher {
             // Preserve exchanging: a later call recovers a durable grant, or rejects this
             // session without replaying the old refresh token after an ambiguous response.
             return .unavailable
-        case .granted(let grant):
+        case .granted(var grant):
+            // A host that doesn't rotate the refresh token may leave it out of the answer.
+            if grant.refreshToken.isEmpty {
+                grant.refreshToken = session.refreshToken
+            }
             pending[provider] = grant
             return await storeGrant(grant, for: provider)
         }
@@ -158,6 +227,24 @@ actor PhoneSessionRefresher {
             }
         }
         return .pendingWrite
+    }
+
+    /// A new sign-in (`session`) or signing out (nil). A renewal already under way finishes first,
+    /// so its write lands before this one and can't bring a removed session back or replace a
+    /// newer one; a grant still waiting to be written is dropped; no renewal starts meanwhile.
+    func replace(_ provider: Provider, with session: PhoneSession?, now: Date = .now) async throws {
+        replacing.insert(provider)
+        defer { replacing.remove(provider) }
+        if let flight = flights[provider] {
+            _ = await flight.value
+        }
+        pending[provider] = nil
+        let store = store
+        if let session {
+            try await BlockingIO.run { try store.save(session, for: provider, now: now) }
+        } else {
+            try await BlockingIO.run { try store.remove(for: provider) }
+        }
     }
 
     /// A launch that finds `exchanging`: the process died during a renewal. Never sends the old

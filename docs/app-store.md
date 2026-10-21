@@ -106,7 +106,8 @@ Not for 1.0.1, 1.0.2, or 1.0.3; leave their listings and notes as submitted.
 
 The next version can say that the Watch, widgets, and Lock Screen lead with the limit that is closest to running out, and that a pace measured on the Mac stays visible, marked projected, after that Mac sleeps.
 
-- "Logins never leave your Mac, and keys never leave your iPhone" stays true while the iPhone has no plan login (`PhoneConnect.productionAllowlist` is empty). Before a version that adds one is submitted, replace it with: "A login you add on your iPhone stays on that iPhone. A login on your Mac stays on your Mac. Only usage, reset times, and plan names sync, through your iCloud."
+- The iPhone now signs in to Claude, Codex, and Grok Build itself (`PhoneConnect.productionAllowlist`). "Logins never leave your Mac, and keys never leave your iPhone" is no longer the whole story: before the version with plan sign-in is submitted, replace it with "A login you add on your iPhone stays on that iPhone. A login on your Mac stays on your Mac. Only usage, reset times, and plan names sync, through your iCloud." The 1.0.2 listing keeps its text.
+- Review notes for that version should say that Claude, Codex, and Grok Build sign in on each company's own page (Safari for Claude, a short code for Codex and Grok Build), that Tokenroom reads only usage with the sign-in, and that the endpoints are the ones each company's command-line tool uses. Sample Data still shows every screen without an account.
 - A later description can say the iPhone works without a Mac for every provider read with a key, Copilot's fine-grained token included, and lists the plans that need Tokenroom for Mac.
 
 ## Review notes

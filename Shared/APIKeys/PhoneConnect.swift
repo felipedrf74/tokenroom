@@ -7,7 +7,8 @@ import Foundation
 ///    `.addKey`, whatever a Mac shows: a pasted key for that provider stays available.
 /// 2. A Mac reading for it that is still live is `.fromMac`. That blocks a second phone login
 ///    only. Another iPhone isn't a Mac; a stale, expired, or signed-out Mac card doesn't count.
-/// 3. A provider on the allowlist is `.signIn`. The allowlist is empty in production.
+/// 3. A provider on the allowlist is `.signIn`: Claude, Codex, and Grok Build sign in on the
+///    iPhone itself (`PhoneSignIn`).
 /// 4. Everything else is `.needsMac`, with the reason as the row's copy and no button.
 ///
 /// It never reads `isUnofficial`: that ignores Copilot's documented token and calls the pasted
@@ -19,7 +20,7 @@ enum PhoneConnect: Sendable {
         /// A pasted key, or Copilot's fine-grained token. On the key card and in API Keys, not
         /// on the connect screen.
         case addKey
-        /// Reserved. The production allowlist is empty, so the default call never returns this.
+        /// Sign in on this iPhone, with the vendor's own sign-in page.
         case signIn
         /// No button. `reason` is the row's copy.
         case needsMac(reason: String)
@@ -31,9 +32,10 @@ enum PhoneConnect: Sendable {
         var envelope: RelayEnvelope
     }
 
-    /// The only allowlist. Empty until a vendor documents a public client with a usage read that
-    /// needs no secret and no identity. Tests pass their own set; production never does.
-    static let productionAllowlist: Set<Provider> = []
+    /// The only allowlist: the plans `PhoneSignIn` signs in to (widgets compile this file, not
+    /// that one; a test keeps the two equal). Taking one out stops its sign-in, renewals, and
+    /// reads on the next launch; its session stays in the Keychain until removed.
+    static let productionAllowlist: Set<Provider> = [.claude, .openai, .grok]
 
     static func action(
         for provider: Provider,
@@ -67,8 +69,8 @@ enum PhoneConnect: Sendable {
         }
     }
 
-    /// Why a provider can't be connected on the iPhone. Each line names the Mac, and none
-    /// promises a sign-in.
+    /// Why a provider can't be connected on the iPhone (one off the allowlist). Each line names the
+    /// Mac, and none promises a sign-in.
     static func reason(for provider: Provider) -> String {
         switch provider {
         case .grok: "Needs Tokenroom on a Mac. Grok Build doesn't offer a usage API for other apps."
@@ -82,43 +84,51 @@ enum PhoneConnect: Sendable {
         }
     }
 
-    /// The providers the connect screen lists: those that need a Mac, or that a Mac covers now.
-    /// Key providers stay on the key card and in API Keys.
+    /// The providers the connect screen lists: those to sign in to here, those that need a Mac,
+    /// and those a Mac covers now. Key providers stay on the key card and in API Keys.
     static func connectList(sources: [CoveringSource], now: Date = .now, allowlist: Set<Provider> = productionAllowlist) -> [(provider: Provider, action: Action)] {
         Provider.allCases.compactMap { provider in
             let action = action(for: provider, sources: sources, now: now, allowlist: allowlist)
             switch action {
-            case .fromMac, .needsMac: return (provider, action)
-            case .addKey, .signIn: return nil
+            case .fromMac, .needsMac, .signIn: return (provider, action)
+            case .addKey: return nil
             }
         }
     }
 
-    /// The footer under Usage's Not connected, with the connect screen on. Promises no sign-in.
+    /// The footer under Usage's Not connected, with the connect screen on. Each kind of provider
+    /// is sent where it can be fixed: a sign-in here, a key, or a Mac.
     static func disconnectedFooter(_ actions: [Action]) -> String {
-        let needsMac = actions.contains { $0 != .addKey }
-        let keys = actions.contains { $0 == .addKey }
-        switch (needsMac, keys) {
-        case (true, true): return "These need Tokenroom on a Mac, or a key in Settings › API Keys."
-        case (false, true): return "Check these keys in Settings › API Keys."
-        default: return "These need Tokenroom on a Mac."
+        let signIn = actions.contains(.signIn)
+        let keys = actions.contains(.addKey)
+        let needsMac = actions.contains { $0 != .signIn && $0 != .addKey }
+        switch (signIn, keys, needsMac) {
+        case (false, false, _): return "These need Tokenroom on a Mac."
+        case (false, true, false): return "Check these keys in Settings › API Keys."
+        case (false, true, true): return "These need Tokenroom on a Mac, or a key in Settings › API Keys."
+        case (true, false, false): return "Sign in to these in Settings › Plans."
+        case (true, false, true): return "Sign in to these in Settings › Plans, or use Tokenroom on a Mac."
+        case (true, true, false): return "Sign in to these in Settings › Plans, or check their keys in Settings › API Keys."
+        case (true, true, true): return "Sign in to these in Settings › Plans, check their keys in Settings › API Keys, or use Tokenroom on a Mac."
         }
     }
 
     // MARK: Flag
 
-    /// Shows the connect screen and its copy. Off by default; off leaves every string as it was.
-    /// Rolling back is shipping it off again. In `UserDefaults.standard`, not the App Group: the
-    /// widgets don't read it, and the Watch learns it only as `connectAvailable`.
+    /// Shows the connect screen, plan sign-in, and their copy. On by default; off leaves every
+    /// string as it was before them and stops reading phone sessions (they stay in the Keychain).
+    /// Rolling back is shipping `defaultValue` false. In `UserDefaults.standard`, not the App
+    /// Group: the widgets don't read it, and the Watch learns it only as `connectAvailable`.
     static let flagKey = "connectOnIPhone"
+    static let defaultValue = true
 
-    /// `-connectOnIPhone YES` on launch turns it on in any build, Release included, because
+    /// `-connectOnIPhone NO` (or `YES`) on launch sets it in any build, Release included, because
     /// launch arguments sit in the defaults' argument domain. TestFlight doesn't pass them.
     static func isEnabled(in defaults: UserDefaults = .standard) -> Bool {
         if let argument = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)[flagKey] {
-            return (argument as? String).map { ["YES", "1", "true"].contains($0) } ?? (argument as? Bool ?? false)
+            return (argument as? String).map { ["YES", "1", "true"].contains($0) } ?? (argument as? Bool ?? defaultValue)
         }
-        return defaults.bool(forKey: flagKey)
+        return defaults.object(forKey: flagKey) as? Bool ?? defaultValue
     }
 }
 

@@ -141,6 +141,9 @@
 			membershipExceptions = (
 				PhoneSessionClient.swift,
 				PhoneSessionStore.swift,
+				PhoneSignIn.swift,
+				PhoneSignInClient.swift,
+				PlanParsers.swift,
 			);
 			target = E10000000000000000000010 /* TokenroomWidgets */;
 		};

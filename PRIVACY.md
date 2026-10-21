@@ -68,10 +68,20 @@ On iPhone, Tokenroom keeps:
 - its alert ledger, like the Mac's `alerts.json` (the last reading of each provider it reads with a key, alert IDs sent, and the text of alerts waiting for quiet hours), alerts it showed before it could tell iCloud, the alert choices as last shared, and the time zone it last gave them
 - API keys you add there in the iPhone’s Keychain, readable only by Tokenroom and its widgets, never synced
 - the device-local public News cache and follow choices in its App Group container; saved/read library metadata remains in the app’s own Application Support storage, outside the App Group and usage relay. Saved items can be read offline, while opening their original pages requires a connection
+- plan sign-ins you add there (below) in the iPhone’s Keychain, in Tokenroom’s own item that only the iPhone app can read (not its widgets, the Watch, or your other devices), never synced
 
-No plan login can be added on the iPhone yet: Claude, Codex, Grok Build, Grok Bot, Cursor, Antigravity, and Devin are read by Tokenroom for Mac, from the login on that Mac. If a provider later documents a way for other apps to read plan usage, a login you add on the iPhone will stay in that iPhone’s Keychain, in Tokenroom’s own item that its widgets, the Watch, and your other devices can’t read, and only usage will sync. A login on your Mac stays on your Mac.
+### Plans you sign in to on the iPhone
 
-When you add keys on the iPhone, it writes its own readings (never the keys) to the same iCloud database, so your other devices can show them. **Settings → Delete Tokenroom Data from iCloud** removes every Tokenroom record there, from all your devices. A Mac with iPhone sync on writes its readings and history again within the hour, and alert choices you changed within half an hour; turn sync off on that Mac first to keep them out.
+Claude, Codex (your ChatGPT plan), and Grok Build can be signed in to on the iPhone itself, under **Settings → Plans**, without a Mac. You sign in on the company’s own page: Claude’s in Safari (you then paste the code it shows back into Tokenroom), OpenAI’s and xAI’s by approving a short code Tokenroom shows. Tokenroom never sees your password. What comes back is a sign-in of Tokenroom’s own on that iPhone, not a copy of a login from your Mac or another tool. Tokenroom keeps:
+
+- the access token, the refresh token, when the access token expires, and which token host and public client issued them. It drops everything else the company sends with them: email, name, account, organization, and ID tokens. Codex’s workspace and Grok’s user, which their usage endpoints ask for, are read from the access token each time it’s sent and aren’t stored.
+- when you signed in, and whether the sign-in is ready, being renewed, or was refused.
+
+It uses that sign-in only to read the plan’s usage, from the same endpoints the Mac reads through each tool’s login (`api.anthropic.com`, `chatgpt.com`, `cli-chat-proxy.grok.com`), and renews it before it expires at the company’s token host (`platform.claude.com` or `console.anthropic.com`, `auth.openai.com`, `auth.x.ai`). Claude’s sign-in asks only to read your profile, not to use your plan for chats; Grok Build’s asks only for the Build proxy. Those endpoints and sign-ins are the ones the companies’ command-line tools use; they aren’t documented for other apps and can change or stop working without notice. **Sign Out on This iPhone** deletes the sign-in; it doesn’t sign you out anywhere else.
+
+Grok Bot, Cursor, Antigravity, and Devin are still read only by Tokenroom for Mac, from the login on that Mac. A login on your Mac stays on your Mac.
+
+When you add keys or sign in to plans on the iPhone, it writes its own readings (never the keys or sign-ins) to the same iCloud database, so your other devices can show them. **Settings → Delete Tokenroom Data from iCloud** removes every Tokenroom record there, from all your devices. A Mac with iPhone sync on writes its readings and history again within the hour, and alert choices you changed within half an hour; turn sync off on that Mac first to keep them out.
 
 The records carry readings only: used percents, reset times, window names, plan names, amounts (and whether a limit is a budget you set), a provider's category, and the Mac's pace forecast for each window. They never contain tokens, API keys, email addresses, names, account or organization IDs, or file paths.
 

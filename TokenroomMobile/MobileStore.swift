@@ -5,9 +5,9 @@ import UserNotifications
 import os
 
 /// Everything the iPhone shows: readings your Macs relay through iCloud, providers read with keys
-/// added on this iPhone, or sample data. Saves the merged readings for widgets and, while this
-/// iPhone has keys, relays its own readings to your other devices. Readings only: keys never
-/// leave this iPhone's Keychain.
+/// added on this iPhone or plans signed in to on it, or sample data. Saves the merged readings for
+/// widgets and, while this iPhone reads any itself, relays its own readings to your other devices.
+/// Readings only: keys and sessions never leave this iPhone's Keychain.
 @Observable
 @MainActor
 final class MobileStore {
@@ -56,6 +56,8 @@ final class MobileStore {
         static let alertsFiltered = "alertSubscriptionFiltered"
         static let unclaimedAlerts = "unclaimedAlerts"
         static let keyedProviders = "keyedProviders"
+        /// Read by the widgets too, so they keep this iPhone's plan readings.
+        static let sessionProviders = "sessionProviders"
         static let followedTimeZone = "followedTimeZone"
     }
 
@@ -92,6 +94,13 @@ final class MobileStore {
     private(set) var isRefreshing = false
     /// Providers with a key on this iPhone.
     private(set) var keyedProviders: [Provider] = []
+    /// Plans signed in to on this iPhone: a session in its Keychain, ready or waiting for a new
+    /// sign-in after its refresh token was refused.
+    private(set) var sessionProviders: [Provider] = []
+    /// Everything this iPhone reads itself, with a key or a session.
+    var localProviders: [Provider] {
+        Provider.allCases.filter { keyedProviders.contains($0) || sessionProviders.contains($0) }
+    }
     /// Other devices' envelopes and what kind of device each is: iCloud's records once read this
     /// launch, the saved cache's until then. Decides which plans a Mac covers now.
     private(set) var coverage: [PhoneConnect.CoveringSource] = []
@@ -149,6 +158,10 @@ final class MobileStore {
     var hasPersistentStorage: Bool { directory != nil }
     var preferencesDefaults: UserDefaults { defaults }
     var widgetReloadCount: Int { WidgetReloadLog.count(defaults: defaults) }
+    /// Plan sessions, in this iPhone app's own Keychain group. Nil when the connect screen is
+    /// off or the build can't name that group: then no plan is read, and none can be signed in to.
+    let sessions: PhoneSessionStore?
+    private let refresher: PhoneSessionRefresher?
     let sourceID: String
     @ObservationIgnored private let notificationScheduler: @MainActor @Sendable (UNNotificationRequest) async throws -> Void
     @ObservationIgnored private let platformEffects: MobilePlatformEffects
@@ -219,7 +232,8 @@ final class MobileStore {
         claimAlert: (@MainActor @Sendable (UsageAlert, Date) async -> Claim)? = nil,
         allowsExternalEffects: Bool = true,
         platformEffects: MobilePlatformEffects = .system,
-        launchDefaults: UserDefaults = .standard
+        launchDefaults: UserDefaults = .standard,
+        sessions: PhoneSessionStore? = PhoneSessionAvailability.store()
     ) {
         self.defaults = defaults
         self.allowsExternalEffects = allowsExternalEffects
@@ -228,6 +242,14 @@ final class MobileStore {
         self.platformEffects = platformEffects
         claimOverride = claimAlert
         self.connectOnIPhone = connectOnIPhone
+        // A fixture root never touches this device's sign-ins.
+        let sessions = connectOnIPhone && allowsExternalEffects ? sessions : nil
+        self.sessions = sessions
+        refresher = sessions.map { store in
+            PhoneSessionRefresher(store: store) { provider, session in
+                await PhoneSignInClient().renew(provider, session)
+            }
+        }
         // Before the first handover, so the flag travels with the first readings.
         if allowsExternalEffects { platformEffects.setWatchConnectAvailable(connectOnIPhone) }
         self.keys = keys
@@ -256,6 +278,10 @@ final class MobileStore {
         // Which providers have keys, as the last launch found; read again, off the main thread,
         // on the first refresh that includes keys.
         keyedProviders = (defaults.array(forKey: Keys.keyedProviders) as? [String] ?? []).compactMap(Provider.init(rawValue:))
+        sessionProviders = sessions == nil ? [] : (defaults.array(forKey: Keys.sessionProviders) as? [String] ?? []).compactMap(Provider.init(rawValue:))
+        if sessions == nil {
+            defaults.removeObject(forKey: Keys.sessionProviders)
+        }
         showCachedReadings()
     }
 
@@ -344,7 +370,8 @@ final class MobileStore {
         history.takePending(now: now)
         async let relayRead: Void = readRelay()
         async let keyRead: Void = readsKeys ? readKeys(now: now) : ()
-        _ = await (relayRead, keyRead)
+        async let sessionRead: Void = readsKeys ? readSessions(now: now) : ()
+        _ = await (relayRead, keyRead, sessionRead)
         guard !Task.isCancelled else { return }
 
         followTimeZone()
@@ -570,7 +597,7 @@ final class MobileStore {
         keyedProviders = providers
         keysRead = true
         defaults.set(providers.map(\.rawValue), forKey: Keys.keyedProviders)
-        for provider in localStatuses.keys where !providers.contains(provider) {
+        for provider in localStatuses.keys where provider.readsWithKey && !providers.contains(provider) {
             localStatuses[provider] = nil
             localCheckedAt[provider] = nil
             localFailedAt[provider] = nil
@@ -605,6 +632,70 @@ final class MobileStore {
                 apply(provider, result: result, now: now)
             }
         }
+    }
+
+    /// Reads the plans signed in to on this iPhone, each with its own session, renewed first when
+    /// it's due. Spaced and held off after a 429 like the key providers. A session whose refresh
+    /// token was refused shows as signed out, asking to sign in again, without a call.
+    private func readSessions(now: Date) async {
+        guard let sessions, let refresher else { return }
+        let found = await BlockingIO.run {
+            PhoneSignIn.providers.compactMap { provider in
+                sessions.metadata(for: provider).map { (provider, $0.state) }
+            }
+        }
+        let providers = found.map(\.0).filter { PhoneConnect.productionAllowlist.contains($0) }
+        setSessionProviders(providers)
+        for provider in localStatuses.keys where PhoneSignIn.method(for: provider) != nil && !providers.contains(provider) {
+            localStatuses[provider] = nil
+            localCheckedAt[provider] = nil
+            localFailedAt[provider] = nil
+        }
+        let refused = Set(found.filter { $0.1 == .rejected }.map(\.0))
+        for provider in providers where refused.contains(provider) {
+            apply(provider, result: .failure(.signedOut(PhoneSessionClient.needsSignIn)), now: now)
+        }
+        let gate = keyGate
+        let due = providers.filter { provider in
+            guard !refused.contains(provider) else { return false }
+            if let until = rateLimitedUntil[provider], until > now { return false }
+            if let last = gate.lastAttempt(provider), (0..<PhoneSignIn.minimumInterval).contains(now.timeIntervalSince(last)) { return false }
+            return !gate.isResting(provider, now: now)
+        }
+        var earlierAttempts: [Provider: Date] = [:]
+        for provider in due {
+            earlierAttempts[provider] = gate.lastAttempt(provider)
+            gate.recordAttempt(provider, at: now)
+        }
+        await withTaskGroup(of: (Provider, Result<QuotaSnapshot, ProviderError>).self) { group in
+            for provider in due {
+                if localStatuses[provider] == nil {
+                    localStatuses[provider] = .loading
+                }
+                let client = PhoneSessionClient(provider: provider, store: sessions, send: PhoneSessionClient.live(provider))
+                let reader = PhoneSessionReader(client: client, refresher: refresher)
+                // A renewal and the reading after it: twice a key's budget. A renewal cut short
+                // still finishes in the refresher, which keeps the new tokens.
+                group.addTask {
+                    await (provider, TimeLimit.run(2 * TokenroomHTTP.fetchBudget, otherwise: .failure(.unreachable)) { await reader.read(now: now) })
+                }
+            }
+            for await (provider, result) in group {
+                if Task.isCancelled, case .failure = result {
+                    gate.recordAttempt(provider, at: earlierAttempts[provider])
+                    if localStatuses[provider] == .loading {
+                        localStatuses[provider] = nil
+                    }
+                    continue
+                }
+                apply(provider, result: result, now: now)
+            }
+        }
+    }
+
+    private func setSessionProviders(_ providers: [Provider]) {
+        sessionProviders = providers
+        defaults.set(providers.map(\.rawValue), forKey: Keys.sessionProviders)
     }
 
     /// Readings are kept as read; the budget or reference set on this iPhone is applied when
@@ -843,7 +934,7 @@ final class MobileStore {
     private func localEnvelope(now: Date) -> RelayEnvelope {
         let saved = savedOwnReadings(now: now)
         let owned = keysRead || defaults.array(forKey: Keys.keyedProviders) != nil
-            ? keyedProviders
+            ? localProviders
             : Provider.allCases.filter { saved[$0.rawValue] != nil }
         let providers = owned.map { provider -> RelayProvider in
             let standIn = saved[provider.rawValue]?.applyingBudget(reference: budgetReference(for: provider))
@@ -889,13 +980,14 @@ final class MobileStore {
         provider.checkedAt ?? provider.fetchedAt
     }
 
-    /// Relays what this iPhone read with its keys, so the Watch and other devices can show it.
-    /// Once this iPhone has published, it keeps its record current, even when that's empty.
+    /// Relays what this iPhone read with its keys and sessions, so the Watch and other devices can
+    /// show it. Once this iPhone has published, it keeps its record current, even when that's empty.
     private func publish(now: Date) async {
         let generation = relayGeneration
+        // Keys and sessions are read in the same pass, so `keysRead` covers both.
         guard let relay, relayPhase == .ready, !sampleMode, keysRead else { return }
         let published = defaults.bool(forKey: Keys.published)
-        guard !keyedProviders.isEmpty || published else { return }
+        guard !localProviders.isEmpty || published else { return }
         let envelope = localEnvelope(now: now)
         if let relayRetryAt, relayRetryAt > now { return }
         if publishPolicy.isDue(envelope, now: now) {
@@ -914,7 +1006,7 @@ final class MobileStore {
         }
         guard generation == relayGeneration, !Task.isCancelled else { return }
         let hour = UsageHistory.hourStart(now)
-        let relayHistory = history.relayHistory(for: keyedProviders)
+        let relayHistory = history.relayHistory(for: localProviders)
         guard lastHistoryHour != hour, !relayHistory.series.isEmpty else { return }
         do {
             let sourceID = sourceID
@@ -928,7 +1020,7 @@ final class MobileStore {
 
     // MARK: Alerts
 
-    /// Alerts for what only this iPhone reads, with its keys. A provider a Mac also reports live
+    /// Alerts for what only this iPhone reads, with its keys and sessions. A provider a Mac also reports live
     /// gets its alert from that Mac, through iCloud, so one crossing makes one notification.
     /// These are local: iCloud doesn't notify the device that saved a record.
     private func sendAlerts(now: Date) async {
@@ -960,7 +1052,7 @@ final class MobileStore {
         // back in time). Alerts a Mac covers come from that Mac, so here they stay pending:
         // claimed if the Mac goes quiet, dropped after 18 hours. Quiet hours are this iPhone's.
         let preferences = preferencesHere
-        let read = keyedProviders.compactMap { provider in
+        let read = localProviders.compactMap { provider in
             localStatuses[provider].map { RelayProvider(provider: provider, status: budgeted($0, for: provider), checkedAt: localCheckedAt[provider]) }
         }
         alertLedger.process(read, preferences: preferences, samples: recentSamples(for: read), now: now)
@@ -1287,6 +1379,46 @@ final class MobileStore {
         // Gone from iCloud on this refresh, not a minute later, so no launch brings it back.
         keyedProviders.removeAll { $0 == provider }
         defaults.set(keyedProviders.map(\.rawValue), forKey: Keys.keyedProviders)
+        publishPolicy.reset()
+        await refresh(force: true)
+    }
+
+    // MARK: Plan sessions
+
+    func sessionMetadata(for provider: Provider) async -> PhoneSessionMetadata? {
+        guard let sessions else { return nil }
+        return await BlockingIO.run { sessions.metadata(for: provider) }
+    }
+
+    /// Keeps a session from a sign-in on this iPhone, and starts reading it. Returns once it's in
+    /// the Keychain, so the sign-in sheet doesn't wait for a refresh that's queued behind another.
+    func saveSession(_ session: PhoneSession, for provider: Provider, now: Date = .now) async throws {
+        guard let sessions, PhoneConnect.productionAllowlist.contains(provider) else { throw PhoneSessionStore.SessionError.encoding }
+        try await BlockingIO.run { try sessions.save(session, for: provider, now: now) }
+        setSessionProviders(Provider.allCases.filter { $0 == provider || sessionProviders.contains($0) })
+        localStatuses[provider] = nil
+        localFailedAt[provider] = nil
+        keyGate.reset(provider)
+        rateLimitedUntil[provider] = nil
+        publishPolicy.reset()
+        hasOnboarded = true
+        if sampleMode {
+            sampleMode = false
+        }
+        Task { await refresh(force: true) }
+    }
+
+    /// Signs this iPhone out of a plan: its session and any renewal in progress are deleted.
+    func removeSession(for provider: Provider) async throws {
+        guard let sessions else { return }
+        try await BlockingIO.run { try sessions.remove(for: provider) }
+        localStatuses[provider] = nil
+        localCheckedAt[provider] = nil
+        localFailedAt[provider] = nil
+        keyGate.reset(provider)
+        rateLimitedUntil[provider] = nil
+        // Gone from iCloud on this refresh, as a removed key is.
+        setSessionProviders(sessionProviders.filter { $0 != provider })
         publishPolicy.reset()
         await refresh(force: true)
     }

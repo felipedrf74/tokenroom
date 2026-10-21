@@ -129,38 +129,42 @@ final class PhoneSessionTests: XCTestCase {
 
     // MARK: Allowlist
 
-    func testProductionAllowlistIsEmpty() {
-        XCTAssertTrue(PhoneConnect.productionAllowlist.isEmpty)
+    func testProductionAllowlistIsThePlansThatSignIn() {
+        XCTAssertEqual(PhoneConnect.productionAllowlist, [.claude, .openai, .grok])
     }
 
     func testTheClientRefusesEveryProviderOutsideTheAllowlistWithoutARequest() async {
         let keychain = FakeKeychain()
         let store = makeStore(keychain)
-        try? store.save(session("old", expiresIn: 3600), for: .claude, now: now)
         let sends = Counter()
-        for provider in Provider.allCases {
-            let client = PhoneSessionClient(provider: provider, usageURL: URL(string: "https://example.invalid/usage")!, store: store) { _ in
+        for provider in Provider.allCases where !PhoneConnect.productionAllowlist.contains(provider) {
+            try? store.save(session("old", expiresIn: 3600), for: provider, now: now)
+            let client = PhoneSessionClient(provider: provider, store: store, request: Self.testRequest) { _ in
                 sends.increment()
                 return .failure(.parse)
             }
             let result = await client.fetch(now: now)
             XCTAssertEqual(result, .failure(.signedOut(PhoneSessionClient.notAllowed)), provider.rawValue)
         }
-        XCTAssertEqual(sends.count, 0, "No request is built while the allowlist is empty")
+        XCTAssertEqual(sends.count, 0, "No request is built for a provider off the allowlist")
     }
 
     func testTheRefresherNeverPostsForAProviderOutsideTheAllowlist() async throws {
         let keychain = FakeKeychain()
         let store = makeStore(keychain)
-        try store.save(session("old", expiresIn: 30), for: .claude, now: now)
+        try store.save(session("old", expiresIn: 30), for: .cursor, now: now)
         let posts = Counter()
         let refresher = PhoneSessionRefresher(store: store) { _, _ in
             posts.increment()
             return .unavailable
         }
-        let outcome = await refresher.renewIfNeeded(.claude, now: now)
+        let outcome = await refresher.renewIfNeeded(.cursor, now: now)
         XCTAssertEqual(outcome, .notAllowed)
         XCTAssertEqual(posts.count, 0)
+    }
+
+    static let testRequest: PhoneSessionClient.Request = { _, token in
+        TokenroomHTTP.request(URL(string: "https://example.invalid/usage")!, token: token)
     }
 
     // MARK: Access group
@@ -476,7 +480,7 @@ final class PhoneSessionTests: XCTestCase {
                                     tokenURL: URL(string: "https://example.invalid/token")!, clientID: "public-test-client"),
                        for: fixture, now: now)
         let authorization = LockedBox<String?>(nil)
-        let client = PhoneSessionClient(provider: fixture, usageURL: URL(string: "https://example.invalid/usage")!, store: store, allowlist: [fixture]) { request in
+        let client = PhoneSessionClient(provider: fixture, store: store, allowlist: [fixture], request: Self.testRequest) { request in
             authorization.value = request.value(forHTTPHeaderField: "Authorization")
             let window = QuotaWindow(id: "cycle", kind: .billingCycle, title: "This cycle", usedPercent: 40, resetsAt: Self.now.addingTimeInterval(86_400))
             return Result { try QuotaSnapshot.headlined(by: [window], provider: Self.fixture, fetchedAt: Self.now) }.mapError { _ in .parse }
