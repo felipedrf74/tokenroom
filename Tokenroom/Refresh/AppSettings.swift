@@ -67,6 +67,13 @@ final class AppSettings {
         didSet { persist() }
     }
 
+    /// The time zone this Mac last gave quiet hours (`QuotaStore.followTimeZone`), so only a
+    /// change of zone here moves them. Nil until a build that follows it first runs.
+    var followedTimeZone: String? {
+        get { defaults.string(forKey: Keys.followedTimeZone) }
+        set { defaults.set(newValue, forKey: Keys.followedTimeZone) }
+    }
+
     private var applyingLogin = false
 
     var refreshInterval: TimeInterval {
@@ -101,6 +108,7 @@ final class AppSettings {
         static let alertsOnMac = "alertsOnMac"
         static let newsEnabled = "newsEnabled"
         static let alertPreferences = "alertPreferences"
+        static let followedTimeZone = "followedTimeZone"
     }
 
     static let currentVersion = 2

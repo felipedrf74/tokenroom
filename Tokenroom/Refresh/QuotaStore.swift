@@ -24,6 +24,8 @@ final class QuotaStore {
     let history: HistoryStore
     /// New models and announcements for the News window, fetched only when turned on. Nil in tests.
     let news: NewsStore?
+    /// This Mac's time zone, for quiet hours to follow (`followTimeZone`); tests give their own.
+    @ObservationIgnored var currentTimeZone: () -> TimeZone = { .current }
     private var alertLedger: AlertLedger
 
     private let clients: [Provider: any ProviderClient]
@@ -434,6 +436,7 @@ final class QuotaStore {
     /// This Mac's alert choices in step with the shared copy: takes what the iPhone changed, and
     /// sends what was changed here (again, if iCloud was away), so Settings shows both.
     func currentAlertPreferences(now: Date = .now) async -> AlertPreferences {
+        followTimeZone()
         let local = settings.alertPreferences
         let preferences = await relay?.syncAlertPreferences(local: local, now: now) ?? local
         if preferences != local {
@@ -453,11 +456,27 @@ final class QuotaStore {
         var preferences = settings.alertPreferences
         change(&preferences)
         guard preferences != settings.alertPreferences else { return }
-        // Dated only: quiet hours keep the shared copy's time zone, the iPhone's.
+        // Dated only: the time zone moves when this Mac's does (`followTimeZone`), not with a choice.
         preferences.updatedAt = now
         settings.alertPreferences = preferences
         guard relay != nil else { return }
         Task { _ = await currentAlertPreferences() }
+    }
+
+    /// Quiet hours follow this Mac's time zone when it changes, as they follow the iPhone's: the
+    /// choices take the new zone, shared without dating it as a change of choices. Only when this
+    /// Mac's zone changes, so a Mac and an iPhone in different zones don't take turns rewriting
+    /// it. The first time, the zone is only noted, unless this Mac never shared its choices:
+    /// launching doesn't undo the zone the iPhone gave them. Runs before every sync of the
+    /// choices: each refresh, and when Settings opens.
+    private func followTimeZone() {
+        let zone = currentTimeZone().identifier
+        let followed = settings.followedTimeZone
+        guard followed != zone else { return }
+        settings.followedTimeZone = zone
+        if followed == nil, relay?.hasSharedAlertPreferences == true { return }
+        guard settings.alertPreferences.timeZoneID != zone else { return }
+        settings.alertPreferences.timeZoneID = zone
     }
 
     /// Pace of a provider's primary window, from its recent readings.

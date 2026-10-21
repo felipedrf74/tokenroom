@@ -99,8 +99,9 @@ struct AlertPreferences: Codable, Equatable, Sendable {
     var quietHours = true
     var quietStartHour = 22
     var quietEndHour = 8
-    /// The iPhone's time zone, given to the shared copy when it changes or a choice changes there,
-    /// so a Mac elsewhere keeps the same quiet hours.
+    /// The zone quiet hours keep. A device gives the shared copy its zone when that zone changes
+    /// (the iPhone also when a choice changes there; a Mac's choice keeps the zone), so a Mac
+    /// elsewhere keeps the same quiet hours.
     var timeZoneID = TimeZone.current.identifier
     /// When they were last changed, on either device.
     var updatedAt: Date? = nil
@@ -162,7 +163,8 @@ struct AlertPreferences: Codable, Equatable, Sendable {
     }
 
     /// Marks a change made on the iPhone, which gives quiet hours its time zone with it. A Mac
-    /// dates its change only, so the shared copy keeps the iPhone's zone.
+    /// dates its change only and gives its zone when that changes (`QuotaStore.followTimeZone`),
+    /// so a choice made there keeps the iPhone's.
     mutating func touch(now: Date = .now, timeZone: TimeZone = .current) {
         updatedAt = now
         timeZoneID = timeZone.identifier
