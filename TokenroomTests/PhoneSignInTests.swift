@@ -250,14 +250,15 @@ final class PhoneSignInTests: XCTestCase {
         XCTAssertEqual(session.refreshToken, "keep-me")
         XCTAssertEqual(session.expiresAt, now.addingTimeInterval(3600))
         XCTAssertEqual(PhoneSignIn.refreshAnswer(provider: .grok, status: 400, data: Self.json(["error": "invalid_grant"]), previous: previous, now: now), .rejected)
-        XCTAssertEqual(PhoneSignIn.refreshAnswer(provider: .grok, status: 503, data: Data(), previous: previous, now: now), .unavailable)
+        XCTAssertEqual(PhoneSignIn.refreshAnswer(provider: .grok, status: 503, data: Data(), previous: previous, now: now), .unavailable, "Unclear: never resent")
+        XCTAssertEqual(PhoneSignIn.refreshAnswer(provider: .grok, status: 429, data: Data(), previous: previous, now: now), .notDispatched, "Refused outright: the token is unchanged")
     }
 
-    func testClaudeRenewsAtItsSecondHostWhenTheFirstIsDown() async {
+    func testClaudeTriesItsSecondHostOnlyWhenTheFirstNeverGotTheRequest() async {
         let hosts = LockedBox<[String]>([])
         let client = PhoneSignInClient(send: { request in
             hosts.value.append(request.url?.host ?? "")
-            if request.url?.host == "platform.claude.com" { return (Data(), Self.http(503)) }
+            if request.url?.host == "platform.claude.com" { throw URLError(.cannotConnectToHost) }
             return (Self.json(["access_token": "new", "refresh_token": "rotated"]), Self.http(200))
         }, sleep: { _ in })
         let session = PhoneSession(accessToken: "old", refreshToken: "rt", expiresAt: now, tokenURL: PhoneSignIn.Claude.tokenURLs[0], clientID: PhoneSignIn.Claude.clientID)
@@ -265,6 +266,22 @@ final class PhoneSignInTests: XCTestCase {
         XCTAssertEqual(hosts.value, ["platform.claude.com", "console.anthropic.com"])
         guard case .granted(let renewed) = grant else { return XCTFail("\(grant)") }
         XCTAssertEqual(renewed.refreshToken, "rotated")
+        // A host that may have got the request (it answered 503, or timed out) isn't followed by
+        // another: the refresh token might have rotated there.
+        for timesOut in [false, true] {
+            hosts.value = []
+            let unclear = PhoneSignInClient(send: { request in
+                hosts.value.append(request.url?.host ?? "")
+                if timesOut { throw URLError(.timedOut) }
+                return (Data(), Self.http(503))
+            }, sleep: { _ in })
+            let outcome = await unclear.renew(.claude, session, now: now)
+            XCTAssertEqual(outcome, .unavailable)
+            XCTAssertEqual(hosts.value, ["platform.claude.com"])
+        }
+        let offline = PhoneSignInClient(send: { _ in throw URLError(.notConnectedToInternet) }, sleep: { _ in })
+        let notSent = await offline.renew(.claude, session, now: now)
+        XCTAssertEqual(notSent, .notDispatched)
         let requests = PhoneSignIn.refreshRequests(for: session, provider: .claude)
         XCTAssertEqual(Self.body(requests[0])["grant_type"] as? String, "refresh_token")
         let grok = PhoneSignIn.refreshRequests(for: PhoneSession(accessToken: "a", refreshToken: "r", expiresAt: nil, tokenURL: PhoneSignIn.Grok.tokenURL, clientID: "c"), provider: .grok)

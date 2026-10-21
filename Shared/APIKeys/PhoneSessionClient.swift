@@ -23,6 +23,10 @@ struct PhoneSessionClient: Sendable {
 
     func fetch(now: Date = .now) async -> Result<QuotaSnapshot, ProviderError> {
         guard allowlist.contains(provider) else { return .failure(.signedOut(Self.notAllowed)) }
+        // An unsafe endpoint never gets the token, and needs no Keychain read to be refused.
+        guard let endpoint = request(provider, "")?.url, TokenroomRedirectPolicy.isSecureEndpoint(endpoint) else {
+            return .failure(.unreachable)
+        }
         let store = store
         // Grok Bot reads with Cursor's session.
         let owner = PhoneSignIn.sessionOwner(for: provider)
@@ -36,8 +40,7 @@ struct PhoneSessionClient: Sendable {
         if let expiresAt = session.expiresAt, expiresAt.timeIntervalSince(now) <= PhoneSessionRefresher.usableSlack {
             return .failure(.expired(Self.needsSignIn))
         }
-        guard var request = request(provider, session.accessToken) else { return .failure(.signedOut(Self.notAllowed)) }
-        guard let url = request.url, TokenroomRedirectPolicy.isSecureEndpoint(url) else { return .failure(.unreachable) }
+        guard var request = request(provider, session.accessToken), request.url == endpoint else { return .failure(.unreachable) }
         request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
         if request.value(forHTTPHeaderField: "User-Agent") == nil {
             request.setValue(TokenroomIdentity.userAgent, forHTTPHeaderField: "User-Agent")

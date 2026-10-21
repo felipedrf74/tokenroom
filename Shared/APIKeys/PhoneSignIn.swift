@@ -430,7 +430,9 @@ enum PhoneSignIn {
     /// What a token host said to a renewal. A grant without a refresh token keeps the one sent:
     /// hosts that don't rotate it may leave it out. Cursor renews with its access token, so a new
     /// one becomes the refresh token too, as Cursor's own app keeps it; its `shouldLogout` is a
-    /// refusal.
+    /// refusal. Any other 4xx refused the request outright, which leaves the refresh token as it
+    /// was (`notDispatched`: safe to send again); a 5xx or a success without tokens is unclear
+    /// (`unavailable`), and the session then waits for a new sign-in rather than risk it.
     static func refreshAnswer(provider: Provider, status: Int, data: Data, previous: PhoneSession, now: Date) -> PhoneSessionRefresher.Grant {
         let object = try? JSONFlex.object(from: data)
         if (object?["shouldLogout"] as? Bool) == true { return .rejected }
@@ -443,7 +445,8 @@ enum PhoneSignIn {
             return .granted(session)
         }
         let error = object.flatMap { JSONFlex.string($0["error"]) }
-        return error == "invalid_grant" ? .rejected : .unavailable
+        if error == "invalid_grant" { return .rejected }
+        return (400..<500).contains(status) ? .notDispatched : .unavailable
     }
 
     /// Access and refresh tokens, in OAuth's names or Cursor's (`accessToken`, `refreshToken`).

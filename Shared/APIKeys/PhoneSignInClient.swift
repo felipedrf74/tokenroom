@@ -6,7 +6,16 @@ struct PhoneSignInClient: Sendable {
     typealias Send = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
     typealias Sleep = @Sendable (TimeInterval) async throws -> Void
 
-    var send: Send = { try await TokenroomHTTP.data(for: $0) }
+    /// Keeps `URLError`s as they are, so a renewal can tell a request that never left the phone
+    /// from one that may have reached the token host.
+    var send: Send = { request in
+        var request = request
+        request.timeoutInterval = TokenroomHTTP.timeout
+        guard TokenroomRedirectPolicy.isSecureEndpoint(request.url) else { throw URLError(.appTransportSecurityRequiresSecureConnection) }
+        let (data, response) = try await TokenroomHTTP.session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        return (data, http)
+    }
     var sleep: Sleep = { try await Task.sleep(for: .seconds($0)) }
 
     enum Failure: Error, Equatable, Sendable {
@@ -111,18 +120,38 @@ struct PhoneSignInClient: Sendable {
 
     // MARK: Renewal
 
-    /// `PhoneSessionRefresher`'s token request: each of the provider's token hosts in turn, until
-    /// one grants or refuses the refresh token.
+    /// `PhoneSessionRefresher`'s token request. The next token host is tried only when the one
+    /// before provably never got the request (no connection was made): once a request may have
+    /// reached a host, its answer stands, and an unclear one is `.unavailable`, so the old refresh
+    /// token is never sent a second time after the server may have rotated it.
     func renew(_ provider: Provider, _ session: PhoneSession, now: Date = .now) async -> PhoneSessionRefresher.Grant {
         for request in PhoneSignIn.refreshRequests(for: session, provider: provider) {
-            guard let answered = try? await answer(request) else { continue }
-            let (data, response) = answered
-            switch PhoneSignIn.refreshAnswer(provider: provider, status: response.statusCode, data: data, previous: session, now: now) {
-            case .unavailable: continue
-            case let grant: return grant
+            let answered: (Data, HTTPURLResponse)
+            do {
+                answered = try await send(request)
+            } catch {
+                if Self.neverSent(error) { continue }
+                return .unavailable
             }
+            return PhoneSignIn.refreshAnswer(provider: provider, status: answered.1.statusCode, data: answered.0, previous: session, now: now)
         }
-        return .unavailable
+        return .notDispatched
+    }
+
+    /// Errors that mean the request never reached the host: no connection, name, or TLS session.
+    static func neverSent(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        guard let error = error as? URLError else { return false }
+        switch error.code {
+        case .notConnectedToInternet, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed,
+             .internationalRoamingOff, .dataNotAllowed, .callIsActive,
+             .appTransportSecurityRequiresSecureConnection, .secureConnectionFailed,
+             .serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateNotYetValid,
+             .serverCertificateHasUnknownRoot, .clientCertificateRejected, .clientCertificateRequired:
+            return true
+        default:
+            return false
+        }
     }
 
     // MARK: Private

@@ -220,7 +220,7 @@ final class PhoneSessionTests: XCTestCase {
         try store.save(session("old", expiresIn: 3600), for: fixture, now: now)
         XCTAssertTrue(store.setState(.exchanging, for: fixture))
         let sends = Counter()
-        let client = PhoneSessionClient(provider: fixture, usageURL: URL(string: "https://example.invalid/usage")!, store: store, allowlist: [fixture]) { _ in
+        let client = PhoneSessionClient(provider: fixture, store: store, allowlist: [fixture], request: Self.testRequest) { _ in
             sends.increment()
             return .failure(.parse)
         }
@@ -235,7 +235,9 @@ final class PhoneSessionTests: XCTestCase {
         try store.save(session("old", expiresIn: 3600), for: fixture, now: now)
         keychain.forgetCalls()
         let sends = Counter()
-        let client = PhoneSessionClient(provider: fixture, usageURL: URL(string: "http://example.invalid/usage")!, store: store, allowlist: [fixture]) { _ in
+        let client = PhoneSessionClient(provider: fixture, store: store, allowlist: [fixture], request: { _, token in
+            TokenroomHTTP.request(URL(string: "http://example.invalid/usage")!, token: token)
+        }) { _ in
             sends.increment()
             return .failure(.parse)
         }
