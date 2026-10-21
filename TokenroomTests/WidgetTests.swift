@@ -95,6 +95,31 @@ final class WidgetTests: XCTestCase {
         XCTAssertEqual(given(at: soon).reloadSignature(at: soon), earlier.reloadSignature(at: soon))
     }
 
+    /// The same on the Watch: complications drew the iPhone's live reading, then faded it. The
+    /// next handover or iCloud read has the same numbers, live again, and is merged in: that's a
+    /// change to reload complications for, from the background too.
+    func testTheWatchReloadsComplicationsForAReadingLiveAgain() {
+        func handover(at date: Date) -> ReadingCache {
+            var provider = reading([window("weekly", used: 40, resetsIn: 3 * 86_400)])
+            provider.checkedAt = date
+            provider.fetchedAt = date
+            return ReadingCache(savedAt: date, isSample: false, items: [ReadingCache.Item(provider: provider, source: "Mac")])
+        }
+        let drawn = handover(at: now)
+        let woke = now.addingTimeInterval(3 * 3600)
+        let merged = drawn.mergingUpdate(handover(at: woke), now: woke)
+        XCTAssertEqual(merged.materialHash, drawn.materialHash, "As saved, nothing but check times moved")
+        let change = merged.changes(since: drawn, at: woke)
+        XCTAssertTrue(change.shown)
+        XCTAssertTrue(change.worthReload)
+
+        let soon = now.addingTimeInterval(10 * 60)
+        let unchanged = drawn.mergingUpdate(handover(at: soon), now: soon).changes(since: drawn, at: soon)
+        XCTAssertFalse(unchanged.shown, "Within the hour, nothing to reload for")
+        XCTAssertFalse(unchanged.worthReload)
+        XCTAssertTrue(drawn.changes(since: nil, at: now).shown, "A first cache is always shown")
+    }
+
     private func cache(savedAt: Date, used: Double, isSample: Bool = false) -> ReadingCache {
         let provider = reading([window("weekly", used: used, resetsIn: 3 * 86_400)])
         return ReadingCache(savedAt: savedAt, isSample: isSample, items: [ReadingCache.Item(provider: provider, source: "Mac")])

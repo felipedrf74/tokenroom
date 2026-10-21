@@ -207,6 +207,15 @@ struct ReadingCache: Codable, Equatable, Sendable {
         presented(at: date).reloadSignature
     }
 
+    /// What these readings change from `previous`, both drawn at `date`: whether anything shown
+    /// differs, and whether it's worth one of the budgeted reloads asked for from the background
+    /// (`reloadSignature`). The Watch measures what it merged against what its complications
+    /// last drew from.
+    func changes(since previous: ReadingCache?, at date: Date) -> (shown: Bool, worthReload: Bool) {
+        (materialHash(at: date) != previous?.materialHash(at: date),
+         reloadSignature(at: date) != previous?.reloadSignature(at: date))
+    }
+
     static var defaultURL: URL? {
         AppGroup.containerURL?.appendingPathComponent(fileName)
     }
