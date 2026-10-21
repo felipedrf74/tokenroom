@@ -42,6 +42,24 @@ enum PhoneSignIn {
     /// How often to ask whether a code was approved, when the vendor doesn't say.
     static let defaultPollInterval: TimeInterval = 5
 
+    /// How long a plan found not to be on its sign-in's plan (Grok Bot without it on the Cursor
+    /// plan) stays out before it's asked about again.
+    static let notOnPlanRecheck: TimeInterval = 24 * 3600
+
+    /// Which signed-in plans to list, and which to read now. One left out as not on its
+    /// sign-in's plan stays out until `notOnPlanRecheck` has passed, and is then read again only
+    /// when its own spacing and waits allow (`isHeldOff`), like any other: a recheck that keeps
+    /// failing never turns into a call on every refresh.
+    static func plansToRead(signedIn: [Provider], notOnPlan: [Provider: Date], now: Date, isHeldOff: (Provider) -> Bool) -> (listed: [Provider], due: [Provider], rechecks: Set<Provider>) {
+        let rechecks = Set(signedIn.filter { provider in
+            guard let since = notOnPlan[provider] else { return false }
+            return !(0..<notOnPlanRecheck).contains(now.timeIntervalSince(since)) && !isHeldOff(provider)
+        })
+        let listed = signedIn.filter { notOnPlan[$0] == nil || rechecks.contains($0) }
+        let due = listed.filter { rechecks.contains($0) || !isHeldOff($0) }
+        return (listed, due, rechecks)
+    }
+
     /// The least time between two readings of one plan from the iPhone: these endpoints aren't
     /// documented for other apps, so coming back to the app doesn't call them every minute.
     static let minimumInterval: TimeInterval = 5 * 60
@@ -430,9 +448,11 @@ enum PhoneSignIn {
     /// What a token host said to a renewal. A grant without a refresh token keeps the one sent:
     /// hosts that don't rotate it may leave it out. Cursor renews with its access token, so a new
     /// one becomes the refresh token too, as Cursor's own app keeps it; its `shouldLogout` is a
-    /// refusal. Any other 4xx refused the request outright, which leaves the refresh token as it
-    /// was (`notDispatched`: safe to send again); a 5xx or a success without tokens is unclear
-    /// (`unavailable`), and the session then waits for a new sign-in rather than risk it.
+    /// refusal. Any other answer (a 4xx, 429 and 408 included, a 5xx, a success without tokens)
+    /// came after the request reached the host, which may have rotated the token, so it's unclear
+    /// (`unavailable`): the session then waits for a new sign-in rather than send the old refresh
+    /// token again. Only a request that never left the phone is `notDispatched`
+    /// (`PhoneSignInClient.renew`).
     static func refreshAnswer(provider: Provider, status: Int, data: Data, previous: PhoneSession, now: Date) -> PhoneSessionRefresher.Grant {
         let object = try? JSONFlex.object(from: data)
         if (object?["shouldLogout"] as? Bool) == true { return .rejected }
@@ -445,8 +465,7 @@ enum PhoneSignIn {
             return .granted(session)
         }
         let error = object.flatMap { JSONFlex.string($0["error"]) }
-        if error == "invalid_grant" { return .rejected }
-        return (400..<500).contains(status) ? .notDispatched : .unavailable
+        return error == "invalid_grant" ? .rejected : .unavailable
     }
 
     /// Access and refresh tokens, in OAuth's names or Cursor's (`accessToken`, `refreshToken`).

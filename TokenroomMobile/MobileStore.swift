@@ -653,10 +653,16 @@ final class MobileStore {
         let signedIn = PhoneSignIn.providers.filter {
             PhoneConnect.productionAllowlist.contains($0) && states[PhoneSignIn.sessionOwner(for: $0)] != nil
         }
-        var skipped = notOnPlan
-        skipped = skipped.filter { signedIn.contains($0.key) }
-        let recheck = Set(skipped.filter { !(0..<Self.notOnPlanRecheck).contains(now.timeIntervalSince($0.value)) }.keys)
-        let providers = signedIn.filter { skipped[$0] == nil || recheck.contains($0) }
+        var skipped = notOnPlan.filter { signedIn.contains($0.key) }
+        let gate = keyGate
+        let heldOff = { [rateLimitedUntil] (provider: Provider) -> Bool in
+            if let until = rateLimitedUntil[provider], until > now { return true }
+            if let last = gate.lastAttempt(provider), (0..<PhoneSignIn.minimumInterval).contains(now.timeIntervalSince(last)) { return true }
+            return gate.isResting(provider, now: now)
+        }
+        let plan = PhoneSignIn.plansToRead(signedIn: signedIn, notOnPlan: skipped, now: now, isHeldOff: heldOff)
+        let providers = plan.listed
+        let recheck = plan.rechecks
         setSessionProviders(providers)
         for provider in localStatuses.keys where PhoneSignIn.method(for: provider) != nil && !providers.contains(provider) {
             localStatuses[provider] = nil
@@ -668,14 +674,7 @@ final class MobileStore {
         for provider in refused {
             apply(provider, result: .failure(.signedOut(PhoneSessionClient.needsSignIn)), now: now)
         }
-        let gate = keyGate
-        let due = providers.filter { provider in
-            guard !refused.contains(provider) else { return false }
-            if recheck.contains(provider) { return true }
-            if let until = rateLimitedUntil[provider], until > now { return false }
-            if let last = gate.lastAttempt(provider), (0..<PhoneSignIn.minimumInterval).contains(now.timeIntervalSince(last)) { return false }
-            return !gate.isResting(provider, now: now)
-        }
+        let due = plan.due.filter { !refused.contains($0) }
         var earlierAttempts: [Provider: Date] = [:]
         for provider in due {
             earlierAttempts[provider] = gate.lastAttempt(provider)
@@ -702,7 +701,14 @@ final class MobileStore {
                     }
                     continue
                 }
-                if PhoneSignIn.sessionOwner(for: provider) != provider, case .failure(.notEntitled) = result {
+                // Not on the plan it rides on, or a daily recheck that didn't get an answer: out
+                // again, asked about tomorrow.
+                let notEntitled: Bool = if case .failure(.notEntitled) = result { true } else { false }
+                let recheckFailed: Bool = if recheck.contains(provider), case .failure = result { true } else { false }
+                if PhoneSignIn.sessionOwner(for: provider) != provider, notEntitled || recheckFailed {
+                    if case .failure(.rateLimited(let until)) = result {
+                        gate.block(provider, until: ProviderStatus.clampedRetry(until, now: now))
+                    }
                     skipped[provider] = now
                     localStatuses[provider] = nil
                     localCheckedAt[provider] = nil
@@ -718,9 +724,6 @@ final class MobileStore {
         }
         notOnPlan = skipped
     }
-
-    /// How long a plan found not to be on its sign-in's plan waits before it's asked about again.
-    static let notOnPlanRecheck: TimeInterval = 24 * 3600
 
     /// Plans left out because they weren't on the plan they ride on, and when that was found.
     private var notOnPlan: [Provider: Date] {

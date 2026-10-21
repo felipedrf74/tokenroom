@@ -244,7 +244,11 @@ actor PhoneSessionRefresher {
         pending[provider] = nil
         let store = store
         if let session {
-            try await BlockingIO.run { try store.save(session, for: provider, now: now) }
+            // An old renewal's grant must never be recovered over the new sign-in.
+            try await BlockingIO.run {
+                store.deleteRecovery(for: provider)
+                try store.save(session, for: provider, now: now)
+            }
         } else {
             try await BlockingIO.run { try store.remove(for: provider) }
         }

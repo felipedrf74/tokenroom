@@ -251,7 +251,10 @@ final class PhoneSignInTests: XCTestCase {
         XCTAssertEqual(session.expiresAt, now.addingTimeInterval(3600))
         XCTAssertEqual(PhoneSignIn.refreshAnswer(provider: .grok, status: 400, data: Self.json(["error": "invalid_grant"]), previous: previous, now: now), .rejected)
         XCTAssertEqual(PhoneSignIn.refreshAnswer(provider: .grok, status: 503, data: Data(), previous: previous, now: now), .unavailable, "Unclear: never resent")
-        XCTAssertEqual(PhoneSignIn.refreshAnswer(provider: .grok, status: 429, data: Data(), previous: previous, now: now), .notDispatched, "Refused outright: the token is unchanged")
+        // Any answer means the request reached the host, which may have rotated the token.
+        for status in [400, 401, 403, 408, 429] {
+            XCTAssertEqual(PhoneSignIn.refreshAnswer(provider: .grok, status: status, data: Data(), previous: previous, now: now), .unavailable, "\(status)")
+        }
     }
 
     func testClaudeTriesItsSecondHostOnlyWhenTheFirstNeverGotTheRequest() async {
@@ -382,6 +385,81 @@ final class PhoneSignInTests: XCTestCase {
         XCTAssertEqual(renewed.value, [.cursor], "Grok Bot renews Cursor's session, the one it reads with")
         XCTAssertEqual(sent.value, "Bearer cursor-new")
         XCTAssertNil(store.metadata(for: .grokBot), "No second copy under Grok Bot")
+    }
+
+    // MARK: Unclear renewals
+
+    func testARenewalAnsweredUnclearlyIsNeverSentAgain() async throws {
+        let keychain = FakeKeychain()
+        let store = PhoneSessionStore(accessGroup: "ABCDE12345.app.tokenroom.ios", servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).",
+                                      recoveryService: "app.tokenroom.tests.\(UUID().uuidString).recovery", keychain: keychain.operations)
+        try store.save(PhoneSession(accessToken: "a", refreshToken: "maybe-rotated", expiresAt: now.addingTimeInterval(30),
+                                    tokenURL: PhoneSignIn.Cursor.tokenURL, clientID: PhoneSignIn.Cursor.clientID), for: .cursor, now: now)
+        let posts = Counter()
+        let client = PhoneSignInClient(send: { _ in
+            posts.increment()
+            return (Data(), Self.http(429))
+        }, sleep: { _ in })
+        let refresher = PhoneSessionRefresher(store: store) { provider, session in await client.renew(provider, session) }
+        // Cursor's and Grok Bot's readers both renew Cursor's session in the same pass.
+        let first = await refresher.renewIfNeeded(.cursor, now: now)
+        let second = await refresher.renewIfNeeded(.cursor, now: now, force: true)
+        XCTAssertEqual(first, .unavailable)
+        XCTAssertEqual(second, .rejected, "No recovered grant: the session asks for a new sign-in")
+        XCTAssertEqual(posts.count, 1, "The refresh token went out once")
+        let usage = PhoneSessionClient(provider: .grokBot, store: store) { _ in
+            XCTFail("No usage call with a session that isn't ready")
+            return .failure(.parse)
+        }
+        let read = await usage.fetch(now: now)
+        XCTAssertEqual(read, .failure(.signedOut(PhoneSessionClient.needsSignIn)))
+    }
+
+    func testANewSignInDropsAnOldRenewalsGrant() async throws {
+        let keychain = FakeKeychain()
+        let store = PhoneSessionStore(accessGroup: "ABCDE12345.app.tokenroom.ios", servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).",
+                                      recoveryService: "app.tokenroom.tests.\(UUID().uuidString).recovery", keychain: keychain.operations)
+        let old = PhoneSession(accessToken: "old-account", refreshToken: "old-refresh", expiresAt: now.addingTimeInterval(3600),
+                               tokenURL: PhoneSignIn.Claude.tokenURLs[0], clientID: PhoneSignIn.Claude.clientID)
+        try store.save(old, for: .claude, now: now)
+        // A renewal's grant reached the recovery item, but the session item never took it.
+        XCTAssertTrue(store.saveRecovery(old, for: .claude))
+        let refresher = PhoneSessionRefresher(store: store) { _, _ in .unavailable }
+        let fresh = PhoneSession(accessToken: "new-account", refreshToken: "new-refresh", expiresAt: now.addingTimeInterval(3600),
+                                 tokenURL: PhoneSignIn.Claude.tokenURLs[0], clientID: PhoneSignIn.Claude.clientID)
+        try await refresher.replace(.claude, with: fresh, now: now)
+        XCTAssertNil(store.takeRecovery(for: .claude))
+        // Even if a later renewal of the new session stalls, nothing brings the old one back.
+        XCTAssertTrue(store.setState(.exchanging, for: .claude))
+        let outcome = await refresher.recover(.claude, now: now)
+        XCTAssertEqual(outcome, .rejected)
+        XCTAssertNotEqual(store.session(for: .claude)?.accessToken, "old-account")
+    }
+
+    // MARK: Which plans are read
+
+    func testARecheckOfAPlanNotOnItsSignInsPlanKeepsItsSpacing() {
+        let signedIn: [Provider] = [.cursor, .grokBot]
+        let dayAgo = now.addingTimeInterval(-(PhoneSignIn.notOnPlanRecheck + 60))
+        // Within the day: Grok Bot stays out, Cursor is read.
+        let early = PhoneSignIn.plansToRead(signedIn: signedIn, notOnPlan: [.grokBot: now.addingTimeInterval(-3600)], now: now) { _ in false }
+        XCTAssertEqual(early.listed, [.cursor])
+        XCTAssertEqual(early.due, [.cursor])
+        XCTAssertTrue(early.rechecks.isEmpty)
+        // A day on: asked again, when nothing holds it off.
+        let due = PhoneSignIn.plansToRead(signedIn: signedIn, notOnPlan: [.grokBot: dayAgo], now: now) { _ in false }
+        XCTAssertEqual(due.listed, [.cursor, .grokBot])
+        XCTAssertEqual(due.due, [.cursor, .grokBot])
+        XCTAssertEqual(due.rechecks, [.grokBot])
+        // A day on but held off (a Retry-After, the five-minute spacing): neither listed nor read.
+        let held = PhoneSignIn.plansToRead(signedIn: signedIn, notOnPlan: [.grokBot: dayAgo], now: now) { $0 == .grokBot }
+        XCTAssertEqual(held.listed, [.cursor])
+        XCTAssertEqual(held.due, [.cursor])
+        XCTAssertTrue(held.rechecks.isEmpty)
+        // Held-off plans that are on the plan stay listed, just not read.
+        let spaced = PhoneSignIn.plansToRead(signedIn: signedIn, notOnPlan: [:], now: now) { $0 == .cursor }
+        XCTAssertEqual(spaced.listed, [.cursor, .grokBot])
+        XCTAssertEqual(spaced.due, [.grokBot])
     }
 
     // MARK: Signing out during a renewal
