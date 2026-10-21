@@ -203,6 +203,29 @@ final class CodingPlanTests: XCTestCase {
         XCTAssertEqual(Set(StubURLProtocol.requests.compactMap { $0.url?.host }), ["api.minimax.io"])
     }
 
+    /// A key the Token Plan answers for, with every lane not included, may be on the Coding Plan.
+    func testMiniMaxFallsBackToTheCodingPlanWhenNoTokenPlanLaneIsIncluded() async throws {
+        let legacy = fixture("minimax-coding-plan")
+        let empty = Data(#"{"base_resp":{"status_code":0},"data":{"model_remains":[{"model_name":"general","current_interval_total_count":0,"current_interval_usage_count":0,"current_interval_status":3,"current_weekly_total_count":0,"current_weekly_usage_count":0,"current_weekly_status":3}]}}"#.utf8)
+        stub { request in
+            request.url?.path.contains("token_plan") == true ? (200, empty) : (200, legacy)
+        }
+        let snapshot = try await APIKeyClient.snapshot(for: .minimax, key: "placeholder", region: nil)
+        XCTAssertEqual(snapshot.usedPercent, 75, accuracy: 0.001)
+        XCTAssertEqual(StubURLProtocol.requests.map { $0.url?.path }, ["/v1/token_plan/remains", "/v1/api/openplatform/coding_plan/remains"])
+
+        // Neither has a lane: the Token Plan's reason, not the older endpoint's failure.
+        stub { request in
+            request.url?.path.contains("token_plan") == true ? (200, empty) : (404, Data())
+        }
+        do {
+            _ = try await APIKeyClient.snapshot(for: .minimax, key: "placeholder", region: nil)
+            XCTFail("No lane anywhere")
+        } catch {
+            guard case ProviderError.notEntitled = error else { return XCTFail("\(error)") }
+        }
+    }
+
     func testOpenCodeGoWithoutASubscriptionIsNotAnExpiredKey() async {
         stub { _ in (403, Data(#"{"type":"error","error":{"type":"EntitlementError","message":"OpenCode Go subscription required."}}"#.utf8)) }
         do {
