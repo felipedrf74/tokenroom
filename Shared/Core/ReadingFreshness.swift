@@ -3,6 +3,12 @@ import Foundation
 enum ReadingFreshness {
     static let staleAfter: TimeInterval = 3600
     static let expiresAfter: TimeInterval = 7 * 86_400
+    /// How far ahead of this device's clock another device's may run. A reading dated further
+    /// ahead was dated by a clock set wrong, or before this one was set back.
+    static let clockAllowance: TimeInterval = 5 * 60
+    /// What every message `present` writes starts with, so a saved one is written again as the
+    /// reading ages rather than keeping the age it had when it was saved.
+    static let staleMessagePrefix = "Last successful check "
 
     static func present(_ provider: RelayProvider, fallback: Date, now: Date) -> RelayProvider? {
         let checked = provider.checkedAt ?? provider.fetchedAt ?? fallback
@@ -10,11 +16,33 @@ enum ReadingFreshness {
         var result = provider
         // Older payloads have only an envelope timestamp; keep it with this provider.
         if result.checkedAt == nil, result.fetchedAt == nil { result.checkedAt = checked }
-        if result.isLive, now.timeIntervalSince(checked) > staleAfter {
+        // A reading dated ahead of the clock is stale too: it would otherwise count as just
+        // checked until the clock caught up with it.
+        if result.isLive, now.timeIntervalSince(checked) > staleAfter || isAhead(checked, of: now) {
             result.state = "stale"
-            result.message = "Last successful check \(RelativeTime.ago(checked, now: now))."
+            result.message = staleMessage(checked: checked, now: now)
+        } else if result.state == "stale", result.message?.hasPrefix(staleMessagePrefix) == true {
+            // Aged here before, perhaps hours ago, and saved: said again with its age now.
+            result.message = staleMessage(checked: checked, now: now)
         }
         return result
+    }
+
+    static func staleMessage(checked: Date, now: Date) -> String {
+        isAhead(checked, of: now)
+            ? staleMessagePrefix + "is dated ahead of this device's clock."
+            : staleMessagePrefix + RelativeTime.ago(checked, now: now) + "."
+    }
+
+    /// Whether `date` is further ahead of `now` than another device's clock could be.
+    static func isAhead(_ date: Date, of now: Date) -> Bool {
+        date.timeIntervalSince(now) > clockAllowance
+    }
+
+    /// `date` for working out which of two readings or caches is newer. One dated ahead of the
+    /// clock never is, or it would win until the clock caught up with it.
+    static func ordering(_ date: Date, now: Date) -> Date {
+        isAhead(date, of: now) ? .distantPast : date
     }
 }
 
@@ -25,6 +53,9 @@ extension RelayWindow {
 }
 
 extension ReadingCache {
+    /// Within this long of a reset, countdowns tick ("2:13:05") rather than read "3d 1h".
+    static let countdownTicksWithin: TimeInterval = 86_400
+
     func presented(at date: Date) -> ReadingCache {
         var result = self
         result.items = items.compactMap { item in
@@ -40,19 +71,21 @@ extension ReadingCache {
     }
 
     /// Membership comes from the newest envelope; older envelopes may advance retained readings,
-    /// but cannot reintroduce removed providers or remove newly added ones.
-    func mergingUpdate(_ incoming: ReadingCache) -> ReadingCache {
+    /// but cannot reintroduce removed providers or remove newly added ones. A cache or reading
+    /// dated ahead of `now` (saved before the clock was set back) never counts as the newer one.
+    func mergingUpdate(_ incoming: ReadingCache, now: Date = .now) -> ReadingCache {
         guard !isSample, !incoming.isSample else { return incoming }
-        if let reconciled = reconcilingSourceUpdate(incoming) { return reconciled }
-        let newer = incoming.savedAt >= savedAt ? incoming : self
-        let older = incoming.savedAt >= savedAt ? self : incoming
+        if let reconciled = reconcilingSourceUpdate(incoming, now: now) { return reconciled }
+        let incomingIsNewer = ReadingFreshness.ordering(incoming.savedAt, now: now) >= ReadingFreshness.ordering(savedAt, now: now)
+        let newer = incomingIsNewer ? incoming : self
+        let older = incomingIsNewer ? self : incoming
         let other = Dictionary(older.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var result = newer
         result.items = newer.items.map { item in
             guard let candidate = other[item.id] else { return item }
             let currentTime = item.provider.checkedAt ?? item.provider.fetchedAt ?? newer.savedAt
             let candidateTime = candidate.provider.checkedAt ?? candidate.provider.fetchedAt ?? older.savedAt
-            return candidateTime > currentTime ? candidate : item
+            return ReadingFreshness.ordering(candidateTime, now: now) > ReadingFreshness.ordering(currentTime, now: now) ? candidate : item
         }
         return result
     }
@@ -68,11 +101,13 @@ extension ReadingCache {
             .filter { $0 > start && $0 <= end }).sorted()
     }
 
-    /// Timeline entries age readings even if WidgetKit postpones the next network reload.
+    /// Timeline entries age readings even if WidgetKit postpones the next network reload. Each
+    /// reset gets one a day ahead too, as its countdown starts ticking (`countdownTicksWithin`).
     func presentationDates(after now: Date, until horizon: Date) -> [Date] {
         let dates = items.flatMap { item -> [Date] in
             let checked = item.provider.checkedAt ?? item.provider.fetchedAt ?? savedAt
-            return item.provider.windows.compactMap(\.resetsAt) + [
+            let resets = item.provider.windows.compactMap(\.resetsAt)
+            return resets + resets.map { $0.addingTimeInterval(1 - Self.countdownTicksWithin) } + [
                 checked.addingTimeInterval(ReadingFreshness.staleAfter + 1),
                 checked.addingTimeInterval(ReadingFreshness.expiresAfter + 1)
             ]

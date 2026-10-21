@@ -22,7 +22,9 @@ extension APIKeyClient {
         switch response.statusCode {
         case 401:
             throw ProviderError.expired(CopilotBilling.tokenExpiredHint)
-        case 403:
+        case 403, 429:
+            if let limited = githubRateLimit(response) { throw limited }
+            if response.statusCode == 429 { throw ProviderError.rateLimited(until: nil) }
             throw ProviderError.notEntitled("This token can't read Copilot usage. Create a fine-grained token with the Plan (read) account permission.")
         case 404:
             throw ProviderError.notEntitled("GitHub has no Copilot usage for this account. Copilot through an organization isn't included.")
@@ -30,5 +32,21 @@ extension APIKeyClient {
             try TokenroomHTTP.check(response, provider: .copilot)
             return data
         }
+    }
+
+    /// GitHub answers a primary or secondary rate limit with 403 as well as 429: it says so with
+    /// `x-ratelimit-remaining: 0` (until `x-ratelimit-reset`, in seconds since 1970) or with
+    /// `retry-after`. Nil for a 403 that's a token without the permission.
+    static func githubRateLimit(_ response: HTTPURLResponse, now: Date = .now) -> ProviderError? {
+        let retryAfter = response.value(forHTTPHeaderField: "Retry-After")
+        let remaining = response.value(forHTTPHeaderField: "X-RateLimit-Remaining")?.trimmingCharacters(in: .whitespaces)
+        guard retryAfter != nil || remaining == "0" else { return nil }
+        if let until = TokenroomHTTP.retryDate(retryAfter, now: now) {
+            return .rateLimited(until: until)
+        }
+        let reset = response.value(forHTTPHeaderField: "X-RateLimit-Reset")
+            .flatMap { TimeInterval($0.trimmingCharacters(in: .whitespaces)) }
+            .map(Date.init(timeIntervalSince1970:))
+        return .rateLimited(until: reset)
     }
 }

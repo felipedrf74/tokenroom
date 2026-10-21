@@ -92,7 +92,7 @@ final class RelayPublisher {
     private let logger = Logger(subsystem: TokenroomIdentity.bundleID, category: "relay")
 
     convenience init(defaults: UserDefaults = .standard, containerIdentifier: String? = RelayAvailability.containerIdentifier) {
-        self.init(defaults: defaults, cloud: containerIdentifier.map(CloudRelay.init(containerIdentifier:)))
+        self.init(defaults: defaults, cloud: containerIdentifier.map { CloudRelay(containerIdentifier: $0, zoneDeletion: RelayZoneDeletion(defaults: defaults)) })
     }
 
     /// `cloud` is nil when this copy can't use iCloud. Tests pass a stand-in and a short budget.

@@ -120,6 +120,43 @@ final class MobileStoreTests: XCTestCase {
         XCTAssertEqual(second.filter { $0 == "activities" }.count, 2, "Activity updates still follow complete refreshes")
     }
 
+    /// Widgets and the Watch were given the Mac's live reading, and drew it stale an hour later.
+    /// Three hours on, the Mac wakes and sends the same numbers: widgets reload and the Watch
+    /// gets it, though nothing but check times moved.
+    @MainActor
+    func testAReadingLiveAgainWithTheSameNumbersReloadsWidgetsAndReachesTheWatch() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let calls = Mutex<[String]>([])
+        let effects = MobilePlatformEffects(
+            setWatchConnectAvailable: { _ in }, sendToWatch: { _ in calls.withLock { $0.append("watch") } },
+            reloadWidgets: { calls.withLock { $0.append("widgets") } }, applicationIsBackground: { true },
+            updateLiveActivities: { _, _, _, _ in }, makeKeyFetchGate: { KeyFetchGate(defaults: $0, lockDirectory: nil) },
+            scheduleBackgroundRefresh: { _ in }
+        )
+        func fromMac(checked: Date) -> ReadingCache {
+            let provider = RelayProvider(
+                id: "claude", name: "Claude", shortName: "Claude", monogram: "C", tint: "#D97757", state: "live",
+                checkedAt: checked, fetchedAt: checked, primaryWindowID: "weekly",
+                windows: [RelayWindow(id: "weekly", kind: "weekly", title: "Weekly", used: 42, resetsAt: now.addingTimeInterval(3 * 86_400))]
+            )
+            return ReadingCache(savedAt: checked, isSample: false, items: [ReadingCache.Item(provider: provider, source: "Mac")])
+        }
+        let cacheURL = folder.appendingPathComponent(ReadingCache.fileName)
+        try fromMac(checked: now).save(to: cacheURL)
+        let store = MobileStore(defaults: defaults, containerIdentifier: nil, keys: MobileFixtureKeychain().keys,
+            directory: folder, connectOnIPhone: false,
+            notificationScheduler: { _ in XCTFail("No alert exists in this refresh") },
+            platformEffects: effects, launchDefaults: defaults)
+        // The newer reading arrives as a widget's refresh saved it; this store has no iCloud.
+        let woke = now.addingTimeInterval(3 * 3600)
+        try fromMac(checked: woke).save(to: cacheURL)
+        await store.refresh(force: true, now: woke)
+        let made = calls.withLock { $0 }
+        XCTAssertEqual(made.filter { $0 == "watch" }, ["watch"], "The Watch still shows it stale")
+        XCTAssertEqual(made.filter { $0 == "widgets" }, ["widgets"], "Worth a reload from the background too")
+    }
+
     @MainActor
     func testSharedAccountInvalidationCannotStampOldMemoryWithTheNewGeneration() async throws {
         let defaults = makeDefaults()

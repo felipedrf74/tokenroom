@@ -211,6 +211,72 @@ final class ReadingReliabilityTests: XCTestCase {
         XCTAssertTrue(expiring.presented(at: now.addingTimeInterval(61)).items.isEmpty)
     }
 
+    /// A reading turns stale an hour after its check and is saved that way. Shown a day later it
+    /// says so, rather than the hour it said when it was saved, through every reader.
+    func testAStaleReadingSaysItsAgeWhenShownNotWhenItWasSaved() throws {
+        let saved = ReadingCache(savedAt: now, isSample: false, items: [item("one", age: 3601)]).presented(at: now)
+        XCTAssertEqual(saved.items.first?.provider.message, "Last successful check 1h ago.")
+        let later = now.addingTimeInterval(25 * 3600)
+        XCTAssertEqual(saved.presented(at: later).items.first?.provider.message, "Last successful check 1d ago.")
+
+        // Carried as another device's reading while iCloud is away, then merged.
+        let carried = try XCTUnwrap(saved.carriedSources(excluding: "This iPhone").first)
+        let merged = ReadingAssembler.assemble(sources: [carried.source], histories: [:], now: now.addingTimeInterval(5 * 3600))
+        XCTAssertEqual(merged.connected.first?.provider.message, "Last successful check 6h ago.")
+
+        // A cache saved before this, its message fixed at the hour.
+        var frozen = item("one", age: 26 * 3600)
+        frozen.provider.state = "stale"
+        frozen.provider.message = "Last successful check 1h ago."
+        let old = ReadingCache(savedAt: now.addingTimeInterval(-25 * 3600), isSample: false, items: [frozen])
+        XCTAssertEqual(old.presented(at: now).items.first?.provider.message, "Last successful check 1d ago.")
+
+        // A collector's own stale reading, and its own message, are left as they are.
+        var mac = item("mac", age: 7200)
+        mac.provider.state = "stale"
+        XCTAssertNil(ReadingFreshness.present(mac.provider, fallback: now, now: now)?.message)
+        mac.provider.message = "Couldn't reach Claude."
+        XCTAssertEqual(ReadingFreshness.present(mac.provider, fallback: now, now: now)?.message, "Couldn't reach Claude.")
+    }
+
+    /// Saved while the clock was a day ahead, then the clock is set back: the cache is read again,
+    /// its readings are stale rather than just checked, and it loses to what iCloud sends now.
+    func testReadingsDatedAheadOfTheClockAreNeitherRecentNorNewest() {
+        let ahead = now.addingTimeInterval(86_400)
+        let early = ReadingCache(savedAt: ahead, isSample: false, items: [item("one", age: -86_400, used: 40)])
+        XCTAssertFalse(RelayReadings.isRecent(early, maxAge: 15 * 60, now: now, keepsSamples: false), "Read again, not recent until the clock catches up")
+        XCTAssertTrue(RelayReadings.isRecent(ReadingCache(savedAt: now.addingTimeInterval(-60), isSample: false, items: []), maxAge: 15 * 60, now: now, keepsSamples: false))
+
+        let shown = early.presented(at: now).items.first?.provider
+        XCTAssertEqual(shown?.state, "stale")
+        XCTAssertEqual(shown?.message, "Last successful check is dated ahead of this device's clock.")
+        XCTAssertEqual(ReadingCache(savedAt: now, isSample: false, items: [item("one", age: -60)]).presented(at: now).items.first?.provider.state, "live",
+                       "Another device's clock a minute ahead is still live")
+
+        let fromICloud = ReadingCache(savedAt: now, isSample: false, items: [item("one", age: 60, used: 70), item("added", age: 60)])
+        let merged = early.mergingUpdate(fromICloud, now: now)
+        XCTAssertEqual(merged.items.map(\.id), ["one", "added"], "Membership comes from what iCloud sends now")
+        XCTAssertEqual(merged.items.first?.provider.primaryWindow?.used, 70, "Not the reading dated ahead")
+        XCTAssertEqual(fromICloud.mergingUpdate(early, now: now).items.map(\.id), ["one", "added"])
+
+        // The same with whole iCloud reads and this iPhone's own source, as the Watch keeps them.
+        func envelope(_ items: [ReadingCache.Item], at date: Date) -> RelayEnvelope {
+            RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: date, providers: items.map(\.provider))
+        }
+        let phone = ReadingCache.SourceSnapshot(RelayMerge.Source(id: "paired", label: "This iPhone",
+            envelope: RelayEnvelope(producer: "iphone", appVersion: "1", checkedAt: now.addingTimeInterval(-60), providers: []), kind: .thisPhone))
+        let aheadRead = RelayMerge.Source(id: "mac", label: "Mac", envelope: envelope(early.items, at: ahead), kind: .mac)
+        let currentRead = RelayMerge.Source(id: "mac", label: "Mac", envelope: envelope(fromICloud.items, at: now), kind: .mac)
+        let earlyWhole = ReadingCache(savedAt: ahead, isSample: false, items: early.items,
+                                      relaySnapshot: .init(checkedAt: ahead, sources: [.init(aheadRead)]), localSource: phone)
+        let currentWhole = ReadingCache(savedAt: now, isSample: false, items: fromICloud.items,
+                                        relaySnapshot: .init(checkedAt: now, sources: [.init(currentRead)]))
+        let reconciled = earlyWhole.mergingUpdate(currentWhole, now: now)
+        XCTAssertEqual(reconciled.items.map(\.id).sorted(), ["added", "one"])
+        XCTAssertEqual(reconciled.items.first { $0.id == "one" }?.provider.primaryWindow?.used, 70)
+        XCTAssertEqual(reconciled.relaySnapshot?.checkedAt, now)
+    }
+
     func testWatchResetScheduleIncludesExactBoundaryWithoutRepeatingIt() {
         var reading = item("one", age: 0)
         reading.provider.windows[0].resetsAt = now.addingTimeInterval(600)
@@ -244,5 +310,19 @@ final class ReadingReliabilityTests: XCTestCase {
         for line in [item, phone, mac].map(\.watchOriginLine) {
             XCTAssertFalse(line.localizedCaseInsensitiveContains("this iPhone"), line)
         }
+    }
+
+    /// A countdown ticks within a day of its reset: the timeline has an entry where it starts.
+    func testWidgetTimelinesStartTheCountdownADayBeforeTheReset() {
+        var reading = item("one", age: 0)
+        reading.provider.windows[0].resetsAt = now.addingTimeInterval(30 * 3600)
+        let cache = ReadingCache(savedAt: now, isSample: false, items: [reading])
+        let dates = cache.presentationDates(after: now, until: now.addingTimeInterval(8 * 3600))
+        let start = now.addingTimeInterval(6 * 3600 + 1)
+        XCTAssertTrue(dates.contains(start), "\(dates)")
+        XCTAssertLessThan(reading.provider.windows[0].resetsAt!.timeIntervalSince(start), ReadingCache.countdownTicksWithin)
+        reading.provider.windows[0].resetsAt = now.addingTimeInterval(3 * 3600)
+        let soon = ReadingCache(savedAt: now, isSample: false, items: [reading]).presentationDates(after: now, until: now.addingTimeInterval(8 * 3600))
+        XCTAssertEqual(soon.filter { $0 < now.addingTimeInterval(3 * 3600) }, [now.addingTimeInterval(3601)], "Only the stale boundary: it already ticks")
     }
 }

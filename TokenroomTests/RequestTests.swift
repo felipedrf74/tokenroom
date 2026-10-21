@@ -343,6 +343,37 @@ final class RequestTests: XCTestCase {
         XCTAssertFalse(StubURLProtocol.requests.contains { $0.url?.path == "/copilot_internal/user" })
     }
 
+    /// GitHub answers a rate limit with 403 too. That's a wait, honoured, not a token without the
+    /// permission, which would tell the user to make a new one.
+    func testAGitHubRateLimitAnsweredWith403IsAWaitNotAMissingPermission() async {
+        let reset = now.addingTimeInterval(1800)
+        let cases: [([String: String], Date?)] = [
+            (["X-RateLimit-Remaining": "0", "X-RateLimit-Reset": String(Int(reset.timeIntervalSince1970))], reset),
+            (["Retry-After": "60"], nil),
+        ]
+        for (headers, until) in cases {
+            stub(headers: headers) { _ in (403, Data(#"{"message":"API rate limit exceeded"}"#.utf8)) }
+            do {
+                _ = try await APIKeyClient.copilotSnapshot(key: "placeholder", planName: nil, now: now)
+                XCTFail("\(headers) should fail")
+            } catch {
+                guard case ProviderError.rateLimited(let date) = error else { return XCTFail("\(headers): \(error)") }
+                if let until {
+                    XCTAssertEqual(date, until)
+                } else {
+                    XCTAssertEqual(date?.timeIntervalSinceNow ?? 0, 60, accuracy: 5, "Retry-After counts from the answer")
+                }
+            }
+        }
+        stub(headers: ["X-RateLimit-Remaining": "4999"]) { _ in (403, Data()) }
+        do {
+            _ = try await APIKeyClient.copilotSnapshot(key: "placeholder", planName: nil, now: now)
+            XCTFail("403 should fail")
+        } catch {
+            guard case ProviderError.notEntitled = error else { return XCTFail("A 403 with calls left is the permission: \(error)") }
+        }
+    }
+
     func testCopilotTokensThatCantReadUsageAreNotEntitled() async {
         for status in [403, 404] {
             stub { _ in (status, Data()) }

@@ -12,10 +12,13 @@ struct UsageTile: Equatable, Sendable {
 }
 
 /// A window close to its limit, for the list at the top of the Usage tab.
-struct CloseWindow: Equatable, Sendable {
+struct CloseWindow: Equatable, Sendable, Identifiable {
     var provider: RelayProvider
     var window: RelayWindow
     var pace: Pace?
+
+    /// The provider and window, so a row keeps its own state (Follow's) when the list re-ranks.
+    var id: String { provider.id + "/" + window.id }
 }
 
 enum UsageTiles {
