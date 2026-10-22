@@ -11,7 +11,7 @@ Status on 22 October 2026: **Mac 2.5.0(1) is publicly released** and installed o
 | Released tree | `3fd99f970cd51171dfa977735de146694a4f0eab`; tag `v2.5.0` |
 | Merge path | The "Protect main" ruleset asks for one code-owner approval; the author is the only maintainer, so all three used the ruleset's existing admin bypass, as Mac 2.4.1 did. No rule changed. |
 | CI | Each PR head passed "Build and test" on GitHub's `macos-26` runner (Xcode 26.6): Shared typecheck, Mac tests, iPhone build, iPhone test compile, Command Line Tools build. #40's head has the released tree: [run 39754847477](https://github.com/felipedrf74/tokenroom/actions/runs/39754847477). |
-| Local (Xcode 27.0) | 916 Mac tests, 0 failures, on the released tree. The iPhone suite (42 tests) passed on the same code before the version bump. |
+| Local (Xcode 27.0) | On the released code: 916 Mac tests and the full iPhone suite (42 tests, iPhone 18 Pro simulator), 0 failures. |
 | CloudKit | No field or record type changed; the Production schema needed nothing. |
 
 Both binaries were built from `69842ca`, whose tree differs from the released one only in one `CHANGELOG.md` sentence, which isn't compiled; `production-source-inputs.json` hashes the compiled inputs at the released commit.
