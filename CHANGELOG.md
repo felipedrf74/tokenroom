@@ -1,8 +1,8 @@
 # Changelog
 
-## 2.5.0 for Mac and 1.2.0 for iPhone — not yet released
+## 2.5.0 for Mac — released 22 October 2026 / 1.2.0 for iPhone — submitted 22 October 2026
 
-Mac 2.5.0(1) and iPhone, widgets and Apple Watch 1.2.0(1) carry the iPhone plan sign-in (#38) and the product audit's fixes with faster News (#39). Neither is uploaded or published yet.
+Mac 2.5.0(1) is [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.5.0) and installed on this Mac. iPhone, widgets and Apple Watch 1.2.0(1) is submitted to App Review (Waiting for Review), released automatically once approved. Both carry the iPhone plan sign-in (#38) and the product audit's fixes with faster News (#39). [The delivery record](docs/release-delivery-20261022.md) binds both to their source.
 
 iPhone and Apple Watch
 

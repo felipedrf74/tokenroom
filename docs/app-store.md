@@ -4,7 +4,7 @@ A draft for App Store Connect. Provider names appear only in the description, as
 
 ## What's New — 1.2.0
 
-Draft for the next submission (1.2.0 build 1, not yet uploaded). Enter it with the name, subtitle, promotional text, privacy bullet and review notes above; they describe this version.
+Submitted 22 October 2026 with build 1.2.0 (1): Waiting for Review, released automatically once approved. The name, subtitle, promotional text, and review notes below went in with it; the review notes as submitted are in [the delivery record](release-delivery-20261022.md).
 
 Sign in to Claude, Codex, Grok Build, Cursor and Grok Bot right on your iPhone, in Settings › Plans, and Tokenroom reads those plans without a Mac. One Cursor sign-in covers Grok Bot, and sign-ins stay in your iPhone's Keychain. News checks more often, adds Gemini CLI, Copilot CLI, OpenCode, Claude Code, Claude Agent SDK, Claude Skills and Google DeepMind, and marks new stories more accurately. Readings, widgets and alerts stay more reliable across your iPhone, Apple Watch and Mac.
 
@@ -48,7 +48,7 @@ Usage readings now show when each provider was last checked and flag stale data.
 | Content rights | Yes: shows third-party content (provider names, model and feed titles) it has the right to use |
 | EU trader status (DSA) | Non-trader |
 | Tracking | None |
-| Release | 1.1.1 publicly released 13 October 2026 after qualification, CI, App Review approval and manual release |
+| Release | 1.2.0 submitted 22 October 2026 (Waiting for Review, automatic release); 1.1.1 publicly released 13 October 2026 |
 
 ## App privacy
 
