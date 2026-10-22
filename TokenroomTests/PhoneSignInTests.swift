@@ -577,10 +577,12 @@ final class PhoneSignInTests: XCTestCase {
             session.accessToken = "renewed"
             return .granted(session)
         }
-        let renewal = Task { await refresher.renewIfNeeded(.claude, now: Self.now) }
+        // A local date, not `Self.now`: Xcode 26's region checker can't follow `Self` into a Task.
+        let at = Self.now
+        let renewal = Task { await refresher.renewIfNeeded(.claude, now: at) }
         for await _ in posted.stream { break }
         // Sign out while the token host is still answering.
-        let signOut = Task { try await refresher.replace(.claude, with: nil, now: Self.now) }
+        let signOut = Task { try await refresher.replace(.claude, with: nil, now: at) }
         release.continuation.yield()
         _ = await renewal.value
         try await signOut.value
