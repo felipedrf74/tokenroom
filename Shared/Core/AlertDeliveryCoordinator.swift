@@ -28,6 +28,8 @@ enum AlertDeliveryCoordinator {
         var recordName: String
         var reset: Date
         var kind: String?
+        /// The window's length, for how far its reset can move and still be the same window.
+        var length: TimeInterval = 0
     }
     private struct Entry: Codable {
         var reset: Date
@@ -54,7 +56,8 @@ enum AlertDeliveryCoordinator {
         guard let reset, reset.timeIntervalSince1970.isFinite else { return nil }
         let parts = [alert.provider, window, alert.key].map { "\($0.utf8.count):\($0)" }.joined()
         let digest = SHA256.hash(data: Data(parts.utf8)).map { String(format: "%02x", $0) }.joined()
-        return Scope(recordName: "alert-coordination-\(digest)", reset: reset, kind: alert.windowKind)
+        return Scope(recordName: "alert-coordination-\(digest)", reset: reset, kind: alert.windowKind,
+                     length: alert.identityPeriodSec ?? AlertRules.typicalLength(kind: alert.windowKind ?? ""))
     }
 
     /// `write` must atomically compare the revision and create the Event (if non-nil). An
@@ -72,7 +75,7 @@ enum AlertDeliveryCoordinator {
             try Task.checkCancellation()
             var document = try decoded(fetched.data)
             document.entries.removeAll { $0.expiresAt < now }
-            if let owned = document.entries.first(where: { matches($0, scope) }) {
+            if let owned = document.entries.first(where: { matches($0, scope, now: now) }) {
                 return Receipt(eventID: owned.eventID, mode: owned.mode, created: false)
             }
             let old = try await legacy(legacyIDs(for: alert))
@@ -109,9 +112,14 @@ enum AlertDeliveryCoordinator {
         }) else { throw Failure.damaged }
         return document
     }
-    private static func matches(_ entry: Entry, _ scope: Scope) -> Bool {
-        (entry.kind == nil || scope.kind == nil || entry.kind == scope.kind)
-            && abs(entry.reset.timeIntervalSince(scope.reset)) < AlertRules.resetJitter
+    /// The same window, as `AlertRules.isSameInstance` sees it: the same reset give or take the
+    /// jitter, or one the provider moved while the window went on (the owned reset still ahead,
+    /// the move within a quarter of the window). No usage is kept here, so a move counts as the
+    /// same window whatever the use did.
+    private static func matches(_ entry: Entry, _ scope: Scope, now: Date) -> Bool {
+        guard entry.kind == nil || scope.kind == nil || entry.kind == scope.kind else { return false }
+        return AlertRules.isSameInstance(entry.reset, scope.reset)
+            || AlertRules.isMovedReset(from: entry.reset, to: scope.reset, usedBefore: 0, usedNow: 0, length: scope.length, now: now)
     }
 
     static func legacyIDs(for alert: UsageAlert) -> [String] {

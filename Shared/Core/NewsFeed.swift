@@ -13,6 +13,12 @@ struct NewsCache: Codable, Equatable, Sendable {
     struct SourceCheck: Codable, Equatable, Sendable {
         var succeededAt: Date?
         var failedAt: Date?
+        /// Failed checks in a row since the last success, for `NewsFetcher.retryInterval`. Nil
+        /// after a success, and in caches from earlier releases.
+        var failures: Int?
+        /// When the feed's server asked to be asked again (Retry-After), as allowed: no
+        /// automatic check goes out before it. Nil after a success.
+        var retryAt: Date?
     }
     /// Optional for caches written by earlier releases.
     var sourceChecks: [String: SourceCheck]?
@@ -22,6 +28,10 @@ struct NewsCache: Codable, Equatable, Sendable {
     /// When the last check failed (no answer, or an error status), so the next waits
     /// `NewsFetcher.retryInterval` instead of going out on every refresh. Cleared by an answer.
     var modelsFailedAt: Date?
+    /// The model list's failed checks in a row; nil after an answer, and in older caches.
+    var modelsFailures: Int?
+    /// When OpenRouter asked to be asked again (Retry-After), as allowed; nil after an answer.
+    var modelsRetryAt: Date?
     var modelState = ModelFeedState()
     /// Items per feed ID, newest first.
     var items: [String: [FeedItem]] = [:]
@@ -70,7 +80,10 @@ struct NewsCache: Codable, Equatable, Sendable {
             }
             let keys: [String]
             if item.kind == .officialAnnouncement {
-                keys = [item.link.map { "official link \($0.absoluteString)" }, item.canonicalID, "title \(product) \(item.duplicateKey)"].compactMap { $0 }
+                // A feed whose entries share titles (commits) is matched by link and ID only.
+                let byTitle = feeds[feed]?.isCommitLog == true ? "item \(feed)|\(item.id)" : "title \(product) \(item.duplicateKey)"
+                keys = [item.link.map { "official link \(Self.linkKey($0))" }, item.canonicalID, byTitle].compactMap { $0 }
+                    + (feeds[feed]?.titleFoldGroup.map { Self.groupTitleKeys(item, group: $0) } ?? [])
             } else { keys = ["item \(feed)|\(item.id)"] }
             let matches = Set(keys.compactMap { positions[$0] })
             if let position = matches.min(), var winner = kept[position] {
@@ -99,6 +112,44 @@ struct NewsCache: Codable, Equatable, Sendable {
             keptFeeds.append(feed)
         }
         return Array(kept.compactMap { $0 }.sorted(by: newestFirst).prefix(limit))
+    }
+
+    /// A link as the same page however it's written: host case and `www.`, a trailing slash, and
+    /// tracking parameters (`utm_…`) aside. The fragment stays: changelogs link each entry to its
+    /// own anchor on one page.
+    static func linkKey(_ url: URL) -> String {
+        guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: true) else { return url.absoluteString }
+        parts.scheme = parts.scheme?.lowercased()
+        parts.host = parts.host.map { host in
+            let host = host.lowercased()
+            return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        }
+        if parts.path.count > 1, parts.path.hasSuffix("/") { parts.path.removeLast() }
+        let query = parts.queryItems?.filter { !$0.name.lowercased().hasPrefix("utm_") }
+        parts.queryItems = query?.isEmpty == true ? nil : query
+        return parts.string ?? url.absoluteString
+    }
+
+    /// Keys under which feeds of one `FeedSource.titleFoldGroup` (Google's Keyword blog and
+    /// DeepMind's, which post some stories under different links and slugs) fold the same post:
+    /// its title as compared (`comparableTitle`), on its day and the days either side, so copies
+    /// up to two days apart match and a same-titled post weeks later doesn't. Undated entries
+    /// don't fold this way.
+    static func groupTitleKeys(_ item: FeedItem, group: String) -> [String] {
+        guard item.sortDate > .distantPast else { return [] }
+        let day = Int((item.sortDate.timeIntervalSince1970 / 86_400).rounded(.down))
+        let title = comparableTitle(item.title)
+        return (day - 1...day + 1).map { "group \(group) \($0) \(title)" }
+    }
+
+    /// A title as two feeds may write it differently: case, spacing, HTML entities and tags, and
+    /// curly or straight quotes aside.
+    static func comparableTitle(_ title: String) -> String {
+        var text = FeedParser.plainText(title)
+        for (curly, straight) in [("\u{2018}", "'"), ("\u{2019}", "'"), ("\u{201B}", "'"), ("\u{201C}", "\""), ("\u{201D}", "\""), ("\u{201F}", "\"")] {
+            text = text.replacingOccurrences(of: curly, with: straight)
+        }
+        return text.lowercased()
     }
 
     /// A feed's name as a place an entry also appeared: "Claude Code releases", or "Claude Code
@@ -132,12 +183,49 @@ struct NewsCache: Codable, Equatable, Sendable {
         }
     }
 
+    /// The model list answered: checked now, and no longer failing.
+    mutating func modelsSucceeded(at now: Date) {
+        modelsFetchedAt = now
+        modelsFailedAt = nil
+        modelsFailures = nil
+        modelsRetryAt = nil
+    }
+
+    /// The model list's check failed once more, so the next waits a little longer, and no less
+    /// than OpenRouter asked (`retryAfter`).
+    mutating func modelsFailed(at now: Date, retryAfter: Date? = nil) {
+        modelsFailedAt = now
+        modelsFailures = (modelsFailures ?? 0) + 1
+        modelsRetryAt = NewsFetcher.allowedRetry(retryAfter, now: now)
+    }
+
     static func load(from directory: URL?) -> NewsCache {
         guard let url = directory?.appendingPathComponent(fileName),
               let data = try? Data(contentsOf: url),
               let cache = try? RelayEnvelope.decoder.decode(NewsCache.self, from: data)
         else { return NewsCache() }
         return cache
+    }
+
+    /// Dates saved while the clock was ahead come back to `now`, so what they mark doesn't stay
+    /// new or badged after a visit until the clock catches up.
+    mutating func bringDatesBack(to now: Date) {
+        for (id, feed) in items where feed.contains(where: { ($0.firstSeenAt ?? .distantPast) > now || ($0.published ?? .distantPast) > now }) {
+            items[id] = feed.map { item in
+                var item = item
+                item.firstSeenAt = item.firstSeenAt.map { min($0, now) }
+                item.published = item.published.map { min($0, now) }
+                return item
+            }
+        }
+        if models.contains(where: { $0.newsDate > now || $0.created > now }) {
+            models = models.map { model in
+                var model = model
+                model.created = min(model.created, now)
+                model.firstSeenAt = model.firstSeenAt.map { min($0, now) }
+                return model
+            }
+        }
     }
 
     func save(to directory: URL?) {
@@ -150,17 +238,37 @@ struct NewsCache: Codable, Equatable, Sendable {
 }
 
 enum NewsFetcher {
-    static let modelInterval: TimeInterval = 6 * 3600
-    static let announcementInterval: TimeInterval = 12 * 3600
+    /// How often the model list and each feed are checked in the background (the iPhone's
+    /// background refresh, the Mac's sharing loop). Conditional GETs keep an unchanged feed to a 304.
+    static let modelInterval: TimeInterval = 3600
+    static let announcementInterval: TimeInterval = 3600
     /// Opening News (the iPhone tab or the app coming forward, the Mac window) refreshes
     /// anything older than this.
-    static let openInterval: TimeInterval = 15 * 60
+    static let openInterval: TimeInterval = 5 * 60
     /// While News is on screen it checks again this often by itself, so nobody has to pull or
-    /// press Check Now to catch up. Conditional GETs keep an unchanged feed to a 304.
-    static let liveInterval: TimeInterval = 15 * 60
-    /// A failed check waits this long before the next, unless asked for (pulling to refresh,
-    /// Check now), so a server that's down isn't asked on every refresh.
-    static let retryInterval: TimeInterval = 3600
+    /// press Check Now to catch up.
+    static let liveInterval: TimeInterval = 5 * 60
+    /// After a failed check the next waits longer the more checks have failed in a row: 5, 15,
+    /// and 30 minutes, then an hour each time, unless asked for (pulling to refresh, Check Now).
+    /// A server that's down isn't asked on every refresh, and one back up is found soon.
+    static let retryIntervals: [TimeInterval] = [5 * 60, 15 * 60, 30 * 60, 3600]
+
+    /// The wait after `failures` failed checks in a row; a failure an earlier release recorded,
+    /// without a count, is the first.
+    static func retryInterval(afterFailures failures: Int?) -> TimeInterval {
+        retryIntervals[min(max(failures ?? 1, 1), retryIntervals.count) - 1]
+    }
+
+    /// The longest a server's Retry-After holds a feed off: a feed asking for days is still
+    /// tried again within this.
+    static let longestRetryAfter: TimeInterval = 6 * 3600
+
+    /// A server's Retry-After as the time the next automatic check may go out: kept within
+    /// `longestRetryAfter`, and none for one already past.
+    static func allowedRetry(_ retryAfter: Date?, now: Date) -> Date? {
+        guard let retryAfter, retryAfter > now else { return nil }
+        return min(retryAfter, now.addingTimeInterval(longestRetryAfter))
+    }
 
     struct Result: Sendable {
         var cache: NewsCache
@@ -175,25 +283,58 @@ enum NewsFetcher {
         var maxAge: TimeInterval?
         var now: Date
         var forcedSources: Set<String> = []
+        /// Sources whose read is quiet, like a first read (`firstSeen`'s `quiet`).
+        var quietSources: Set<String> = []
+        /// Shown the cache as answers that change what's listed are taken in, before the whole
+        /// pass is done. Each call is awaited before the pass returns, and none overlap.
+        var publish: @Sendable (NewsCache) async -> Void = { _ in }
         /// Rechecked before each public GET; already-issued requests may finish normally.
         var isAllowed: @MainActor @Sendable () -> Bool = { true }
     }
 
+    /// Feeds run to megabytes (`FeedSource.sizeLimit`), so a download has this long on a slow
+    /// network, not a provider check's `TokenroomHTTP.timeout`; a pause longer than that still
+    /// ends it sooner.
+    static let downloadTimeout: TimeInterval = 60
+
+    /// The session News reads through: `TokenroomHTTP`'s settings and redirect rules, with
+    /// `downloadTimeout` for the whole download. A session tests swap into `TokenroomHTTP` is
+    /// used as it is.
+    static var session: URLSession {
+        let shared = TokenroomHTTP.session
+        return shared === TokenroomHTTP.defaultSession ? downloadSession : shared
+    }
+
+    private static let downloadSession: URLSession = {
+        // A copy: no cookies, no cache, Tokenroom's user agent, the same wait between packets.
+        let configuration = TokenroomHTTP.defaultSession.configuration
+        configuration.timeoutIntervalForResource = downloadTimeout
+        return URLSession(configuration: configuration, delegate: FeedRedirectDelegate(), delegateQueue: nil)
+    }()
+
     /// What a GET got back.
     enum Answer: Sendable {
-        /// The body, up to the size limit; `isTruncated` when it went on past it.
+        /// The body, up to the size limit; `isTruncated` when it went on past it, or was cut off
+        /// partway.
         case body(Data, NewsCache.Validator, isTruncated: Bool)
         /// 304: the cached copy is current.
         case notModified
-        /// An answer with an error status.
-        case status(Int)
+        /// An answer with an error status, and its Retry-After, if any.
+        case status(Int, retryAfter: String?)
         /// No answer.
         case unreachable
     }
 
-    /// Fetches what's due: models every 6 hours, announcements every 12, or anything older than
-    /// `maxAge` when given (opening the tab, pulling to refresh).
-    static func refresh(_ cache: NewsCache, sources: [FeedSource], following vendors: Set<String>, maxAge: TimeInterval? = nil, now: Date = .now, forcedSources: Set<String> = [], isAllowed: @escaping @MainActor @Sendable () -> Bool = { true }) async -> Result {
+    /// What a pass's feed checks hand back: a feed's answer, or word that `publish` is done.
+    private enum PassEvent: Sendable {
+        case answer(FeedSource, Answer?)
+        case shown
+    }
+
+    /// Fetches what's due: the model list and each feed every hour, a failed one after its
+    /// `retryInterval`, or anything older than `maxAge` when given (opening the tab, pulling to
+    /// refresh).
+    static func refresh(_ cache: NewsCache, sources: [FeedSource], following vendors: Set<String>, maxAge: TimeInterval? = nil, now: Date = .now, forcedSources: Set<String> = [], quietSources: Set<String> = [], isAllowed: @escaping @MainActor @Sendable () -> Bool = { true }, publish: @escaping @Sendable (NewsCache) async -> Void = { _ in }) async -> Result {
         var cache = cache
         // Freeze legacy sources' dates before another source advances the shared timestamp.
         var migrated = cache.sourceChecks ?? [:]
@@ -204,145 +345,215 @@ enum NewsFetcher {
         var newModels: [ModelRelease] = []
         var unreadable = cache.unreadable ?? []
 
-        if forcedSources.contains(ModelFeed.id) || isDue(cache.modelsFetchedAt, failedAt: cache.modelsFailedAt, interval: maxAge ?? modelInterval, now: now) {
+        // The model list has no validators, so every check downloads all of it: it keeps to its
+        // hourly interval while News is open or on screen; only a pull or Check Now asks sooner.
+        let modelAge = maxAge == 0 ? 0 : modelInterval
+        if forcedSources.contains(ModelFeed.id) || isDue(cache.modelsFetchedAt, failedAt: cache.modelsFailedAt, failures: cache.modelsFailures, retryAt: cache.modelsRetryAt, interval: modelAge, now: now) {
             let key = ModelFeed.url.absoluteString
             guard let answer = await permittedGet(ModelFeed.url, validator: cache.validators[key], isAllowed: isAllowed) else {
                 return .init(cache: cache, newModels: [])
             }
+            let listed = cache.models
             switch answer {
             case let .body(data, validator, isTruncated):
                 if !isTruncated, let releases = try? ModelFeed.releases(from: data) {
-                    cache.models = firstSeen(releases, previous: cache.models, now: now)
+                    cache.models = firstSeen(releases, previous: cache.models, now: now, previousRead: cache.modelsFetchedAt)
                     newModels = cache.modelState.takeNew(from: cache.models, following: vendors)
                     cache.validators[key] = validator
                     unreadable.remove(ModelFeed.id)
-                    cache.modelsFetchedAt = now
-                    cache.modelsFailedAt = nil
+                    cache.modelsSucceeded(at: now)
                 } else {
                     // Keeps the last list, and asks for the whole answer next time.
                     cache.validators[key] = nil
                     unreadable.insert(ModelFeed.id)
-                    cache.modelsFailedAt = now
+                    cache.modelsFailed(at: now)
                 }
             case .notModified:
                 if cache.modelsFetchedAt != nil {
-                    cache.modelsFetchedAt = now
-                    cache.modelsFailedAt = nil
+                    cache.modelsSucceeded(at: now)
                     unreadable.remove(ModelFeed.id)
                 } else {
                     cache.validators[key] = nil
-                    cache.modelsFailedAt = now
+                    cache.modelsFailed(at: now)
                     unreadable.insert(ModelFeed.id)
                 }
-            case .status:
-                cache.modelsFailedAt = now
+            case let .status(_, retryAfter):
+                cache.modelsFailed(at: now, retryAfter: TokenroomHTTP.retryDate(retryAfter, now: now))
                 unreadable.insert(ModelFeed.id)
             case .unreachable:
                 // A cancelled refresh (quitting, sleep) isn't a failure.
                 if !Task.isCancelled {
-                    cache.modelsFailedAt = now
+                    cache.modelsFailed(at: now)
                     unreadable.insert(ModelFeed.id)
                 }
+            }
+            // A list that changed shows before the feeds are in; the same list again waits for
+            // the pass, so it isn't folded and shown for nothing.
+            if cache.models != listed {
+                var shown = cache
+                shown.unreadable = unreadable.isEmpty ? nil : unreadable
+                await publish(shown)
             }
         }
 
         let due = sources.filter { source in
             let check = cache.check(for: source)
-            return forcedSources.contains(source.id) || isDue(check.succeededAt, failedAt: check.failedAt, interval: maxAge ?? announcementInterval, now: now)
+            return forcedSources.contains(source.id) || isDue(check.succeededAt, failedAt: check.failedAt, failures: check.failures, retryAt: check.retryAt, interval: maxAge ?? announcementInterval, now: now)
         }
         if !due.isEmpty {
             let previous = cache.validators
             let needsExcerptBody = Set(due.filter { source in
                 cache.items[source.id]?.contains { $0.excerpt != nil && $0.excerptIsPlainText != true } == true
             }.map(\.id))
-            let answers = await withTaskGroup(of: (FeedSource, Answer?).self) { group in
-                for source in due {
-                    group.addTask {
-                        return (source, await permittedGet(source.url, validator: needsExcerptBody.contains(source.id) ? nil : previous[source.url.absoluteString], sizeLimit: source.sizeLimit, isAllowed: isAllowed))
-                    }
-                }
-                var answers: [(FeedSource, Answer?)] = []
-                for await answer in group { answers.append(answer) }
-                return answers
-            }
             var anySucceeded = false
             var anyFailed = false
             var checks = cache.sourceChecks ?? [:]
-            for (source, answer) in answers {
-                guard let answer else { continue } // Disabled checks are neither failures nor fresh readings.
-                let key = source.url.absoluteString
-                var check = cache.check(for: source)
-                var success = false
-                switch answer {
-                case let .body(data, validator, isTruncated):
-                    let read = FeedParser.read(data, source: source)
-                    let previousItems = cache.items[source.id] ?? []
-                    let items = firstSeen(read.items, previous: previousItems, now: now)
-                    if read.isComplete, !isTruncated {
-                        cache.items[source.id] = items
-                        cache.validators[key] = validator
-                        success = true
-                    } else {
-                        // A partial response supplements the last complete copy, never deletes it.
-                        let ids = Set(items.map(\.id))
-                        if !items.isEmpty || cache.items[source.id] != nil {
-                            cache.items[source.id] = (items + previousItems.filter { !ids.contains($0.id) })
-                                .sorted { ($0.published ?? .distantPast) > ($1.published ?? .distantPast) }
-                        }
-                        cache.validators[key] = nil
+            // Each feed's answer is taken in as it arrives, and one that changes the feed's items
+            // is shown (`publish`) beside the others: a slow feed doesn't hold the rest back. A
+            // 304, or the same items again, isn't shown until the pass is done, and what's taken
+            // in while one answer is being shown is shown next, together, so feeds that change
+            // back to back are folded once rather than once each.
+            await withTaskGroup(of: PassEvent.self) { group in
+                for source in due {
+                    group.addTask {
+                        return .answer(source, await permittedGet(source.url, validator: needsExcerptBody.contains(source.id) ? nil : previous[source.url.absoluteString], sizeLimit: source.sizeLimit, isAllowed: isAllowed))
                     }
-                case .notModified:
-                    success = cache.items[source.id] != nil
-                    if !success { cache.validators[key] = nil }
-                case .status: break
-                case .unreachable:
-                    if Task.isCancelled { continue }
                 }
-                if success {
-                    check.succeededAt = now
-                    check.failedAt = nil
-                    unreadable.remove(source.id)
-                    anySucceeded = true
-                } else {
-                    check.failedAt = now
-                    unreadable.insert(source.id)
-                    anyFailed = true
+                var isShowing = false
+                var unshown = false
+                for await event in group {
+                    guard case let .answer(source, answer) = event else {
+                        isShowing = false
+                        if unshown {
+                            unshown = false
+                            isShowing = true
+                            let shown = cache
+                            group.addTask { await publish(shown); return .shown }
+                        }
+                        continue
+                    }
+                    guard let answer else { continue } // Disabled checks are neither failures nor fresh readings.
+                    let key = source.url.absoluteString
+                    let listed = cache.items[source.id] ?? []
+                    var check = cache.check(for: source)
+                    var success = false
+                    var retryAfter: Date?
+                    switch answer {
+                    case let .body(data, validator, isTruncated):
+                        let read = FeedParser.read(data, source: source)
+                        let previousItems = cache.items[source.id] ?? []
+                        let items = firstSeen(read.items, previous: previousItems, now: now, quiet: quietSources.contains(source.id), previousRead: check.succeededAt)
+                        // A feed with no entries at all where some were cached isn't taken at its
+                        // word: a server's placeholder would clear the list.
+                        if read.isComplete, !isTruncated, read.entries > 0 || previousItems.isEmpty {
+                            // Every entry left out (a run of pre-releases): the last ones stay.
+                            cache.items[source.id] = items.isEmpty ? previousItems : items
+                            cache.validators[key] = validator
+                            success = true
+                        } else {
+                            // A partial response supplements the last complete copy, never deletes it,
+                            // and keeps to a feed's usual length.
+                            let ids = Set(items.map(\.id))
+                            if !items.isEmpty || cache.items[source.id] != nil {
+                                cache.items[source.id] = Array((items + previousItems.filter { !ids.contains($0.id) })
+                                    .sorted { ($0.published ?? .distantPast) > ($1.published ?? .distantPast) }
+                                    .prefix(FeedParser.itemLimit))
+                            }
+                            cache.validators[key] = nil
+                        }
+                    case .notModified:
+                        success = cache.items[source.id] != nil
+                        if !success { cache.validators[key] = nil }
+                    case let .status(_, asked): retryAfter = TokenroomHTTP.retryDate(asked, now: now)
+                    case .unreachable:
+                        if Task.isCancelled { continue }
+                    }
+                    if success {
+                        check.succeededAt = now
+                        check.failedAt = nil
+                        check.failures = nil
+                        check.retryAt = nil
+                        unreadable.remove(source.id)
+                        anySucceeded = true
+                    } else {
+                        check.failedAt = now
+                        check.failures = (check.failures ?? 0) + 1
+                        check.retryAt = allowedRetry(retryAfter, now: now)
+                        unreadable.insert(source.id)
+                        anyFailed = true
+                    }
+                    checks[source.id] = check
+                    cache.sourceChecks = checks
+                    cache.unreadable = unreadable.isEmpty ? nil : unreadable
+                    if anySucceeded { cache.announcementsFetchedAt = now }
+                    guard (cache.items[source.id] ?? []) != listed else { continue }
+                    if isShowing {
+                        unshown = true
+                    } else {
+                        isShowing = true
+                        let shown = cache
+                        group.addTask { await publish(shown); return .shown }
+                    }
                 }
-                checks[source.id] = check
             }
-            cache.sourceChecks = checks
-            if anySucceeded { cache.announcementsFetchedAt = now }
             if anySucceeded || anyFailed { cache.announcementsFailedAt = anyFailed ? now : nil }
         }
         cache.unreadable = unreadable.isEmpty ? nil : unreadable
         return Result(cache: cache, newModels: newModels)
     }
 
+    /// Due once `interval` has passed since `fetchedAt`, or when `fetchedAt` is later than `now`:
+    /// saved while the clock was ahead, it would otherwise hold checks off until then.
     static func isDue(_ fetchedAt: Date?, interval: TimeInterval, now: Date) -> Bool {
-        fetchedAt.map { now.timeIntervalSince($0) >= interval } ?? true
+        fetchedAt.map { $0 > now || now.timeIntervalSince($0) >= interval } ?? true
     }
 
-    /// Due by `interval`, and, after a failed check, once `retryInterval` has passed, however
-    /// often News is open or on screen; asking with a `maxAge` of 0 (pulling to refresh, Check
-    /// Now) always goes out.
-    static func isDue(_ fetchedAt: Date?, failedAt: Date?, interval: TimeInterval, now: Date) -> Bool {
+    /// Due by `interval`, and, after `failures` failed checks in a row, once their
+    /// `retryInterval` has passed and no sooner than the server asked (`retryAt`), however often
+    /// News is open or on screen; asking with a `maxAge` of 0 (pulling to refresh, Check Now)
+    /// always goes out.
+    static func isDue(_ fetchedAt: Date?, failedAt: Date?, failures: Int? = nil, retryAt: Date? = nil, interval: TimeInterval, now: Date) -> Bool {
         if let failedAt, fetchedAt == nil || failedAt >= fetchedAt! {
-            return isDue(failedAt, interval: interval <= 0 ? 0 : retryInterval, now: now)
+            guard interval > 0 else { return true }
+            // A time asked for further off than allowed was saved while the clock was ahead.
+            if let retryAt, retryAt > now, retryAt.timeIntervalSince(now) <= longestRetryAfter { return false }
+            return isDue(failedAt, interval: retryInterval(afterFailures: failures), now: now)
         }
         return isDue(fetchedAt, interval: interval, now: now)
     }
 
+    /// An entry dated this long before its feed's previous successful read was out by then: it's
+    /// only new to the feed's window (an older post moved up), so it keeps its own date. Two days
+    /// leave room for a post dated by the day that turns up the next.
+    static let arrivalSlack: TimeInterval = 2 * 86_400
+
     /// Items dated no later than the check that first saw them: one dated ahead (a wrong time
     /// zone, a post scheduled early) counts as seen once News opens, and a later change to its
     /// date doesn't make it new again.
-    static func firstSeen(_ items: [FeedItem], previous: [FeedItem], now: Date) -> [FeedItem] {
+    ///
+    /// `firstSeenAt` is when it reached this device, so an entry dated earlier than it turned up
+    /// (a post dated midnight that arrives in the afternoon) is still new, and one without any
+    /// date is dated when it arrives, so it sorts with what came then rather than last. A quiet
+    /// read (a feed's first, or one followed again: `quiet`, or nothing cached) brings what was
+    /// there already, so it has no arrival to go by: its entries keep their own dates, an undated
+    /// one still sorts last, and `NewsStore` keeps them from counting as new. One dated well
+    /// before the feed's previous successful read (`previousRead`, `arrivalSlack`) keeps its own
+    /// date too. A first-seen date saved ahead of the clock comes back to `now`.
+    static func firstSeen(_ items: [FeedItem], previous: [FeedItem], now: Date, quiet: Bool = false, previousRead: Date? = nil) -> [FeedItem] {
         let earlier = Dictionary(previous.map { ($0.id, $0) }) { first, _ in first }
+        let isQuiet = quiet || previous.isEmpty
         return items.map { incoming in
             var item = incoming
             let old = earlier[item.id]
             if let old { item.aliases = old.aliasIDs.union(item.aliasIDs) }
-            item.firstSeenAt = old?.newsDate ?? min(item.publisherPublishedAt ?? item.updatedAt ?? item.published ?? now, now)
+            let dated = min(item.publisherPublishedAt ?? item.updatedAt ?? item.published ?? now, now)
+            let enteredWindow = previousRead.map { dated < $0.addingTimeInterval(-arrivalSlack) } ?? false
+            item.firstSeenAt = min(old?.newsDate ?? (isQuiet || enteredWindow ? dated : now), now)
             item.published = item.published.map { min($0, old?.published ?? now, now) }
+            if item.published == nil, item.updatedAt == nil {
+                // One cached undated by an earlier release stays so, rather than turning new now.
+                item.published = old == nil ? (isQuiet ? nil : now) : old?.published
+            }
             if item.kind == .officialStatus {
                 let update = FeedItem.StatusUpdate(date: item.updatedAt ?? item.publisherPublishedAt, excerpt: item.excerpt)
                 var updates = old?.observedUpdates ?? []
@@ -353,12 +564,17 @@ enum NewsFetcher {
         }
     }
 
-    /// Releases dated no later than the check that first saw them, newest first.
-    static func firstSeen(_ releases: [ModelRelease], previous: [ModelRelease], now: Date) -> [ModelRelease] {
-        let earlier = Dictionary(previous.map { ($0.id, $0.created) }) { first, _ in first }
+    /// Releases dated no later than the check that first saw them, newest first, each noting when
+    /// it arrived (`firstSeenAt`) as announcements do: the list's first read, and a model created
+    /// well before the list's previous read (`previousRead`, `arrivalSlack`), keep their own dates.
+    static func firstSeen(_ releases: [ModelRelease], previous: [ModelRelease], now: Date, previousRead: Date? = nil) -> [ModelRelease] {
+        let earlier = Dictionary(previous.map { ($0.id, $0) }) { first, _ in first }
         return releases.map { release in
             var release = release
-            release.created = min(release.created, earlier[release.id] ?? now, now)
+            let old = earlier[release.id]
+            release.created = min(release.created, old?.created ?? now, now)
+            let enteredList = previousRead.map { release.created < $0.addingTimeInterval(-arrivalSlack) } ?? false
+            release.firstSeenAt = min(old?.newsDate ?? (previous.isEmpty || enteredList ? release.created : now), now)
             return release
         }
         .sorted { $0.created > $1.created }
@@ -373,7 +589,8 @@ enum NewsFetcher {
     }
 
     /// A conditional GET that reads at most `sizeLimit` bytes: a longer body stops there instead
-    /// of loading whole.
+    /// of loading whole. One cut off partway (the time ran out, the network dropped) gives what
+    /// arrived, as one past its limit does.
     @MainActor static func get(_ url: URL, validator: NewsCache.Validator?, sizeLimit: Int = FeedParser.sizeLimit) async -> Answer {
         guard !Task.isCancelled else { return .unreachable }
         var request = URLRequest(url: url)
@@ -386,24 +603,47 @@ enum NewsFetcher {
         if let lastModified = validator?.lastModified {
             request.setValue(lastModified, forHTTPHeaderField: "If-Modified-Since")
         }
+        return await download(request, sizeLimit: sizeLimit)
+    }
+
+    /// The download itself, off the main actor: its body is read where it arrives, a buffer at a
+    /// time, never with a hop to the main actor for each byte, which made a megabyte take seconds
+    /// and could run a whole answer past `downloadTimeout`.
+    @concurrent private static func download(_ request: URLRequest, sizeLimit: Int) async -> Answer {
         do {
-            let (bytes, response) = try await TokenroomHTTP.session.bytes(for: request)
+            let (bytes, response) = try await session.bytes(for: request)
             guard let http = response as? HTTPURLResponse else {
                 bytes.task.cancel()
                 return .unreachable
             }
             guard (200..<300).contains(http.statusCode) else {
                 bytes.task.cancel()
-                return http.statusCode == 304 ? .notModified : .status(http.statusCode)
+                if http.statusCode == 304 { return .notModified }
+                return .status(http.statusCode, retryAfter: http.value(forHTTPHeaderField: "Retry-After"))
             }
             var data = Data()
+            data.reserveCapacity(min(max(Int(http.expectedContentLength), 0), sizeLimit))
+            var buffer: [UInt8] = []
+            buffer.reserveCapacity(64 * 1024)
             var isTruncated = false
-            for try await byte in bytes {
-                guard data.count < sizeLimit else {
-                    isTruncated = true
-                    break
+            do {
+                for try await byte in bytes {
+                    guard data.count + buffer.count < sizeLimit else {
+                        isTruncated = true
+                        break
+                    }
+                    buffer.append(byte)
+                    if buffer.count == buffer.capacity {
+                        data.append(contentsOf: buffer)
+                        buffer.removeAll(keepingCapacity: true)
+                    }
                 }
-                data.append(byte)
+                data.append(contentsOf: buffer)
+            } catch {
+                data.append(contentsOf: buffer)
+                // A cancelled check isn't a failure, and nothing at all is no answer.
+                guard !Task.isCancelled, !data.isEmpty else { return .unreachable }
+                isTruncated = true
             }
             if isTruncated {
                 // The rest of the body is never downloaded.
@@ -417,6 +657,20 @@ enum NewsFetcher {
         } catch {
             return .unreachable
         }
+    }
+}
+
+/// The redirect rules `TokenroomHTTP.defaultSession` applies, for News's own session: a feed may
+/// move to another HTTPS host, never to cleartext or a URL carrying credentials.
+private final class FeedRedirectDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        completionHandler(TokenroomRedirectPolicy.allows(original: task.originalRequest, current: task.currentRequest, redirected: request) ? request : nil)
     }
 }
 

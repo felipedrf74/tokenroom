@@ -419,7 +419,7 @@ struct ResetCountdown: View {
 
     static func text(resetsAt: Date, date: Date) -> Text {
         guard resetsAt > date else { return Text("now") }
-        if resetsAt.timeIntervalSince(date) < 86_400 {
+        if resetsAt.timeIntervalSince(date) < ReadingCache.countdownTicksWithin {
             return Text(timerInterval: date...resetsAt, countsDown: true)
         }
         let words = RelativeTime.resets(resetsAt, now: date) ?? ""

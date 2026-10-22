@@ -110,12 +110,12 @@ enum XAIBillingParser {
         return (cents / 100, limit)
     }
 
-    /// Prepaid credits left, in dollars. xAI keeps this ledger with credit as a negative total,
-    /// so the magnitude is shown.
+    /// Prepaid credits left, in dollars. xAI keeps this ledger with credit as a negative total;
+    /// a positive one is spent past the credits, so none are left.
     static func prepaidCredits(from data: Data) throws -> Double {
         let root = try JSONFlex.object(from: data)
         guard let cents = JSONFlex.cent(root["total"]) else { throw ProviderError.parse }
-        return abs(cents) / 100
+        return max(-cents, 0) / 100
     }
 }
 
@@ -170,20 +170,46 @@ extension APIKeyClient {
             let validation = try await TokenroomHTTP.get(URL(string: "\(base)/auth/management-keys/validation")!, token: key, provider: provider)
             let team = try XAIBillingParser.teamID(fromValidation: validation)
             let teamPath = team.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? team
-            let credits: ExtraUsage? = await {
-                guard let data = try? await TokenroomHTTP.get(URL(string: "\(base)/v1/billing/teams/\(teamPath)/prepaid/balance")!, token: key, provider: provider),
-                      let dollars = try? XAIBillingParser.prepaidCredits(from: data)
-                else { return nil }
-                return ExtraUsage(title: "Prepaid credits", amount: QuotaAmount(remaining: dollars, unit: "usd"))
-            }()
-            if let data = try? await TokenroomHTTP.get(URL(string: "\(base)/v1/billing/teams/\(teamPath)/postpaid/invoice/preview")!, token: key, provider: provider),
-               let invoice = try? XAIBillingParser.invoice(from: data) {
-                return OrgSpend.snapshot(provider, window: OrgSpend.spendWindow(invoice.spend, limit: invoice.limit, now: now), extra: credits, fetchedAt: now)
+            // Nil when the team has no prepaid ledger (404).
+            let credits: Result<ExtraUsage?, any Error>
+            do {
+                let (data, response) = try await TokenroomHTTP.data(for: TokenroomHTTP.request(URL(string: "\(base)/v1/billing/teams/\(teamPath)/prepaid/balance")!, token: key))
+                if response.statusCode == 404 {
+                    credits = .success(nil)
+                } else {
+                    try TokenroomHTTP.check(response, provider: provider)
+                    let dollars = try XAIBillingParser.prepaidCredits(from: data)
+                    credits = .success(ExtraUsage(title: "Prepaid credits", amount: QuotaAmount(remaining: dollars, unit: "usd")))
+                }
+            } catch {
+                credits = .failure(error)
             }
-            // Prepaid-only teams have no invoice: show the credits as the balance.
-            guard let credits else { throw ProviderError.parse }
-            let window = QuotaWindow(id: "balance", kind: .pool, title: "Prepaid credits", usedPercent: 0, resetsAt: nil, amount: credits.amount, metered: false)
-            return OrgSpend.snapshot(provider, window: window, fetchedAt: now)
+            let (data, response) = try await TokenroomHTTP.data(for: TokenroomHTTP.request(URL(string: "\(base)/v1/billing/teams/\(teamPath)/postpaid/invoice/preview")!, token: key))
+            guard response.statusCode != 404 else {
+                // Prepaid-only teams have no invoice: the credits are the balance, and a call for
+                // them that failed (a 429, an outage) fails the check.
+                guard let credits = try credits.get() else { throw ProviderError.parse }
+                let window = QuotaWindow(id: "balance", kind: .pool, title: "Prepaid credits", usedPercent: 0, resetsAt: nil, amount: credits.amount, metered: false)
+                return OrgSpend.snapshot(provider, window: window, fetchedAt: now)
+            }
+            // Any other failure is the invoice's (a 429's wait, an outage, a refused key), not a
+            // team without one.
+            try TokenroomHTTP.check(response, provider: provider)
+            let invoice = try XAIBillingParser.invoice(from: data)
+            let extra: ExtraUsage?
+            switch credits {
+            case .success(let found):
+                extra = found
+            case .failure(let error):
+                // The same key and team: a wait or a refusal holds for the whole check.
+                switch error as? ProviderError {
+                case .rateLimited?, .expired?: throw error
+                default: break
+                }
+                // Otherwise the spend still shows; the credits beside it come back on the next check.
+                extra = nil
+            }
+            return OrgSpend.snapshot(provider, window: OrgSpend.spendWindow(invoice.spend, limit: invoice.limit, now: now), extra: extra, fetchedAt: now)
 
         default:
             throw ProviderError.parse

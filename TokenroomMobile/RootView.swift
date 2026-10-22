@@ -15,6 +15,7 @@ struct RootView: View {
     @State private var tab: AppTab = .usage
     @State private var usagePath: [String] = []
     @State private var settingsPath: [SettingsRoute] = []
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         #if DEBUG
@@ -78,9 +79,16 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: WatchLink.openConnectRequest)) { _ in
             open(DeepLink.connect.url)
         }
-        .onChange(of: tab, initial: true) { _, tab in
-            if tab == .news { news.beginVisit() } else { news.endVisit() }
-        }
+        .onChange(of: tab, initial: true) { _, _ in updateVisit() }
+        // Leaving the app ends a News visit too, so a check in the background doesn't count what
+        // it finds as seen; coming back to News starts the next one. A passing interruption
+        // (Control Center, a call) doesn't end it.
+        .onChange(of: scenePhase) { _, _ in updateVisit() }
+    }
+
+    /// A News visit lasts while the News tab is selected and the app is in front.
+    private func updateVisit() {
+        if tab == .news, scenePhase != .background { news.beginVisit() } else { news.endVisit() }
     }
 
     private func open(_ url: URL) {

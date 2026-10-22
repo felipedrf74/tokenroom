@@ -39,6 +39,60 @@ final class OrgSpendTests: XCTestCase {
         XCTAssertEqual(window.resetsAt, Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 10, day: 1)))
     }
 
+    /// A ledger spent past its credits (a positive total) has none left, not that many.
+    func testAnOverspentXAILedgerHasNoCreditsLeft() throws {
+        XCTAssertEqual(try XAIBillingParser.prepaidCredits(from: Data(#"{"total":{"val":"500"}}"#.utf8)), 0)
+        XCTAssertEqual(try XAIBillingParser.prepaidCredits(from: Data(#"{"total":{"val":"-1250"}}"#.utf8)), 12.5, accuracy: 0.001)
+    }
+
+    /// Only a team without an invoice (404) shows its prepaid credits instead. An invoice call
+    /// that's rate limited, down, or refused fails the check, so the spend meter stays, faded,
+    /// and a 429's wait is kept.
+    func testXAIInvoiceFailuresAreNotAPrepaidOnlyTeam() async throws {
+        defer {
+            TokenroomHTTP.overrideSession(nil)
+            StubURLProtocol.reset()
+        }
+        func answer(invoice: Int, prepaid: Int = 200, headers: [String: String] = [:]) async -> Result<QuotaSnapshot, ProviderError> {
+            StubURLProtocol.reset()
+            StubURLProtocol.headers = headers
+            let validation = fixture("xai-validation"), balance = fixture("xai-prepaid-balance"), preview = fixture("xai-invoice-preview")
+            StubURLProtocol.handler = { request in
+                let path = request.url?.path ?? ""
+                if path.hasSuffix("/validation") { return (200, validation) }
+                if path.hasSuffix("/prepaid/balance") { return (prepaid, prepaid == 200 ? balance : Data()) }
+                return (invoice, invoice == 200 ? preview : Data())
+            }
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.protocolClasses = [StubURLProtocol.self]
+            TokenroomHTTP.overrideSession(URLSession(configuration: configuration))
+            do {
+                return .success(try await APIKeyClient.orgSnapshot(for: .xaiOrg, key: "placeholder", now: now))
+            } catch {
+                return .failure(error as? ProviderError ?? .parse)
+            }
+        }
+
+        guard case .failure(.rateLimited(let until)) = await answer(invoice: 429, headers: ["Retry-After": "120"]) else { return XCTFail("A 429 is a wait") }
+        XCTAssertNotNil(until)
+        let down = await answer(invoice: 503)
+        XCTAssertEqual(down, .failure(.unreachable))
+        guard case .failure(.expired) = await answer(invoice: 403) else { return XCTFail("A refused key") }
+
+        let prepaidOnly = try await answer(invoice: 404).get()
+        XCTAssertEqual(prepaidOnly.windows.map(\.id), ["balance"])
+        XCTAssertEqual(prepaidOnly.windows.first?.amount?.remaining ?? 0, 25, accuracy: 0.001)
+        guard case .failure(.rateLimited) = await answer(invoice: 404, prepaid: 429) else { return XCTFail("The credits' own 429 is kept") }
+
+        let spend = try await answer(invoice: 200).get()
+        XCTAssertEqual(spend.windows.map(\.id), ["spend-month"])
+        XCTAssertEqual(spend.extra?.amount.remaining ?? 0, 25, accuracy: 0.001)
+        let withoutCredits = try await answer(invoice: 200, prepaid: 503).get()
+        XCTAssertEqual(withoutCredits.windows.map(\.id), ["spend-month"], "Credits that couldn't be read don't hide the spend")
+        XCTAssertNil(withoutCredits.extra)
+        guard case .failure(.rateLimited) = await answer(invoice: 200, prepaid: 429) else { return XCTFail("A 429 holds for the whole check") }
+    }
+
     func testSpendWithoutLimitIsAnAmount() {
         let window = OrgSpend.spendWindow(312.5, now: now)
         XCTAssertFalse(window.isMetered)

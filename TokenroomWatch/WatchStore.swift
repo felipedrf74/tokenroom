@@ -177,16 +177,18 @@ final class WatchStore {
     /// A delayed whole cache cannot undo removals; a mixed-age update still advances fresh providers.
     /// Complications reload for what they'd draw differently; from the background, only for
     /// what matters (`ReadingCache.reloadSignature`), as their reloads are budgeted. Smaller
-    /// changes show on their next timeline, which reads the saved readings.
+    /// changes show on their next timeline, which reads the saved readings. Both caches are
+    /// measured as drawn now, so a reading that faded since and is live again with the same
+    /// numbers is a change.
     func apply(_ fresh: ReadingCache) {
-        let fresh = cache?.mergingUpdate(fresh) ?? fresh
-        let changed = fresh.materialHash != cache?.materialHash
-        let matters = fresh.reloadSignature != cache?.reloadSignature
+        let now = Date.now
+        let fresh = cache?.mergingUpdate(fresh, now: now) ?? fresh
+        let change = fresh.changes(since: cache, at: now)
         cache = fresh
         try? WatchCacheAccess.saveValidated(fresh, at: cacheURL, defaults: AppGroup.defaults,
                                            cutoff: accountGate.signedOutAt)
-        guard changed else { return }
-        if matters || WKApplication.shared().applicationState == .active {
+        guard change.shown else { return }
+        if change.worthReload || WKApplication.shared().applicationState == .active {
             WidgetCenter.shared.reloadAllTimelines()
         }
         // The Smart Stack widget picks its moments from the readings; let it look again.

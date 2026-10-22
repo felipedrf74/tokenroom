@@ -53,6 +53,20 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(state.takeNew(from: try ModelFeed.releases(from: models), following: ModelFeed.defaultVendors), [], "The first real answer still only remembers what's there")
     }
 
+    func testRetirementsComeFromTheWholeModelList() throws {
+        XCTAssertNil(URLComponents(url: ModelFeed.url, resolvingAgainstBaseURL: false)?.queryItems, "The whole list, not the newest 50")
+        // 55 models a day apart, newest first; two of the five oldest have retirement dates.
+        let entries = (0..<55).map { index in
+            let expires = index == 52 || index == 54 ? #","expiration_date":"2026-10-30""# : ""
+            return #"{"id":"lab/model-\#(index)","name":"Lab: Model \#(index)","created":\#(1_790_000_000 - index * 86_400)\#(expires)}"#
+        }
+        let releases = try ModelFeed.releases(from: Data(#"{"data":[\#(entries.joined(separator: ","))]}"#.utf8))
+        XCTAssertEqual(releases.count, ModelFeed.newestLimit + 2)
+        XCTAssertEqual(releases.prefix(ModelFeed.newestLimit).map(\.id), (0..<50).map { "lab/model-\($0)" }, "The newest 50 for new models")
+        XCTAssertEqual(releases.dropFirst(ModelFeed.newestLimit).map(\.id), ["lab/model-52", "lab/model-54"], "Older models only while they're retiring")
+        XCTAssertEqual(releases.last?.expires, utc(2026, 10, 30))
+    }
+
     // MARK: Announcements
 
     private let claudeCode = FeedSource(id: "claude-code", name: "Claude Code", url: URL(string: "https://example.com/rss.xml")!)
@@ -78,6 +92,45 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(items[1].published, utc(2026, 9, 23, 12))
     }
 
+    func testFeedDatesReadTheVariantsFeedsWrite() {
+        XCTAssertEqual(FeedParser.date("Thu, 24 Sep 2026 18:46:38 GMT"), utc(2026, 9, 24, 18, 46, 38))
+        XCTAssertEqual(FeedParser.date("Thu, 24 Sep 2026 18:46:38 +0100"), utc(2026, 9, 24, 17, 46, 38))
+        XCTAssertEqual(FeedParser.date("Thu, 24 Sep 2026 18:46 GMT"), utc(2026, 9, 24, 18, 46), "No seconds")
+        XCTAssertEqual(FeedParser.date("Thu, 24 Sep 26 18:46:38 GMT"), utc(2026, 9, 24, 18, 46, 38), "A two-digit year is this century's, not the year 26")
+        XCTAssertEqual(FeedParser.date("24 Sep 2026 18:46:38 +0000"), utc(2026, 9, 24, 18, 46, 38))
+        XCTAssertEqual(FeedParser.date("2026-09-24T12:00:00Z"), utc(2026, 9, 24, 12))
+        XCTAssertEqual(FeedParser.date("2026-09-24T12:00:00"), utc(2026, 9, 24, 12), "No time zone reads as UTC")
+        XCTAssertEqual(FeedParser.date("2026-09-24 12:00:00Z"), utc(2026, 9, 24, 12), "A space for the T")
+        XCTAssertEqual(FeedParser.date("2026-09-24 12:00:00"), utc(2026, 9, 24, 12))
+        XCTAssertEqual(FeedParser.date("2026-09-24T12:00Z"), utc(2026, 9, 24, 12), "No seconds")
+        XCTAssertEqual(FeedParser.date("2026-09-24T12:00+02:00"), utc(2026, 9, 24, 10))
+        XCTAssertEqual(FeedParser.date(" 2026-09-24 "), utc(2026, 9, 24), "A day alone is its midnight, UTC")
+        XCTAssertNil(FeedParser.date("soon"))
+        XCTAssertNil(FeedParser.date(""))
+    }
+
+    func testAnUndatedEntryIsDatedWhenItArrivesAfterTheFirstRead() {
+        let now = utc(2026, 9, 25, 12)
+        let older = FeedItem(id: "o", title: "Older", link: nil, published: utc(2026, 9, 20), source: "Claude Code")
+        let undated = FeedItem(id: "u", title: "Undated", link: nil, published: nil, source: "Claude Code")
+        let arrived = NewsFetcher.firstSeen([undated, older], previous: [older], now: now)
+        XCTAssertEqual(arrived.first?.published, now, "Dated when it arrives, so it sorts with what came then")
+        XCTAssertEqual(arrived.first?.sortDate, now)
+        XCTAssertNil(arrived.first?.publisherPublishedAt, "The publisher's own date stays unknown")
+        let again = NewsFetcher.firstSeen([undated], previous: arrived, now: now.addingTimeInterval(86_400))
+        XCTAssertEqual(again.first?.published, now, "…and keeps that date, still undated in the feed")
+        let legacy = NewsFetcher.firstSeen([undated], previous: [undated], now: now)
+        XCTAssertNil(legacy.first?.published, "One cached undated by an earlier release isn't dated now")
+
+        // A feed whose dates don't parse: its back catalog doesn't all read as just published.
+        let firstRead = NewsFetcher.firstSeen([undated], previous: [], now: now)
+        XCTAssertNil(firstRead.first?.published, "On a first read an undated entry still sorts last")
+        XCTAssertEqual(firstRead.first?.sortDate, .distantPast)
+        let followedAgain = NewsFetcher.firstSeen([undated], previous: [older], now: now, quiet: true)
+        XCTAssertNil(followedAgain.first?.published, "…and on the quiet read of a feed followed again")
+        XCTAssertEqual(NewsFetcher.firstSeen([older], previous: [], now: now).first?.firstSeenAt, utc(2026, 9, 20), "A quiet read keeps entries' own dates")
+    }
+
     func testAtomReleasesDropPrereleasesAndPackagePrefixes() {
         let atom = Data("""
         <?xml version="1.0" encoding="UTF-8"?>
@@ -95,9 +148,17 @@ final class FeedTests: XCTestCase {
         let items = FeedParser.items(from: atom, source: source)
         XCTAssertEqual(items.map(\.title), ["0.157.0", "2.1.1"])
         XCTAssertEqual(items[0].link?.absoluteString, "https://example.com/releases/tag/v0.157.0")
-        XCTAssertNil(items[0].published, "Missing publication date stays missing")
-        XCTAssertEqual(items[0].updatedAt, utc(2026, 9, 25, 2, 32, 43))
+        XCTAssertEqual(items[0].publisherPublishedAt, utc(2026, 9, 25, 2, 32, 43), "A release dated only by <updated> was released then")
+        XCTAssertEqual(items[0].published, utc(2026, 9, 25, 2, 32, 43))
+        XCTAssertNil(items[0].updatedAt, "…so it doesn't read as \"Updated\"")
         XCTAssertEqual(items[1].published, utc(2026, 9, 24, 7, 45, 5), "published wins over updated")
+        XCTAssertEqual(items[1].updatedAt, utc(2026, 9, 25), "…and an update after it still shows as one")
+
+        // Other feeds keep an <updated> as an update: the publication date stays unknown.
+        let blog = FeedSource(id: "blog", name: "Blog", url: URL(string: "https://example.com/feed.atom")!)
+        let post = FeedParser.items(from: Data("<feed><entry><id>p</id><title>Post</title><link href=\"https://example.com/post\"/><updated>2026-09-25T02:32:43Z</updated></entry></feed>".utf8), source: blog).first
+        XCTAssertNil(post?.publisherPublishedAt)
+        XCTAssertEqual(post?.updatedAt, utc(2026, 9, 25, 2, 32, 43))
     }
 
     func testOnlyAnItemsOwnTitleCounts() {
@@ -236,6 +297,143 @@ final class FeedTests: XCTestCase {
 
     private static let noModels = Data(#"{"data":[]}"#.utf8)
 
+    func testALargeBodyIsReadWholeAndQuickly() async {
+        defer { unstubNetwork() }
+        // About the size of OpenRouter's whole model list, read through the same GET.
+        let body = Data(repeating: UInt8(ascii: "x"), count: 1_500_000)
+        stubNetwork { _ in (200, body) }
+        let started = Date.now
+        guard case let .body(data, _, isTruncated) = await NewsFetcher.get(URL(string: "https://example.com/models")!, validator: nil) else {
+            return XCTFail("A 200 has a body")
+        }
+        XCTAssertEqual(data.count, body.count)
+        XCTAssertFalse(isTruncated, "A complete body is never marked cut off")
+        XCTAssertLessThan(Date.now.timeIntervalSince(started), 3, "Read off the main actor a buffer at a time, not a hop per byte")
+    }
+
+    func testOnScreenChecksLeaveTheModelListToItsHour() async {
+        defer { unstubNetwork() }
+        stubNetwork { request in request.url == ModelFeed.url ? (200, Self.noModels) : (304, Data()) }
+        let now = utc(2026, 10, 21, 12)
+        var cache = NewsCache()
+        cache.modelsFetchedAt = now.addingTimeInterval(-10 * 60)
+        _ = await NewsFetcher.refresh(cache, sources: [], following: [], maxAge: NewsFetcher.liveInterval, now: now)
+        XCTAssertFalse(StubURLProtocol.requests.contains { $0.url == ModelFeed.url }, "The whole list isn't downloaded again every 5 minutes")
+        _ = await NewsFetcher.refresh(cache, sources: [], following: [], maxAge: NewsFetcher.openInterval, now: now.addingTimeInterval(50 * 60))
+        XCTAssertEqual(StubURLProtocol.requests.filter { $0.url == ModelFeed.url }.count, 1, "…but is once its hour is up")
+        _ = await NewsFetcher.refresh(cache, sources: [], following: [], maxAge: 0, now: now)
+        XCTAssertEqual(StubURLProtocol.requests.filter { $0.url == ModelFeed.url }.count, 2, "A pull or Check Now still asks")
+    }
+
+    func testAFeedThatAsksToWaitIsntAskedSooner() async {
+        defer {
+            TokenroomHTTP.overrideSession(nil)
+            StubURLProtocol.reset()
+        }
+        StubURLProtocol.reset()
+        RetryAfterProtocol.retryAfter = "7200"
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RetryAfterProtocol.self]
+        TokenroomHTTP.overrideSession(URLSession(configuration: configuration))
+        let now = utc(2026, 10, 21, 12)
+        var cache = await NewsFetcher.refresh(NewsCache(), sources: [claudeCode], following: [], now: now).cache
+        XCTAssertEqual(cache.sourceChecks?[claudeCode.id]?.retryAt, now.addingTimeInterval(7200))
+        XCTAssertEqual(cache.modelsRetryAt, now.addingTimeInterval(7200))
+        let asked = StubURLProtocol.requests.count
+        for minutes in [5.0, 30, 60, 119] {
+            cache = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], now: now.addingTimeInterval(minutes * 60)).cache
+        }
+        XCTAssertEqual(StubURLProtocol.requests.count, asked, "Nothing goes out before the two hours it asked for")
+        cache = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], now: now.addingTimeInterval(7200)).cache
+        XCTAssertEqual(StubURLProtocol.requests.count, asked + 2, "…and both go out once they're up")
+        _ = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], maxAge: 0, now: now.addingTimeInterval(7260)).cache
+        XCTAssertEqual(StubURLProtocol.requests.count, asked + 4, "A pull or Check Now still goes out")
+
+        // A server asking for days is tried again within six hours.
+        RetryAfterProtocol.retryAfter = "\(3 * 86_400)"
+        let held = await NewsFetcher.refresh(NewsCache(), sources: [claudeCode], following: [], now: now).cache
+        XCTAssertEqual(held.sourceChecks?[claudeCode.id]?.retryAt, now.addingTimeInterval(NewsFetcher.longestRetryAfter))
+        XCTAssertTrue(NewsFetcher.isDue(nil, failedAt: now, failures: 1, retryAt: now.addingTimeInterval(30 * 86_400), interval: 3600, now: now.addingTimeInterval(300)), "A time further off than allowed was saved while the clock was ahead")
+    }
+
+    func testEachFeedShowsAsItArrives() async {
+        defer {
+            TokenroomHTTP.overrideSession(nil)
+            StubURLProtocol.reset()
+        }
+        StubURLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [SlowFeedProtocol.self]
+        TokenroomHTTP.overrideSession(URLSession(configuration: configuration))
+        let fast = FeedSource(id: "fast", name: "Fast", url: URL(string: "https://fast.example.com/feed.xml")!)
+        let slow = FeedSource(id: "slow", name: "Slow", url: URL(string: "https://slow.example.com/feed.xml")!)
+        let shown = LockedBox<[[String]]>([])
+        let result = await NewsFetcher.refresh(NewsCache(), sources: [fast, slow], following: [], now: utc(2026, 10, 21, 12), publish: { cache in
+            shown.value.append(cache.items.keys.sorted())
+        })
+        XCTAssertTrue(shown.value.contains(["fast"]), "The fast feed shows before the slow one is in: \(shown.value)")
+        XCTAssertEqual(shown.value.last, ["fast", "slow"])
+        XCTAssertEqual(Set(result.cache.items.keys), ["fast", "slow"])
+    }
+
+    private static func rss(_ host: String, _ titles: [String]) -> Data {
+        Data("<rss version=\"2.0\"><channel>\(titles.map { "<item><title>\($0)</title><link>https://\(host)/\($0)</link><pubDate>Wed, 21 Oct 2026 09:00:00 GMT</pubDate></item>" }.joined())</channel></rss>".utf8)
+    }
+
+    /// A pass of mostly unchanged answers (304s, a feed that sends the same entries again, the
+    /// same model list) shows only the feed that changed, once: nothing else is folded or shown.
+    func testAPassOfMostlyUnchangedFeedsShowsOnlyWhatChanged() async {
+        defer { unstubNetwork() }
+        let sources = (0..<20).map { FeedSource(id: "feed\($0)", name: "Feed \($0)", url: URL(string: "https://feed\($0).example.com/rss.xml")!) }
+        let listed = models
+        let changed = LockedBox(false)
+        stubNetwork { request in
+            let host = request.url?.host ?? ""
+            if request.url == ModelFeed.url { return (200, listed) }
+            if changed.value, host == "feed0.example.com" { return (200, Self.rss(host, ["new", "old"])) }
+            // A server that doesn't validate sends the same entries again.
+            if host == "feed1.example.com" { return (200, Self.rss(host, ["old"])) }
+            return request.value(forHTTPHeaderField: "If-None-Match") == "\"v1\"" ? (304, Data()) : (200, Self.rss(host, ["old"]))
+        }
+        let now = utc(2026, 10, 21, 12)
+        var cached = await NewsFetcher.refresh(NewsCache(), sources: sources, following: [], now: now).cache
+        // As NewsStore keeps it.
+        cached.retainFoldedIdentities(from: NewsCache(), sources: sources)
+        changed.value = true
+        let shown = LockedBox<[NewsCache]>([])
+        let later = now.addingTimeInterval(600)
+        let result = await NewsFetcher.refresh(cached, sources: sources, following: [], maxAge: 0, now: later, publish: { cache in
+            shown.value.append(cache)
+        })
+        XCTAssertEqual(shown.value.count, 1, "Only the feed that changed is shown before the pass is done")
+        XCTAssertEqual(shown.value.first?.items["feed0"]?.map(\.title), ["new", "old"])
+        XCTAssertEqual(result.cache.items["feed0"]?.map(\.title), ["new", "old"])
+        XCTAssertEqual(result.cache.items["feed1"], cached.items["feed1"], "The same entries again change nothing")
+        XCTAssertEqual(result.cache.sourceChecks?["feed5"]?.succeededAt, later, "A 304 still counts as a check")
+        XCTAssertEqual(result.cache.modelsFetchedAt, later)
+    }
+
+    /// Feeds that change while one is being shown are shown together next, not one by one.
+    func testFeedsThatChangeWhileOneIsShownAreShownTogether() async {
+        defer { unstubNetwork() }
+        let sources = (0..<5).map { FeedSource(id: "feed\($0)", name: "Feed \($0)", url: URL(string: "https://feed\($0).example.com/rss.xml")!) }
+        stubNetwork { request in
+            request.url == ModelFeed.url ? (200, Self.noModels) : (200, Self.rss(request.url?.host ?? "", ["first"]))
+        }
+        let shown = LockedBox<[[String]]>([])
+        let result = await NewsFetcher.refresh(NewsCache(), sources: sources, following: [], now: utc(2026, 10, 21, 12), publish: { cache in
+            // Showing takes a while (folding a whole store): the other feeds arrive meanwhile.
+            if shown.value.isEmpty {
+                let done = ContinuousClock.now + .milliseconds(300)
+                while ContinuousClock.now < done {}
+            }
+            shown.value.append(cache.items.keys.sorted())
+        })
+        XCTAssertEqual(shown.value.count, 2, "The first feed, then the four that came in while it was shown: \(shown.value)")
+        XCTAssertEqual(shown.value.last, sources.map(\.id).sorted())
+        XCTAssertEqual(Set(result.cache.items.keys), Set(sources.map(\.id)))
+    }
+
     func testTheSizeLimitStopsTheDownload() async {
         defer { unstubNetwork() }
         stubNetwork { _ in (200, Data(repeating: UInt8(ascii: "x"), count: 3000)) }
@@ -277,6 +475,57 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(second.cache.validators[source.url.absoluteString]?.etag, "\"v1\"")
     }
 
+    func testFeedsHaveLongerToDownloadThanAProviderCheck() throws {
+        TokenroomHTTP.overrideSession(nil)
+        let session = NewsFetcher.session
+        let configuration = session.configuration
+        XCTAssertGreaterThan(NewsFetcher.downloadTimeout, TokenroomHTTP.timeout)
+        XCTAssertEqual(configuration.timeoutIntervalForResource, NewsFetcher.downloadTimeout, "Room for a 4 MB changelog on a slow network")
+        XCTAssertEqual(configuration.timeoutIntervalForRequest, TokenroomHTTP.timeout, "A stalled download still ends soon")
+        XCTAssertEqual(configuration.httpAdditionalHeaders?["User-Agent"] as? String, TokenroomIdentity.userAgent)
+        XCTAssertNil(configuration.httpCookieStorage)
+        XCTAssertEqual(TokenroomHTTP.defaultSession.configuration.timeoutIntervalForResource, TokenroomHTTP.timeout, "Providers keep theirs")
+
+        // The shared session's redirect rules come along: never to cleartext.
+        let delegate = try XCTUnwrap(session.delegate as? any URLSessionTaskDelegate)
+        let original = URLRequest(url: URL(string: "https://example.invalid/feed.xml")!)
+        let task = session.dataTask(with: original) // Kept suspended: no networking.
+        defer { task.cancel() }
+        let response = try XCTUnwrap(HTTPURLResponse(url: original.url!, statusCode: 301, httpVersion: "HTTP/1.1", headerFields: nil))
+        let answers = LockedBox<[URLRequest?]>([])
+        for destination in ["http://example.invalid/feed.xml", "https://feeds.example.invalid/feed.xml"] {
+            delegate.urlSession?(session, task: task, willPerformHTTPRedirection: response, newRequest: URLRequest(url: URL(string: destination)!)) { answers.value.append($0) }
+        }
+        XCTAssertEqual(answers.value.map { $0?.url?.absoluteString }, [nil, "https://feeds.example.invalid/feed.xml"])
+
+        let stub = URLSession(configuration: .ephemeral)
+        TokenroomHTTP.overrideSession(stub)
+        defer { TokenroomHTTP.overrideSession(nil) }
+        XCTAssertTrue(NewsFetcher.session === stub, "A session tests swap in is used as it is")
+    }
+
+    func testAFeedCutOffPartwayShowsWhatArrived() async {
+        defer { unstubNetwork() }
+        let partial = Data("<rss version=\"2.0\"><channel><item><title>Arrived</title><link>https://example.com/arrived</link><pubDate>Thu, 24 Sep 2026 12:00:00 GMT</pubDate></item><item><title>Cut".utf8)
+        StubURLProtocol.reset()
+        StubURLProtocol.handler = { request in request.url == ModelFeed.url ? (200, Self.noModels) : (200, partial) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [CutOffFeedProtocol.self]
+        TokenroomHTTP.overrideSession(URLSession(configuration: configuration))
+
+        guard case let .body(data, _, isTruncated) = await NewsFetcher.get(claudeCode.url, validator: nil) else {
+            return XCTFail("What arrived before the time ran out is kept")
+        }
+        XCTAssertEqual(data, partial)
+        XCTAssertTrue(isTruncated)
+
+        let now = utc(2026, 9, 25, 12)
+        let cache = await NewsFetcher.refresh(NewsCache(), sources: [claudeCode], following: [], now: now).cache
+        XCTAssertEqual(cache.items["claude-code"]?.map(\.title), ["Arrived"], "It shows, as a feed past its size limit does")
+        XCTAssertEqual(cache.unreadable, ["claude-code"], "…and says it couldn't read the rest")
+        XCTAssertEqual(cache.sourceChecks?["claude-code"]?.failedAt, now)
+    }
+
     func testABrokenFeedKeepsWhatItHad() async {
         defer { unstubNetwork() }
         let page = Data("<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body>Down for maintenance</body></html>".utf8)
@@ -290,6 +539,64 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(result.cache.unreadable, ["claude-code"])
     }
 
+    func testADocumentWithNoEntriesKeepsWhatWasCached() async {
+        defer { unstubNetwork() }
+        let cached = [FeedItem(id: "old", title: "2.1.282", link: URL(string: "https://example.com/2-1-282"), published: utc(2026, 9, 24), source: "Claude Code")]
+        let now = utc(2026, 9, 25, 12)
+        for body in ["<error>rate limited</error>", "<html><body><p>Sign in to the Wi-Fi</p></body></html>", "<rss version=\"2.0\"><channel><title>Changelog</title></channel></rss>"] {
+            stubNetwork { request in request.url == ModelFeed.url ? (200, Self.noModels) : (200, Data(body.utf8)) }
+            var cache = NewsCache()
+            cache.items["claude-code"] = cached
+            let result = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], now: now).cache
+            XCTAssertEqual(result.items["claude-code"]?.map(\.id), ["old"], "\(body) leaves the last items")
+            XCTAssertEqual(result.unreadable, ["claude-code"], "\(body) is a failed read")
+            XCTAssertNil(result.sourceChecks?["claude-code"]?.succeededAt, "\(body) isn't a successful check")
+        }
+
+        // An empty feed is taken at its word only when nothing was cached.
+        let fresh = await NewsFetcher.refresh(NewsCache(), sources: [claudeCode], following: [], now: now).cache
+        XCTAssertEqual(fresh.items["claude-code"], [])
+        XCTAssertNil(fresh.unreadable)
+        XCTAssertEqual(fresh.sourceChecks?["claude-code"]?.succeededAt, now)
+    }
+
+    func testAFeedOfOnlyPrereleasesKeepsTheLastReleases() async {
+        defer { unstubNetwork() }
+        let alphas = Data("""
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><id>tag:example,2008:Repository/1/v0.158.0-alpha.2</id><updated>2026-09-25T10:00:00Z</updated><link rel="alternate" href="https://example.com/v0.158.0-alpha.2"/><title>0.158.0-alpha.2</title></entry>
+          <entry><id>tag:example,2008:Repository/1/v0.158.0-alpha.1</id><updated>2026-09-25T09:00:00Z</updated><link rel="alternate" href="https://example.com/v0.158.0-alpha.1"/><title>0.158.0-alpha.1</title></entry>
+        </feed>
+        """.utf8)
+        stubNetwork { request in request.url == ModelFeed.url ? (200, Self.noModels) : (200, alphas) }
+        let releases = FeedSource(id: "codex-releases", name: "Codex", url: URL(string: "https://example.com/releases.atom")!, skipsPrereleases: true)
+        var cache = NewsCache()
+        cache.items[releases.id] = [FeedItem(id: "v0.157.0", title: "0.157.0", link: URL(string: "https://example.com/v0.157.0"), published: utc(2026, 9, 24), source: "Codex")]
+        let now = utc(2026, 9, 25, 12)
+        let result = await NewsFetcher.refresh(cache, sources: [releases], following: [], now: now).cache
+        XCTAssertEqual(result.items[releases.id]?.map(\.id), ["v0.157.0"], "Nothing left after skipping pre-releases: the last releases stay")
+        XCTAssertNil(result.unreadable, "The feed was read")
+        XCTAssertEqual(result.sourceChecks?[releases.id]?.succeededAt, now)
+    }
+
+    func testAPartialReadKeepsToAFeedsUsualLength() async {
+        defer { unstubNetwork() }
+        let now = utc(2026, 9, 25, 12)
+        var cache = NewsCache()
+        cache.items["long"] = (0..<FeedParser.itemLimit).map { index in
+            FeedItem(id: "old-\(index)", title: "Old \(index)", link: URL(string: "https://example.com/old-\(index)"), published: utc(2026, 9, 1).addingTimeInterval(Double(index) * 3600), source: "Long")
+        }
+        let fresh = (0..<5).map { "<item><title>New \($0)</title><link>https://example.com/new-\($0)</link><pubDate>Thu, 24 Sep 2026 1\($0):00:00 GMT</pubDate></item>" }.joined()
+        let cut = Data("<rss version=\"2.0\"><channel>\(fresh)<item><title>Cut off".utf8)
+        stubNetwork { request in request.url == ModelFeed.url ? (200, Self.noModels) : (200, cut) }
+        let source = FeedSource(id: "long", name: "Long", url: URL(string: "https://example.com/long.xml")!)
+        let items = await NewsFetcher.refresh(cache, sources: [source], following: [], now: now).cache.items["long"] ?? []
+        XCTAssertEqual(items.count, FeedParser.itemLimit, "What arrived joins the last copy, up to a feed's usual length")
+        XCTAssertEqual(items.prefix(5).map(\.title), ["New 4", "New 3", "New 2", "New 1", "New 0"])
+        XCTAssertFalse(items.contains { $0.id == "old-0" || $0.id == "old-4" }, "The oldest give way")
+        XCTAssertEqual(items.last?.id, "old-5")
+    }
+
     func testFailedChecksWaitBeforeAskingAgain() async {
         defer { unstubNetwork() }
         stubNetwork { _ in (503, Data()) }
@@ -300,14 +607,38 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(cache.announcementsFailedAt, now)
         XCTAssertEqual(cache.unreadable, [ModelFeed.id, "claude-code"])
 
-        cache = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], now: now.addingTimeInterval(600)).cache
-        XCTAssertEqual(StubURLProtocol.requests.count, 2, "The next refresh doesn't ask again")
+        XCTAssertEqual(cache.modelsFailures, 1)
+        XCTAssertEqual(cache.sourceChecks?["claude-code"]?.failures, 1)
 
-        cache = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], maxAge: 0, now: now.addingTimeInterval(660)).cache
-        XCTAssertEqual(StubURLProtocol.requests.count, 4, "Asking now (pulling to refresh, Check now) still goes out")
+        // Each failure in a row waits longer: 5 minutes, 15, 30, then an hour.
+        var last = now
+        var expected = 2
+        for (failures, wait) in [(1, 300.0), (2, 900), (3, 1800), (4, 3600), (5, 3600)] {
+            cache = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], now: last.addingTimeInterval(wait - 60)).cache
+            XCTAssertEqual(StubURLProtocol.requests.count, expected, "After \(failures) in a row, not before \(wait) s")
+            last = last.addingTimeInterval(wait)
+            cache = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], now: last).cache
+            expected += 2
+            XCTAssertEqual(StubURLProtocol.requests.count, expected, "After \(failures) in a row, again at \(wait) s")
+            XCTAssertEqual(cache.modelsFailures, failures + 1)
+            XCTAssertEqual(cache.sourceChecks?["claude-code"]?.failures, failures + 1)
+        }
 
-        _ = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], now: now.addingTimeInterval(660 + NewsFetcher.retryInterval))
-        XCTAssertEqual(StubURLProtocol.requests.count, 6, "An hour after the last try, it tries again")
+        cache = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], maxAge: 0, now: last.addingTimeInterval(60)).cache
+        XCTAssertEqual(StubURLProtocol.requests.count, expected + 2, "Asking now (pulling to refresh, Check now) still goes out")
+
+        // An answer starts the count again.
+        StubURLProtocol.handler = { request in request.url == ModelFeed.url ? (200, Self.noModels) : (200, Self.rss("Back", "Thu, 24 Sep 2026 12:00:00 GMT")) }
+        cache = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], maxAge: 0, now: last.addingTimeInterval(120)).cache
+        XCTAssertNil(cache.modelsFailures)
+        XCTAssertNil(cache.sourceChecks?["claude-code"]?.failures)
+        StubURLProtocol.handler = { _ in (503, Data()) }
+        cache = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], maxAge: 0, now: last.addingTimeInterval(180)).cache
+        XCTAssertEqual(cache.sourceChecks?["claude-code"]?.failures, 1)
+        XCTAssertEqual(cache.modelsFailures, 1)
+        let count = StubURLProtocol.requests.count
+        _ = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], now: last.addingTimeInterval(180 + 300)).cache
+        XCTAssertEqual(StubURLProtocol.requests.count, count + 2, "Back to a 5-minute wait")
     }
 
     func testCatalogIsHTTPSAndUnique() {
@@ -319,8 +650,229 @@ final class FeedTests: XCTestCase {
         let changelog = try XCTUnwrap(FeedSource.catalog.first { $0.id == "codex-changelog" })
         XCTAssertEqual(changelog.linkContains, "#codex-", "Its CLI entries repeat codex-releases")
         XCTAssertEqual(changelog.sizeLimit, 4 * 1024 * 1024)
-        XCTAssertTrue(FeedSource.catalog.filter { $0.url.host == "github.com" }.allSatisfy(\.skipsPrereleases), "Release feeds skip pre-releases")
+        let releaseFeeds = FeedSource.catalog.filter { $0.url.path.hasSuffix("/releases.atom") }
+        XCTAssertGreaterThanOrEqual(releaseFeeds.count, 9)
+        for source in releaseFeeds {
+            XCTAssertTrue(source.skipsPrereleases, "\(source.id) is a release feed, so it skips pre-releases")
+        }
+        XCTAssertFalse(try XCTUnwrap(FeedSource.catalog.first { $0.id == "claude-skills" }).skipsPrereleases, "A commit feed has no pre-releases to skip")
         XCTAssertTrue(FeedSource.catalog.filter { $0.id != "codex-changelog" }.allSatisfy { $0.sizeLimit == FeedParser.sizeLimit })
+    }
+
+    /// The official feeds added in October 2026, checked live from the main checkout that day.
+    private static let addedSources: [String: Provider] = [
+        "gemini-cli": .antigravity, "copilot-cli": .copilot, "opencode": .opencodeGo, "claude-code-whats-new": .claude,
+        "claude-agent-sdk": .claude, "claude-skills": .claude, "deepmind": .antigravity,
+    ]
+
+    @MainActor
+    func testTheAddedSourcesAreTogglesWithTheirToolsIcons() throws {
+        let added = FeedSource.catalog.filter { Self.addedSources[$0.id] != nil }
+        XCTAssertEqual(Set(added.map(\.id)), Set(Self.addedSources.keys))
+        for source in added {
+            XCTAssertEqual(source.provider, Self.addedSources[source.id], "\(source.id) shows its tool's icon")
+            XCTAssertNil(source.partOf, "\(source.id) is turned on and off by itself")
+            XCTAssertTrue(FeedSource.toggles.contains(source))
+            XCTAssertEqual(source.kind, .officialAnnouncement)
+        }
+        XCTAssertEqual(Set(added.filter(\.skipsPrereleases).map(\.id)), ["gemini-cli", "copilot-cli", "opencode", "claude-agent-sdk"])
+        XCTAssertTrue(added.allSatisfy { !NewsStore.firstCatalog.contains($0.id) }, "New since 2.0, so a list saved before turns them on")
+    }
+
+    func testPrereleasesIncludeNightliesPreviewsAndNumberedOnes() throws {
+        for title in ["v0.67.0-nightly.20261021.gd00859d6b", "v0.66.0-preview.0", "1.0.102-0", "1.0.102-1", "0.158.0-alpha.14",
+                      "2.2.0-rc.1", "2.2.0 beta", "1.0.0-canary.3", "1.2.0.dev1", "3.0.0-next.2", "1.0.0-SNAPSHOT"] {
+            XCTAssertTrue(FeedParser.isPrerelease(title), title)
+        }
+        for title in ["Release v0.65.0", "1.0.102", "v2.1.2", "v0.66.0", "Claude Code 2.1.282", "kimi-code-2.1.1",
+                      "What's next for Gemini", "Developer preview of agents", "2026-10-21 release notes"] {
+            XCTAssertFalse(FeedParser.isPrerelease(title), title)
+        }
+        // Gemini CLI's releases as published: mostly nightlies and previews.
+        let gemini = try XCTUnwrap(FeedSource.catalog.first { $0.id == "gemini-cli" })
+        let atom = Data("""
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><id>n</id><title>v0.67.0-nightly.20261021.gd00859d6b</title><link href="https://github.com/google-gemini/gemini-cli/releases/tag/n"/><updated>2026-10-21T00:00:00Z</updated></entry>
+          <entry><id>p</id><title>v0.66.0-preview.0</title><link href="https://github.com/google-gemini/gemini-cli/releases/tag/p"/><updated>2026-10-20T00:00:00Z</updated></entry>
+          <entry><id>s</id><title>Release v0.65.0</title><link href="https://github.com/google-gemini/gemini-cli/releases/tag/s"/><updated>2026-10-19T00:00:00Z</updated></entry>
+        </feed>
+        """.utf8)
+        XCTAssertEqual(FeedParser.items(from: atom, source: gemini).map(\.title), ["Release v0.65.0"])
+    }
+
+    func testOpenCodeReadsItsNewHomeWithoutItsGitHubIntegrationsReleases() throws {
+        let opencode = try XCTUnwrap(FeedSource.catalog.first { $0.id == "opencode" })
+        XCTAssertEqual(opencode.url.absoluteString, "https://github.com/anomalyco/opencode/releases.atom", "sst/opencode answers with a redirect here")
+        let atom = Data("""
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><id>a</id><title>v1.2.28</title><link href="https://github.com/anomalyco/opencode/releases/tag/v1.2.28"/><updated>2026-10-21T00:00:00Z</updated></entry>
+          <entry><id>b</id><title>github-v1.2.27</title><link href="https://github.com/anomalyco/opencode/releases/tag/github-v1.2.27"/><updated>2026-10-20T00:00:00Z</updated></entry>
+          <entry><id>c</id><title>GitHub-v1.2.26</title><link href="https://github.com/anomalyco/opencode/releases/tag/github-v1.2.26"/><updated>2026-10-19T00:00:00Z</updated></entry>
+          <entry><id>d</id><title>v1.2.27</title><link href="https://github.com/anomalyco/opencode/releases/tag/v1.2.27"/><updated>2026-10-18T00:00:00Z</updated></entry>
+        </feed>
+        """.utf8)
+        XCTAssertEqual(FeedParser.items(from: atom, source: opencode).map(\.displayTitle), ["OpenCode v1.2.28", "OpenCode v1.2.27"])
+        let read = FeedParser.read(atom, source: opencode)
+        XCTAssertEqual(read.entries, 4, "Left out, not missing: the feed is still whole")
+        XCTAssertTrue(read.isComplete)
+    }
+
+    /// Google's Keyword blog and DeepMind's post some stories under different links and slugs
+    /// (checked live in October 2026): the same title within a couple of days is one row.
+    func testGoogleDeepMindAndGeminiShowAPostTheyShareOnce() throws {
+        let gemini = try XCTUnwrap(FeedSource.catalog.first { $0.id == "gemini" })
+        let deepmind = try XCTUnwrap(FeedSource.catalog.first { $0.id == "deepmind" })
+        let models = "https://blog.google/innovation-and-ai/models-and-research/gemini-models/"
+        // (DeepMind title and link, Keyword blog title and link, hours the blog's copy came later)
+        let pairs: [(String, String, String, String, Double)] = [
+            ("Gemini 4 Argon: Built to solve your hardest problems", "https://deepmind.google/blog/introducing-gemini-4-argon/",
+             "Gemini 4 Argon: Built to solve your hardest problems", models + "introducing-gemini-4-argon-model/", 1),
+            ("Gemini 4 Argon: our next era of frontier intelligence", "https://deepmind.google/blog/gemini-4-argon-our-next-era-of-frontier-intelligence/",
+             "Gemini 4 Argon: our next era of frontier intelligence", models + "gemini-4-argon/", 0.5),
+            ("Gemini 3.8 text-to-speech says hello", "https://deepmind.google/blog/say-hello-to-gemini-38-text-to-speech/",
+             "Gemini 3.8 text-to-speech says hello", models + "gemini-3-8-text-to-speech/", 30),
+            ("Developing Gemini 4 Argon responsibly and safely", "https://deepmind.google/blog/developing-gemini-4-argon-responsibly-and-safely/",
+             "Developing  Gemini 4 Argon responsibly and  safely", "https://blog.google/innovation-and-ai/technology/safety-security/gemini-4-model-safety-security/", 2),
+            ("Introducing Gemini 3.8 Live with Live Avatar", "https://deepmind.google/blog/introducing-gemini-38-live-with-live-avatar/",
+             "introducing Gemini 3.8 Live with Live&#160;Avatar", models + "gemini-3-8-live-avatar/", 3),
+            ("Introducing Gemini 3.8 Live and 3.8 Live Extended Thinking", "https://deepmind.google/blog/introducing-gemini-38-live-and-38-live-extended-thinking/",
+             "Introducing Gemini 3.8 Live and 3.8 Live Extended Thinking", models + "gemini-3-8-live-extended-thinking/", -4),
+            ("Gemini\u{2019}s next chapter", "https://deepmind.google/blog/geminis-next-chapter/",
+             "Gemini's next chapter", models + "next-chapter/", 5),
+        ]
+        let start = utc(2026, 10, 1, 9)
+        var cache = NewsCache()
+        cache.items["deepmind"] = pairs.enumerated().map { index, pair in
+            FeedItem(id: "d\(index)", title: pair.0, link: URL(string: pair.1), published: start.addingTimeInterval(Double(index) * 86_400 * 3), source: "Google DeepMind")
+        }
+        cache.items["gemini"] = pairs.enumerated().map { index, pair in
+            FeedItem(id: "g\(index)", title: pair.2, link: URL(string: pair.3), published: start.addingTimeInterval(Double(index) * 86_400 * 3 + pair.4 * 3600), source: "Google Gemini")
+        }
+        // Similar but different posts stay two rows, and so does a title used again weeks later.
+        cache.items["deepmind"]?.append(FeedItem(id: "robotics", title: "Gemini 4 Argon for Robotics", link: URL(string: "https://deepmind.google/blog/gemini-4-argon-for-robotics/"), published: utc(2026, 10, 25, 9), source: "Google DeepMind"))
+        cache.items["gemini"]?.append(FeedItem(id: "app", title: "Gemini 4 Argon comes to the Gemini app", link: URL(string: models + "gemini-app-argon/"), published: utc(2026, 10, 25, 10), source: "Google Gemini"))
+        cache.items["deepmind"]?.append(FeedItem(id: "recap-1", title: "Gemini Drop: October", link: URL(string: "https://deepmind.google/blog/gemini-drop/"), published: utc(2026, 9, 1), source: "Google DeepMind"))
+        cache.items["gemini"]?.append(FeedItem(id: "recap-2", title: "Gemini Drop: October", link: URL(string: models + "gemini-drop-october/"), published: utc(2026, 9, 20), source: "Google Gemini"))
+
+        let shown = cache.announcements(from: [gemini, deepmind])
+        XCTAssertEqual(shown.count, pairs.count + 4, "Each shared post once; the near misses and the later repeat stay apart")
+        for pair in pairs {
+            let rows = shown.filter { NewsCache.comparableTitle($0.title) == NewsCache.comparableTitle(pair.2) }
+            XCTAssertEqual(rows.count, 1, pair.0)
+            XCTAssertNotNil(rows.first?.alsoIn, "\(pair.0) notes the other blog")
+        }
+        XCTAssertTrue(shown.contains { $0.id == "robotics" } && shown.contains { $0.id == "app" }, "Similar titles are different posts")
+        XCTAssertEqual(shown.filter { $0.title == "Gemini Drop: October" }.count, 2, "Nineteen days apart: two posts")
+
+        // The row keeps the earliest arrival, so the second blog catching up doesn't make it new.
+        var arrivals = NewsCache()
+        arrivals.items["deepmind"] = [FeedItem(id: "d", title: "Gemini 4 Argon: Built to solve your hardest problems", link: URL(string: "https://deepmind.google/blog/introducing-gemini-4-argon/"), published: start, source: "Google DeepMind", firstSeenAt: start)]
+        arrivals.items["gemini"] = [FeedItem(id: "g", title: "Gemini 4 Argon: Built to solve your hardest problems", link: URL(string: models + "introducing-gemini-4-argon-model/"), published: start.addingTimeInterval(3600), source: "Google Gemini", firstSeenAt: start.addingTimeInterval(6 * 3600))]
+        XCTAssertEqual(arrivals.announcements(from: [gemini, deepmind]).map(\.newsDate), [start])
+
+        // The fold is these two feeds' only: another tool's same title is its own post.
+        var others = NewsCache()
+        let cursor = try XCTUnwrap(FeedSource.catalog.first { $0.id == "cursor" })
+        others.items["gemini"] = [FeedItem(id: "g", title: "Faster agents", link: URL(string: models + "faster-agents/"), published: start, source: "Google Gemini")]
+        others.items["cursor"] = [FeedItem(id: "c", title: "Faster agents", link: URL(string: "https://cursor.com/changelog#faster"), published: start, source: "Cursor")]
+        XCTAssertEqual(others.announcements(from: [gemini, cursor]).count, 2)
+
+        // Links still match however they're written, and changelog anchors stay apart.
+        var links = NewsCache()
+        links.items["gemini"] = [FeedItem(id: "g", title: "Try Gemini in Chrome", link: URL(string: models + "gemini-in-chrome/?utm_source=rss"), published: start, source: "Google Gemini")]
+        links.items["deepmind"] = [FeedItem(id: "d", title: "Gemini comes to Chrome", link: URL(string: "https://www.blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-in-chrome"), published: start.addingTimeInterval(-30 * 86_400), source: "Google DeepMind")]
+        XCTAssertEqual(links.announcements(from: [gemini, deepmind]).count, 1)
+        var anchors = NewsCache()
+        anchors.items["cursor"] = (1...3).map { FeedItem(id: "c\($0)", title: "Release \($0)", link: URL(string: "https://cursor.com/changelog#1-\($0)"), published: utc(2026, 10, $0), source: "Cursor") }
+        XCTAssertEqual(anchors.announcements(from: [cursor]).count, 3)
+    }
+
+    func testOpenCodesPullRequestArtifactsAreLeftOut() throws {
+        let opencode = try XCTUnwrap(FeedSource.catalog.first { $0.id == "opencode" })
+        let atom = Data("""
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><id>a</id><title>PR #38252 verification videos</title><link href="https://github.com/anomalyco/opencode/releases/tag/pr-38252"/><updated>2026-10-21T00:00:00Z</updated></entry>
+          <entry><id>b</id><title>v1.2.28</title><link href="https://github.com/anomalyco/opencode/releases/tag/v1.2.28"/><updated>2026-10-20T00:00:00Z</updated></entry>
+        </feed>
+        """.utf8)
+        XCTAssertEqual(FeedParser.items(from: atom, source: opencode).map(\.title), ["v1.2.28"])
+    }
+
+    func testTheSkillsLogShowsADaysUpdatesOnceAndWholeWords() throws {
+        let skills = try XCTUnwrap(FeedSource.catalog.first { $0.id == "claude-skills" })
+        func entry(_ sha: String, _ title: String, _ time: String) -> String {
+            "<entry><id>tag:github.com,2008:Grit::Commit/\(sha)</id><link rel=\"alternate\" href=\"https://github.com/anthropics/skills/commit/\(sha)\"/><title>\(title)</title><updated>\(time)</updated></entry>"
+        }
+        let atom = Data("""
+        <feed xmlns="http://www.w3.org/2005/Atom">
+        \(entry("a3", "Update claude-api skill: add guidance for structured outp…", "2026-10-21T18:00:00Z"))
+        \(entry("a2", "Update claude-api skill (#1601)", "2026-10-21T12:00:00Z"))
+        \(entry("p1", "Update pdf skill (#1600)", "2026-10-21T11:00:00Z"))
+        \(entry("n1", "Add discernment-nudge skill (#1553)", "2026-10-21T10:00:00Z"))
+        \(entry("a1", "Update claude-api skill (#1590)", "2026-10-20T09:00:00Z"))
+        </feed>
+        """.utf8)
+        let items = FeedParser.items(from: atom, source: skills)
+        XCTAssertEqual(items.map { $0.id.components(separatedBy: "/").last }, ["a3", "p1", "n1", "a1"], "One row per thing updated a day, the newest; a new skill always shows")
+        XCTAssertEqual(items.first?.displayTitle, "Update claude-api skill: add guidance for structured…", "GitHub's cut word goes; the ellipsis stays")
+        XCTAssertEqual(FeedParser.wholeWords("Short title"), "Short title")
+        XCTAssertEqual(FeedParser.wholeWords("Trailing space …"), "Trailing space…")
+        XCTAssertEqual(FeedParser.wholeWords("Onewordcutoff…"), "Onewordcutoff…", "Nothing to cut back to")
+    }
+
+    /// A day's commits fold by the thing they update, not the word after "Update": "the docx
+    /// skill" and "the pdf skill" are two things, as are "docs for" two different ones.
+    func testADaysUpdatesFoldOnlyWhenTheyUpdateTheSameThing() throws {
+        let skills = try XCTUnwrap(FeedSource.catalog.first { $0.id == "claude-skills" })
+        func entry(_ sha: String, _ title: String, _ time: String) -> String {
+            "<entry><id>tag:github.com,2008:Grit::Commit/\(sha)</id><link rel=\"alternate\" href=\"https://github.com/anthropics/skills/commit/\(sha)\"/><title>\(title)</title><updated>\(time)</updated></entry>"
+        }
+        let atom = Data("""
+        <feed xmlns="http://www.w3.org/2005/Atom">
+        \(entry("d3", "Update the docx skill: handle tracked changes", "2026-10-21T17:00:00Z"))
+        \(entry("d2", "Update the docx skill (#1610)", "2026-10-21T15:00:00Z"))
+        \(entry("d1", "Update docx skill (#1609)", "2026-10-21T14:00:00Z"))
+        \(entry("p1", "Update the pdf skill (#1608)", "2026-10-21T11:00:00Z"))
+        \(entry("g2", "Update docs for the xlsx skill (#1606)", "2026-10-21T10:00:00Z"))
+        \(entry("g1", "Update docs for skill authoring (#1605)", "2026-10-21T09:00:00Z"))
+        </feed>
+        """.utf8)
+        let items = FeedParser.items(from: atom, source: skills)
+        XCTAssertEqual(items.map { $0.id.components(separatedBy: "/").last }, ["d3", "p1", "g2", "g1"], "The docx skill's three updates show once, the newest; the pdf skill and each docs change show")
+    }
+
+    func testCommitsWithTheSameMessageStayApartAndShowWithoutTheirPullRequestNumber() throws {
+        func entry(_ sha: String, _ title: String, _ day: Int) -> String {
+            """
+            <entry><id>tag:github.com,2008:Grit::Commit/\(sha)</id><link type="text/html" rel="alternate" href="https://github.com/anthropics/skills/commit/\(sha)"/>
+              <title>
+                  \(title)
+              </title><updated>2026-10-\(day)T09:00:00Z</updated></entry>
+            """
+        }
+        let atom = Data("""
+        <feed xmlns="http://www.w3.org/2005/Atom"><title>Recent Commits to skills:main</title>
+        \(entry("c162", "Update pdf skill (#162)", 20))
+        \(entry("c140", "Update pdf skill (#140)", 18))
+        \(entry("r2", "Update README.md", 17))
+        \(entry("r1", "Update README.md", 16))
+        \(entry("n1", "Update the (#1) ranking notes", 15))
+        </feed>
+        """.utf8)
+        let skills = try XCTUnwrap(FeedSource.catalog.first { $0.id == "claude-skills" })
+        let items = FeedParser.items(from: atom, source: skills)
+        XCTAssertEqual(items.map(\.id).map { $0.components(separatedBy: "/").last }, ["c162", "c140", "r2", "r1", "n1"], "Each commit is its own entry, whatever its message")
+        XCTAssertEqual(items.map(\.displayTitle), ["Update pdf skill", "Update pdf skill", "Update README.md", "Update README.md", "Update the (#1) ranking notes"], "Only a trailing pull request number is left off, and only when shown")
+        XCTAssertEqual(items.first?.title, "Update pdf skill (#162)")
+
+        // Read before with the older commits; the newer pdf commit arrives later and is new.
+        var cache = NewsCache()
+        cache.items[skills.id] = NewsFetcher.firstSeen(Array(items.dropFirst()), previous: [], now: utc(2026, 10, 19))
+        cache.items[skills.id] = NewsFetcher.firstSeen(items, previous: cache.items[skills.id] ?? [], now: utc(2026, 10, 21))
+        let shown = cache.announcements(from: [skills])
+        XCTAssertEqual(shown.count, 5, "Nothing folds by title in a commit feed")
+        XCTAssertEqual(shown.first { $0.id.hasSuffix("c162") }?.newsDate, utc(2026, 10, 21), "The new commit counts from when it arrived")
+        XCTAssertEqual(FeedParser.cleanTitle("@scope/package@2.1.1"), "2.1.1")
     }
 
     // MARK: Titles and duplicates
@@ -544,6 +1096,9 @@ final class FeedTests: XCTestCase {
         var checked = NewsCache()
         checked.modelsFetchedAt = utc(2026, 9, 24)
         checked.announcementsFetchedAt = utc(2026, 9, 24)
+        // Read before, so what they bring now is new: a feed's first read marks nothing new.
+        let older = FeedItem(id: "older", title: "Older", link: URL(string: "https://example.com/older"), published: utc(2026, 9, 20), source: "Claude Code")
+        checked.items = ["claude-code": [older], "claude-code-releases": [older]]
         checked.save(to: folder)
         let defaults = makeDefaults()
         defaults.set(utc(2026, 9, 24).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt)
@@ -562,6 +1117,255 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(news.announcements.first?.published, now, "Once its date has passed, it keeps the one it arrived with")
         XCTAssertEqual(news.models().first?.created, now)
         XCTAssertEqual(news.unseenCount(now: utc(2026, 9, 28)), 0, "…so it isn't new again")
+    }
+
+    /// Feeds read before, with a cached copy each, as of `checkedAt`.
+    private func readBefore(_ ids: [String], checkedAt: Date) -> NewsCache {
+        var cache = NewsCache()
+        cache.modelsFetchedAt = checkedAt
+        cache.announcementsFetchedAt = checkedAt
+        for id in ids {
+            cache.items[id] = [FeedItem(id: "older", title: "Older", link: URL(string: "https://example.com/older"), published: checkedAt.addingTimeInterval(-86_400), source: id)]
+            cache.sourceChecks = (cache.sourceChecks ?? [:]).merging([id: .init(succeededAt: checkedAt)]) { $1 }
+        }
+        return cache
+    }
+
+    @MainActor
+    func testAnEntryDatedBeforeItArrivedIsStillNew() async throws {
+        defer { unstubNetwork() }
+        let folder = try makeFolder()
+        readBefore(["claude-code", "claude-code-releases"], checkedAt: utc(2026, 9, 26, 9)).save(to: folder)
+        let defaults = makeDefaults()
+        defaults.set(utc(2026, 9, 26, 10).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt) // Looked at 10:00.
+        let news = NewsStore(defaults: defaults, directory: folder, notify: { _, _, _ in })
+        news.followedSources = ["claude-code"]
+        // Dated by the day, so midnight, but only in the feed at 14:00.
+        let feed = Self.rss("Midnight-post", "Sat, 26 Sep 2026 00:00:00 GMT")
+        stubNetwork { request in request.url == ModelFeed.url ? (304, Data()) : (200, feed) }
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: utc(2026, 9, 26, 14))
+        let post = try XCTUnwrap(news.allAnnouncements.first { $0.title == "Midnight-post" })
+        XCTAssertEqual(post.newsDate, utc(2026, 9, 26, 14), "New as of when it arrived")
+        XCTAssertEqual(post.sortDate, utc(2026, 9, 26), "Still sorted and shown by its own date")
+        XCTAssertEqual(news.unseenAnnouncementCount, 1, "Badged, though dated before the last look")
+
+        news.beginVisit(now: utc(2026, 9, 26, 15))
+        XCTAssertTrue(news.isNew(post.newsDate), "…and marked New on the next")
+        let edition = NewsEditions.today(models: [], announcements: news.allAnnouncements, retiring: [], since: news.visitBaseline, now: utc(2026, 9, 26, 15))
+        XCTAssertEqual(edition.digest.updates, 1)
+        XCTAssertEqual(edition.tools.first { $0.sourceID == "claude-code" || $0.source == "Claude Code" }?.newCount, 1)
+    }
+
+    /// Updating to a release with the added feeds: they start on, are read on the next check,
+    /// and their back catalogs, recent posts included, aren't badged or marked New.
+    @MainActor
+    func testTheAddedSourcesStartOnAndTheirBackCatalogsArentNew() async throws {
+        defer { unstubNetwork() }
+        let added = Set(Self.addedSources.keys)
+        let folder = try makeFolder()
+        readBefore(["claude-code", "claude-code-releases"], checkedAt: utc(2026, 10, 20, 9)).save(to: folder)
+        let defaults = makeDefaults()
+        defaults.set(utc(2026, 10, 20, 10).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt)
+        defaults.set(["claude-code"], forKey: NewsStore.Keys.sources)
+        defaults.set(FeedSource.catalog.map(\.id).filter { !added.contains($0) }, forKey: NewsStore.Keys.knownSources)
+        let news = NewsStore(defaults: defaults, directory: folder, notify: { _, _, _ in })
+        XCTAssertEqual(news.followedSources, added.union(["claude-code"]), "Added since the list was saved: they start on")
+
+        let ids = Dictionary(uniqueKeysWithValues: FeedSource.catalog.filter { added.contains($0.id) }.map { ($0.url, $0.id) })
+        // Each one's back catalog has a post from after the last look.
+        stubNetwork { request in
+            guard let url = request.url, let id = ids[url] else { return (304, Data()) }
+            return (200, Self.rss("Archive-\(id)", "Tue, 20 Oct 2026 12:00:00 GMT"))
+        }
+        await news.refresh(preferences: AlertPreferences(), notifies: false, now: utc(2026, 10, 20, 14))
+        for id in added {
+            XCTAssertEqual(news.cache.items[id]?.map(\.title), ["Archive-\(id)"], "\(id) is read on the next check")
+        }
+        XCTAssertEqual(news.unseenAnnouncementCount, 0, "No back catalog is badged")
+        news.beginVisit(now: utc(2026, 10, 20, 15))
+        XCTAssertFalse(news.allAnnouncements.contains { added.contains($0.sourceID ?? "") && news.isNew($0.newsDate) }, "…or marked New")
+        news.endVisit()
+
+        // What they bring after that is new.
+        stubNetwork { request in
+            guard let url = request.url, let id = ids[url] else { return (304, Data()) }
+            return (200, Data("<rss version=\"2.0\"><channel><item><title>Next-\(id)</title><link>https://example.com/Next-\(id)</link><pubDate>Tue, 20 Oct 2026 16:00:00 GMT</pubDate></item><item><title>Archive-\(id)</title><link>https://example.com/Archive-\(id)</link><pubDate>Tue, 20 Oct 2026 12:00:00 GMT</pubDate></item></channel></rss>".utf8))
+        }
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: utc(2026, 10, 20, 17))
+        XCTAssertEqual(news.unseenAnnouncementCount, added.count)
+    }
+
+    /// Turned off, then followed again before it was ever read: the feed is fetched at once.
+    @MainActor
+    func testFollowingAnAddedSourceFetchesItAtOnce() async throws {
+        let defaults = makeDefaults()
+        defaults.set(FeedSource.catalog.map(\.id).filter { $0 != "deepmind" }, forKey: NewsStore.Keys.sources)
+        defaults.set(FeedSource.catalog.map(\.id), forKey: NewsStore.Keys.knownSources)
+        let forced = LockedBox<[Set<String>]>([])
+        let news = NewsStore(defaults: defaults, directory: try makeFolder(), fetch: { request in
+            forced.value.append(request.forcedSources)
+            return .init(cache: request.cache, newModels: [])
+        }, notify: { _, _, _ in })
+        XCTAssertFalse(news.followedSources.contains("deepmind"), "Turned off stays off")
+        news.followedSources.insert("deepmind")
+        for _ in 0..<200 where forced.value.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(forced.value, [["deepmind"]])
+        XCTAssertTrue(news.sources.contains { $0.id == "deepmind" })
+    }
+
+    /// Unfollowed for a month while News was in use, then followed again: what the feed and the
+    /// voice published meanwhile is their back catalog, not a flood of New.
+    @MainActor
+    func testFollowingASourceAgainBringsWhatItMissedQuietly() async throws {
+        defer { unstubNetwork() }
+        let now = Date.now
+        let month = now.addingTimeInterval(-30 * 86_400)
+        let voice = try XCTUnwrap(NewsVoice.catalog.first?.feed)
+        let folder = try makeFolder()
+        var cache = readBefore(["claude-code", "claude-code-releases", "codex-releases", voice.id], checkedAt: month)
+        cache.modelsFetchedAt = now.addingTimeInterval(-60)
+        cache.save(to: folder)
+        let defaults = makeDefaults()
+        defaults.set(now.addingTimeInterval(-3600).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt) // Looked an hour ago.
+        defaults.set(FeedSource.catalog.map(\.id).filter { $0 != "codex-releases" }, forKey: NewsStore.Keys.sources)
+        defaults.set(FeedSource.catalog.map(\.id), forKey: NewsStore.Keys.knownSources)
+        let news = NewsStore(defaults: defaults, directory: folder, now: now, notify: { _, _, _ in })
+        XCTAssertFalse(news.followedSources.contains("codex-releases"))
+
+        // Each feed has three posts from the month it wasn't followed, and its old one.
+        let missed = (1...3).map { "<item><title>Missed-\($0)</title><link>https://example.com/Missed-\($0)</link><pubDate>\(Self.rfc822(month.addingTimeInterval(Double($0) * 86_400)))</pubDate></item>" }.joined()
+        let feed = Data("<rss version=\"2.0\"><channel>\(missed)<item><title>Older</title><link>https://example.com/older</link></item></channel></rss>".utf8)
+        let codex = try XCTUnwrap(FeedSource.catalog.first { $0.id == "codex-releases" }).url
+        let followedAgain: Set<URL> = [codex, voice.url]
+        stubNetwork { request in followedAgain.contains(request.url!) ? (200, feed) : (304, Data()) }
+        news.followedSources.insert("codex-releases")
+        news.followedVoices.insert(voice.id)
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: now)
+        for _ in 0..<200 where news.isRefreshing { try await Task.sleep(for: .milliseconds(10)) }
+        for id in ["codex-releases", voice.id] {
+            XCTAssertEqual(news.cache.items[id]?.filter { $0.title.hasPrefix("Missed") }.count, 3, "\(id) was read")
+        }
+        XCTAssertEqual(news.unseenAnnouncementCount, 0, "What they published while unfollowed isn't badged")
+        news.beginVisit(now: now.addingTimeInterval(60))
+        XCTAssertFalse(news.allAnnouncements.contains { news.isNew($0.newsDate) }, "…or marked New")
+        news.endVisit()
+
+        // After that read, what they bring is new again.
+        let next = Data("<rss version=\"2.0\"><channel><item><title>Next</title><link>https://example.com/Next</link><pubDate>\(Self.rfc822(now))</pubDate></item>\(missed)</channel></rss>".utf8)
+        stubNetwork { request in followedAgain.contains(request.url!) ? (200, next) : (304, Data()) }
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: now.addingTimeInterval(120))
+        for _ in 0..<200 where news.isRefreshing { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(news.cache.items["codex-releases"]?.contains { $0.title == "Next" && ($0.newsDate ?? .distantPast) > news.seenAt } == true)
+        XCTAssertTrue(news.cache.items[voice.id]?.contains { $0.title == "Next" && ($0.newsDate ?? .distantPast) > news.seenAt } == true)
+    }
+
+    private static func rfc822(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss 'GMT'"
+        return formatter.string(from: date)
+    }
+
+    /// An older post that newly enters the feed's 30-entry window was out before the last read,
+    /// so it isn't new; a post dated by the day that turns up a few hours later still is.
+    func testAnOldEntryEnteringTheWindowKeepsItsOwnDate() async {
+        defer { unstubNetwork() }
+        let now = utc(2026, 10, 21, 14)
+        var cache = readBefore(["claude-code"], checkedAt: now.addingTimeInterval(-3600))
+        cache.items["claude-code"] = [FeedItem(id: "https://example.com/older", title: "Older", link: URL(string: "https://example.com/older"), published: utc(2026, 10, 19), source: "Claude Code")]
+        let feed = Data("""
+        <rss version="2.0"><channel>
+          <item><title>Midnight</title><link>https://example.com/midnight</link><pubDate>Wed, 21 Oct 2026 00:00:00 GMT</pubDate></item>
+          <item><title>Older</title><link>https://example.com/older</link><pubDate>Mon, 19 Oct 2026 00:00:00 GMT</pubDate></item>
+          <item><title>Ten-days-old</title><link>https://example.com/ten-days-old</link><pubDate>Sun, 11 Oct 2026 12:00:00 GMT</pubDate></item>
+        </channel></rss>
+        """.utf8)
+        stubNetwork { request in request.url == ModelFeed.url ? (304, Data()) : (200, feed) }
+        let items = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], now: now).cache.items["claude-code"] ?? []
+        XCTAssertEqual(items.first { $0.title == "Ten-days-old" }?.newsDate, utc(2026, 10, 11, 12), "Out ten days before the last read: not new")
+        XCTAssertEqual(items.first { $0.title == "Midnight" }?.newsDate, now, "Dated by the day, arrived since the last read: new")
+    }
+
+    /// A model listed after the last visit though created before it is new, as an announcement
+    /// is; an old model newly in the list (one OpenRouter will retire) isn't.
+    @MainActor
+    func testAModelListedAfterTheLastVisitIsNew() async throws {
+        defer { unstubNetwork() }
+        let now = Date.now
+        let folder = try makeFolder()
+        var cache = readBefore([], checkedAt: now.addingTimeInterval(-3600))
+        cache.models = [ModelRelease(id: "anthropic/claude-a", name: "Anthropic: A", vendor: "anthropic", created: now.addingTimeInterval(-86_400), contextLength: nil, promptPrice: nil, completionPrice: nil, expires: nil)]
+        cache.save(to: folder)
+        let defaults = makeDefaults()
+        defaults.set(now.addingTimeInterval(-1800).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt) // Looked half an hour ago.
+        let news = NewsStore(defaults: defaults, directory: folder, now: now, notify: { _, _, _ in })
+        func model(_ id: String, _ created: Date, expires: String = "") -> String {
+            #"{"id":"anthropic/\#(id)","name":"Anthropic: \#(id)","created":\#(Int(created.timeIntervalSince1970))\#(expires)}"#
+        }
+        let list = Data(#"{"data":[\#(model("claude-b", now.addingTimeInterval(-7200))),\#(model("claude-a", now.addingTimeInterval(-86_400))),\#(model("claude-old", now.addingTimeInterval(-90 * 86_400), expires: #","expiration_date":"2026-12-31""#))]}"#.utf8)
+        stubNetwork { request in request.url == ModelFeed.url ? (200, list) : (304, Data()) }
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: now)
+        XCTAssertEqual(news.models().first { $0.id == "anthropic/claude-b" }?.newsDate, now, "Created two hours ago, listed now")
+        XCTAssertEqual(news.unseenModelCount(now: now), 1, "Badged, though created before the last look")
+        news.beginVisit(now: now.addingTimeInterval(60))
+        XCTAssertTrue(news.isNew(news.models().first { $0.id == "anthropic/claude-b" }?.newsDate))
+        XCTAssertFalse(news.isNew(news.models().first { $0.id == "anthropic/claude-old" }?.newsDate), "An old model newly listed isn't new")
+    }
+
+    /// Dates saved while the clock was ahead don't keep a badge through visits.
+    @MainActor
+    func testFirstSeenDatesAheadOfTheClockComeBackToNow() throws {
+        let now = Date.now
+        let folder = try makeFolder()
+        var cache = readBefore(["claude-code", "claude-code-releases"], checkedAt: now.addingTimeInterval(-3600))
+        cache.items["claude-code"]?.append(FeedItem(id: "ahead", title: "Ahead", link: URL(string: "https://example.com/ahead"), published: now.addingTimeInterval(2 * 86_400), source: "Claude Code", firstSeenAt: now.addingTimeInterval(2 * 86_400)))
+        cache.models = [ModelRelease(id: "anthropic/claude-ahead", name: "Anthropic: Ahead", vendor: "anthropic", created: now.addingTimeInterval(2 * 86_400), contextLength: nil, promptPrice: nil, completionPrice: nil, expires: nil)]
+        cache.save(to: folder)
+        let defaults = makeDefaults()
+        defaults.set(now.addingTimeInterval(-3600).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt)
+        let news = NewsStore(defaults: defaults, directory: folder, now: now, notify: { _, _, _ in })
+        news.beginVisit(now: now)
+        news.endVisit()
+        XCTAssertEqual(news.unseenAnnouncementCount, 0, "Seen on the visit, not badged again until the clock catches up")
+        XCTAssertEqual(news.unseenModelCount(now: now), 0)
+        XCTAssertEqual(news.allAnnouncements.first { $0.id == "ahead" }?.newsDate, now)
+    }
+
+    @MainActor
+    func testASourcesFirstReadMarksNothingNew() async throws {
+        defer { unstubNetwork() }
+        let folder = try makeFolder()
+        readBefore(["claude-code", "claude-code-releases"], checkedAt: utc(2026, 9, 26, 9)).save(to: folder)
+        let defaults = makeDefaults()
+        defaults.set(utc(2026, 9, 26, 10).timeIntervalSince1970, forKey: NewsStore.Keys.seenAt)
+        // Saved before Cursor was offered: it starts on, never read.
+        defaults.set(["claude-code"], forKey: NewsStore.Keys.sources)
+        defaults.set(FeedSource.catalog.map(\.id).filter { $0 != "cursor" }, forKey: NewsStore.Keys.knownSources)
+        let news = NewsStore(defaults: defaults, directory: folder, notify: { _, _, _ in })
+        XCTAssertTrue(news.followedSources.contains("cursor"))
+        let cursor = try XCTUnwrap(FeedSource.catalog.first { $0.id == "cursor" }).url
+        // Its back catalog includes a post from after the last look.
+        let archive = Self.rss("Cursor-archive", "Sat, 26 Sep 2026 12:00:00 GMT")
+        stubNetwork { request in
+            if request.url == ModelFeed.url { return (304, Data()) }
+            return request.url == cursor ? (200, archive) : (304, Data())
+        }
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: utc(2026, 9, 26, 14))
+        let old = try XCTUnwrap(news.allAnnouncements.first { $0.title == "Cursor-archive" })
+        XCTAssertEqual(news.unseenAnnouncementCount, 0, "A source's first read brings what it had: none of it is new")
+        news.beginVisit(now: utc(2026, 9, 26, 15))
+        XCTAssertFalse(news.isNew(old.newsDate))
+        news.endVisit()
+
+        let next = Data("<rss version=\"2.0\"><channel><item><title>Cursor-next</title><link>https://example.com/Cursor-next</link><pubDate>Sat, 26 Sep 2026 16:00:00 GMT</pubDate></item><item><title>Cursor-archive</title><link>https://example.com/Cursor-archive</link><pubDate>Sat, 26 Sep 2026 12:00:00 GMT</pubDate></item></channel></rss>".utf8)
+        stubNetwork { request in
+            if request.url == ModelFeed.url { return (304, Data()) }
+            return request.url == cursor ? (200, next) : (304, Data())
+        }
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: utc(2026, 9, 26, 17))
+        XCTAssertEqual(news.unseenAnnouncementCount, 1, "What it brings after that is new")
+        XCTAssertEqual(news.allAnnouncements.first { $0.title == "Cursor-archive" }?.newsDate, old.newsDate, "The archive stays quiet")
     }
 
     @MainActor
@@ -650,12 +1454,12 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(first.sourceChecks?[good.id]?.succeededAt, now)
         XCTAssertEqual(first.sourceChecks?[failed.id]?.failedAt, now)
         let before = StubURLProtocol.requests.count
-        let second = await NewsFetcher.refresh(first, sources: [good, failed, added], following: [], now: now.addingTimeInterval(600)).cache
+        let second = await NewsFetcher.refresh(first, sources: [good, failed, added], following: [], now: now.addingTimeInterval(240)).cache
         XCTAssertEqual(StubURLProtocol.requests.count, before + 1)
         XCTAssertEqual(StubURLProtocol.requests.last?.url, added.url, "A fresh global timestamp cannot delay an uncached source")
-        _ = await NewsFetcher.refresh(second, sources: [good, failed, added], following: [], now: now.addingTimeInterval(3600))
+        _ = await NewsFetcher.refresh(second, sources: [good, failed, added], following: [], now: now.addingTimeInterval(300))
         XCTAssertEqual(StubURLProtocol.requests.count, before + 2)
-        XCTAssertEqual(StubURLProtocol.requests.last?.url, failed.url, "Only the failed source retries after an hour")
+        XCTAssertEqual(StubURLProtocol.requests.last?.url, failed.url, "Only the failed source retries, after its first 5-minute wait")
     }
 
     func testParsingFailureDoesNotAdvanceSuccessAndRetriesAfterAnHour() async {
@@ -710,6 +1514,11 @@ final class FeedTests: XCTestCase {
         let decoded = try RelayEnvelope.decoder.decode(NewsCache.self, from: RelayEnvelope.encoder.encode(cache))
         XCTAssertNil(decoded.sourceChecks)
         XCTAssertEqual(decoded.items, [:])
+        // Written before failures were counted.
+        let legacy = try RelayEnvelope.decoder.decode(NewsCache.self, from: Data(#"{"models":[],"modelsFailedAt":1790000000,"modelState":{"seenIDs":[]},"items":{},"validators":{},"sourceChecks":{"cursor":{"failedAt":1790000000}}}"#.utf8))
+        XCTAssertNil(legacy.modelsFailures)
+        XCTAssertNil(legacy.sourceChecks?["cursor"]?.failures)
+        XCTAssertEqual(legacy.sourceChecks?["cursor"]?.failedAt, Date(timeIntervalSince1970: 1_790_000_000))
     }
 
     func testLegacyFeedDatesDoNotAdvanceWhenANewSourceSucceeds() async {
@@ -853,6 +1662,74 @@ final class StubETagProtocol: URLProtocol, @unchecked Sendable {
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: data)
         client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+/// Like StubURLProtocol, but a feed's body is cut off by a timeout a moment after what the handler
+/// gives has arrived. The content type is set, so the session doesn't hold a short body back to
+/// sniff it.
+/// Answers at once, except a host starting `slow.`, which answers half a second later.
+private final class SlowFeedProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        StubURLProtocol.requests.append(request)
+        let url = request.url!
+        let body = url == ModelFeed.url ? Data(#"{"data":[]}"#.utf8)
+            : Data("<rss version=\"2.0\"><channel><item><title>\(url.host!)</title><link>https://example.com/\(url.host!)</link></item></channel></rss>".utf8)
+        let respond: @Sendable () -> Void = { [client] in
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/rss+xml"])!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: body)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+        if url.host?.hasPrefix("slow.") == true {
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { respond() }
+        } else {
+            respond()
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+/// Every request answers 429 with `retryAfter` as its Retry-After.
+private final class RetryAfterProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var retryAfter = "7200"
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        StubURLProtocol.requests.append(request)
+        let response = HTTPURLResponse(url: request.url!, statusCode: 429, httpVersion: "HTTP/1.1", headerFields: ["Retry-After": Self.retryAfter])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+private final class CutOffFeedProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        StubURLProtocol.requests.append(request)
+        let (status, data) = StubURLProtocol.handler?(request) ?? (404, Data())
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/rss+xml"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        if request.url == ModelFeed.url {
+            client?.urlProtocolDidFinishLoading(self)
+        } else {
+            let client = client
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) {
+                client?.urlProtocol(self, didFailWithError: URLError(.timedOut))
+            }
+        }
     }
 
     override func stopLoading() {}

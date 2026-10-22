@@ -6,9 +6,7 @@ final class FoundationTests: XCTestCase {
     private var folders: [URL] = []
 
     override func tearDown() {
-        for name in suites {
-            UserDefaults(suiteName: name)?.removePersistentDomain(forName: name)
-        }
+        suites.forEach(TestDefaults.remove)
         for folder in folders {
             try? FileManager.default.removeItem(at: folder)
         }
@@ -17,13 +15,10 @@ final class FoundationTests: XCTestCase {
         super.tearDown()
     }
 
-    /// Named by the class and a count rather than at random: macOS keeps an empty preferences
-    /// file for every name, so runs reuse a few instead of leaving one behind per test.
+    /// Unique to this run (`TestDefaults`), so two runs at once don't share a suite.
     private func makeDefaults() -> UserDefaults {
-        let name = "tokenroom.tests.\(Self.self).\(suites.count)"
+        let (name, defaults) = TestDefaults.make(owner: "\(Self.self)", index: suites.count)
         suites.append(name)
-        let defaults = UserDefaults(suiteName: name)!
-        defaults.removePersistentDomain(forName: name)
         return defaults
     }
 
@@ -109,6 +104,28 @@ final class FoundationTests: XCTestCase {
         )
         XCTAssertTrue(output.succeeded)
         XCTAssertEqual(output.stdout.count, 300_000)
+    }
+
+    /// A child left running keeps stdout open, so EOF never comes. What the process wrote before
+    /// it exited still counts, and the read stops instead of waiting for the child.
+    func testProcessOutputSurvivesAChildThatKeepsStdoutOpen() throws {
+        let pidFile = try makeFolder().appendingPathComponent("child.pid")
+        defer {
+            // The child holding stdout doesn't outlive the test.
+            if let text = try? String(contentsOf: pidFile, encoding: .utf8),
+               let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                kill(pid, SIGKILL)
+            }
+        }
+        let start = Date()
+        let output = BlockingIO.runProcess(
+            URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", #"echo '{"version":"1.2.3"}'; sleep 20 & echo $! > "$1""#, "sh", pidFile.path],
+            timeout: 5
+        )
+        XCTAssertTrue(output.succeeded)
+        XCTAssertEqual(String(decoding: output.stdout, as: UTF8.self), "{\"version\":\"1.2.3\"}\n")
+        XCTAssertLessThan(Date().timeIntervalSince(start), 4)
     }
 
     func testProcessIsKilledAfterTimeout() {
@@ -435,12 +452,26 @@ final class FoundationTests: XCTestCase {
     func testChecksThatAllFailedToConnectDontSpaceOutTheNext() async throws {
         let defaults = makeDefaults()
         defaults.set(["claude", "antigravity"], forKey: "enabledProviders")
-        let claude = ScriptedClient(provider: .claude, results: [.failure(.unreachable), .success(snapshot(.claude))])
-        let agy = ScriptedClient(provider: .antigravity, results: [.failure(.unreachable), .success(snapshot(.antigravity))])
+        StubURLProtocol.reset()
+        StubURLProtocol.failure = URLError(.notConnectedToInternet)
+        StubURLProtocol.handler = { _ in (200, Data("{}".utf8)) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubURLProtocol.self]
+        TokenroomHTTP.overrideSession(URLSession(configuration: configuration))
+        defer {
+            TokenroomHTTP.overrideSession(nil)
+            StubURLProtocol.reset()
+        }
+        let claude = ReachingClient(provider: .claude, reading: snapshot(.claude))
+        let agy = ReachingClient(provider: .antigravity, reading: snapshot(.antigravity))
         let store = QuotaStore(settings: AppSettings(defaults: defaults), clients: [claude, agy], cache: SnapshotCache(directory: try makeFolder()))
+        let gate = TestGate()
+        store.waitBeforeOfflineRetry = { await gate.wait() }
+        defer { gate.open(); store.stop() }
         await store.refresh(force: true)
+        StubURLProtocol.failure = nil
         await store.refresh(force: true)
-        XCTAssertEqual(claude.calls, 2, "Nothing answered at all: the Mac was offline, so no call counts")
+        XCTAssertEqual(claude.calls, 2, "Nothing reached the network: the Mac was offline, so no call counts")
         XCTAssertEqual(agy.calls, 2)
     }
 

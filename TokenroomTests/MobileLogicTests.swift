@@ -265,6 +265,89 @@ final class MobileLogicTests: XCTestCase {
         XCTAssertEqual(output.disconnected.map(\.id), ["cursor"])
     }
 
+    /// Mac A is signed in to Claude and asleep for two hours; Mac B isn't, and says so now. Claude
+    /// stays, faded, on the iPhone, its widgets, and the Watch, rather than moving to Not connected.
+    func testACollectorThatIsntSignedInDoesntHideAnotherCollectorsReading() {
+        let asleep = now.addingTimeInterval(-2 * 3600)
+        let reading = RelayProvider(provider: .claude, status: .live(snapshot(.claude, used: 70, fetchedAt: asleep)), checkedAt: asleep)
+        let macA = RelayMerge.Source(id: "mac-a", label: "Studio", envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: asleep, providers: [reading]))
+        for status in [ProviderStatus.signedOut("Sign in with claude login."), .notEntitled("Not on a plan."), .unreachable(cached: nil)] {
+            let missing = RelayProvider(provider: .claude, status: status, checkedAt: nil)
+            let macB = RelayMerge.Source(id: "mac-b", label: "Laptop", envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: now, providers: [missing]))
+            let output = ReadingAssembler.assemble(sources: [macA, macB], histories: [:], now: now)
+            XCTAssertEqual(output.connected.map(\.id), ["claude"], "\(status.relayState) from Mac B")
+            XCTAssertEqual(output.connected.first?.source, "Studio")
+            XCTAssertEqual(output.connected.first?.provider.state, "stale")
+            XCTAssertTrue(output.disconnected.isEmpty)
+            let watch = RelayReadings.cache(from: CloudRelay.Contents(sources: [
+                CloudRelay.Source(id: "mac-a", kind: "mac", label: "Studio", modifiedAt: asleep, envelope: macA.envelope, needsNewerApp: false),
+                CloudRelay.Source(id: "mac-b", kind: "mac", label: "Laptop", modifiedAt: now, envelope: macB.envelope, needsNewerApp: false),
+            ], histories: [:]), now: now)
+            XCTAssertEqual(watch.items.map(\.id), ["claude"], "The Watch keeps it too")
+        }
+
+        // A live reading still beats it, and among readings with nothing to show the newest wins.
+        let fresh = RelayProvider(provider: .claude, status: .live(snapshot(.claude, used: 75)), checkedAt: now.addingTimeInterval(-60))
+        let live = RelayMerge.Source(id: "mac-b", label: "Laptop", envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: now, providers: [fresh]))
+        XCTAssertEqual(ReadingAssembler.assemble(sources: [macA, live], histories: [:], now: now).connected.first?.source, "Laptop")
+        let older = RelayMerge.Source(id: "mac-a", label: "Studio", envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: asleep, providers: [
+            RelayProvider(provider: .claude, status: .signedOut("Older"), checkedAt: nil),
+        ]))
+        let newer = RelayMerge.Source(id: "mac-b", label: "Laptop", envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: now, providers: [
+            RelayProvider(provider: .claude, status: .expired("Newer", cached: nil), checkedAt: nil),
+        ]))
+        XCTAssertEqual(ReadingAssembler.assemble(sources: [older, newer], histories: [:], now: now).disconnected.map(\.provider.message), ["Newer"])
+
+        // One dated ahead of the clock (a collector's clock running fast) is as new as anything.
+        let ahead = RelayProvider(provider: .claude, status: .stale(snapshot(.claude, used: 10, fetchedAt: now.addingTimeInterval(360))), checkedAt: now.addingTimeInterval(360))
+        let real = RelayProvider(provider: .claude, status: .stale(snapshot(.claude, used: 55, fetchedAt: asleep)), checkedAt: asleep)
+        let entries = RelayMerge.entries(from: [
+            RelayMerge.Source(id: "a", label: "A", envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: now, providers: [ahead])),
+            RelayMerge.Source(id: "b", label: "B", envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: now, providers: [real])),
+        ], now: now)
+        XCTAssertEqual(entries.first?.sourceLabel, "A")
+    }
+
+    /// Mac A's reading is two hours old; Mac B has just found Claude signed out. The faded reading
+    /// stays, and says what Mac B found, so "sign in" isn't lost for a week. Mac B's status from
+    /// before Mac A's reading says nothing new.
+    func testANewerSignInStatusShowsOnAnotherCollectorsFadedReading() {
+        let asleep = now.addingTimeInterval(-2 * 3600)
+        let reading = RelayProvider(provider: .claude, status: .live(snapshot(.claude, used: 70, fetchedAt: asleep)), checkedAt: asleep)
+        let macA = RelayMerge.Source(id: "mac-a", label: "Studio", envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: asleep, providers: [reading]))
+        for status in [ProviderStatus.signedOut("Sign in with claude login."), .expired("Session expired. Sign in with claude login again.", cached: nil), .notEntitled("Not on a plan.")] {
+            let missing = RelayProvider(provider: .claude, status: status, checkedAt: nil)
+            let newer = RelayMerge.Source(id: "mac-b", label: "Laptop", envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: now, providers: [missing]))
+            let shown = ReadingAssembler.assemble(sources: [macA, newer], histories: [:], now: now).connected.first
+            XCTAssertEqual(shown?.source, "Studio", "The reading stays")
+            XCTAssertEqual(shown?.provider.primaryWindow?.used, 70)
+            XCTAssertFalse(shown?.provider.isLive ?? true, "Faded")
+            XCTAssertEqual(shown?.provider.message, missing.message, "\(status.relayState): what the newer check found")
+        }
+        let earlier = RelayMerge.Source(id: "mac-b", label: "Laptop", envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: now.addingTimeInterval(-3 * 3600), providers: [
+            RelayProvider(provider: .claude, status: .signedOut("Sign in with claude login."), checkedAt: nil),
+        ]))
+        XCTAssertEqual(ReadingAssembler.assemble(sources: [macA, earlier], histories: [:], now: now).connected.first?.provider.message,
+                       "Last successful check 2h ago.", "Signed out before Mac A's reading: nothing new")
+    }
+
+    /// A key provider this launch hasn't checked, with nothing saved for it, isn't listed as not
+    /// connected without a reason, and doesn't hide another collector's reason.
+    func testAProviderWaitingForItsFirstCheckIsNeitherConnectedNorNot() {
+        let waiting = RelayProvider(provider: .openrouter, status: .loading, checkedAt: nil)
+        XCTAssertTrue(waiting.isAwaitingFirstReading)
+        let phone = RelayMerge.Source(id: "phone", label: "This iPhone", envelope: RelayEnvelope(producer: "iphone", appVersion: "1", checkedAt: now, providers: [waiting]))
+        let alone = ReadingAssembler.assemble(sources: [phone], histories: [:], now: now)
+        XCTAssertTrue(alone.connected.isEmpty)
+        XCTAssertTrue(alone.disconnected.isEmpty, "Not under Not connected, with nothing to say why")
+
+        let refused = RelayProvider(provider: .openrouter, status: .expired("Key refused.", cached: nil), checkedAt: nil)
+        let mac = RelayMerge.Source(id: "mac", label: "Mac", envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: now.addingTimeInterval(-600), providers: [refused]))
+        XCTAssertEqual(ReadingAssembler.assemble(sources: [mac, phone], histories: [:], now: now).disconnected.map(\.provider.message), ["Key refused."])
+        XCTAssertFalse(refused.isAwaitingFirstReading)
+        XCTAssertFalse(RelayProvider(provider: .claude, status: .live(snapshot()), checkedAt: now).isAwaitingFirstReading)
+    }
+
     func testTheWatchReadsEveryCollectorFromICloud() {
         let mac = RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: now, providers: [RelayProvider(provider: .claude, status: .live(snapshot(.claude, used: 70)), checkedAt: now)])
         let phone = RelayEnvelope(producer: "iphone", appVersion: "1", checkedAt: now, providers: [RelayProvider(provider: .openrouter, status: .live(snapshot(.openrouter, used: 20)), checkedAt: now)])
@@ -412,6 +495,20 @@ final class MobileLogicTests: XCTestCase {
         XCTAssertFalse(RelayErrorPolicy.Outcome.failed("x").stopsBatch, "One bad record doesn't stop the rest")
         XCTAssertTrue(outcome(CKError(.zoneBusy)).stopsBatch)
         XCTAssertTrue(RelayErrorPolicy.Outcome.noAccount.stopsBatch)
+    }
+
+    /// Signed in, but iCloud can't be used now: that's said as it is, and only a missing account
+    /// asks the user to sign in.
+    func testAnICloudAccountThatCantBeUsedNowIsntSignedOut() {
+        XCTAssertNil(RelayErrorPolicy.unusableAccount(.available))
+        XCTAssertNil(RelayErrorPolicy.unusableAccount(.noAccount), "Signed out starts afresh")
+        XCTAssertEqual(RelayErrorPolicy.unusableAccount(.couldNotDetermine), "Couldn't reach iCloud.")
+        for status in [CKAccountStatus.couldNotDetermine, .temporarilyUnavailable, .restricted] {
+            let message = RelayErrorPolicy.unusableAccount(status)
+            XCTAssertEqual(message?.hasPrefix("Couldn't"), true, "\(status.rawValue)")
+            XCTAssertFalse(message?.localizedCaseInsensitiveContains("sign in") ?? true, "\(status.rawValue)")
+        }
+        XCTAssertNotEqual(RelayErrorPolicy.unusableAccount(.temporarilyUnavailable), RelayErrorPolicy.unusableAccount(.restricted))
     }
 
     // MARK: Nothing secret leaves the device

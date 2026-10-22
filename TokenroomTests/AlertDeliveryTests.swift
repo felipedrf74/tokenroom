@@ -72,13 +72,70 @@ import XCTest
         let server = DeliveryServer()
         let first = try await Self.deliver(alert(reset: now.addingTimeInterval(3600)), server: server)
         let jitter = try await Self.deliver(alert(reset: now.addingTimeInterval(4800)), server: server)
-        let next = try await Self.deliver(alert(reset: now.addingTimeInterval(6000)), server: server)
+        // 80 minutes from the first anchor (past a quarter of the session), 60 from the jitter.
+        let next = try await Self.deliver(alert(reset: now.addingTimeInterval(8400)), server: server)
         let higher = try await Self.deliver(alert(reset: now.addingTimeInterval(3600), level: 95), server: server)
         XCTAssertEqual(first.eventID, jitter.eventID)
-        XCTAssertNotEqual(first.eventID, next.eventID, "20-minute jitter cannot move the first anchor another 20 minutes")
+        XCTAssertNotEqual(first.eventID, next.eventID, "20-minute jitter cannot move the first anchor another hour")
         XCTAssertNotEqual(first.eventID, higher.eventID)
         let count = await server.eventCount
         XCTAssertEqual(count, 3)
+    }
+
+    func testAResetMovedWhileTheWindowGoesOnIsOneAlertAcrossDevices() async throws {
+        let server = DeliveryServer()
+        let reset = now.addingTimeInterval(2 * 86_400)
+        // One device saw the crossing; the provider then moved the week's reset three hours on.
+        let first = try await Self.deliver(alert(reset: reset, windowKind: "weekly"), server: server)
+        let moved = try await Self.deliver(alert(reset: reset.addingTimeInterval(3 * 3600), windowKind: "weekly"), server: server)
+        XCTAssertTrue(first.created)
+        XCTAssertEqual(moved.eventID, first.eventID, "The same week, as AlertRules.isSameInstance has it")
+        XCTAssertFalse(moved.created)
+        // Once that reset has come, a reset as near is another week.
+        let after = try await Self.deliver(alert(reset: reset.addingTimeInterval(3 * 3600), windowKind: "weekly"), server: server,
+                                           at: reset.addingTimeInterval(60))
+        XCTAssertTrue(after.created)
+        let count = await server.eventCount
+        XCTAssertEqual(count, 2)
+    }
+
+    func testAWindowBackFromAGapDoesNotAnnounceACrossingAgain() async throws {
+        var choices = AlertPreferences()
+        choices.timeZoneID = "UTC"
+        choices.quietHours = false
+        let reset = now.addingTimeInterval(2 * 86_400)
+        func opus(_ used: Double, resetsAt: Date) -> RelayWindow {
+            RelayWindow(id: "seven_day_opus", kind: "weekly", title: "Opus weekly", used: used, resetsAt: resetsAt, periodSec: 7 * 86_400)
+        }
+        func claude(_ windows: [RelayWindow]) -> RelayProvider {
+            RelayProvider(id: "claude", name: "Claude", shortName: "Claude", monogram: "C", tint: "#000000",
+                          state: "live", checkedAt: now, fetchedAt: now, primaryWindowID: windows.first?.id, windows: windows)
+        }
+        let weekly = { (used: Double) in RelayWindow(id: "weekly", kind: "weekly", title: "Weekly", used: used, resetsAt: reset, periodSec: 7 * 86_400) }
+
+        // Another device saw Opus cross 95% and announced it.
+        let server = DeliveryServer()
+        let theirs = try XCTUnwrap(AlertRules.alerts(previous: claude([weekly(40), opus(70, resetsAt: reset)]),
+                                                     current: claude([weekly(41), opus(96, resetsAt: reset)]), preferences: choices, now: now).first)
+        let announced = try await Self.deliver(theirs, server: server)
+        XCTAssertTrue(announced.created)
+
+        // This Mac's readings left the window out meanwhile, and the reset moved three hours on.
+        let later = now.addingTimeInterval(2 * 3600)
+        var ledger = AlertLedger()
+        ledger.process([claude([weekly(40), opus(70, resetsAt: reset)])], preferences: choices, now: now)
+        ledger.process([claude([weekly(41)])], preferences: choices, now: now.addingTimeInterval(3600))
+        let back = ledger.process([claude([weekly(42), opus(97, resetsAt: reset.addingTimeInterval(3 * 3600))])], preferences: choices, now: later)
+        XCTAssertEqual(back.map(\.level), [95], "Back from the gap, the crossing is judged against the window as last seen")
+        XCTAssertNotEqual(back.first?.id, theirs.id, "Named by a different reset")
+
+        let due = ledger.due(preferences: choices, now: later)
+        let delivery = await RelayPublisher.send(due, wentOutOnANeighbouringDay: { _ in false },
+                                                 save: { try await Self.deliver($0, server: server, at: later).created }, stops: { _ in false })
+        XCTAssertEqual(delivery, AlertLedger.Delivery(saved: due.map(\.id), announced: Set(due.map(\.id))))
+        XCTAssertTrue(ledger.settle(due, delivery: delivery, showsHere: true, now: later).isEmpty, "Not shown on this Mac either")
+        let count = await server.eventCount
+        XCTAssertEqual(count, 1, "One notification on the iPhone")
     }
 
     func testResetCoordinationUsesEndedResetRatherThanNewPresentationReset() async throws {

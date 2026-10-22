@@ -20,7 +20,9 @@ struct FollowButton: View {
             } label: {
                 Label(isFollowing ? (isCompact ? "Stop" : "Stop Following") : (isCompact ? "Follow" : "Follow on Lock Screen"), systemImage: isFollowing ? "xmark.circle" : "timer")
             }
-            .onAppear {
+            // Again whenever the provider changes, not only on appearing: a row that now shows
+            // another provider doesn't keep the last one's "Stop".
+            .task(id: provider.id) {
                 guard allowsExternalEffects else { return }
                 isFollowing = LiveActivities.activity(for: provider.id) != nil
             }

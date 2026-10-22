@@ -66,7 +66,11 @@ struct ReadingCache: Codable, Equatable, Sendable {
     }
 
     /// Nil leaves the established legacy-cache policy in place when exact provenance is absent.
-    func reconcilingSourceUpdate(_ incoming: ReadingCache) -> ReadingCache? {
+    /// A snapshot or cache dated ahead of `now` counts as now (`ReadingFreshness.ordering`), and an
+    /// iCloud read as new as the one kept is taken.
+    func reconcilingSourceUpdate(_ incoming: ReadingCache, now: Date = .now) -> ReadingCache? {
+        let order = { (date: Date) in ReadingFreshness.ordering(date, now: now) }
+        let incomingIsNewer = order(incoming.savedAt) >= order(savedAt)
         // A legacy handover cannot claim exact source membership from its displayed rows.
         guard relaySnapshot != nil || localSource != nil,
               incoming.relaySnapshot != nil || incoming.localSource != nil else { return nil }
@@ -87,9 +91,9 @@ struct ReadingCache: Codable, Equatable, Sendable {
             if retained.id != candidate.id || retainedGeneration != candidateGeneration {
                 // Exact local provenance belongs to one paired phone and one validated cache
                 // generation. A new scope must not inherit the previous scope's cloud sources.
-                return incoming.savedAt >= savedAt ? incoming : self
+                return incomingIsNewer ? incoming : self
             }
-            local = candidate.envelope.checkedAt > retained.envelope.checkedAt ? candidate : retained
+            local = order(candidate.envelope.checkedAt) > order(retained.envelope.checkedAt) ? candidate : retained
             local?.accountGeneration = candidateGeneration
         }
 
@@ -98,15 +102,15 @@ struct ReadingCache: Codable, Equatable, Sendable {
         case (nil, let candidate): relay = candidate
         case (let retained, nil): relay = retained
         case (let retained?, let candidate?):
-            relay = candidate.checkedAt > retained.checkedAt ? candidate : retained
+            relay = order(candidate.checkedAt) >= order(retained.checkedAt) ? candidate : retained
         }
         guard let relay, var local, local.envelope.isReadable else { return nil }
 
         var sources = Dictionary(relay.sources.filter { $0.envelope.isReadable }.map { ($0.id, $0) },
                                  uniquingKeysWith: { first, second in
-            second.envelope.checkedAt > first.envelope.checkedAt ? second : first
+            order(second.envelope.checkedAt) > order(first.envelope.checkedAt) ? second : first
         })
-        if let published = sources[local.id], published.envelope.checkedAt > local.envelope.checkedAt {
+        if let published = sources[local.id], order(published.envelope.checkedAt) > order(local.envelope.checkedAt) {
             // A newer published snapshot can remove a provider too. Keep the paired source's
             // local scope and wording, but use the source's actual published membership.
             local.envelope = published.envelope
@@ -130,7 +134,7 @@ struct ReadingCache: Codable, Equatable, Sendable {
             }
         }
 
-        var result = incoming.savedAt >= savedAt ? incoming : self
+        var result = incomingIsNewer ? incoming : self
         result.savedAt = max(result.savedAt, relay.checkedAt)
         result.relaySnapshot = relay
         result.localSource = local
@@ -188,6 +192,28 @@ struct ReadingCache: Codable, Equatable, Sendable {
             }
         }
         return hasher.finalize()
+    }
+
+    /// `materialHash` as the readings are drawn at `date`, where one checked over an hour before
+    /// is stale. Two caches with the same numbers then differ when one's reading has aged since
+    /// it was saved and the other's is live again: widgets and the Watch still show the first
+    /// one stale.
+    func materialHash(at date: Date) -> Int {
+        presented(at: date).materialHash
+    }
+
+    /// `reloadSignature` as the readings are drawn at `date` (see `materialHash(at:)`).
+    func reloadSignature(at date: Date) -> Int {
+        presented(at: date).reloadSignature
+    }
+
+    /// What these readings change from `previous`, both drawn at `date`: whether anything shown
+    /// differs, and whether it's worth one of the budgeted reloads asked for from the background
+    /// (`reloadSignature`). The Watch measures what it merged against what its complications
+    /// last drew from.
+    func changes(since previous: ReadingCache?, at date: Date) -> (shown: Bool, worthReload: Bool) {
+        (materialHash(at: date) != previous?.materialHash(at: date),
+         reloadSignature(at: date) != previous?.reloadSignature(at: date))
     }
 
     static var defaultURL: URL? {

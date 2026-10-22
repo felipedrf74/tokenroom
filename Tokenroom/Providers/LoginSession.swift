@@ -14,6 +14,11 @@ struct LoginRecoveryPending: Codable, Sendable, Equatable {
     var expiresAtMs: Double?
     /// The refresh token that was exchanged. The file is patched only while it still has this.
     var previousRefresh: String
+    /// Claude: the Keychain item the exchanged login was read from, its service and the account
+    /// checked before the exchange. The grant goes into that item and no other, whatever a later
+    /// read can or can't look up. Nil in a grant an earlier Tokenroom saved, and for the CLIs' files.
+    var itemService: String? = nil
+    var itemAccount: String? = nil
 }
 
 /// Pure helpers for renewing a CLI login. The actor below does the reading and writing.
@@ -201,7 +206,8 @@ enum OAuthRefresh {
            ) {
             return surgical
         }
-        return rewriteObject(raw) { root in
+        // Compact, as Claude Code writes its Keychain item.
+        return rewriteObject(raw, pretty: false) { root in
             let expires = NSNumber(value: Int64(expiresAtMs.rounded()))
             if var nested = root["claudeAiOauth"] as? [String: Any] {
                 writeToken(accessToken, camel: "accessToken", snake: "access_token", into: &nested)
@@ -374,13 +380,19 @@ enum OAuthRefresh {
         }
     }
 
-    private static func rewriteObject(_ raw: String, _ edit: (inout [String: Any]) -> [String: Any]?) -> String? {
+    /// The whole login parsed, edited, and written out again. `pretty` indents it, as the CLIs'
+    /// auth files are.
+    private static func rewriteObject(_ raw: String, pretty: Bool = true, _ edit: (inout [String: Any]) -> [String: Any]?) -> String? {
+        var options: JSONSerialization.WritingOptions = [.sortedKeys, .withoutEscapingSlashes]
+        if pretty {
+            options.insert(.prettyPrinted)
+        }
         guard let data = raw.data(using: .utf8),
               let parsed = try? JSONSerialization.jsonObject(with: data),
               var root = parsed as? [String: Any],
               let edited = edit(&root),
               JSONSerialization.isValidJSONObject(edited),
-              let out = try? JSONSerialization.data(withJSONObject: edited, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
+              let out = try? JSONSerialization.data(withJSONObject: edited, options: options),
               let text = String(data: out, encoding: .utf8)
         else { return nil }
         return text
@@ -424,20 +436,24 @@ actor LoginSession {
         }
     }
 
-    /// `load` and `save` stand in for the Keychain in tests. Production reads and writes
-    /// Claude Code's own item.
+    /// `load`, `loadItem`, and `save` stand in for the Keychain in tests. Production reads and
+    /// writes Claude Code's own items: `load` the one read first, `loadItem` one by its service
+    /// and account (nil when it isn't there).
     func claude(
         now: Date = .now,
         replacing rejected: String? = nil,
         persistsRecovery: Bool = true,
         load: (@Sendable () throws -> CredentialReaders.ClaudeAuth)? = nil,
+        loadItem: (@Sendable (String, String) throws -> CredentialReaders.ClaudeAuth?)? = nil,
         save: (@Sendable (CredentialReaders.ClaudeAuth) throws -> Void)? = nil
     ) async throws -> CredentialReaders.ClaudeAuth {
         if load == nil, Self.runningUnderTests {
             return try await BlockingIO.run { try CredentialReaders.claudeAuth() }
         }
         return try await fly(claudeFlight, replacing: rejected, access: \.accessToken) {
-            try await self.performClaude(now: now, replacing: rejected, persistsRecovery: persistsRecovery, load: load, save: save)
+            try await self.performClaude(
+                now: now, replacing: rejected, persistsRecovery: persistsRecovery, load: load, loadItem: loadItem, save: save
+            )
         }
     }
 
@@ -511,6 +527,7 @@ actor LoginSession {
         replacing: String?,
         persistsRecovery: Bool,
         load: (@Sendable () throws -> CredentialReaders.ClaudeAuth)?,
+        loadItem: (@Sendable (String, String) throws -> CredentialReaders.ClaudeAuth?)?,
         save: (@Sendable (CredentialReaders.ClaudeAuth) throws -> Void)?
     ) async throws -> CredentialReaders.ClaudeAuth {
         let read: () async throws -> CredentialReaders.ClaudeAuth = {
@@ -530,16 +547,40 @@ actor LoginSession {
             }
             return try await BlockingIO.run { try CredentialReaders.claudeAuth() }
         }
+        // A grant's own item, by the service and account it was read from. A grant saved before
+        // items were recorded, or a test that stands in for one item with `load`, is checked
+        // against what `read` returns, as before.
+        let readOwn: (LoginRecoveryPending) async -> OwnLogin<CredentialReaders.ClaudeAuth> = { pending in
+            guard let service = pending.itemService, let account = pending.itemAccount else { return .readFirst }
+            if load != nil, loadItem == nil { return .readFirst }
+            do {
+                let found = try await BlockingIO.run { () throws -> CredentialReaders.ClaudeAuth? in
+                    if let loadItem {
+                        return try loadItem(service, account)
+                    }
+                    return try CredentialReaders.claudeItem(service: service, account: account)
+                }
+                return found.map { .found($0) } ?? .missing
+            } catch let unusable as CredentialReaders.UnusableClaudeItem {
+                switch unusable {
+                case .notALogin: return .notALogin
+                case .untrusted: return .untrusted
+                }
+            } catch {
+                return .unreadable
+            }
+        }
         return try await renew(
             provider: .claude,
             now: now,
             replacing: replacing,
             persistsRecovery: persistsRecovery,
             read: read,
+            readOwn: readOwn,
             facts: { auth in
                 let expiry = auth.expiresAtMs.map { Date(timeIntervalSince1970: $0 / 1000) }
                 // Exchange only when the new login can be written back into the same item.
-                let canRefresh = auth.canRefresh(at: now) && CredentialReaders.claudeLoginCanBeRenewedInPlace()
+                let canRefresh = auth.canRefresh(at: now) && CredentialReaders.claudeLoginCanBeRenewedInPlace(auth)
                 return Facts(accessToken: auth.accessToken, refreshToken: auth.refreshToken ?? "", expiresAt: expiry, canRefresh: canRefresh)
             },
             post: { auth in
@@ -567,11 +608,25 @@ actor LoginSession {
                     idToken: nil,
                     expiresText: nil,
                     expiresAtMs: (now.timeIntervalSince1970 + expiresIn) * 1000,
-                    previousRefresh: auth.refreshToken ?? ""
+                    previousRefresh: auth.refreshToken ?? "",
+                    // `facts` let this login be exchanged only with its account known.
+                    itemService: auth.service,
+                    itemAccount: auth.account.isEmpty ? nil : auth.account
                 )
             },
             apply: { auth, pending in
                 guard (auth.refreshToken ?? "") == pending.previousRefresh else { return .moved(auth) }
+                // Into the item checked before the exchange. Only a grant saved before items were
+                // recorded takes the account this read found, and none is guessed.
+                let service = pending.itemService ?? auth.service
+                guard let account = pending.itemAccount ?? (auth.account.isEmpty ? nil : auth.account) else {
+                    throw ProviderError.unreachable
+                }
+                // Another item, holding the same refresh token, isn't the one this grant renews.
+                // The grant stays saved, and the login isn't exchanged again.
+                guard auth.service == service, auth.account.isEmpty || auth.account == account else {
+                    throw ProviderError.unreachable
+                }
                 guard let expiresAtMs = pending.expiresAtMs else { throw ProviderError.unreachable }
                 guard let patched = OAuthRefresh.patchClaude(
                     raw: auth.rawJSON,
@@ -582,12 +637,12 @@ actor LoginSession {
                     previousRefresh: auth.refreshToken,
                     previousExpiresAtMs: auth.expiresAtMs
                 ) else { throw ProviderError.unreachable }
-                let updated = try CredentialReaders.parseClaudeAuth(patched, account: auth.account, service: auth.service)
+                let updated = try CredentialReaders.parseClaudeAuth(patched, account: account, service: service)
                 if let save {
                     try await BlockingIO.run { try save(updated) }
                 } else {
                     let wrote = await BlockingIO.run {
-                        CredentialReaders.writeClaudeCredential(service: auth.service, account: auth.account, json: patched)
+                        CredentialReaders.writeClaudeCredential(service: service, account: account, json: patched)
                     }
                     guard wrote else { throw ProviderError.unreachable }
                     CredentialReaders.rememberClaudeAuth(updated)
@@ -667,12 +722,40 @@ actor LoginSession {
         case moved(Auth)
     }
 
+    /// The login a grant renews, read by itself.
+    private enum OwnLogin<Auth: Sendable>: Sendable {
+        /// The one `read` returns: the tool keeps one login (a file).
+        case readFirst
+        case found(Auth)
+        /// No longer there: nothing to write the grant into.
+        case missing
+        /// Can't be read just now (the `security` tool busy, say): the grant waits for it.
+        case unreadable
+        /// There, and its secret isn't a login: it can't take the grant, and waiting won't change that.
+        case notALogin
+        /// There, and its access list doesn't trust the `security` tool, so it isn't read. That can
+        /// change with the replaced refresh token still in it (`grantCanStillRescue`).
+        case untrusted
+    }
+
+    /// Until the login a grant replaced has run out, plus the slack, Claude Code hasn't refreshed
+    /// that item itself with the spent refresh token, so writing the grant back can still rescue
+    /// it. That login's expiry isn't recorded. The grant's own access-token expiry is, and it comes
+    /// later: the exchange runs within `lead` of that login's expiry, or once its token was refused,
+    /// and the new token lasts `expires_in` (eight hours). A grant without one can't be written
+    /// back (`apply` needs it).
+    static func grantCanStillRescue(_ pending: LoginRecoveryPending, now: Date) -> Bool {
+        guard let expiresAtMs = pending.expiresAtMs else { return false }
+        return now.timeIntervalSince1970 < expiresAtMs / 1000 + OAuthRefresh.usableSlack
+    }
+
     private func renew<Auth: Sendable>(
         provider: Provider,
         now: Date,
         replacing: String?,
         persistsRecovery: Bool,
         read: () async throws -> Auth,
+        readOwn: (LoginRecoveryPending) async -> OwnLogin<Auth> = { _ in .readFirst },
         facts: (Auth) -> Facts,
         post: (Auth) async -> OAuthRefresh.Outcome,
         pendingFor: (Auth, OAuthRefresh.Grant) -> LoginRecoveryPending,
@@ -680,31 +763,74 @@ actor LoginSession {
     ) async throws -> Auth {
         var current = try await read()
         if let saved = await recall(provider, persists: persistsRecovery) {
-            let fact = facts(current)
-            if saved.previousRefresh == fact.refreshToken {
-                if fact.accessToken == saved.accessToken, fact.refreshToken == saved.refreshToken {
-                    await forget(provider, persists: persistsRecovery)
-                    CredentialReaders.clearRenewalRejection(provider)
-                    return current
+            // A saved grant is checked against its own login. Claude Code can keep more than one
+            // item, and the one read first may be another: comparing with that one would drop the
+            // grant and leave its item with the refresh token the exchange used up, to be sent again.
+            let target: Auth?
+            switch await readOwn(saved) {
+            case .readFirst:
+                target = current
+            case .found(let own):
+                target = own
+            case .missing:
+                await forget(provider, persists: persistsRecovery)
+                target = nil
+            case .unreadable:
+                // Kept for when its item can be read. Only one grant is kept at a time, so no
+                // other login is exchanged meanwhile.
+                if let usable = adoptIfUsable(current, facts: facts, replacing: replacing, now: now) {
+                    return usable
                 }
-                do {
-                    switch try await apply(current, saved) {
-                    case .wrote(let updated):
-                        await forget(provider, persists: persistsRecovery)
-                        CredentialReaders.clearRenewalRejection(provider)
-                        return updated
-                    case .moved(let updated):
-                        await forget(provider, persists: persistsRecovery)
-                        current = updated
-                    }
-                } catch {
-                    if OAuthRefresh.stillUsable(expiresAt: fact.expiresAt, now: now), fact.accessToken != replacing {
-                        return current
+                throw ProviderError.unreachable
+            case .untrusted where Self.grantCanStillRescue(saved, now: now):
+                // Its access list can trust the tool again with the spent refresh token still in
+                // it: kept, as for an item not readable now, while writing it back can still help.
+                if let usable = adoptIfUsable(current, facts: facts, replacing: replacing, now: now) {
+                    return usable
+                }
+                throw ProviderError.unreachable
+            case .untrusted, .notALogin:
+                // Dropped like a gone item's: not a login, or untrusted past the time it could be
+                // rescued, so waiting would hold off renewing the login read first for good. Kept
+                // while that login has the replaced token itself: it's spent, and exchanging it
+                // would send it again.
+                if facts(current).refreshToken == saved.previousRefresh {
+                    if let usable = adoptIfUsable(current, facts: facts, replacing: replacing, now: now) {
+                        return usable
                     }
                     throw ProviderError.unreachable
                 }
-            } else {
                 await forget(provider, persists: persistsRecovery)
+                target = nil
+            }
+            if let target {
+                let fact = facts(target)
+                if saved.previousRefresh == fact.refreshToken {
+                    if fact.accessToken == saved.accessToken, fact.refreshToken == saved.refreshToken {
+                        await forget(provider, persists: persistsRecovery)
+                        CredentialReaders.clearRenewalRejection(provider)
+                        return target
+                    }
+                    do {
+                        switch try await apply(target, saved) {
+                        case .wrote(let updated):
+                            await forget(provider, persists: persistsRecovery)
+                            CredentialReaders.clearRenewalRejection(provider)
+                            return updated
+                        case .moved:
+                            await forget(provider, persists: persistsRecovery)
+                        }
+                    } catch {
+                        let currentFact = facts(current)
+                        if OAuthRefresh.stillUsable(expiresAt: currentFact.expiresAt, now: now), currentFact.accessToken != replacing {
+                            return current
+                        }
+                        throw ProviderError.unreachable
+                    }
+                } else {
+                    // Its own login moved on (the tool renewed it): the grant is no longer needed.
+                    await forget(provider, persists: persistsRecovery)
+                }
             }
         }
 
@@ -715,16 +841,34 @@ actor LoginSession {
 
         var tries = 0
         while tries < 2 {
+            // A second try is for the login read after the first: it's sent only if that one
+            // could have been sent on its own (for Claude, its account is known).
+            if tries > 0, let ready = readySession(current, facts: facts, provider: provider, now: now, replacing: replacing) {
+                return try ready.get()
+            }
             tries += 1
             let exchanged = facts(current).refreshToken
             switch await post(current) {
             case .grant(let grant):
                 let pending = pendingFor(current, grant)
                 await remember(pending, provider: provider, persists: persistsRecovery)
-                let latest = try await read()
+                // The login just exchanged, read again by itself: another item read first
+                // mustn't make this grant look out of date.
+                let latest: Auth
+                switch await readOwn(pending) {
+                case .readFirst:
+                    latest = try await read()
+                case .found(let own):
+                    latest = own
+                case .missing, .unreadable, .untrusted, .notALogin:
+                    // Saved, and written into its item on a later try (or dropped then).
+                    Self.log.error("Renewal could not be written back for \(provider.rawValue, privacy: .public)")
+                    throw ProviderError.unreachable
+                }
                 if facts(latest).refreshToken != exchanged {
+                    // The tool renewed it meanwhile: this grant isn't needed.
+                    await forget(provider, persists: persistsRecovery)
                     if let adopted = adoptIfUsable(latest, facts: facts, replacing: replacing, now: now) {
-                        await forget(provider, persists: persistsRecovery)
                         CredentialReaders.clearRenewalRejection(provider)
                         return adopted
                     }
