@@ -1,6 +1,6 @@
 # Privacy
 
-Last updated: October 11, 2026. Questions: [open an issue](https://github.com/felipedrf74/tokenroom/issues).
+Last updated: October 21, 2026. Questions: [open an issue](https://github.com/felipedrf74/tokenroom/issues).
 
 Tokenroom runs on your Mac, iPhone, and Apple Watch. There is no Tokenroom account and no Tokenroom server. Syncing between your devices goes through your own iCloud account.
 
@@ -65,19 +65,29 @@ When iPhone sync is on, the signed Mac app writes the same readings as `snapshot
 On iPhone, Tokenroom keeps:
 
 - the latest readings and a week of history in its App Group container, so its widgets can show them, plus readings the widgets took for that history (one per provider an hour, for up to a week), when each key provider was last called and any wait it asked for, and when each widget refreshed in the last two days (by size and the provider it leads with)
-- its alert ledger, like the Mac's `alerts.json` (the last reading of each provider it reads with a key, alert IDs sent, and the text of alerts waiting for quiet hours), alerts it showed before it could tell iCloud, the alert choices as last shared, and the time zone it last gave them
+- its alert ledger, like the Mac's `alerts.json` (the last reading of each provider it reads with a key or a sign-in, alert IDs sent, and the text of alerts waiting for quiet hours), alerts it showed before it could tell iCloud, the alert choices as last shared, and the time zone it last gave them
 - API keys you add there in the iPhone’s Keychain, readable only by Tokenroom and its widgets, never synced
 - the device-local public News cache and follow choices in its App Group container; saved/read library metadata remains in the app’s own Application Support storage, outside the App Group and usage relay. Saved items can be read offline, while opening their original pages requires a connection
+- plan sign-ins you add there (below) in the iPhone’s Keychain, in Tokenroom’s own item that only the iPhone app can read (not its widgets, the Watch, or your other devices), never synced
 
-No plan login can be added on the iPhone yet: Claude, Codex, Grok Build, Grok Bot, Cursor, Antigravity, and Devin are read by Tokenroom for Mac, from the login on that Mac. If a provider later documents a way for other apps to read plan usage, a login you add on the iPhone will stay in that iPhone’s Keychain, in Tokenroom’s own item that its widgets, the Watch, and your other devices can’t read, and only usage will sync. A login on your Mac stays on your Mac.
+### Plans you sign in to on the iPhone
 
-When you add keys on the iPhone, it writes its own readings (never the keys) to the same iCloud database, so your other devices can show them. **Settings → Delete Tokenroom Data from iCloud** removes every Tokenroom record there, from all your devices. A Mac with iPhone sync on writes its readings and history again within the hour, and alert choices you changed within half an hour; turn sync off on that Mac first to keep them out.
+Claude, Codex (your ChatGPT plan), Grok Build, Cursor, and Grok Bot can be signed in to on the iPhone itself, under **Settings → Plans**, without a Mac. You sign in on the company’s own page: Claude’s in Safari (you then paste the code it shows back into Tokenroom), OpenAI’s and xAI’s by approving a short code Tokenroom shows, and Cursor’s in Safari, where a Grok or X account works too. Grok Bot runs on your Cursor account, so one Cursor sign-in reads both. Tokenroom never sees your password. What comes back is a sign-in of Tokenroom’s own on that iPhone, not a copy of a login from your Mac or another tool. Tokenroom keeps:
+
+- the access token, the refresh token, when the access token expires, and which token host and public client issued them. It drops everything else the company sends with them: email, name, account, organization, and ID tokens. Codex’s workspace and Grok’s user, which their usage endpoints ask for, are read from the access token each time it’s sent and aren’t stored.
+- when you signed in, and whether the sign-in is ready, being renewed, or was refused.
+
+It uses that sign-in only to read the plan’s usage, from the same endpoints the Mac reads through each tool’s login (`api.anthropic.com`, `chatgpt.com`, `cli-chat-proxy.grok.com`, `api2.cursor.sh`), and renews it before it expires at the company’s token host (`platform.claude.com` or `console.anthropic.com`, `auth.openai.com`, `auth.x.ai`, `api2.cursor.sh`). Claude’s sign-in asks only to read your profile, not to use your plan for chats; Grok Build’s asks for the Build proxy and a refresh token (plus `openid`, whose ID token Tokenroom drops). The sign-ins use each company’s own public client, the one its command-line tool or app uses, because none of these companies offers one for other apps; Claude’s usage and renewal calls also send Claude Code’s client name. Those endpoints and sign-ins aren’t documented for other apps and can change or stop working without notice. Cursor’s sign-in also sends back an account ID, which Tokenroom drops. If a renewal gets an unclear answer, Tokenroom asks you to sign in again rather than send the same refresh token twice. **Sign Out on This iPhone** deletes the sign-in (Cursor’s and Grok Bot’s together); it doesn’t sign you out anywhere else.
+
+Antigravity and Devin are still read only by Tokenroom for Mac, from the login on that Mac. A login on your Mac stays on your Mac.
+
+When you add keys or sign in to plans on the iPhone, it writes its own readings (never the keys or sign-ins) to the same iCloud database, so your other devices can show them. **Settings → Delete Tokenroom Data from iCloud** removes every Tokenroom record there, from all your devices. A Mac with iPhone sync on writes its readings and history again within the hour, and alert choices you changed within half an hour; turn sync off on that Mac first to keep them out.
 
 The records carry readings only: used percents, reset times, window names, plan names, amounts (and whether a limit is a budget you set), a provider's category, and the Mac's pace forecast for each window. They never contain tokens, API keys, email addresses, names, account or organization IDs, or file paths.
 
 Alerts travel the same way. When a window crosses 80% or 95%, resets after heavy use, a banked reset arrives or is about to expire, or a balance or budget runs low, a Mac saves a short alert record (provider, kind, level, and the text you see) that your iPhone shows as a notification. Your alert choices and quiet hours, with the time zone quiet hours keep (your iPhone gives it its own zone when that zone changes or you change a choice there; a Mac gives it its own only when the Mac's zone changes, so every device holds alerts for the same night), are one more record, which the iPhone and your Macs both read and update, so a change on either applies to both. Your iPhone, and Macs while iPhone sync is on, delete alert records older than two weeks. Updated collectors also keep private delivery ownership metadata: provider/window and alert key, an immutable reset time, canonical alert ID, pushed/shown mode and retention time. This prevents duplicate reset-window alerts between updated devices; active future windows keep ownership beyond the alert record's two-week lifetime. This metadata contains usage identity only, never credentials or News choices. Older app versions do not participate in that coordination.
 
-On Apple Watch, Tokenroom reads the same iCloud records and keeps the latest readings on the Watch, for its app and complications, and when its complications last refreshed. When the iPhone is near, it also hands the Watch its latest readings directly (WatchConnectivity), sooner than iCloud would, and whether the iPhone can show its list of plans that need a Mac; the Watch can ask the iPhone to open that list. The Watch never has your API keys or a login.
+On Apple Watch, Tokenroom reads the same iCloud records and keeps the latest readings on the Watch, for its app and complications, and when its complications last refreshed. When the iPhone is near, it also hands the Watch its latest readings directly (WatchConnectivity), sooner than iCloud would, and whether the iPhone can show its list of plans; the Watch can ask the iPhone to open that list. The Watch never has your API keys or a login.
 
 ## News
 
@@ -91,14 +101,14 @@ News follows, saved metadata and read state stay on this device. They are not re
 
 ## What Tokenroom does not store or send
 
-- another tool's login, beyond the short-lived Claude, Grok Build, and Codex recovery described above (on the iPhone, a future phone login would be Tokenroom’s own item on that iPhone, not a copy of another tool’s login and not the Mac’s recovery item)
+- another tool's login, beyond the short-lived Claude, Grok Build, and Codex recovery described above (a plan sign-in on the iPhone is Tokenroom’s own item on that iPhone, not a copy of another tool’s login and not the Mac’s recovery item)
 - private account email addresses, display names, account IDs, or organization names, beyond the iCloud account fingerprint described below. Public publisher and skill-owner names are intentionally retained as News attribution
 - prompts, chats, or file contents
 - payment details
 
 If you delete Tokenroom's data in iCloud settings, each Mac and iPhone that notices remembers it, so it doesn't put the data back on its own. To tell which iCloud account it was for, it keeps a short one-way fingerprint of the anonymous ID CloudKit gives Tokenroom for that account (the first 8 hex characters of its SHA-256), in that device's local settings: the app's own preferences on a Mac, the App Group settings on an iPhone. It's kept only after such a deletion, and removed when you start again (turning Send readings to iCloud off and on on the Mac, or Delete Tokenroom Data from iCloud on the iPhone) or when Tokenroom finds its data back. It never leaves the device and is never put in an iCloud record.
 
-Tokenroom does not send traffic through a third party. Its usage requests identify themselves as Tokenroom, except two that must look like the tool whose login they use: Claude's usage call sends Claude Code's client name, and Devin's sends the Devin app's client details with its key. Renewing Claude, Grok Build, or Codex calls that tool's own token host with the refresh token already on this Mac.
+Tokenroom does not send traffic through a third party. Its usage requests identify themselves as Tokenroom, except two that must look like the tool whose login they use: Claude's usage call sends Claude Code's client name, and Devin's sends the Devin app's client details with its key. Renewing Claude, Grok Build, or Codex calls that tool's own token host with the refresh token already on this Mac. On the iPhone, plan sign-ins and renewals go to each company's token host with its own public client (Claude's also with Claude Code's client name), as described above.
 
 ## Sign out
 

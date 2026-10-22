@@ -81,9 +81,11 @@ enum WidgetRefresher {
         let ownRecord = contents?.sources.first { $0.id == ownID }?.envelope
         let previousOwn = previous?.localSource?.envelope.providers
             ?? previous?.items.filter { $0.source == localLabel }.map(\.provider) ?? []
-        // As in the app: only providers that still have a key, and readings up to a week old.
+        // As in the app: only providers that still have a key or a plan session, and readings
+        // up to a week old. Widgets don't read sessions; the app's readings of them stand in.
         // One dated ahead of the clock (saved before it was set back) is never the newer one.
-        let keyed = (defaults.array(forKey: "keyedProviders") as? [String]).map(Set.init)
+        let listed = ["keyedProviders", "sessionProviders"].compactMap { defaults.array(forKey: $0) as? [String] }
+        let keyed = listed.isEmpty ? nil : Set(listed.joined())
         var own = fresh
         let order = { (provider: RelayProvider) in Self.readingTime(provider).map { ReadingFreshness.ownOrdering($0, now: now) } ?? .distantPast }
         for provider in (ownRecord?.providers ?? []) + previousOwn where !fresh.contains(where: { $0.id == provider.id }) {

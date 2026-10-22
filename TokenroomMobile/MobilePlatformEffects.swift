@@ -16,6 +16,9 @@ struct MobilePlatformEffects {
     var updateLiveActivities: @MainActor @Sendable ([RelayProvider], AlertPreferences, Samples, Date) async -> Void
     var makeKeyFetchGate: @MainActor @Sendable (UserDefaults) -> KeyFetchGate
     var scheduleBackgroundRefresh: @MainActor @Sendable (Date) async throws -> Void
+    /// Asks iOS for time to finish work begun in the foreground (a token renewal mid-request);
+    /// returns what ends it.
+    var beginBackgroundWork: @MainActor @Sendable (String) -> @MainActor @Sendable () -> Void = { _ in {} }
 
     static let system = MobilePlatformEffects(
         setWatchConnectAvailable: { WatchLink.shared.connectAvailable = $0 },
@@ -39,6 +42,12 @@ struct MobilePlatformEffects {
             #else
             try BGTaskScheduler.shared.submit(request)
             #endif
+        },
+        beginBackgroundWork: { name in
+            let box = BackgroundTaskBox()
+            // iOS calls the expiration handler on the main thread.
+            box.id = UIApplication.shared.beginBackgroundTask(withName: name) { MainActor.assumeIsolated { box.end() } }
+            return { box.end() }
         }
     )
 
@@ -48,4 +57,16 @@ struct MobilePlatformEffects {
         makeKeyFetchGate: { KeyFetchGate(defaults: $0, lockDirectory: nil) },
         scheduleBackgroundRefresh: { _ in }
     )
+}
+
+/// One background task's identifier, ended once.
+@MainActor
+private final class BackgroundTaskBox {
+    var id: UIBackgroundTaskIdentifier = .invalid
+
+    func end() {
+        guard id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id)
+        id = .invalid
+    }
 }

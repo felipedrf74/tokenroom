@@ -26,8 +26,8 @@ Usage readings now show when each provider was last checked and flag stale data.
 
 | Field | Value |
 |---|---|
-| Name (30) | Tokenroom: AI Usage & Limits |
-| Subtitle (30) | Plan limits, resets & alerts |
+| Name (30) | Tokenroom: AI News & Usage |
+| Subtitle (30) | Usage limits, resets & alerts |
 | Bundle ID | `app.tokenroom.ios` (Watch: `app.tokenroom.ios.watchkitapp`) |
 | SKU | `tokenroom-ios` |
 | Primary category | Utilities |
@@ -46,7 +46,7 @@ Usage readings now show when each provider was last checked and flag stale data.
 
 ## App privacy
 
-**Data Not Collected.** Tokenroom has no server and no analytics. Readings sync through the user's own iCloud private database, which the developer can't read. API keys stay in the device's Keychain. News requests go to public pages without identifiers.
+**Data Not Collected.** Tokenroom has no server and no analytics. Readings sync through the user's own iCloud private database, which the developer can't read. API keys and plan sign-ins stay in the device's Keychain. News requests go to public pages without identifiers.
 
 Export compliance: `ITSAppUsesNonExemptEncryption = NO` (only Apple's HTTPS and CloudKit).
 
@@ -54,7 +54,7 @@ Provider icons: the app shows each provider's own icon, used under its owner's p
 
 ## Promotional text (170)
 
-See how much of your AI plans you've used, your pace, and when each limit resets, from your Mac or your API keys. Widgets, Live Activity, alerts, and Apple Watch.
+See how much of your AI plans you've used, your pace, and when each limit resets: sign in on iPhone, add API keys, or use your Mac. Widgets, Live Activity, and Watch.
 
 ## Description
 
@@ -91,7 +91,7 @@ APPLE WATCH
 
 PRIVATE BY DESIGN
 • No account, no Tokenroom server, no analytics
-• Logins never leave your Mac, and keys never leave your iPhone. Only usage, reset times, and plan names sync, through your iCloud.
+• A login you add on your iPhone stays on that iPhone. A login on your Mac stays on your Mac. Only usage, reset times, and plan names sync, through your iCloud.
 • Try it first with sample data.
 
 Tokenroom isn't affiliated with any of the providers it shows. Their names are used only to identify the services you connect.
@@ -106,17 +106,21 @@ Not for 1.0.1, 1.0.2, or 1.0.3; leave their listings and notes as submitted.
 
 The next version can say that the Watch, widgets, and Lock Screen lead with the limit that is closest to running out, and that a pace measured on the Mac stays visible, marked projected, after that Mac sleeps.
 
-- "Logins never leave your Mac, and keys never leave your iPhone" stays true while the iPhone has no plan login (`PhoneConnect.productionAllowlist` is empty). Before a version that adds one is submitted, replace it with: "A login you add on your iPhone stays on that iPhone. A login on your Mac stays on your Mac. Only usage, reset times, and plan names sync, through your iCloud."
-- A later description can say the iPhone works without a Mac for every provider read with a key, Copilot's fine-grained token included, and lists the plans that need Tokenroom for Mac.
+- The name and subtitle above (Tokenroom: AI News & Usage; Usage limits, resets & alerts) replace "Tokenroom: AI Usage & Limits" and "Plan limits, resets & alerts". App Store Connect takes a new name only with a new version, so enter them with the next version submitted. The home-screen name stays Tokenroom.
+
+- The iPhone now signs in to Claude, Codex, Grok Build, Cursor, and Grok Bot itself (`PhoneConnect.productionAllowlist`). This draft's promotional text, privacy bullet, and review notes now describe that version (the old bullet was "Logins never leave your Mac, and keys never leave your iPhone"); the 1.0.2 listing keeps its text.
+- Review notes for that version should say that Claude, Codex, Grok Build, Cursor, and Grok Bot sign in on each company's own page (Safari for Claude and Cursor, a short code for Codex and Grok Build; Grok Bot uses the Cursor sign-in), that Tokenroom reads only usage with the sign-in, and that the endpoints are the ones each company's command-line tool uses. Sample Data still shows every screen without an account.
+- A later description can say the iPhone works without a Mac for every provider read with a key, Copilot's fine-grained token included, and lists the plans that still need Tokenroom for Mac (Antigravity and Devin).
 
 ## Review notes
 
 Tokenroom works without an account. To look around quickly: Settings › Sample Data (or "Try sample data" on the welcome screen) turns on realistic sample readings for every screen, widget, and the Live Activity.
 
-Real readings come from two places:
+Real readings come from three places:
 
 1. **Tokenroom for Mac** (free, open source; https://github.com/felipedrf74/tokenroom). It reads usage from the AI tools on the Mac and syncs the readings through the user's own iCloud private database.
-2. **API keys** the user pastes on the iPhone (for example an OpenRouter key, or a GitHub fine-grained token with the Plan permission for Copilot). The app only reads usage and balances with them. Most are read through the provider's documented API; Z.ai, Kimi Code, OpenCode Go, and MiniMax's older Coding Plan are read from the usage endpoints their own tools call, which those providers haven't documented.
+2. **Plan sign-ins on the iPhone** (Settings › Plans): Claude, Codex, Grok Build, Cursor, and Grok Bot. The user signs in on each company's own page (Safari for Claude and Cursor, a short code for Codex and Grok Build; Grok Bot uses the Cursor sign-in). The app only reads usage with the sign-in, from the same endpoints each company's own command-line tool or app uses; the sign-in stays in the iPhone's Keychain and is never synced.
+3. **API keys** the user pastes on the iPhone (for example an OpenRouter key, or a GitHub fine-grained token with the Plan permission for Copilot). The app only reads usage and balances with them. Most are read through the provider's documented API; Z.ai, Kimi Code, OpenCode Go, and MiniMax's older Coding Plan are read from the usage endpoints their own tools call, which those providers haven't documented.
 
 The Watch app reads the same iCloud records. Notifications are optional and come from the user's own devices through iCloud. The News tab reads public feeds only. There are no in-app purchases.
 

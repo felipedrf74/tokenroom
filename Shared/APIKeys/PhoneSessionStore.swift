@@ -1,16 +1,18 @@
 import Foundation
 import Security
 
-/// A session a vendor issued to Tokenroom on this iPhone, for a documented public client. Never a
-/// copy of another tool's login, and never an identity: no email, subject, organization, or id
-/// token. A grant parser drops those before `save`.
+/// A session a vendor issued to Tokenroom on this iPhone, from a sign-in made on this iPhone with
+/// the vendor's public client (`PhoneSignIn`). Never a copy of another tool's login, and never an
+/// identity: no email, subject, organization, or id token. A grant parser drops those before
+/// `save`.
 struct PhoneSession: Codable, Equatable, Sendable {
     var accessToken: String
     var refreshToken: String
     var expiresAt: Date?
-    /// Documented token endpoint for this public client. No secret is stored beside it.
+    /// The token endpoint that issued this session. No secret is stored beside it.
     var tokenURL: URL
-    /// Public client id the vendor issued for third-party apps. Never a CLI id.
+    /// The vendor's public client the sign-in used: the same one its own CLI or app uses
+    /// (`PhoneSignIn`), since none of these vendors offers one for other apps. No secret.
     var clientID: String
 }
 
@@ -32,7 +34,7 @@ struct PhoneSessionMetadata: Codable, Equatable, Sendable {
 
 /// Phone sessions, one Keychain item per provider, in the iPhone app's own access group.
 ///
-/// Nothing writes here yet: `PhoneConnect.productionAllowlist` is empty. Same accessibility and
+/// Written by a sign-in on this iPhone, for the plans in `PhoneConnect.productionAllowlist`. Same accessibility and
 /// not-synchronizable flags as `APIKeyStore` on the iPhone, so a session stays on this device
 /// and needs it unlocked once since starting. The Watch doesn't compile this file, and the
 /// widget extension doesn't either (a membership exception in the project), and isn't entitled
@@ -115,6 +117,30 @@ struct PhoneSessionStore: Sendable {
         readAttributes(query(for: provider)).flatMap(Self.decodeMetadata)
     }
 
+    /// What the Keychain says about a provider's session: there, not there, or couldn't be read
+    /// now (locked, busy). A caller doesn't take "couldn't be read" for signed out.
+    enum Lookup: Equatable, Sendable {
+        case found(PhoneSessionMetadata)
+        case none
+        case unreadable
+    }
+
+    func lookup(for provider: Provider) -> Lookup {
+        var query = query(for: provider)
+        query[kSecReturnAttributes as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        let (status, item) = keychain.copy(query)
+        switch status {
+        case errSecSuccess:
+            guard let attributes = item as? [String: Any], let metadata = Self.decodeMetadata(attributes) else { return .unreadable }
+            return .found(metadata)
+        case errSecItemNotFound:
+            return .none
+        default:
+            return .unreadable
+        }
+    }
+
     func hasSession(for provider: Provider) -> Bool {
         session(for: provider) != nil
     }
@@ -168,6 +194,13 @@ struct PhoneSessionStore: Sendable {
 
     func deleteRecovery(for provider: Provider) {
         _ = keychain.delete(recoveryQuery(for: provider))
+    }
+
+    /// Deletes the recovery item, and throws when one is there and couldn't be deleted: a new
+    /// sign-in must not go in while an old grant could still be recovered over it.
+    func clearRecovery(for provider: Provider) throws {
+        let status = keychain.delete(recoveryQuery(for: provider))
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw SessionError.keychain(status) }
     }
 
     /// Replaces the session from the recovery item, sets it ready, then deletes the recovery

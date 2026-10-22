@@ -5,7 +5,9 @@ import XCTest
 final class PhoneConnectTests: XCTestCase {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
     /// Providers whose only login is on a Mac, plus Copilot, whose phone path is a token.
-    let neverSignIn: [Provider] = [.claude, .openai, .grok, .grokBot, .cursor, .antigravity, .devin, .copilot]
+    let neverSignIn: [Provider] = [.antigravity, .devin, .copilot]
+    /// The plans the iPhone signs in to itself.
+    let signsIn: [Provider] = [.claude, .openai, .grok, .cursor, .grokBot]
 
     private func reading(_ provider: Provider, checkedAt: Date, used: Double = 40) -> RelayProvider {
         let window = QuotaWindow(id: "weekly", kind: .weekly, title: "Weekly", usedPercent: used, resetsAt: checkedAt.addingTimeInterval(3 * 86_400))
@@ -23,8 +25,9 @@ final class PhoneConnectTests: XCTestCase {
 
     // MARK: Allowlist
 
-    func testTheDefaultDecisionNeverSignsIn() {
-        XCTAssertTrue(PhoneConnect.productionAllowlist.isEmpty)
+    func testTheDefaultDecisionSignsInOnlyThePlansPhoneSignInReads() {
+        XCTAssertEqual(PhoneConnect.productionAllowlist, Set(signsIn))
+        XCTAssertEqual(Set(PhoneSignIn.providers), Set(signsIn))
         let liveMac = source(.mac, Provider.allCases, checkedAt: now.addingTimeInterval(-600))
         let staleMac = source(.mac, Provider.allCases, checkedAt: now.addingTimeInterval(-(ReadingFreshness.staleAfter + 60)))
         for provider in neverSignIn {
@@ -32,7 +35,13 @@ final class PhoneConnectTests: XCTestCase {
                 XCTAssertNotEqual(PhoneConnect.action(for: provider, sources: sources, now: now), .signIn, provider.rawValue)
             }
         }
-        for provider in Provider.allCases {
+        for provider in signsIn {
+            XCTAssertEqual(PhoneConnect.action(for: provider, sources: [], now: now), .signIn, provider.rawValue)
+            XCTAssertEqual(PhoneConnect.action(for: provider, sources: [staleMac], now: now), .signIn, provider.rawValue)
+            // A Mac reading it live blocks a second login here.
+            XCTAssertEqual(PhoneConnect.action(for: provider, sources: [liveMac], now: now), .fromMac, provider.rawValue)
+        }
+        for provider in Provider.allCases where !signsIn.contains(provider) {
             XCTAssertNotEqual(PhoneConnect.action(for: provider, sources: [], now: now), .signIn, provider.rawValue)
         }
     }
@@ -57,21 +66,24 @@ final class PhoneConnectTests: XCTestCase {
         let mac = source(.mac, [.claude], checkedAt: checked)
         XCTAssertEqual(PhoneConnect.action(for: .claude, sources: [mac], now: now), .fromMac)
         let later = checked.addingTimeInterval(ReadingFreshness.staleAfter + 1)
-        XCTAssertEqual(PhoneConnect.action(for: .claude, sources: [mac], now: later), .needsMac(reason: PhoneConnect.reason(for: .claude)))
+        XCTAssertEqual(PhoneConnect.action(for: .claude, sources: [mac], now: later), .signIn)
+        XCTAssertEqual(PhoneConnect.action(for: .claude, sources: [mac], now: later, allowlist: []), .needsMac(reason: PhoneConnect.reason(for: .claude)))
         let gone = checked.addingTimeInterval(RelayMerge.maxSourceAge + 1)
-        XCTAssertEqual(PhoneConnect.action(for: .claude, sources: [mac], now: gone), .needsMac(reason: PhoneConnect.reason(for: .claude)))
+        XCTAssertEqual(PhoneConnect.action(for: .claude, sources: [mac], now: gone), .signIn)
     }
 
     func testAnotherIPhoneIsNotAMac() {
         let phone = source(.otherPhone, [.claude], checkedAt: now.addingTimeInterval(-60))
-        XCTAssertEqual(PhoneConnect.action(for: .claude, sources: [phone], now: now), .needsMac(reason: PhoneConnect.reason(for: .claude)))
+        XCTAssertEqual(PhoneConnect.action(for: .claude, sources: [phone], now: now), .signIn)
+        XCTAssertEqual(PhoneConnect.action(for: .devin, sources: [source(.otherPhone, [.devin], checkedAt: now.addingTimeInterval(-60))], now: now), .needsMac(reason: PhoneConnect.reason(for: .devin)))
     }
 
     func testASignedOutMacCardDoesNotCover() {
         var signedOut = RelayProvider(provider: .cursor, status: .signedOut("Sign in to Cursor to see usage."), checkedAt: now.addingTimeInterval(-60))
         signedOut.checkedAt = now.addingTimeInterval(-60)
         let mac = PhoneConnect.CoveringSource(kind: .mac, envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: now, providers: [signedOut]))
-        XCTAssertEqual(PhoneConnect.action(for: .cursor, sources: [mac], now: now), .needsMac(reason: PhoneConnect.reason(for: .cursor)))
+        XCTAssertEqual(PhoneConnect.action(for: .cursor, sources: [mac], now: now), .signIn)
+        XCTAssertEqual(PhoneConnect.action(for: .cursor, sources: [mac], now: now, allowlist: []), .needsMac(reason: PhoneConnect.reason(for: .cursor)))
     }
 
     func testACachedMacReadingStillCoversBeforeICloudAnswers() {
@@ -87,7 +99,7 @@ final class PhoneConnectTests: XCTestCase {
         let cache = ReadingCache(savedAt: now, isSample: false, items: [item])
         let carried = cache.carriedSources(excluding: "This iPhone").map(\.source)
         XCTAssertEqual(carried.first?.kind, .otherPhone)
-        XCTAssertEqual(PhoneConnect.action(for: .claude, sources: carried.covering, now: now), .needsMac(reason: PhoneConnect.reason(for: .claude)))
+        XCTAssertEqual(PhoneConnect.action(for: .claude, sources: carried.covering, now: now), .signIn)
         // An old cache's Mac label still reads as a Mac.
         let mac = ReadingCache(savedAt: now, isSample: false, items: [ReadingCache.Item(provider: item.provider, source: "Mac")])
         XCTAssertEqual(PhoneConnect.action(for: .claude, sources: mac.carriedSources(excluding: "This iPhone").map(\.source).covering, now: now), .fromMac)
@@ -101,6 +113,10 @@ final class PhoneConnectTests: XCTestCase {
         XCTAssertEqual(listed, [.grok, .grokBot, .claude, .openai, .cursor, .antigravity, .devin])
         XCTAssertTrue(listed.allSatisfy { !$0.readsWithKey })
         for entry in list {
+            if signsIn.contains(entry.provider) {
+                XCTAssertEqual(entry.action, .signIn, entry.provider.rawValue)
+                continue
+            }
             guard case .needsMac(let reason) = entry.action else { return XCTFail("\(entry.provider)") }
             XCTAssertTrue(reason.hasPrefix("Needs Tokenroom on a Mac."), reason)
             XCTAssertFalse(reason.localizedCaseInsensitiveContains("sign in"), reason)
@@ -109,12 +125,19 @@ final class PhoneConnectTests: XCTestCase {
         XCTAssertEqual(covered.first { $0.provider == .claude }?.action, .fromMac)
     }
 
-    func testTheFooterNeverPromisesASignIn() {
+    func testTheFooterSendsEachProviderWhereItCanBeFixed() {
         let needsMac = PhoneConnect.Action.needsMac(reason: "x")
         XCTAssertEqual(PhoneConnect.disconnectedFooter([needsMac]), "These need Tokenroom on a Mac.")
         XCTAssertEqual(PhoneConnect.disconnectedFooter([.fromMac]), "These need Tokenroom on a Mac.")
         XCTAssertEqual(PhoneConnect.disconnectedFooter([.addKey]), "Check these keys in Settings › API Keys.")
         XCTAssertEqual(PhoneConnect.disconnectedFooter([needsMac, .addKey]), "These need Tokenroom on a Mac, or a key in Settings › API Keys.")
+        XCTAssertEqual(PhoneConnect.disconnectedFooter([.signIn]), "Sign in to these in Settings › Plans.")
+        XCTAssertEqual(PhoneConnect.disconnectedFooter([.signIn, needsMac]), "Sign in to these in Settings › Plans, or use Tokenroom on a Mac.")
+        XCTAssertEqual(PhoneConnect.disconnectedFooter([.signIn, .addKey, needsMac]), "Sign in to these in Settings › Plans, check their keys in Settings › API Keys, or use Tokenroom on a Mac.")
+        // Without a sign-in to offer, no footer mentions one.
+        for actions in [[needsMac], [.fromMac], [.addKey], [needsMac, .addKey]] as [[PhoneConnect.Action]] {
+            XCTAssertFalse(PhoneConnect.disconnectedFooter(actions).localizedCaseInsensitiveContains("sign in"))
+        }
     }
 
     func testTheOriginPhrases() {
@@ -156,10 +179,12 @@ final class PhoneConnectTests: XCTestCase {
 
     // MARK: Flag
 
-    func testTheConnectScreenIsOffByDefault() throws {
+    func testTheConnectScreenIsOnByDefaultAndCanBeTurnedOff() throws {
         let name = "app.tokenroom.tests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
+        XCTAssertTrue(PhoneConnect.isEnabled(in: defaults))
+        defaults.set(false, forKey: PhoneConnect.flagKey)
         XCTAssertFalse(PhoneConnect.isEnabled(in: defaults))
         defaults.set(true, forKey: PhoneConnect.flagKey)
         XCTAssertTrue(PhoneConnect.isEnabled(in: defaults))
