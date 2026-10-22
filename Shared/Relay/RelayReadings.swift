@@ -70,7 +70,7 @@ enum RelayReadings {
         switch outcome {
         case .readings(let fresh):
             guard cutoff.map({ fresh.savedAt > $0 }) != false else { return nil }
-            let merged = cached?.mergingUpdate(fresh) ?? fresh
+            let merged = cached?.mergingUpdate(fresh, now: now) ?? fresh
             if let defaults { try? WatchCacheAccess.saveValidated(merged, at: url, defaults: defaults, cutoff: cutoff) }
             else if let url { try? merged.save(to: url) }
             return merged.presented(at: now)

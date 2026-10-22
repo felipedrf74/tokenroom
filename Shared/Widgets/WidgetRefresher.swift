@@ -82,14 +82,16 @@ enum WidgetRefresher {
         let previousOwn = previous?.localSource?.envelope.providers
             ?? previous?.items.filter { $0.source == localLabel }.map(\.provider) ?? []
         // As in the app: only providers that still have a key, and readings up to a week old.
+        // One dated ahead of the clock (saved before it was set back) is never the newer one.
         let keyed = (defaults.array(forKey: "keyedProviders") as? [String]).map(Set.init)
         var own = fresh
+        let order = { (provider: RelayProvider) in Self.readingTime(provider).map { ReadingFreshness.ownOrdering($0, now: now) } ?? .distantPast }
         for provider in (ownRecord?.providers ?? []) + previousOwn where !fresh.contains(where: { $0.id == provider.id }) {
             guard keyed?.contains(provider.id) ?? true,
                   let time = Self.readingTime(provider), now.timeIntervalSince(time) < RelayMerge.maxSourceAge
             else { continue }
             if let index = own.firstIndex(where: { $0.id == provider.id }) {
-                if Self.readingTime(provider) ?? .distantPast > Self.readingTime(own[index]) ?? .distantPast {
+                if order(provider) > order(own[index]) {
                     own[index] = provider
                 }
             } else {

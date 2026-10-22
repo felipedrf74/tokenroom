@@ -96,6 +96,21 @@ final class UsageTileTests: XCTestCase {
         XCTAssertEqual(close.map { "\($0.provider.id)/\($0.window.id)" }, ["kimiCode/session", "claude/session", "openai/weekly", "zai/weekly", "copilot/premium"])
     }
 
+    /// Rows are named by provider and window, not place: when the list re-ranks, a row's state
+    /// (Follow's) goes with the window it was for.
+    func testCloseWindowsAreNamedByProviderAndWindowNotPlace() {
+        let claude = provider(id: "claude", [session(86, resetsIn: 72 * 60), weekly(92, resetsIn: 53 * 3600)])
+        let openai = provider(id: "openai", [session(82, resetsIn: 60 * 60)])
+        let before = UsageTiles.closeWindows([(claude, [:]), (openai, [:])], now: now)
+        XCTAssertEqual(Set(before.map(\.id)).count, before.count, "Two windows of one provider are two rows")
+        var busier = openai
+        busier.windows[0].used = 100
+        let after = UsageTiles.closeWindows([(claude, [:]), (busier, [:])], now: now)
+        XCTAssertNotEqual(before.first?.id, after.first?.id, "Another window leads now")
+        XCTAssertEqual(after.first?.id, "openai/session")
+        XCTAssertEqual(Set(after.map(\.id)), Set(before.map(\.id)), "Each keeps its name wherever it's ranked")
+    }
+
     func testTilesKeepTheirPlacesUntilRankedAgain() {
         let ranked = ["claude", "openai", "cursor"]
         XCTAssertEqual(UsageTiles.ordered(["openai", "claude", "cursor"], id: { $0 }, as: ranked), ranked, "A refresh that re-ranks doesn't move tiles")

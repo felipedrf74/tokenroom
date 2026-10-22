@@ -35,6 +35,32 @@ enum TokenroomHTTP {
 
     private static let redirectDelegate = TokenroomRedirectDelegate()
 
+    /// Counted since launch: answers of any status, and calls that couldn't reach a network at
+    /// all. Every failure is `.unreachable` to a provider; the Mac compares these before and after
+    /// a check to tell waking before the Wi-Fi from a server's errors or a slow answer.
+    struct NetworkTally: Sendable, Equatable {
+        var answers = 0
+        var offline = 0
+    }
+
+    static var networkTally: NetworkTally {
+        tally.withLock { $0 }
+    }
+
+    private static let tally = Mutex(NetworkTally())
+
+    /// No network to send on: no connection, no route or DNS, the link dropped, or cellular data
+    /// off. A timeout, or a server that answered, isn't this.
+    static func meansOffline(_ error: URLError) -> Bool {
+        switch error.code {
+        case .notConnectedToInternet, .networkConnectionLost, .cannotFindHost, .cannotConnectToHost,
+             .dnsLookupFailed, .dataNotAllowed, .internationalRoamingOff:
+            true
+        default:
+            false
+        }
+    }
+
     static func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         var request = request
         // Secrets may be in a custom header or the body, not only Authorization. Never start
@@ -49,8 +75,12 @@ enum TokenroomHTTP {
             guard let http = response as? HTTPURLResponse else {
                 throw ProviderError.unreachable
             }
+            tally.withLock { $0.answers += 1 }
             return (data, http)
-        } catch is URLError {
+        } catch let error as URLError {
+            if meansOffline(error) {
+                tally.withLock { $0.offline += 1 }
+            }
             throw ProviderError.unreachable
         } catch let error as ProviderError {
             throw error

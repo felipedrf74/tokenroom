@@ -212,7 +212,7 @@ struct CloseToLimitCard: View {
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isHeader)
 
-            ForEach(Array(windows.prefix(4).enumerated()), id: \.offset) { index, item in
+            ForEach(Array(windows.prefix(4).enumerated()), id: \.element.id) { index, item in
                 if index > 0 {
                     Divider()
                         .padding(.leading, 54)

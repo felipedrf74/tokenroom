@@ -73,6 +73,77 @@ final class WidgetTests: XCTestCase {
         XCTAssertEqual(early.materialHash, late.materialHash, "Nor a send")
     }
 
+    /// Widgets were given a live reading, which they fade an hour later as they draw it. Three
+    /// hours on, the Mac wakes and sends the same numbers, live again: that's a change to reload
+    /// widgets for and hand the Watch, though nothing but check times moved.
+    func testAReadingLiveAgainWithTheSameNumbersIsAChangeForWidgetsAndTheWatch() {
+        func given(at date: Date) -> ReadingCache {
+            var provider = reading([window("weekly", used: 40, resetsIn: 3 * 86_400)])
+            provider.checkedAt = date
+            provider.fetchedAt = date
+            return ReadingCache(savedAt: date, isSample: false, items: [ReadingCache.Item(provider: provider, source: "Mac")])
+        }
+        let earlier = given(at: now)
+        let woke = now.addingTimeInterval(3 * 3600)
+        let again = given(at: woke)
+        XCTAssertEqual(again.materialHash, earlier.materialHash, "Check times alone don't count")
+        XCTAssertNotEqual(again.materialHash(at: woke), earlier.materialHash(at: woke), "Widgets show the earlier one stale by now")
+        XCTAssertNotEqual(again.reloadSignature(at: woke), earlier.reloadSignature(at: woke), "Worth a reload from the background too")
+
+        let soon = now.addingTimeInterval(10 * 60)
+        XCTAssertEqual(given(at: soon).materialHash(at: soon), earlier.materialHash(at: soon), "Within the hour, nothing to reload for")
+        XCTAssertEqual(given(at: soon).reloadSignature(at: soon), earlier.reloadSignature(at: soon))
+    }
+
+    /// The same on the Watch: complications drew the iPhone's live reading, then faded it. The
+    /// next handover or iCloud read has the same numbers, live again, and is merged in: that's a
+    /// change to reload complications for, from the background too.
+    func testTheWatchReloadsComplicationsForAReadingLiveAgain() {
+        func handover(at date: Date) -> ReadingCache {
+            var provider = reading([window("weekly", used: 40, resetsIn: 3 * 86_400)])
+            provider.checkedAt = date
+            provider.fetchedAt = date
+            return ReadingCache(savedAt: date, isSample: false, items: [ReadingCache.Item(provider: provider, source: "Mac")])
+        }
+        let drawn = handover(at: now)
+        let woke = now.addingTimeInterval(3 * 3600)
+        let merged = drawn.mergingUpdate(handover(at: woke), now: woke)
+        XCTAssertEqual(merged.materialHash, drawn.materialHash, "As saved, nothing but check times moved")
+        let change = merged.changes(since: drawn, at: woke)
+        XCTAssertTrue(change.shown)
+        XCTAssertTrue(change.worthReload)
+
+        let soon = now.addingTimeInterval(10 * 60)
+        let unchanged = drawn.mergingUpdate(handover(at: soon), now: soon).changes(since: drawn, at: soon)
+        XCTAssertFalse(unchanged.shown, "Within the hour, nothing to reload for")
+        XCTAssertFalse(unchanged.worthReload)
+        XCTAssertTrue(drawn.changes(since: nil, at: now).shown, "A first cache is always shown")
+
+        // A Mac's unchanged heartbeats, every 30 minutes for four hours, each merged and saved:
+        // measured against the last one saved, never a change, so no reload is spent on them.
+        var saved = drawn
+        for beat in 1...8 {
+            let date = now.addingTimeInterval(Double(beat) * 30 * 60)
+            let next = saved.mergingUpdate(handover(at: date.addingTimeInterval(-60)), now: date)
+            let beatChange = next.changes(since: saved, at: date)
+            XCTAssertFalse(beatChange.shown, "Heartbeat \(beat)")
+            XCTAssertFalse(beatChange.worthReload, "Heartbeat \(beat)")
+            saved = next
+        }
+
+        // The same from a Mac whose clock runs six minutes fast.
+        saved = handover(at: now.addingTimeInterval(6 * 60))
+        for beat in 1...8 {
+            let date = now.addingTimeInterval(Double(beat) * 30 * 60)
+            let next = saved.mergingUpdate(handover(at: date.addingTimeInterval(6 * 60)), now: date)
+            XCTAssertEqual(next.items.first?.provider.checkedAt, date.addingTimeInterval(6 * 60), "Each heartbeat is taken: \(beat)")
+            let beatChange = next.changes(since: saved, at: date)
+            XCTAssertFalse(beatChange.shown, "Fast heartbeat \(beat)")
+            XCTAssertFalse(beatChange.worthReload, "Fast heartbeat \(beat)")
+            saved = next
+        }
+    }
+
     private func cache(savedAt: Date, used: Double, isSample: Bool = false) -> ReadingCache {
         let provider = reading([window("weekly", used: used, resetsIn: 3 * 86_400)])
         return ReadingCache(savedAt: savedAt, isSample: isSample, items: [ReadingCache.Item(provider: provider, source: "Mac")])

@@ -7,6 +7,7 @@ struct NewsView: View {
     @Bindable var skills: SkillsStore
     @AppStorage("newsDestination") private var destination: NewsDestination = .today
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.scenePhase) private var scenePhase
     @State private var search = ""
     @State private var showsSearch = false
     @State private var contentWidth: CGFloat = 350
@@ -32,7 +33,12 @@ struct NewsView: View {
                 if destination == .skills { await skills.refresh(sort: skills.sort, force: true) }
                 else if destination != .saved { await news.refresh(maxAge: 0, preferences: store.alertPreferences, notifies: false) }
             }
-            .task { await news.keepCurrent(preferences: { store.alertPreferences }) }
+            // Kept current while on screen with the app in front; leaving it stops the checks, so
+            // the background keeps to its hourly ones, and coming back starts them again.
+            .task(id: scenePhase == .active) {
+                guard scenePhase == .active else { return }
+                await news.keepCurrent(preferences: { store.alertPreferences })
+            }
             .onChange(of: destination) { _, _ in search = "" }
         }
     }

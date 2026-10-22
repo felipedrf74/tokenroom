@@ -159,7 +159,11 @@ final class MobileStore {
     private let cacheURL: URL?
     private var publishPolicy = RelayPublishPolicy()
     private var lastHistoryHour: Date?
-    private var lastCacheHash: Int?
+    /// The readings this app last saved for widgets (at launch, the saved ones): what they read.
+    /// A new cache is measured against them, both as drawn now.
+    @ObservationIgnored private var lastSavedCache: ReadingCache?
+    /// How many caches have gone out as a change, for a silent push to say whether one did.
+    @ObservationIgnored private var changesGivenOut = 0
     private var rateLimitedUntil: [Provider: Date] = [:]
     /// When each key provider was last called, shared with the widgets.
     private let keyGate: KeyFetchGate
@@ -198,9 +202,6 @@ final class MobileStore {
     @ObservationIgnored private var lastHandoverRunOuts: [String: Date] = [:]
     /// When this launch's last check of each key provider failed.
     @ObservationIgnored private var localFailedAt: [Provider: Date] = [:]
-    /// What the widgets were last reloaded for, as far as a background reload goes (seeded from
-    /// the saved readings, so a background launch doesn't reload for what they already show).
-    @ObservationIgnored private var lastReloadSignature: Int?
     /// A reload held back in the background, made when the app comes forward.
     @ObservationIgnored private var reloadHeldBack = false
     @ObservationIgnored private var liveActivityUpdate: Task<Void, Never>?
@@ -238,7 +239,7 @@ final class MobileStore {
             sourceID = "src-\(UUID().uuidString.lowercased())"
             defaults.set(sourceID, forKey: Keys.sourceID)
         }
-        relay = containerIdentifier.map(CloudRelay.init(containerIdentifier:))
+        relay = containerIdentifier.map { CloudRelay(containerIdentifier: $0, zoneDeletion: RelayZoneDeletion(defaults: defaults)) }
         relayPhase = relay == nil ? .unavailable : .idle
         history = HistoryStore(directory: directory)
         self.directory = directory
@@ -383,7 +384,9 @@ final class MobileStore {
                 resetRelayAccount(phase: .noAccount)
                 return
             default:
-                relayPhase = .noAccount
+                // Signed in, but iCloud can't be used now (unsure, to be verified, restricted):
+                // that's said as it is, not as signed out, and what was read stays.
+                relayPhase = .failed(RelayErrorPolicy.unusableAccount(account) ?? "Couldn't reach iCloud.")
                 return
             }
             let readStartedAt = Date()
@@ -393,9 +396,15 @@ final class MobileStore {
             relaySources = contents.sources.filter { $0.id != sourceID }
             relayHistories = contents.histories
             relayEvents = contents.events
-            relayPhase = .ready
             relayRetryAt = nil
             relayReadOnce = true
+            guard !contents.deletedByUser else {
+                // Deleted in iCloud settings: known to hold nothing, so the saved cache's readings
+                // don't stand in, and nothing is sent until the user starts again.
+                handleRelayError(CKError(.userDeletedZone))
+                return
+            }
+            relayPhase = .ready
             adoptPreferences(contents.alertPreferences, readStartedAt: readStartedAt)
         } catch {
             guard relayGeneration == generation, !Task.isCancelled else { return }
@@ -659,8 +668,7 @@ final class MobileStore {
         coverage = cache.carriedSources(excluding: Self.localLabel).map(\.source).covering
         // Delivery still compares against what widgets/the Watch last received on disk, so
         // removing an ambiguous legacy meter is propagated on the next successful cache save.
-        lastCacheHash = saved.materialHash
-        lastReloadSignature = saved.reloadSignature
+        lastSavedCache = saved
         lastHandoverRunOuts = saved.runOuts
     }
 
@@ -750,14 +758,19 @@ final class MobileStore {
     /// they don't refetch, and they aren't reloaded.
     private func saveCache(_ cache: ReadingCache) {
         guard allowsExternalEffects, let cacheURL else { return }
-        let hash = cache.materialHash
         do {
             guard try PhoneCacheAccess.save(cache, at: cacheURL, defaults: defaults, generation: cacheGeneration) else { return }
         } catch {
             logger.error("cache save failed: \(String(describing: error), privacy: .public)")
             return
         }
-        let changed = hash != lastCacheHash
+        // Against what widgets read until now, the last cache saved, both as drawn now: one that
+        // held a reading faded an hour after its check, which is live again with the same
+        // numbers, is a change. A reading that was live in it isn't, however long ago that cache
+        // was given out (a Mac's unchanged heartbeats): widgets read every save.
+        let previous = lastSavedCache
+        lastSavedCache = cache
+        let changed = cache.materialHash(at: cache.savedAt) != previous?.materialHash(at: cache.savedAt)
         let runOuts = cache.runOuts
         // The Watch shows a Mac's measured run-out, which widgets don't: one that moved an
         // hour goes to it too.
@@ -770,22 +783,22 @@ final class MobileStore {
             lastHandoverRunOuts = runOuts
         }
         guard changed else { return }
-        lastCacheHash = hash
-        reloadWidgets(for: cache)
+        changesGivenOut += 1
+        reloadWidgets(for: cache, since: previous)
     }
 
     /// Reloads widgets for new readings. Reloads asked for in the background (a silent push)
     /// count against WidgetKit's daily budget, so then only what matters goes out at once
     /// (`ReadingCache.reloadSignature`); smaller moves wait for the widgets' next timeline, which
-    /// reads this cache, or for the app to come forward.
-    private func reloadWidgets(for cache: ReadingCache) {
+    /// reads this cache, or for the app to come forward. What matters is measured from the cache
+    /// saved before this one, both as drawn now.
+    private func reloadWidgets(for cache: ReadingCache, since previous: ReadingCache?) {
         guard allowsExternalEffects else { return }
-        let signature = cache.reloadSignature
-        guard !platformEffects.applicationIsBackground() || signature != lastReloadSignature else {
+        let matters = cache.reloadSignature(at: cache.savedAt) != previous?.reloadSignature(at: cache.savedAt)
+        guard !platformEffects.applicationIsBackground() || matters else {
             reloadHeldBack = true
             return
         }
-        lastReloadSignature = signature
         reloadHeldBack = false
         platformEffects.reloadWidgets()
     }
@@ -844,16 +857,21 @@ final class MobileStore {
         let saved = savedOwnReadings(now: now)
         let owned = keysRead || defaults.array(forKey: Keys.keyedProviders) != nil
             ? keyedProviders
-            : Provider.allCases.filter { saved[$0.rawValue] != nil }
+            : Provider.allCases.filter { saved.readings[$0.rawValue] != nil || saved.statuses[$0.rawValue] != nil }
         let providers = owned.map { provider -> RelayProvider in
-            let standIn = saved[provider.rawValue]?.applyingBudget(reference: budgetReference(for: provider))
+            let standIn = saved.readings[provider.rawValue]?.applyingBudget(reference: budgetReference(for: provider))
             guard let status = localStatuses[provider], status != .loading else {
-                return standIn ?? RelayProvider(provider: provider, status: .loading, checkedAt: nil)
+                // Not called this launch (resting, a 429 wait, a silent push): with no reading to
+                // stand in, the status it last had says why (a key refused, a 429 before any
+                // reading), rather than "loading", which reads as not connected for no reason.
+                return standIn ?? saved.statuses[provider.rawValue] ?? RelayProvider(provider: provider, status: .loading, checkedAt: nil)
             }
             let mine = RelayProvider(provider: provider, status: budgeted(status, for: provider), checkedAt: localCheckedAt[provider])
+            // One dated ahead of the clock (saved before it was set back) never beats a reading
+            // this launch took.
             guard var standIn, !["signedOut", "expired", "notEntitled"].contains(mine.state),
                   let standInTime = Self.readingTime(standIn),
-                  standInTime > (Self.readingTime(mine) ?? .distantPast)
+                  Self.readingTime(mine).map({ ReadingFreshness.ownOrdering(standInTime, now: now) > $0 }) ?? true
             else { return mine }
             if !mine.isLive, let failedAt = localFailedAt[provider], failedAt > standInTime {
                 // This launch's check failed (offline, busy, rate limited) after the saved
@@ -869,8 +887,9 @@ final class MobileStore {
     }
 
     /// The newest reading of each of this iPhone's providers in its iCloud record and the cache,
-    /// up to a week old.
-    private func savedOwnReadings(now: Date) -> [String: RelayProvider] {
+    /// up to a week old, and for those with none, the status they were last relayed or saved with.
+    /// One dated ahead of the clock (saved before it was set back) is never the newer one.
+    private func savedOwnReadings(now: Date) -> (readings: [String: RelayProvider], statuses: [String: RelayProvider]) {
         let cache = PhoneCacheAccess.load(at: cacheURL, defaults: defaults)
         let cached = cache.map {
             $0.isSample ? [] : ($0.localSource?.envelope.providers
@@ -879,10 +898,24 @@ final class MobileStore {
         var newest: [String: RelayProvider] = [:]
         for provider in (ownRecord?.providers ?? []) + cached {
             guard let time = Self.readingTime(provider), now.timeIntervalSince(time) < Self.standInLimit else { continue }
-            if let kept = newest[provider.id], let keptTime = Self.readingTime(kept), keptTime >= time { continue }
+            if let kept = newest[provider.id], let keptTime = Self.readingTime(kept),
+               ReadingFreshness.ownOrdering(keptTime, now: now) >= ReadingFreshness.ownOrdering(time, now: now) { continue }
             newest[provider.id] = provider
         }
-        return newest
+        // A key refused or rate limited before its first reading is relayed and saved without a
+        // time; its envelope's time says how old that is, and the newer envelope's status wins.
+        let envelopes = [ownRecord, cache?.isSample == false ? cache?.localSource?.envelope : nil]
+            .compactMap { $0 }
+            .filter { (0..<Self.standInLimit).contains(now.timeIntervalSince($0.checkedAt)) }
+            .sorted { $0.checkedAt > $1.checkedAt }
+        var statuses: [String: RelayProvider] = [:]
+        for envelope in envelopes {
+            for provider in envelope.providers where Self.readingTime(provider) == nil && !provider.isAwaitingFirstReading
+                && newest[provider.id] == nil && statuses[provider.id] == nil {
+                statuses[provider.id] = provider
+            }
+        }
+        return (newest, statuses)
     }
 
     private static func readingTime(_ provider: RelayProvider) -> Date? {
@@ -896,7 +929,11 @@ final class MobileStore {
         guard let relay, relayPhase == .ready, !sampleMode, keysRead else { return }
         let published = defaults.bool(forKey: Keys.published)
         guard !keyedProviders.isEmpty || published else { return }
-        let envelope = localEnvelope(now: now)
+        var sending = localEnvelope(now: now)
+        // One still waiting for its first check says nothing yet: sent as "loading", other
+        // devices would list it as not connected, for no reason they could show.
+        sending.providers.removeAll(where: \.isAwaitingFirstReading)
+        let envelope = sending
         if let relayRetryAt, relayRetryAt > now { return }
         if publishPolicy.isDue(envelope, now: now) {
             do {
@@ -1202,10 +1239,10 @@ final class MobileStore {
 
     /// A silent push: a Mac sent new readings. Returns whether what this iPhone shows changed.
     func refreshForPush() async -> Bool {
-        let before = lastCacheHash
+        let before = changesGivenOut
         // Keys on this iPhone can wait for a full refresh.
         await refresh(force: true, includeKeys: false)
-        return lastCacheHash != before
+        return changesGivenOut != before
     }
 
     func scheduleBackgroundRefresh(now: Date = .now) async {
