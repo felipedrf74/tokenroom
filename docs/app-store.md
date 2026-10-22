@@ -2,6 +2,12 @@
 
 A draft for App Store Connect. Provider names appear only in the description, as facts, never in the name, subtitle, or keywords. Tokenroom isn't affiliated with any provider.
 
+## What's New — 1.2.0
+
+Draft for the next submission (1.2.0 build 1, not yet uploaded). Enter it with the name, subtitle, promotional text, privacy bullet and review notes above; they describe this version.
+
+Sign in to Claude, Codex, Grok Build, Cursor and Grok Bot right on your iPhone, in Settings › Plans, and Tokenroom reads those plans without a Mac. One Cursor sign-in covers Grok Bot, and sign-ins stay in your iPhone's Keychain. News checks more often, adds Gemini CLI, Copilot CLI, OpenCode, Claude Code, Claude Agent SDK, Claude Skills and Google DeepMind, and marks new stories more accurately. Readings, widgets and alerts stay more reliable across your iPhone, Apple Watch and Mac.
+
 ## What's New — 1.0.3
 
 Submitted and released 5 October 2026. Preserved historical text; current public version is 1.1.1, below.
@@ -100,9 +106,9 @@ Tokenroom isn't affiliated with any of the providers it shows. Their names are u
 
 `ai,usage,quota,limit,tokens,coding,assistant,meter,reset,pace,widget,api,credits,balance,llm,spend`
 
-## For a later listing
+## For 1.2.0
 
-Not for 1.0.1, 1.0.2, or 1.0.3; leave their listings and notes as submitted.
+For 1.2.0, the next version submitted. Leave the 1.0.1 to 1.1.1 listings and notes as submitted.
 
 The next version can say that the Watch, widgets, and Lock Screen lead with the limit that is closest to running out, and that a pace measured on the Mac stays visible, marked projected, after that Mac sleeps.
 
