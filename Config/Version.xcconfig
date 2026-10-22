@@ -1,10 +1,10 @@
 // Versions. The Mac collector is versioned on its own.
 // scripts/build.sh reads these for the swiftc fallback.
-// Mac 2.4.1 build 1 is the published Mac News editorial release.
-// Mobile 1.1.1 build 1 is the iPhone News editorial release candidate.
-TOKENROOM_MAC_VERSION = 2.4.1
+// Mac 2.5.0 build 1 follows the published 2.4.1: the audit fixes and faster News.
+// Mobile 1.2.0 build 1 follows the published 1.1.1: plan sign-in on the iPhone.
+TOKENROOM_MAC_VERSION = 2.5.0
 TOKENROOM_MAC_BUILD = 1
 
 // iPhone app, widgets, and Watch app share one version.
-TOKENROOM_MOBILE_VERSION = 1.1.1
+TOKENROOM_MOBILE_VERSION = 1.2.0
 TOKENROOM_MOBILE_BUILD = 1

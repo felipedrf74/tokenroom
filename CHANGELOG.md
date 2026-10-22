@@ -1,5 +1,36 @@
 # Changelog
 
+## 2.5.0 for Mac and 1.2.0 for iPhone — not yet released
+
+Mac 2.5.0(1) and iPhone, widgets and Apple Watch 1.2.0(1) carry the iPhone plan sign-in (#38) and the product audit's fixes with faster News (#39). Neither is uploaded or published yet.
+
+iPhone and Apple Watch
+
+- Sign in to Claude, Codex, Grok Build, Cursor and Grok Bot on the iPhone, in Settings › Plans, on each company's own page. The iPhone then reads those plans itself, with no Mac, and sends the readings to the Watch and widgets. One Cursor sign-in also reads Grok Bot. Sign-ins stay in the iPhone's Keychain and are never synced.
+- A renewal never sends a refresh token again after an unclear answer. An offline renewal reads as a connection problem, not as a reason to sign in again.
+- The App Store name becomes "Tokenroom: AI News & Usage", with the subtitle "Usage limits, resets & alerts". The Home Screen name stays Tokenroom.
+
+News, on both
+
+- News checks hourly in the background and every 5 minutes while it's on screen. A failed feed is retried after 5, 15, 30, then 60 minutes, and a Retry-After is honoured.
+- New sources: Gemini CLI, Copilot CLI, OpenCode, Claude Code's what's new, Claude Agent SDK, Claude Skills and Google DeepMind.
+- New is more accurate. A post dated before your last visit still counts; a newly followed source's back catalog doesn't. Releases and commits are dated by when they happened. A post on both Google blogs shows once, and a day's Claude Skills commits fold only when they update the same thing.
+- Each feed shows as it arrives, and folding the list runs off the main thread.
+
+Usage, iCloud and alerts, on both
+
+- A device that isn't signed in to a provider no longer hides another device's reading. A reading dated ahead of the clock doesn't win.
+- Widgets and the Watch reload when a reading is live again, and not for unchanged heartbeats.
+- After you delete Tokenroom's data in iCloud settings, devices that notice don't put it back until you start again.
+- A held run-out alert follows newer readings and never quotes a time that has passed. A window missing from one reading still alerts when it returns. Devices announce a crossing once.
+- xAI spend, GitHub and Copilot rate limits, and MiniMax Coding Plan errors are read correctly.
+
+Mac
+
+- Claude renewal writes back only into the exact Keychain item it checked, which fixes a duplicate item that could sign Claude Code out. A renewal that couldn't be written back no longer holds off another Claude login for good.
+- iPhone sync turned off mid-send stays off, and each iCloud call gives way after 20 seconds.
+- Turning a provider on, or changing the refresh interval, applies at once. After a wake with no network, a check is retried once, 45 seconds later.
+
 ## 1.1.1 for iPhone — released 13 October 2026
 
 - iPhone News follows the selected editorial concept: a compact masthead, portrait lead artwork, official source marks and grouped release rows with inline Save and More actions.
