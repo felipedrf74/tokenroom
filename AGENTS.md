@@ -33,7 +33,7 @@ Shared logic (relay, alerts, ranking, parsers, forecasts) is tested on the Mac i
 
 ## Code Review Rules
 
-Every reviewer follows these rules: Codex, Claude Code, Grok Build, the advisory CI review (`.github/workflows/claude-review.yml`), and fresh-context review sessions. A review reports evidence; it never approves or merges. The merge gate stays the maintainer's code-owner approval on `main`, with the `CI` workflow's `Build and test` job passing.
+Every reviewer follows these rules: Codex, Claude Code, Grok Build, the advisory CI review (`.github/workflows/claude-review.yml`), and fresh-context review sessions. A review reports evidence; it never approves or merges. The merge gate stays the maintainer's code-owner approval on `main`. The `CI` workflow's `Build and test` job is expected to pass, but it is not a required check.
 
 ### Important (P0/P1)
 
@@ -54,7 +54,7 @@ Every reviewer follows these rules: Codex, Claude Code, Grok Build, the advisory
 
 ### Do not report
 
-- What CI already enforces: compile errors in `Shared` for macOS, iOS, and watchOS, the Mac tests, the iPhone app, widgets, and Watch build, the `TokenroomMobileTests` compile, and the Command Line Tools build.
+- What the `CI` workflow already checks, since its result shows on the pull request: compile errors in `Shared` for macOS, iOS, and watchOS, the Mac tests, the iPhone app, widgets, and Watch build, the `TokenroomMobileTests` compile, and the Command Line Tools build.
 - Formatting, generated assets (`*.xcassets`, `AppIcon.icon`, `docs/images/`), and Xcode's own churn in `project.pbxproj` other than build settings.
 
 ### Output

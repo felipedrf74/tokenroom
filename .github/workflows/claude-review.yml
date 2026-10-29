@@ -1,7 +1,7 @@
 # Advisory AI review of each pull request, from the shared `review-setup`
 # skill. Rules: AGENTS.md `## Code Review Rules`, loaded through CLAUDE.md.
-# It never blocks a merge: branch protection must not require it; the
-# repository's required CI stays the gate.
+# It never blocks a merge: the ruleset on main must not require it; the
+# maintainer's code-owner approval stays the gate.
 #
 # Every push gets a review. A trusted shell step reads only this workflow's
 # own marked summaries (author github-actions[bot]) to set the round, the
