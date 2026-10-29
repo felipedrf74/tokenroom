@@ -147,7 +147,7 @@ final class MobileStoreTests: XCTestCase {
         return ReadingCache(savedAt: checked, isSample: false, items: [ReadingCache.Item(provider: provider, source: "Mac")])
     }
 
-    /// A Mac awake with unchanged usage sends its heartbeat every 30 minutes, and the iPhone, in
+    /// A Mac awake with unchanged usage sends a heartbeat (`RelayPublishPolicy.heartbeat`), and the iPhone, in
     /// the background, takes each one. Widgets already show every one of them live: no reload is
     /// spent on WidgetKit's budget, and the Watch isn't handed the same numbers again.
     @MainActor
@@ -334,6 +334,27 @@ final class MobileStoreTests: XCTestCase {
         XCTAssertEqual(store.lastChecked, checked, "Aging does not invent a successful check")
         store.ageReadings(at: checked.addingTimeInterval(7 * 86_400 + 1))
         XCTAssertTrue(store.readings.isEmpty)
+    }
+
+    /// While Usage is on screen: nothing before the first wait (coming forward already refreshed),
+    /// an ordinary refresh after each one, and nothing more once the wait is cancelled because the
+    /// tab or the app went away.
+    @MainActor
+    func testKeepCurrentRefreshesAfterEachWaitUntilCancelled() async throws {
+        let store = makeStore(defaults: makeDefaults(), folder: try makeFolder())
+        let waits = Mutex(0)
+        XCTAssertNil(store.lastRefresh)
+        await store.keepCurrent(interval: 120) { interval in
+            XCTAssertEqual(interval, 120)
+            let count = waits.withLock { value in
+                value += 1
+                return value
+            }
+            if count == 3 { throw CancellationError() }
+        }
+        XCTAssertEqual(waits.withLock { $0 }, 3, "Two waits each followed by a refresh, then the cancelled one")
+        XCTAssertNotNil(store.lastRefresh)
+        XCTAssertNil(store.latestChecked, "No readings: nothing to say how current they are")
     }
 
     @MainActor

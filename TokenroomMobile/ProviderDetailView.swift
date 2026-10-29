@@ -90,14 +90,24 @@ struct ProviderDetailView: View {
             if let window = heroWindow {
                 let stale = !provider.isLive || window.isAwaitingReading(at: date)
                 HStack(spacing: 16) {
-                    UsageRing(used: window.used, isStale: stale, label: ReadingText.headline(window, now: date), lineWidth: 10, paceMark: heroPace?.elapsedFraction)
-                        .frame(width: 104, height: 104)
+                    UsageRing(used: window.used, isStale: stale, label: ReadingText.headline(window, now: date), lineWidth: 12, paceMark: heroPace?.elapsedFraction)
+                        .frame(width: 112, height: 112)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(window.displayTitle)
                             .font(.headline)
-                        Text(window.isAwaitingReading(at: date) ? "Reset · awaiting reading" : "\(TokenroomFormat.percentText(100 - window.used))% left")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                        if window.isAwaitingReading(at: date) {
+                            Text("Reset · awaiting reading")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            // What's left, as large as the ring's used figure is: the two add up.
+                            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                HeadlineValue("\(TokenroomFormat.percentText(100 - window.used))%", style: .title2, signStyle: .subheadline)
+                                Text("left")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                         if let amount = window.amount, let detail = ReadingText.amountDetail(amount) {
                             Text(detail)
                                 .font(.subheadline)

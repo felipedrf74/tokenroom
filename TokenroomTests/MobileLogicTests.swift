@@ -66,8 +66,8 @@ final class MobileLogicTests: XCTestCase {
         let envelope = RelayEnvelope(producer: "iphone", appVersion: "1", checkedAt: now, providers: [RelayProvider(provider: .openrouter, status: .live(snapshot(.openrouter)), checkedAt: now)])
         XCTAssertTrue(policy.isDue(envelope, now: now), "The first reading always goes out")
         policy.didSend(envelope, at: now)
-        XCTAssertFalse(policy.isDue(envelope, now: now.addingTimeInterval(29 * 60)), "Unchanged usage waits for the heartbeat")
-        XCTAssertTrue(policy.isDue(envelope, now: now.addingTimeInterval(30 * 60)))
+        XCTAssertFalse(policy.isDue(envelope, now: now.addingTimeInterval(8 * 60)), "Unchanged usage waits for the heartbeat")
+        XCTAssertTrue(policy.isDue(envelope, now: now.addingTimeInterval(9 * 60)), "The heartbeat goes out with the Mac's next 10-minute check")
 
         let changed = RelayEnvelope(producer: "iphone", appVersion: "1", checkedAt: now, providers: [RelayProvider(provider: .openrouter, status: .live(snapshot(.openrouter, used: 60)), checkedAt: now)])
         XCTAssertFalse(policy.isDue(changed, now: now.addingTimeInterval(4 * 60)))
@@ -95,8 +95,8 @@ final class MobileLogicTests: XCTestCase {
         let dayEarlier = now.addingTimeInterval(-86_400)
         XCTAssertTrue(policy.isDue(envelope, now: dayEarlier), "Set back a day, sending doesn't wait a day")
         policy.didSend(envelope, at: dayEarlier)
-        XCTAssertFalse(policy.isDue(envelope, now: dayEarlier.addingTimeInterval(29 * 60)), "Then it counts from that send")
-        XCTAssertTrue(policy.isDue(envelope, now: dayEarlier.addingTimeInterval(30 * 60)))
+        XCTAssertFalse(policy.isDue(envelope, now: dayEarlier.addingTimeInterval(8 * 60)), "Then it counts from that send")
+        XCTAssertTrue(policy.isDue(envelope, now: dayEarlier.addingTimeInterval(9 * 60)))
     }
 
     private func envelope(_ windows: [RelayWindow], extra: ExtraUsage? = nil) -> RelayEnvelope {
@@ -150,7 +150,7 @@ final class MobileLogicTests: XCTestCase {
 
         var policy = RelayPublishPolicy()
         policy.didSend(runsOut(in: 125), at: now)
-        XCTAssertFalse(policy.isDue(runsOut(in: 170), now: now.addingTimeInterval(10 * 60)), "Drifting under an hour isn't a change")
+        XCTAssertFalse(policy.isDue(runsOut(in: 170), now: now.addingTimeInterval(8 * 60)), "Drifting under an hour isn't a change")
         XCTAssertFalse(policy.isDue(runsOut(in: 185), now: now.addingTimeInterval(4 * 60)))
         XCTAssertTrue(policy.isDue(runsOut(in: 185), now: now.addingTimeInterval(5 * 60)), "A run-out an hour later goes out without waiting for the heartbeat")
         XCTAssertTrue(policy.isDue(envelope([weekly(RelayPace(runsOutAt: nil))]), now: now.addingTimeInterval(5 * 60)), "Running out, or not")
@@ -158,11 +158,11 @@ final class MobileLogicTests: XCTestCase {
 
         // Wobbling across an hour boundary, or around the reset, doesn't go out every 5 minutes.
         policy.didSend(runsOut(in: 175), at: now)
-        XCTAssertFalse(policy.isDue(runsOut(in: 185), now: now.addingTimeInterval(10 * 60)))
-        XCTAssertFalse(policy.isDue(runsOut(in: 165), now: now.addingTimeInterval(10 * 60)))
+        XCTAssertFalse(policy.isDue(runsOut(in: 185), now: now.addingTimeInterval(8 * 60)))
+        XCTAssertFalse(policy.isDue(runsOut(in: 165), now: now.addingTimeInterval(8 * 60)))
         policy.didSend(envelope([weekly(RelayPace(runsOutAt: nil), resetsIn: 3 * 3600)]), at: now)
-        XCTAssertFalse(policy.isDue(runsOut(in: 140, resetsIn: 3 * 3600), now: now.addingTimeInterval(10 * 60)), "Forty minutes before the reset is as good as lasting")
-        XCTAssertTrue(policy.isDue(runsOut(in: 100, resetsIn: 3 * 3600), now: now.addingTimeInterval(10 * 60)))
+        XCTAssertFalse(policy.isDue(runsOut(in: 140, resetsIn: 3 * 3600), now: now.addingTimeInterval(8 * 60)), "Forty minutes before the reset is as good as lasting")
+        XCTAssertTrue(policy.isDue(runsOut(in: 100, resetsIn: 3 * 3600), now: now.addingTimeInterval(8 * 60)))
     }
 
     // MARK: Ranking

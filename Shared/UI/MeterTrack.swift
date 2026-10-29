@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// A usage meter: a rounded track, the used fill coloured by how far it has gone, and the even
-/// pace as a notch cut through the bar with a slim marker. When use runs ahead of that pace, the
-/// stretch past the notch is lightly striped, so "ahead" reads without a caption.
+/// A usage meter: a rounded track, the used fill in its level's colour (a lighter tint where it
+/// starts, the full colour at its tip), and the even pace as a notch cut through the bar with a
+/// slim marker. When use runs ahead of that pace, the stretch past the notch is lightly striped,
+/// so "ahead" reads without a caption.
 struct MeterTrack: View {
     var usedPercent: Double
     var remaining: Double
@@ -10,8 +11,6 @@ struct MeterTrack: View {
     /// Where an even pace would be now, 0–1 of the window; drawn as a notch and marker.
     var paceMark: Double? = nil
     var height: CGFloat = TokenroomTokens.meterHeight
-    /// One colour by level (the menu bar's rule) instead of the gradient across the track.
-    var solid = false
 
     /// How far the pace marker reaches past the track, above and below.
     private var overhang: CGFloat { max(2, height * 0.35) }
@@ -24,6 +23,8 @@ struct MeterTrack: View {
             let radius = height / 2
             let track = Path(roundedRect: trackRect, cornerRadius: radius, style: .continuous)
             context.fill(track, with: .color(TokenroomTokens.track))
+            // A hairline edge keeps an empty track crisp on the popover's material.
+            context.stroke(track, with: .color(Color.primary.opacity(0.05)), lineWidth: 0.5)
 
             let width = MeterLayout.drawnFillEnd(usedPercent: usedPercent, total: size.width, height: height)
             if width > 0 {
@@ -33,12 +34,14 @@ struct MeterTrack: View {
                 bar.clip(to: track)
                 let fillRect = CGRect(x: -radius, y: overhang, width: width + radius, height: height)
                 let fill = Path(roundedRect: fillRect, cornerRadius: min(radius, (width + radius) / 2), style: .continuous)
-                bar.fill(fill, with: shading(trackWidth: size.width))
-                // A soft highlight along the top keeps the bar from looking flat.
+                bar.fill(fill, with: shading(fillEnd: width))
+                // Light falls from above: a soft sheen on the top half, fading out.
                 var shine = bar
                 shine.clip(to: fill)
-                shine.fill(Path(CGRect(x: 0, y: overhang, width: width, height: height * 0.42)),
-                           with: .color(.white.opacity(isStale ? 0 : 0.16)))
+                shine.fill(Path(CGRect(x: 0, y: overhang, width: width, height: height * 0.55)),
+                           with: .linearGradient(Gradient(colors: [.white.opacity(isStale ? 0 : 0.26), .white.opacity(0)]),
+                                                 startPoint: CGPoint(x: 0, y: overhang),
+                                                 endPoint: CGPoint(x: 0, y: overhang + height * 0.55)))
 
                 if let pace, used > pace + 0.015 {
                     // Past the even pace: stripes over that stretch of the fill.
@@ -53,7 +56,7 @@ struct MeterTrack: View {
                         stripes.addLine(to: CGPoint(x: x + height, y: overhang))
                         x += step
                     }
-                    ahead.stroke(stripes, with: .color(.white.opacity(0.28)), lineWidth: max(1, height * 0.18))
+                    ahead.stroke(stripes, with: .color(.white.opacity(0.24)), lineWidth: max(1, height * 0.18))
                 }
             }
 
@@ -78,14 +81,14 @@ struct MeterTrack: View {
         .accessibilityValue(paceMark.map { "\(TokenroomFormat.percentText(min(max($0, 0), 1) * 100)) percent of the window has passed" } ?? "")
     }
 
-    private func shading(trackWidth: CGFloat) -> GraphicsContext.Shading {
+    private func shading(fillEnd: CGFloat) -> GraphicsContext.Shading {
         if isStale {
             return .color(Color.secondary.opacity(0.72))
         }
-        if solid {
-            return .color(TokenroomTokens.usageColor(usedPercent: usedPercent, isStale: false))
-        }
-        // The gradient spans the whole track, so the colour where the fill ends says how far it went.
-        return .linearGradient(TokenroomTokens.usageGradient, startPoint: .zero, endPoint: CGPoint(x: trackWidth, y: 0))
+        // One colour by level, the menu bar's rule, from a lighter tint up to the tip.
+        let tones = TokenroomTokens.usageTones(usedPercent: usedPercent)
+        return .linearGradient(Gradient(colors: [tones.start, tones.end]),
+                               startPoint: CGPoint(x: 0, y: 0),
+                               endPoint: CGPoint(x: max(fillEnd, 1), y: 0))
     }
 }

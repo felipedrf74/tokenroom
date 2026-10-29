@@ -8,7 +8,8 @@ struct MonogramMark: View {
     var size: CGFloat = 36
 
     var body: some View {
-        RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: size * 0.23, style: .continuous)
+        shape
             .fill(tint.gradient)
             .frame(width: size, height: size)
             .overlay {
@@ -17,6 +18,9 @@ struct MonogramMark: View {
                     .foregroundStyle(.white)
                     .minimumScaleFactor(0.6)
             }
+            // The same edge and lift as a provider's own icon, so a monogram sits among them.
+            .overlay(shape.strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+            .modifier(IconLift(size: size))
             .accessibilityHidden(true)
     }
 }

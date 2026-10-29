@@ -20,6 +20,8 @@ struct ProviderCard: View {
     var onCancelSignIn: () -> Void = {}
     var onInstall: () -> Void = {}
     var date: Date = .now
+    /// The pointer over a card or row: it lifts a little, as a list row does on macOS.
+    @State private var isHovered = false
 
     var body: some View {
         if isCompact, !isExpanded, let snapshot = compactSnapshot {
@@ -80,10 +82,17 @@ struct ProviderCard: View {
         }
         .padding(TokenroomTokens.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.primary.opacity(0.045))
-        )
+        .background(cardSurface(cornerRadius: 10))
+        .onHover { isHovered = onToggleExpanded != nil && $0 }
+    }
+
+    /// The card's surface: a light fill on the popover's material with a hairline edge, a
+    /// little brighter under the pointer.
+    private func cardSurface(cornerRadius: CGFloat) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        return shape
+            .fill(Color.primary.opacity(isHovered ? 0.075 : 0.045))
+            .overlay(shape.strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
     }
 
     /// Readings that can collapse to one line: nothing to sign in to.
@@ -107,22 +116,28 @@ struct ProviderCard: View {
             onToggleExpanded?()
         } label: {
             HStack(spacing: 8) {
-                ProviderIcon(provider: provider, size: 18)
-                VStack(alignment: .leading, spacing: 2) {
+                ProviderIcon(provider: provider, size: 20)
+                VStack(alignment: .leading, spacing: 1) {
                     Text(provider.displayName).font(.system(size: 12, weight: .semibold))
                     if let attention {
-                        Text(attention).font(.system(size: 9, weight: .semibold))
+                        Text(attention).font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(limitWarning == nil ? Color.secondary : TokenroomTokens.usageCritical)
                             .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     } else if let reset = compactReset(snapshot) {
-                        Text(reset).font(.system(size: 9))
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
+                        // The window's name too when it fits; "resets in" always, so the time
+                        // can't be read as how long the quota lasts.
+                        ViewThatFits(in: .horizontal) {
+                            Text(reset.full)
+                            Text(reset.short)
+                        }
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
                     }
                 }
                     .foregroundStyle(stale ? Color.secondary : Color.primary)
                     .lineLimit(1)
-                    .frame(width: 104, alignment: .leading)
+                    .frame(width: 118, alignment: .leading)
                 if metered {
                     MeterTrack(
                         usedPercent: snapshot.usedPercent,
@@ -146,8 +161,7 @@ struct ProviderCard: View {
                         .foregroundStyle(.secondary)
                         .help(note.text)
                 }
-                Text(value)
-                    .font(.system(size: 13, weight: .medium).monospacedDigit())
+                HeadlineValue(value, size: 13.5, weight: .semibold)
                     .foregroundStyle(TokenroomTokens.ink(remaining: metered ? snapshot.remainingPercent : 100, isStale: meterStale))
                     .lineLimit(1)
                     .frame(minWidth: 44, alignment: .trailing)
@@ -157,19 +171,19 @@ struct ProviderCard: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.primary.opacity(0.045))
-        )
+        .background(cardSurface(cornerRadius: 8))
+        .onHover { isHovered = $0 }
         .help("Show details")
         .accessibilityLabel("\(provider.displayName), \(value)\(attention.map { ", \($0)" } ?? "")\(note.map { ", \($0.text)" } ?? "")\((meterStale ? nil : pace).map { ", \($0.caption())" } ?? "")")
         .accessibilityHint("Shows every window and the last 7 days")
     }
 
-    /// "Weekly · 3d 1h": the window and how long until it starts over, under a one-line name.
-    private func compactReset(_ snapshot: QuotaSnapshot) -> String? {
+    /// "Weekly · resets in 3d 1h" under a one-line name, or "resets in 3d 1h" when the window's
+    /// name ("Premium requests") leaves no room.
+    private func compactReset(_ snapshot: QuotaSnapshot) -> (full: String, short: String)? {
         guard let primary = snapshot.windows.first, let resetsAt = primary.resetsAt, resetsAt > date else { return nil }
-        return "\(primary.displayTitle) · \(UsageFacts.countdown(to: resetsAt, now: date))"
+        let short = "resets in \(UsageFacts.countdown(to: resetsAt, now: date))"
+        return ("\(primary.displayTitle) · \(short)", short)
     }
 
     /// What a one-line row says about a reading that isn't current, besides graying it: a symbol
@@ -435,8 +449,7 @@ struct ProviderCard: View {
                 .font(.system(size: TokenroomTokens.popoverNameSize, weight: .semibold))
                 .foregroundStyle(stale ? Color.secondary.opacity(TokenroomTokens.staleOpacity) : Color.primary)
             Spacer(minLength: 8)
-            Text(value ?? "—")
-                .font(.system(size: TokenroomTokens.popoverPercentSize, weight: .medium).monospacedDigit())
+            HeadlineValue(value ?? "—", size: TokenroomTokens.popoverPercentSize, weight: .medium)
                 .foregroundStyle(TokenroomTokens.ink(remaining: remaining, isStale: stale))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)

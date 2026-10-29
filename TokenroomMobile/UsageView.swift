@@ -21,6 +21,12 @@ struct UsageView: View {
         TimelineView(.periodic(from: .now, by: 60)) { tick in
             content(at: tick.date).onChange(of: tick.date, initial: true) { _, date in store.ageReadings(at: date) }
         }
+        // Kept current while the tab is on screen with the app in front, like News, a provider's
+        // detail included: leaving the tab or the app stops it, and coming back starts it again.
+        .task(id: scenePhase == .active) {
+            guard scenePhase == .active else { return }
+            await store.keepCurrent()
+        }
     }
 
     private func content(at date: Date) -> some View {
@@ -70,7 +76,7 @@ struct UsageView: View {
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Usage")
-            .navigationSubtitle(header ?? "")
+            .navigationSubtitle(header(at: date) ?? "")
             .navigationDestination(for: String.self) { id in
                 if let reading = store.reading(id: id) {
                     ProviderDetailView(reading: reading, date: date)
@@ -209,11 +215,15 @@ struct UsageView: View {
         notificationsOff = status == .denied || status == .notDetermined
     }
 
-    private var header: String? {
+    /// "From Mac · checked 2m ago · 1 stale": when the newest reading was checked, with readings
+    /// left behind counted apart, and "checking…" while a refresh is out.
+    private func header(at date: Date) -> String? {
         guard !store.sampleMode, let source = store.sourceSummary else { return nil }
-        guard let checked = store.lastChecked else { return "From \(source)" }
         let stale = store.readings.filter { !$0.provider.isLive }.count
-        return "From \(source) · checked \(RelativeTime.ago(checked))" + (stale > 0 ? " · \(stale) stale" : "")
+        let staleNote = stale > 0 ? " · \(stale) stale" : ""
+        if store.isRefreshing { return "From \(source) · checking…" + staleNote }
+        guard let checked = store.latestChecked else { return "From \(source)" }
+        return "From \(source) · checked \(RelativeTime.ago(checked, now: date))" + staleNote
     }
 
     /// With the connect screen on: why a plan isn't here, when its status doesn't say.
