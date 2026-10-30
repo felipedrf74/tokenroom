@@ -10,15 +10,15 @@ description: >-
 
 # Tokenroom macOS
 
-**Previous delivery status (11 October 2026):** `docs/news-release-delivery-20261011.md` records the prior delivery. Mac 2.4.0 is public and installed on both Macs; mobile 1.1.0(1) is Waiting for Review, with automatic release after approval selected. Preparation/QA status prose below describes its dated checkpoint. Physical Production integration limits remain unverified.
-
 **Delivery status (30 October 2026):** Mac 2.5.1(1) is public (`v2.5.1`) and installed on this Mac; iPhone, widgets and Watch 1.2.1(1) is in TestFlight and Waiting for Review with automatic release. `docs/release-delivery-20261030.md` is the current authority.
 
-**Previous delivery status (22 October 2026):** Mac 2.5.0(1) is public (`v2.5.0`); iPhone, widgets and Watch 1.2.0(1) was approved and released on the App Store on 22 October 2026. `docs/release-delivery-20261022.md` records it.
+**Previous delivery status (22 October 2026):** Mac 2.5.0(1) is public (`v2.5.0`); iPhone, widgets and Watch 1.2.0(1) was approved and released on the App Store on 22 October 2026. `docs/release-delivery-20261022.md` records that release and the submission; `docs/release-delivery-20261030.md` records the approval.
 
-**Delivery status (12 October 2026):** Mac 2.4.1(1) is public and installed on both Macs. `docs/mac-news-release-delivery-20261012.md` is the current Mac authority, with exact source/CI/public-package/install receipts. Neither app was launched after installation. Mobile 1.1.0(1) is unchanged; its portal status was not rechecked in this Mac-only release.
+**iPhone delivery update (13 October 2026):** Mobile 1.1.1(1) is approved, manually released and verified on live official US/PT pages. `docs/ios-news-release-delivery-20261012.md` records that separate release and conservative cache cleanup. Read-only checks that day confirmed both Macs matched the public Mac 2.4.1(1) package; no new Mac release, installation or production launch was performed in the iPhone closeout. Historical owned phone Simulators are already absent; the pre-existing Watch and other workflows' devices remain intact.
 
-**iPhone delivery update (13 October 2026):** Mobile 1.1.1(1) is approved, manually released and verified on live official US/PT pages. `docs/ios-news-release-delivery-20261012.md` records that separate release and conservative cache cleanup. Fresh read-only checks confirm both Macs still match the public Mac 2.4.1(1) package; no new Mac release, installation or production launch was performed in the iPhone closeout. Historical owned phone Simulators are already absent; the pre-existing Watch and other workflows' devices remain intact.
+**Previous delivery status (12 October 2026):** Mac 2.4.1(1) is public and installed on both Macs. `docs/mac-news-release-delivery-20261012.md` records that Mac delivery, with exact source/CI/public-package/install receipts. Neither app was launched after installation. Mobile 1.1.0(1) is unchanged; its portal status was not rechecked in this Mac-only release.
+
+**Previous delivery status (11 October 2026):** `docs/news-release-delivery-20261011.md` records the prior delivery. Mac 2.4.0 is public and installed on both Macs; mobile 1.1.0(1) is Waiting for Review, with automatic release after approval selected. Preparation/QA status prose below describes its dated checkpoint. Physical Production integration limits remain unverified.
 
 Community menu-bar extra. Glance first. Apple-native, not a web page. Bundle ID `app.tokenroom.mac`.
 

@@ -2,6 +2,8 @@
 
 Status on 22 October 2026: **Mac 2.5.0(1) is publicly released** and installed on this Mac. **iPhone, widgets and Apple Watch 1.2.0(1) is Waiting for Review**, set to release automatically once Apple approves it. Felipe authorized finishing, installing and releasing in chat that day.
 
+**Outcome (recorded 30 October 2026):** Apple approved 1.2.0, and it was released automatically on 22 October at 18:08 UTC (App Store lookup). Mac 2.5.1 replaced 2.5.0 as the latest release on 30 October; [the 30 October record](release-delivery-20261030.md) covers that release. The App Store description was not updated with 1.2.0 (see iPhone, below).
+
 ## Source
 
 | | |
@@ -9,12 +11,12 @@ Status on 22 October 2026: **Mac 2.5.0(1) is publicly released** and installed o
 | Changes | #39 (product audit fixes, faster News), #38 (iPhone plan sign-in), #40 (version bump) |
 | Merged | #39 as `0165c2a`, #38 as `8afc826`, #40 as `89296cacb5db56fb273398f98b0349d87e221bcd` |
 | Released tree | `3fd99f970cd51171dfa977735de146694a4f0eab`; tag `v2.5.0` |
-| Merge path | The "Protect main" ruleset asks for one code-owner approval; the author is the only maintainer, so all three used the ruleset's existing admin bypass, as Mac 2.4.1 did. No rule changed. |
+| Merge path | The "Protect main" ruleset asks for one code-owner approval; the author is the only maintainer, so all three used the ruleset's existing admin bypass, as Mac 2.4.1 did. The agent ran each merge on the maintainer's instruction in chat, after that PR's head passed CI. No rule changed. |
 | CI | Each PR head passed "Build and test" on GitHub's `macos-26` runner (Xcode 26.6): Shared typecheck, Mac tests, iPhone build, iPhone test compile, Command Line Tools build. #40's head has the released tree: [run 39754847477](https://github.com/felipedrf74/tokenroom/actions/runs/39754847477). |
 | Local (Xcode 27.0) | On the released code: 916 Mac tests and the full iPhone suite (42 tests, iPhone 18 Pro simulator), 0 failures. |
 | CloudKit | No field or record type changed; the Production schema needed nothing. |
 
-Both binaries were built from `69842ca`, whose tree differs from the released one only in one `CHANGELOG.md` sentence, which isn't compiled; `production-source-inputs.json` hashes the compiled inputs at the released commit.
+Both binaries were built from `69842ca`, whose tree differs from the released one only in one `CHANGELOG.md` sentence, which isn't compiled; `production-source-inputs.json` hashes the compiled inputs at the released commit. `69842ca` is #40's head before it was amended to `331eebd`. It is on no published branch; a local ref, `refs/keep/ios-1.2.0-build`, keeps it from being pruned in this Mac's clone.
 
 ## Mac 2.5.0 (1)
 
@@ -26,7 +28,7 @@ Both binaries were built from `69842ca`, whose tree differs from the released on
 ## iPhone, widgets, and Apple Watch 1.2.0 (1)
 
 - Archived (Release) and exported for App Store Connect. All four components are 1.2.0 (1), with Production iCloud, production push on the app, no `get-task-allow`, valid signatures, and `ITSAppUsesNonExemptEncryption = NO`. Uploaded with Xcode on 22 October at 09:20 UTC; processed.
-- App Store Connect, version 1.2.0: build 1.2.0 (1); What's New, promotional text and review notes from `docs/app-store.md`; name **Tokenroom: AI News & Usage** and subtitle **Usage limits, resets & alerts** (submitted with the version); automatic release, to all users at once, keeping existing ratings. Description, keywords, screenshots, privacy ("Data Not Collected") and age rating unchanged.
+- App Store Connect, version 1.2.0: build 1.2.0 (1); What's New, promotional text and review notes from `docs/app-store.md`; name **Tokenroom: AI News & Usage** and subtitle **Usage limits, resets & alerts** (submitted with the version); automatic release, to all users at once, keeping existing ratings. Keywords, screenshots, privacy ("Data Not Collected") and age rating unchanged. The description was left unchanged too, which was a miss: its privacy bullet still says "Logins never leave your Mac, and keys never leave your iPhone", which plan sign-in made untrue, and the draft's replacement bullet wasn't entered. `docs/app-store.md` › Description has the text to enter.
 - Submitted for review on 22 October at about 09:33 UTC: "1 Item Submitted", status Waiting for Review.
 
 Review notes as submitted:
@@ -45,6 +47,9 @@ Review notes as submitted:
 
 ## Still open
 
-- App Review: approval, then automatic public release. Waiting for Review is not public availability; check the live App Store pages after release.
-- Vendor terms: plan sign-in uses each vendor's own CLI/app public client. Anthropic's consumer terms (February 2026) bar third-party apps from offering Claude.ai sign-in; App Review or a vendor may object. Removing a provider is one line in `PhoneConnect.productionAllowlist`.
+- App Review: done. Approved and released on 22 October (see Outcome).
+- App Store description: the privacy bullet above still needs replacing. App Store Connect changes a description only with a new version, or with a version taken back out of review.
+- Vendor terms: plan sign-in uses each vendor's own CLI/app public client. Anthropic's consumer terms (February 2026) bar third-party apps from offering Claude.ai sign-in; App Review or a vendor may object. The owner took that risk for all five plans on 21 October (`docs/iphone-login-without-a-mac.md` › Decision change), naming Claude the riskiest; OpenAI's, xAI's and Cursor's terms weren't checked. Removing a provider means taking it out of `PhoneConnect.productionAllowlist` and `PhoneSignIn.providers`, and out of the tests that pin those sets.
+- Renewal rule: on the iPhone, a 4xx OAuth error other than `invalid_grant` keeps the session ready, to retry with the same refresh token (RFC 6749 §5.2), as #38's Risk section says. That is looser than `docs/session-security-assessment-20261004.md`, which says only a sender-proven `notDispatched` restores `ready`. Keeping it needs the maintainer's decision, written into that assessment.
 - Not exercised: a real plan sign-in, renewal and usage read against the live vendors from an iPhone; physical-device checks of Mac wake and toggles, Watch and widget reloads, and live feeds. 2.5.0 was relaunched on this Mac, but its behaviour there was not inspected.
+- Test preference files: #39's description says the Mac tests now delete the `tokenroom.tests.*` files they create. Only suites made with `TestDefaults` are swept; most tests name their own suites, and their files stay in `~/Library/Preferences` (about 3,900 on this Mac on 30 October).

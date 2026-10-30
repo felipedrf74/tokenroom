@@ -24,7 +24,7 @@ iPhone and Apple Watch
 
 ## 2.5.0 for Mac — released 22 October 2026 / 1.2.0 for iPhone — released 22 October 2026
 
-Mac 2.5.0(1) is [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.5.0) and installed on this Mac. iPhone, widgets and Apple Watch 1.2.0(1) was approved and released on the App Store on 22 October 2026. Both carry the iPhone plan sign-in (#38) and the product audit's fixes with faster News (#39). [The delivery record](docs/release-delivery-20261022.md) binds both to their source.
+Mac 2.5.0(1) was [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.5.0) and installed on this Mac, until 2.5.1 replaced it on 30 October. iPhone, widgets and Apple Watch 1.2.0(1) was approved and released on the App Store on 22 October 2026. Both carry the iPhone plan sign-in (#38) and the product audit's fixes with faster News (#39). [The delivery record](docs/release-delivery-20261022.md) binds both to their source.
 
 iPhone and Apple Watch
 
