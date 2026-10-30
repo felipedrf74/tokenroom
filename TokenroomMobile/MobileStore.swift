@@ -1525,10 +1525,11 @@ final class MobileStore {
     /// Keeps a session from a sign-in on this iPhone, for the provider and every plan sharing it
     /// (a Cursor sign-in reads Grok Bot too), and starts reading them. Returns once it's in the
     /// Keychain, so the sign-in sheet doesn't wait for a refresh that's queued behind another.
-    func saveSession(_ session: PhoneSession, for provider: Provider, now: Date = .now) async throws {
+    /// - Parameter now: a fixed clock (tests), which the refresh that follows runs on too.
+    func saveSession(_ session: PhoneSession, for provider: Provider, now: Date? = nil) async throws {
         guard let refresher, PhoneConnect.productionAllowlist.contains(provider) else { throw PhoneSessionStore.SessionError.encoding }
         let owner = PhoneSignIn.sessionOwner(for: provider)
-        try await refresher.replace(owner, with: session, now: now)
+        try await refresher.replace(owner, with: session, now: now ?? .now)
         let covered = PhoneSignIn.sharingSession(with: provider)
         setSessionProviders(PhoneSignIn.providers.filter { covered.contains($0) || sessionProviders.contains($0) })
         refusedSessions.remove(owner)
@@ -1544,7 +1545,9 @@ final class MobileStore {
         if sampleMode {
             sampleMode = false
         }
-        Task { await refresh(force: true) }
+        // Without a fixed clock, the time the refresh starts. A refresh queued behind another
+        // pass reads the real clock either way.
+        Task { await refresh(force: true, now: now ?? .now) }
     }
 
     /// Signs this iPhone out of a plan, and every plan sharing its session: the session is

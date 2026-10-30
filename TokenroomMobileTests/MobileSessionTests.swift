@@ -99,9 +99,15 @@ final class MobileSessionTests: XCTestCase {
         XCTAssertEqual(vendor.calls(.grokBot), 1)
         XCTAssertEqual(store.sessionProviders, [.cursor])
 
-        // A new sign-in asks again at once.
+        // A new sign-in asks again at once, on the sign-in's clock: on the real one, a session
+        // saved for this test's day would be long expired and sent for renewal.
         try await store.saveSession(cursorSession(), for: .grokBot, now: now.addingTimeInterval(3 * 3600 + 60))
         XCTAssertEqual(store.sessionProviders, [.cursor, .grokBot])
+        for _ in 0..<200 where vendor.calls(.grokBot) < 2 || store.isRefreshing {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(vendor.calls(.grokBot), 2)
+        XCTAssertEqual(store.sessionProviders, [.cursor], "Still not on the plan: out quietly again")
     }
 
     func testSigningOutRemovesBothPlans() async throws {
