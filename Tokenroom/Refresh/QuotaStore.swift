@@ -841,7 +841,7 @@ final class QuotaStore {
             let snapshot = raw.applyingBudget(reference: settings.budgetReference(for: provider))
             checkedAt[provider] = snapshot.fetchedAt
             rateLimitedUntil[provider] = nil
-            history.record(snapshot)
+            history.record(snapshot, now: now)
             if case .live(let old) = statuses[provider], Self.usageEqual(old, snapshot) {
                 return
             }

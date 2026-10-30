@@ -27,13 +27,18 @@ enum TestDefaults {
     }
 
     /// The preferences daemon can still write an emptied suite back after `remove`. Once a run,
-    /// such files from earlier runs are deleted: only this helper's names, and only ones an hour
-    /// old, so a run going on at the same time keeps its own.
+    /// such files from earlier runs are deleted: this helper's names, and the per-test suites
+    /// other tests name with a UUID (`tokenroom.tests.news-qa.<UUID>`, `app.tokenroom.tests.<UUID>`),
+    /// which `removePersistentDomain` empties but leaves on disk. Only ones an hour old, so a
+    /// run going on at the same time keeps its own.
     private static let sweep: Void = {
-        let pattern = /^tokenroom\.tests\.[A-Za-z]+\.[0-9a-f]{8}\.[0-9]+\.plist$/
+        let patterns = [
+            #/^tokenroom\.tests\.[A-Za-z]+\.[0-9a-f]{8}\.[0-9]+\.plist$/#,
+            #/^(?:app\.)?tokenroom\.tests\.(?:[A-Za-z0-9-]+\.)*[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\.plist$/#,
+        ]
         let cutoff = Date().addingTimeInterval(-3600)
         let names = (try? FileManager.default.contentsOfDirectory(atPath: preferences.path)) ?? []
-        for name in names where name.wholeMatch(of: pattern) != nil && !name.contains(".\(run).") {
+        for name in names where patterns.contains(where: { name.wholeMatch(of: $0) != nil }) && !name.contains(".\(run).") {
             let file = preferences.appendingPathComponent(name)
             let modified = (try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date
             if let modified, modified < cutoff {

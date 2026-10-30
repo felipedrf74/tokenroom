@@ -33,16 +33,17 @@ final class MobileSessionTests: XCTestCase {
         return folder
     }
 
-    private func makeStore(defaults: UserDefaults, folder: URL, keychain: MemoryKeychain, vendor: Vendor) -> MobileStore {
+    private func makeStore(defaults: UserDefaults, folder: URL, keychain: MemoryKeychain, vendor: Vendor,
+                           keys: APIKeyStore = MobileFixtureKeychain().keys) -> MobileStore {
         MobileStore(
             defaults: defaults,
             containerIdentifier: nil,
-            keys: MobileFixtureKeychain().keys,
+            keys: keys,
             directory: folder, connectOnIPhone: true,
             notificationScheduler: { _ in },
             platformEffects: .inert, launchDefaults: defaults,
             sessions: keychain.store,
-            sessionSend: { provider in { request in vendor.answer(provider, request) } },
+            sessionSend: { provider in { request in await vendor.respond(provider, request) } },
             sessionRenew: { _, _ in
                 XCTFail("Sessions here don't need renewing")
                 return .notDispatched
@@ -53,6 +54,14 @@ final class MobileSessionTests: XCTestCase {
     private func cursorSession(expiresIn: TimeInterval = 30 * 86_400) -> PhoneSession {
         PhoneSession(accessToken: "cursor-access", refreshToken: "cursor-refresh", expiresAt: now.addingTimeInterval(expiresIn),
                      tokenURL: PhoneSignIn.Cursor.tokenURL, clientID: PhoneSignIn.Cursor.clientID)
+    }
+
+    /// Keys whose save and removal succeed without storing anything: every read finds no key, so
+    /// no key provider is called.
+    private func acceptingKeys() -> APIKeyStore {
+        APIKeyStore(servicePrefix: "app.tokenroom.tests.mobile-session.keys.", keychain: .init(
+            copy: { _ in (errSecItemNotFound, nil) }, add: { _ in errSecSuccess },
+            update: { _, _ in errSecItemNotFound }, delete: { _ in errSecSuccess }))
     }
 
     // MARK: Reading
@@ -76,6 +85,7 @@ final class MobileSessionTests: XCTestCase {
         XCTAssertEqual(defaults.stringArray(forKey: MobileStore.Keys.sessionProviders), ["cursor", "grokBot"], "Widgets keep these readings")
         let saved = try XCTUnwrap(ReadingCache.load(from: folder.appendingPathComponent(ReadingCache.fileName)))
         XCTAssertTrue(saved.items.contains { $0.provider.id == "grokBot" })
+        XCTAssertFalse(try XCTUnwrap(store.reading(id: "cursor")).history.isEmpty, "In the history on the pass's clock, not pruned as a week old")
 
         // Within five minutes, nothing is called again.
         await store.refresh(force: true, now: now.addingTimeInterval(120))
@@ -150,6 +160,52 @@ final class MobileSessionTests: XCTestCase {
         XCTAssertEqual(vendor.calls(.cursor), 2, "Read again by the sign-out's refresh")
     }
 
+    func testARefreshAskedForDuringAnotherRunsOnItsOwnClock() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let keychain = MemoryKeychain()
+        try keychain.store.save(cursorSession(), for: .cursor, now: now)
+        let vendor = Vendor(now: now, held: true)
+        let store = makeStore(defaults: defaults, folder: folder, keychain: keychain, vendor: vendor)
+        let start = now, later = now.addingTimeInterval(600)
+        let first = Task { await store.refresh(force: true, now: start) }
+        for _ in 0..<200 where vendor.calls(.cursor) == 0 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        // Ten minutes on, while the first pass waits on Cursor: queued behind it. On the real
+        // clock, Cursor's session, dated from this test's day, would be long expired and sent
+        // for renewal.
+        let second = Task { await store.refresh(force: true, now: later) }
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+        await vendor.release()
+        await first.value
+        await second.value
+
+        XCTAssertEqual(vendor.calls(.cursor), 2, "Read again by the queued pass")
+        XCTAssertFalse(store.isRefreshing)
+    }
+
+    func testSavingOrRemovingAKeyReadsPlansOnItsClock() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let keychain = MemoryKeychain()
+        try keychain.store.save(cursorSession(), for: .cursor, now: now)
+        let vendor = Vendor(now: now)
+        let store = makeStore(defaults: defaults, folder: folder, keychain: keychain, vendor: vendor, keys: acceptingKeys())
+        await store.refresh(force: true, now: now)
+        XCTAssertEqual(vendor.calls(.cursor), 1)
+
+        // Ten minutes apart, Cursor is due again each time. On the real clock its session, dated
+        // from this test's day, would be long expired and sent for renewal.
+        try await store.saveKey("fixture-key", for: .openrouter, region: nil, now: now.addingTimeInterval(600))
+        XCTAssertEqual(vendor.calls(.cursor), 2, "Read again by the saved key's refresh")
+        try await store.removeKey(for: .openrouter, now: now.addingTimeInterval(1200))
+        XCTAssertEqual(vendor.calls(.cursor), 3, "And by the removed key's")
+    }
+
     func testAKeychainThatCantBeReadNowIsntASignOut() async throws {
         let defaults = makeDefaults()
         let folder = try makeFolder()
@@ -186,7 +242,8 @@ final class MobileSessionTests: XCTestCase {
 
 // MARK: Stand-ins
 
-/// Canned vendor answers, counting what was asked.
+/// Canned vendor answers, counting what was asked. `held` keeps every answer back, each counted
+/// as it's asked, until `release`.
 private final class Vendor: Sendable {
     private struct Log {
         var calls: [Provider: Int] = [:]
@@ -195,19 +252,31 @@ private final class Vendor: Sendable {
     }
 
     private let log = Mutex(Log())
+    private let gate: Gate?
     let now: Date
     let grokBotOnPlan: Bool
     let cursorRetryAfter: TimeInterval?
 
-    init(now: Date, grokBotOnPlan: Bool = true, cursorRetryAfter: TimeInterval? = nil) {
+    init(now: Date, grokBotOnPlan: Bool = true, cursorRetryAfter: TimeInterval? = nil, held: Bool = false) {
         self.now = now
         self.grokBotOnPlan = grokBotOnPlan
         self.cursorRetryAfter = cursorRetryAfter
+        gate = held ? Gate() : nil
     }
 
     func calls(_ provider: Provider) -> Int { log.withLock { $0.calls[provider] ?? 0 } }
     var authorizations: Set<String> { log.withLock { $0.authorizations } }
     var urls: [URL] { log.withLock { $0.urls } }
+
+    func release() async {
+        await gate?.open()
+    }
+
+    func respond(_ provider: Provider, _ request: URLRequest) async -> Result<QuotaSnapshot, ProviderError> {
+        let result = answer(provider, request)
+        await gate?.wait()
+        return result
+    }
 
     func answer(_ provider: Provider, _ request: URLRequest) -> Result<QuotaSnapshot, ProviderError> {
         log.withLock { log in
@@ -223,6 +292,23 @@ private final class Vendor: Sendable {
         }
         let window = QuotaWindow(id: "cycle", kind: .billingCycle, title: "This cycle", usedPercent: 40, resetsAt: now.addingTimeInterval(10 * 86_400))
         return Result { try QuotaSnapshot.headlined(by: [window], provider: provider, fetchedAt: now) }.mapError { _ in .parse }
+    }
+}
+
+/// Shut until opened, then open for good.
+private actor Gate {
+    private var isOpen = false
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { waiting.append($0) }
+    }
+
+    func open() {
+        isOpen = true
+        waiting.forEach { $0.resume() }
+        waiting = []
     }
 }
 

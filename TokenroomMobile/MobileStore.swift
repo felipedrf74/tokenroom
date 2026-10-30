@@ -212,6 +212,8 @@ final class MobileStore {
     @ObservationIgnored private var running: Task<Void, Never>?
     @ObservationIgnored private var queued: Task<Void, Never>?
     @ObservationIgnored private var queuedReadsKeys = false
+    /// A fixed clock (tests) the queued pass was asked for on.
+    @ObservationIgnored private var queuedNow: Date?
     /// The last refresh that read this iPhone's keys.
     @ObservationIgnored private var lastKeyRefresh: Date?
     /// The alert choices going out to iCloud, and whether they changed again meanwhile.
@@ -300,8 +302,11 @@ final class MobileStore {
     /// the last refresh that read them (a silent push in between reads only iCloud, so opening
     /// the app still reads the keys).
     /// - Parameter includeKeys: false for a silent push, which only means a Mac sent new readings.
-    func refresh(force: Bool = false, includeKeys: Bool = true, now: Date = .now) async {
+    /// - Parameter now: a fixed clock (tests), which a pass queued behind another runs on too.
+    ///   Without one, the time the refresh starts, and a queued pass reads the clock when it does.
+    func refresh(force: Bool = false, includeKeys: Bool = true, now fixedNow: Date? = nil) async {
         guard allowsExternalEffects else { return }
+        let now = fixedNow ?? .now
         if !sampleMode, cacheGeneration != PhoneCacheAccess.generation(in: defaults) {
             rebuild(now: now)
         }
@@ -311,7 +316,7 @@ final class MobileStore {
             // app opened during one): one more pass follows it, rather than the ask being
             // dropped. It runs in a task of its own, so the other caller's deadline (a push's)
             // doesn't cut it short; this caller stops waiting at its own.
-            let next = queuePass(after: running, readsKeys: includeKeys)
+            let next = queuePass(after: running, readsKeys: includeKeys, now: fixedNow)
             _ = await TimeLimit.run(Self.passWait, otherwise: ()) { await next.value }
             return
         }
@@ -344,9 +349,13 @@ final class MobileStore {
         }
     }
 
-    /// The pass that follows the one running, for everything asked for meanwhile.
-    private func queuePass(after running: Task<Void, Never>, readsKeys: Bool) -> Task<Void, Never> {
+    /// The pass that follows the one running, for everything asked for meanwhile, on the last
+    /// fixed clock asked for, if any.
+    private func queuePass(after running: Task<Void, Never>, readsKeys: Bool, now: Date?) -> Task<Void, Never> {
         queuedReadsKeys = queuedReadsKeys || readsKeys
+        if let now {
+            queuedNow = now
+        }
         if let queued {
             return queued
         }
@@ -358,10 +367,12 @@ final class MobileStore {
                 self.isRefreshing = false
             }
             let readsKeys = self.queuedReadsKeys
+            let now = self.queuedNow
             self.queued = nil
             self.queuedReadsKeys = false
+            self.queuedNow = nil
             // Through `refresh`, in case another pass started first.
-            await self.refresh(force: true, includeKeys: readsKeys)
+            await self.refresh(force: true, includeKeys: readsKeys, now: now)
         }
         queued = task
         return task
@@ -473,6 +484,7 @@ final class MobileStore {
         queued?.cancel()
         queued = nil
         queuedReadsKeys = false
+        queuedNow = nil
         lastKeyRefresh = nil
         resetRelayAccount(phase: relay == nil ? .unavailable : .idle)
         rebuild()
@@ -804,7 +816,7 @@ final class MobileStore {
             localCheckedAt[provider] = raw.fetchedAt
             localFailedAt[provider] = nil
             rateLimitedUntil[provider] = nil
-            history.record(raw.applyingBudget(reference: budgetReference(for: provider)))
+            history.record(raw.applyingBudget(reference: budgetReference(for: provider)), now: now)
         case .failure(let error):
             let next = ProviderStatus.failure(error, cached: localStatuses[provider]?.snapshot, lastChecked: localCheckedAt[provider], now: now)
             if case .rateLimited(let until, _) = next {
@@ -872,6 +884,7 @@ final class MobileStore {
             queued?.cancel()
             queued = nil
             queuedReadsKeys = false
+            queuedNow = nil
             lastKeyRefresh = nil
             resetRelayAccount(phase: relay == nil ? .unavailable : .idle, invalidateCache: false)
         }
@@ -1483,9 +1496,10 @@ final class MobileStore {
         return await BlockingIO.run { keys.metadata(for: provider) }
     }
 
-    func saveKey(_ key: String, for provider: Provider, region: String?, warning: String? = nil) async throws {
+    /// - Parameter now: a fixed clock (tests), which the refresh that follows runs on too.
+    func saveKey(_ key: String, for provider: Provider, region: String?, warning: String? = nil, now: Date? = nil) async throws {
         let keys = self.keys
-        try await BlockingIO.run { try keys.save(key, for: provider, region: region, warning: warning) }
+        try await BlockingIO.run { try keys.save(key, for: provider, region: region, warning: warning, now: now ?? .now) }
         keyedProviders = Provider.allCases.filter { $0 == provider || keyedProviders.contains($0) }
         defaults.set(keyedProviders.map(\.rawValue), forKey: Keys.keyedProviders)
         // Checked now: the old key's spacing and any 429 wait don't apply to a new one.
@@ -1496,10 +1510,11 @@ final class MobileStore {
         if sampleMode {
             sampleMode = false
         }
-        await refresh(force: true)
+        await refresh(force: true, now: now)
     }
 
-    func removeKey(for provider: Provider) async throws {
+    /// - Parameter now: a fixed clock (tests), which the refresh that follows runs on too.
+    func removeKey(for provider: Provider, now: Date? = nil) async throws {
         let keys = self.keys
         try await BlockingIO.run { try keys.remove(for: provider) }
         localStatuses[provider] = nil
@@ -1511,7 +1526,7 @@ final class MobileStore {
         keyedProviders.removeAll { $0 == provider }
         defaults.set(keyedProviders.map(\.rawValue), forKey: Keys.keyedProviders)
         publishPolicy.reset()
-        await refresh(force: true)
+        await refresh(force: true, now: now)
     }
 
     // MARK: Plan sessions
@@ -1545,15 +1560,12 @@ final class MobileStore {
         if sampleMode {
             sampleMode = false
         }
-        // Without a fixed clock, the time the refresh starts. A refresh queued behind another
-        // pass reads the real clock either way.
-        Task { await refresh(force: true, now: now ?? .now) }
+        Task { await refresh(force: true, now: now) }
     }
 
     /// Signs this iPhone out of a plan, and every plan sharing its session: the session is
     /// deleted after any renewal under way, so that renewal can't bring it back.
-    /// - Parameter now: a fixed clock (tests), which the refresh that follows runs on too. A
-    ///   refresh queued behind another pass reads the real clock either way.
+    /// - Parameter now: a fixed clock (tests), which the refresh that follows runs on too.
     func removeSession(for provider: Provider, now: Date? = nil) async throws {
         guard let refresher else { return }
         let owner = PhoneSignIn.sessionOwner(for: provider)
@@ -1571,7 +1583,7 @@ final class MobileStore {
         // Gone from iCloud on this refresh, as a removed key is.
         setSessionProviders(sessionProviders.filter { !covered.contains($0) })
         publishPolicy.reset()
-        await refresh(force: true, now: now ?? .now)
+        await refresh(force: true, now: now)
     }
 
     /// The selected Moonshot account takes precedence over a retained reading from another

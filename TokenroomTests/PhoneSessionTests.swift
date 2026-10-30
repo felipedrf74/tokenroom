@@ -491,11 +491,14 @@ final class PhoneSessionTests: XCTestCase {
         let snapshot = try await client.fetch(now: now).get()
         XCTAssertEqual(authorization.value, "Bearer \(accessMarker)", "The session is used for the request")
 
+        // On the reading's clock: the real one leaves out a reading dated this test's day, and
+        // the history checked below would be empty.
         let history = await MainActor.run { () -> RelayHistory in
             let store = HistoryStore(directory: nil)
-            store.record(snapshot)
+            store.record(snapshot, now: Self.now)
             return store.relayHistory(for: [Self.fixture])
         }
+        XCTAssertFalse(history.series.isEmpty, "The history checked below holds the reading")
         let provider = RelayProvider(provider: fixture, status: .live(snapshot), checkedAt: now)
         let envelope = RelayEnvelope(producer: "iphone", appVersion: "1", checkedAt: now, providers: [provider])
         let cache = ReadingCache(savedAt: now, isSample: false, items: [ReadingCache.Item(provider: provider, source: "This iPhone", history: history.series, origin: .thisPhone)])

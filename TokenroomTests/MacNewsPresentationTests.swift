@@ -79,7 +79,7 @@ final class MacNewsPresentationTests: XCTestCase {
 
     @MainActor
     func testDesktopPreviewFlagIsInertWithoutOtherFixtureArguments() {
-        let name = "MacNewsPreviewIsolation-\(UUID().uuidString)"
+        let name = "tokenroom.tests.news-preview.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: name)!
         defer { defaults.removePersistentDomain(forName: name) }
         defaults.set(true, forKey: "TokenroomNewsPreview")
