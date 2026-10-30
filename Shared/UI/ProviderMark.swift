@@ -35,6 +35,7 @@ struct ProviderMark: View {
             .frame(width: size, height: size)
             .clipShape(shape)
             .overlay(shape.strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
+            .modifier(IconLift(size: size))
             .accessibilityHidden(true)
         } else {
             MonogramMark(text: monogram, tint: Color(hex: tint), size: size)
@@ -48,6 +49,20 @@ struct ProviderMark: View {
         #else
         return UIImage(named: name).map { Image(uiImage: $0) }
         #endif
+    }
+}
+
+/// A provider tile sits a hair above its card, as app icons do in Apple's own lists: a soft
+/// shadow under it, none at glyph sizes where it would only blur the edge.
+struct IconLift: ViewModifier {
+    var size: CGFloat
+
+    func body(content: Content) -> some View {
+        if size >= 20 {
+            content.shadow(color: .black.opacity(0.14), radius: size * 0.05, y: size * 0.025)
+        } else {
+            content
+        }
     }
 }
 

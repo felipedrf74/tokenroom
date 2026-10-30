@@ -42,32 +42,46 @@ struct UsageTileView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
-            Text(reading.source == SampleData.sourceLabel ? "Sample data" : reading.origin.phrase)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            if let checked = provider.checkedAt ?? provider.fetchedAt {
-                Text("Checked \(RelativeTime.ago(checked, now: date))")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
+            Spacer(minLength: 0)
+            origin
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color(.secondarySystemGroupedBackground)))
         .overlay {
-            if isClose {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .strokeBorder(TokenroomTokens.usageTight, lineWidth: 1.5)
-            }
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(isClose ? TokenroomTokens.usageTight : Color.primary.opacity(0.06), lineWidth: isClose ? 1.5 : 0.5)
         }
         .opacity(isStale ? 0.7 : 1)
         .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .accessibilityElement(children: .combine)
     }
 
+    /// Where the reading came from and how long ago, on one line at the foot of the tile:
+    /// "From your Mac · 2m ago".
+    private var origin: some View {
+        let isSample = reading.source == SampleData.sourceLabel
+        let symbol = isSample ? "sparkles" : reading.origin == .mac ? "laptopcomputer" : "iphone"
+        let place = isSample ? "Sample data" : reading.origin.phrase
+        let checked = (provider.checkedAt ?? provider.fetchedAt).map { " · \(RelativeTime.ago($0, now: date))" } ?? ""
+        return Label {
+            // Wraps rather than cutting the age short ("From your other iPhone · 12m ago" on an
+            // SE, or at larger text): the age is what this line is for.
+            Text(place + checked)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: symbol)
+                .imageScale(.small)
+        }
+        .labelStyle(.titleAndIcon)
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+    }
+
     private func header(isClose: Bool) -> some View {
         HStack(spacing: 8) {
-            ProviderMark(provider: provider, size: 24)
+            ProviderMark(provider: provider, size: 26)
             ViewThatFits(in: .horizontal) {
                 Text(provider.name).fixedSize(horizontal: true, vertical: false)
                 Text(provider.shortName).lineLimit(1)
@@ -88,8 +102,8 @@ struct UsageTileView: View {
 
     private func ringRow(_ ring: RelayWindow) -> some View {
         HStack(spacing: 10) {
-            UsageRing(used: ring.used, isStale: isStale || ring.isAwaitingReading(at: date), label: ReadingText.headline(ring, now: date), lineWidth: 6, paceMark: pace(ring)?.elapsedFraction)
-                .frame(width: 58, height: 58)
+            UsageRing(used: ring.used, isStale: isStale || ring.isAwaitingReading(at: date), label: ReadingText.headline(ring, now: date), lineWidth: 7, paceMark: pace(ring)?.elapsedFraction)
+                .frame(width: 60, height: 60)
             VStack(alignment: .leading, spacing: 2) {
                 Text(ring.displayTitle)
                     .font(.footnote.weight(.semibold))
@@ -107,12 +121,10 @@ struct UsageTileView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 4)
-                Text(ReadingText.headline(bar, now: date))
-                    .font(.system(.body, design: .rounded, weight: .semibold))
-                    .monospacedDigit()
+                HeadlineValue(ReadingText.headline(bar, now: date), style: .body, signStyle: .caption)
                     .foregroundStyle(TokenroomTokens.ink(remaining: 100 - bar.used, isStale: isStale))
             }
-            MeterTrack(usedPercent: bar.used, remaining: 100 - bar.used, isStale: isStale || bar.isAwaitingReading(at: date), paceMark: pace(bar)?.elapsedFraction, height: 6, solid: true)
+            MeterTrack(usedPercent: bar.used, remaining: 100 - bar.used, isStale: isStale || bar.isAwaitingReading(at: date), paceMark: pace(bar)?.elapsedFraction, height: 6)
             WindowStatus(window: bar, pace: pace(bar), isStale: isStale, date: date)
         }
     }
@@ -229,6 +241,7 @@ struct CloseToLimitCard: View {
         }
         .padding(.bottom, 6)
         .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color(.secondarySystemGroupedBackground)))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(TokenroomTokens.tight.opacity(0.35), lineWidth: 0.5))
     }
 
     private func row(_ item: CloseWindow, isFirst: Bool) -> some View {
@@ -239,7 +252,7 @@ struct CloseToLimitCard: View {
                 open(item.provider.id)
             } label: {
                 HStack(spacing: 12) {
-                    ProviderMark(provider: item.provider, size: 26)
+                    ProviderMark(provider: item.provider, size: 28)
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             // At the accessibility sizes the limit goes under the name, so neither is cut short.
@@ -256,12 +269,10 @@ struct CloseToLimitCard: View {
                                     .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
                             }
                             Spacer(minLength: 4)
-                            Text(ReadingText.headline(window, now: date))
-                                .font(.system(.body, design: .rounded, weight: .semibold))
-                                .monospacedDigit()
+                            HeadlineValue(ReadingText.headline(window, now: date), style: .title3, signStyle: .footnote)
                                 .foregroundStyle(TokenroomTokens.ink(remaining: 100 - window.used, isStale: false))
                         }
-                        MeterTrack(usedPercent: window.used, remaining: 100 - window.used, isStale: false, paceMark: item.pace?.elapsedFraction, height: 5, solid: true)
+                        MeterTrack(usedPercent: window.used, remaining: 100 - window.used, isStale: false, paceMark: item.pace?.elapsedFraction, height: 6)
                         caption(item)
                             .font(.caption)
                             .lineLimit(typeSize.isAccessibilitySize ? 4 : 2)

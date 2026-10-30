@@ -70,6 +70,10 @@ final class MobileStore {
     static let backgroundTaskID = "app.tokenroom.refresh"
     /// How often to ask iOS for a background refresh. iOS decides when it actually runs.
     static let backgroundInterval: TimeInterval = 30 * 60
+    /// While Usage is on screen: how often it reads again on its own, standing in for a silent
+    /// push iOS held back or dropped. Shorter than a Mac's 9-minute heartbeat, so a Mac's check
+    /// shows within a couple of minutes of reaching iCloud.
+    static let liveInterval: TimeInterval = 2 * 60
 
     private(set) var relayPhase: RelayPhase = .idle
     /// Other collectors' records; this iPhone's own record is left out.
@@ -361,6 +365,24 @@ final class MobileStore {
         }
         queued = task
         return task
+    }
+
+    /// While Usage is on screen with the app in front: an ordinary refresh every `interval`, until
+    /// the caller's task is cancelled (the tab goes away or the app goes to the background).
+    /// Ordinary, so the minute between key reads, each key's spacing and sign-in's five minutes,
+    /// and iCloud's back-off all still hold. It waits first: coming forward already refreshed.
+    func keepCurrent(
+        interval: TimeInterval = MobileStore.liveInterval,
+        sleep: @escaping @Sendable (TimeInterval) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }
+    ) async {
+        while !Task.isCancelled {
+            do {
+                try await sleep(interval)
+            } catch {
+                return
+            }
+            await refresh()
+        }
     }
 
     /// Whether a refresh that isn't forced is due: a minute after the last one that read what
@@ -974,6 +996,12 @@ final class MobileStore {
     /// When the oldest shown provider was last successfully checked.
     var lastChecked: Date? {
         readings.compactMap { $0.provider.checkedAt ?? $0.provider.fetchedAt }.min()
+    }
+
+    /// When the newest shown reading was checked: how current the Usage tab is. Readings left
+    /// behind are counted apart, as stale.
+    var latestChecked: Date? {
+        readings.compactMap { $0.provider.checkedAt ?? $0.provider.fetchedAt }.max()
     }
 
     /// Where readings came from, e.g. "Mac" or "Mac and This iPhone".

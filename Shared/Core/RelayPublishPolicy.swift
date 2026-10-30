@@ -2,9 +2,12 @@ import Foundation
 
 /// When a collector sends its readings: when usage changed or a measured run-out moved an hour
 /// (at most every 5 minutes), when a provider's status changed or a window crossed an alert
-/// threshold (after a minute), and every 30 minutes as a heartbeat so readers can tell it's alive.
+/// threshold (after a minute), and every 9 minutes as a heartbeat, so readers can tell it's alive
+/// and say when it last checked. Nine, a little under the Mac's default 10-minute check, so a
+/// check that ends a few seconds early still sends; at 30, an iPhone showed "checked 40m ago"
+/// for a Mac that had checked two minutes before.
 struct RelayPublishPolicy: Sendable, Equatable {
-    static let heartbeat: TimeInterval = 30 * 60
+    static let heartbeat: TimeInterval = 9 * 60
     static let minimumInterval: TimeInterval = 5 * 60
     static let statusInterval: TimeInterval = 60
 

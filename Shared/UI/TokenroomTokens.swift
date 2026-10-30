@@ -52,13 +52,6 @@ enum TokenroomTokens {
     static let track = Color.primary.opacity(0.12)
     static let staleOpacity = 0.55
 
-    static let usageGradient = Gradient(stops: [
-        .init(color: usageHealthy, location: 0),
-        .init(color: usageWatch, location: 0.48),
-        .init(color: usageTight, location: 0.74),
-        .init(color: usageCritical, location: 1),
-    ])
-
     static let menuLabelSize: CGFloat = 10
     static let menuPercentSize: CGFloat = 12
     static let menuIconSize: CGFloat = 17.22
@@ -108,16 +101,10 @@ enum TokenroomTokens {
         return usageHealthy
     }
 
-    static func usageShading(in well: CGRect, vertical: Bool, isStale: Bool) -> GraphicsContext.Shading {
-        if isStale {
-            return .color(Color.secondary.opacity(0.72))
-        }
-        let start = vertical
-            ? CGPoint(x: well.midX, y: well.maxY)
-            : CGPoint(x: well.minX, y: well.midY)
-        let end = vertical
-            ? CGPoint(x: well.midX, y: well.minY)
-            : CGPoint(x: well.maxX, y: well.midY)
-        return .linearGradient(usageGradient, startPoint: start, endPoint: end)
+    /// A fill with depth in its level's colour: a lighter tint where a meter or ring starts, the
+    /// colour itself where it ends. The colour still says the level; the tint gives it travel.
+    static func usageTones(usedPercent: Double) -> (start: Color, end: Color) {
+        let end = usageColor(usedPercent: usedPercent, isStale: false)
+        return (end.mix(with: .white, by: 0.34), end)
     }
 }

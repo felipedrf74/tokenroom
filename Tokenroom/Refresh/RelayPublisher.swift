@@ -118,7 +118,7 @@ final class RelayPublisher {
     }
 
     /// Sends when usage changed materially (at most every 5 minutes), when a provider's status
-    /// changed (after a minute), or every 30 minutes as a heartbeat.
+    /// changed (after a minute), or every 9 minutes as a heartbeat (`RelayPublishPolicy`).
     func publish(_ envelope: RelayEnvelope, force: Bool = false, now: Date = .now) async {
         guard let relay, isEnabled else { return }
         if isWaiting(now), !force { return }

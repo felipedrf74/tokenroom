@@ -28,7 +28,7 @@ Community menu-bar extra. Glance first. Apple-native, not a web page. Bundle ID 
 | Ink | `Color.primary` | Names, healthy numbers |
 | Mute | `Color.secondary` | Captions, timestamps |
 | Track | `Color.primary.opacity(0.12)` | Empty meter |
-| Fill | usage gradient | Weekly used-bar |
+| Fill | level colour, tinted start (`usageTones`) | Used-bar and ring |
 | Healthy | `#6EC4F5` | 0% used (light blue) |
 | Watch | `#F2C416` | ~50% used |
 | Tight | `#E87A10` | ~75% used |
@@ -43,7 +43,7 @@ Community menu-bar extra. Glance first. Apple-native, not a web page. Bundle ID 
 
 Memorable element: compact extra — brand glyph + tabular %, or iStat-style vertical used-bars. Names live in the popover. No status dot. Keep it narrow so macOS 27 does not park it behind the overflow chevron.
 
-`TokenroomTokens.ink(remaining:isStale:)` owns popover percent color. Menu-bar type uses `Color.primary` only. Menu-bar meters use one solid color from `usageColor(usedPercent:)` (light blue < 50%, yellow < 75%, orange < 90%, red at 90%+). The popover track keeps `usageGradient`. Do not duplicate thresholds.
+`TokenroomTokens.ink(remaining:isStale:)` owns popover percent color. Menu-bar type uses `Color.primary` only. Menu-bar meters use one solid color from `usageColor(usedPercent:)` (light blue < 50%, yellow < 75%, orange < 90%, red at 90%+). Popover, iPhone, widget and Watch meters and rings fill in the same level colour, from a lighter tint where they start to the full colour at the tip (`TokenroomTokens.usageTones`), with a top sheen; rings add a shadowed cap at the tip. Headline figures set the percent sign smaller (`HeadlineValue`). Provider icons and monograms carry a 0.5 pt edge and, from 20 pt, a soft shadow (`IconLift`). Do not duplicate thresholds.
 
 ## Menu bar
 
@@ -54,7 +54,7 @@ Enabled + connected providers only:
   Meters:    [glyph]|     [glyph]|     [glyph]|
 ```
 
-`AppSettings.menuStyle` is Percents or Meters. The percent or meter is the open window that needs attention soonest (a reached limit, then the tightest run-out, then the most used), not always the weekly headline. When that window is not the primary one, the tooltip and accessibility label name it ("5-hour 55%") and name the primary window beside it ("Weekly 10%"). The drawn extra stays one figure wide. Meters are vertical rounded rectangles: 8.05×18pt, 1.6pt corners (soft, not a pill), 1pt primary outline. Used fill sits in an inner well 1.2pt off the stroke so it does not touch the outline. Fill height is `wellHeight × usedPercent / 100` from the bottom of that well. Glyphs are 17.22pt. Grok and GPT marks are vector templates (full even-odd Grok slash, not a cropped PNG). Menu-bar fill is one color by used % (light blue / yellow / orange / red). Popover meters keep the light-blue → red gradient. No leading health dot. Provider icons show in the popover and Settings via `ProviderIcon`, which is the shared `ProviderMark`. Short names: Build, Bot, Claude, GPT, Cursor. Loading, and rate limited before a first reading, use `–%`. Percents are whole numbers (`55%`, not `55.2%`). Signed-out / expired providers are omitted. Never hide an enabled connected provider. Opening the popover refreshes if the last attempt is older than 45s. Unchanged usage does not rewrite status or the menu extra. Highest keeps the provider whose shown window is most urgent, then the most used.
+`AppSettings.menuStyle` is Percents or Meters. The percent or meter is the open window that needs attention soonest (a reached limit, then the tightest run-out, then the most used), not always the weekly headline. When that window is not the primary one, the tooltip and accessibility label name it ("5-hour 55%") and name the primary window beside it ("Weekly 10%"). The drawn extra stays one figure wide. Meters are vertical rounded rectangles: 8.05×18pt, 1.6pt corners (soft, not a pill), 1pt primary outline. Used fill sits in an inner well 1.2pt off the stroke so it does not touch the outline. Fill height is `wellHeight × usedPercent / 100` from the bottom of that well. Glyphs are 17.22pt. Grok and GPT marks are vector templates (full even-odd Grok slash, not a cropped PNG). Menu-bar fill is one color by used % (light blue / yellow / orange / red). Popover meters use the level colour with its tinted start (`usageTones`). No leading health dot. Provider icons show in the popover and Settings via `ProviderIcon`, which is the shared `ProviderMark`. Short names: Build, Bot, Claude, GPT, Cursor. Loading, and rate limited before a first reading, use `–%`. Percents are whole numbers (`55%`, not `55.2%`). Signed-out / expired providers are omitted. Never hide an enabled connected provider. Opening the popover refreshes if the last attempt is older than 45s. Unchanged usage does not rewrite status or the menu extra. Highest keeps the provider whose shown window is most urgent, then the most used.
 
 The extra is an **AppKit `NSStatusItem`** hosting `MenuBarLabel` in a passthrough `NSHostingView`. Click opens an `NSPopover`. Settings is `AppDelegate.openSettings`. `LSUIElement`. Install to `/Applications/Tokenroom.app`.
 

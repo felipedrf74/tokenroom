@@ -1,7 +1,9 @@
 import SwiftUI
 
-/// A ring for one window: used percent in the usage gradient, a label (the monogram or the
-/// percent) in the middle. Scales to its frame, from a Watch row to the iPhone's summary card.
+/// A ring for one window: used percent in its level's colour, a lighter tint at the start running
+/// to the full colour at the tip, where a rounded cap casts a soft shadow, as Apple's Activity
+/// rings do. A label (the monogram or the percent) sits in the middle. Scales to its frame, from a
+/// Watch row to the iPhone's summary card.
 struct UsageRing: View {
     var used: Double
     var isStale: Bool
@@ -24,6 +26,15 @@ struct UsageRing: View {
                         .trim(from: 0, to: fraction)
                         .stroke(fill, style: StrokeStyle(lineWidth: width, lineCap: .round))
                         .rotationEffect(.degrees(-90))
+                    if showsTip {
+                        // The tip: a cap in the full colour with a soft shadow, so the end reads
+                        // as raised above the track (and above the start once it laps).
+                        Circle()
+                            .fill(TokenroomTokens.usageTones(usedPercent: used).end)
+                            .frame(width: width, height: width)
+                            .shadow(color: .black.opacity(0.28), radius: width * 0.22)
+                            .offset(tipOffset(radius: side / 2))
+                    }
                     if let pace {
                         // A notch cut through the ring where an even pace would be.
                         Capsule()
@@ -42,12 +53,14 @@ struct UsageRing: View {
                         .offset(y: -side / 2)
                         .rotationEffect(.degrees(360 * pace))
                 }
-                Text(label)
-                    .font(.system(size: side * 0.3, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .minimumScaleFactor(0.5)
-                    .lineLimit(1)
-                    .padding(width)
+                HeadlineValue(
+                    text: label,
+                    font: .system(size: side * 0.3, weight: .semibold, design: .rounded),
+                    signFont: .system(size: side * 0.17, weight: .semibold, design: .rounded)
+                )
+                .minimumScaleFactor(0.5)
+                .lineLimit(1)
+                .padding(width)
             }
             .frame(width: side, height: side)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -67,13 +80,25 @@ struct UsageRing: View {
         CGFloat(min(max(used, 0), 100) / 100)
     }
 
-    /// The gradient runs around the whole ring, so 30% stays cool and 95% reaches red.
+    /// A tip needs room to show as one: not on a sliver, not on a faded reading.
+    private var showsTip: Bool {
+        !isStale && fraction >= 0.04
+    }
+
+    /// Where the tip sits: the end of the arc, clockwise from 12 o'clock.
+    private func tipOffset(radius: CGFloat) -> CGSize {
+        let angle = Double(fraction) * 2 * .pi - .pi / 2
+        return CGSize(width: radius * cos(angle), height: radius * sin(angle))
+    }
+
+    /// From a lighter tint of the level's colour to the colour itself at the tip. It starts a
+    /// little before 12 o'clock, so the round cap at the start takes the tint.
     private var fill: AnyShapeStyle {
         if isStale {
             return AnyShapeStyle(Color.secondary)
         }
-        // Starts a little before 12 o'clock, so the round cap at the start takes the first color
-        // instead of the last one wrapping around.
-        return AnyShapeStyle(AngularGradient(gradient: TokenroomTokens.usageGradient, center: .center, startAngle: .degrees(-12), endAngle: .degrees(348)))
+        let tones = TokenroomTokens.usageTones(usedPercent: used)
+        let end = max(Double(fraction) * 360, 1)
+        return AnyShapeStyle(AngularGradient(colors: [tones.start, tones.end], center: .center, startAngle: .degrees(-8), endAngle: .degrees(end)))
     }
 }

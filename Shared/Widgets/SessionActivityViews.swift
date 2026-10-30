@@ -39,7 +39,7 @@ struct SessionLockScreenView: View {
                             .monospacedDigit()
                             .foregroundStyle(color)
                     }
-                    MeterTrack(usedPercent: state.used, remaining: 100 - state.used, isStale: state.isStale, paceMark: attributes.paceMark(for: state), height: 6, solid: true)
+                    MeterTrack(usedPercent: state.used, remaining: 100 - state.used, isStale: state.isStale, paceMark: attributes.paceMark(for: state), height: 6)
                     HStack {
                         Text(attributes.windowTitle)
                         Spacer()

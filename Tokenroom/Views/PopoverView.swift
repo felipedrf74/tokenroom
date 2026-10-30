@@ -228,6 +228,17 @@ struct PopoverView: View {
         )
     }
 
+    /// When sending to iCloud failed: said in the header, where it's seen, rather than only in
+    /// Settings. States someone chose (sync off, no iCloud account on this Mac, Tokenroom's data
+    /// deleted in iCloud settings) and unsigned builds stay in Settings, so nothing nags for good.
+    var syncProblem: String? {
+        guard let relay = store.relay else { return nil }
+        switch relay.state {
+        case .failed: return "Couldn't sync with iCloud"
+        case .unavailable, .off, .waiting, .noAccount, .paused, .sent: return nil
+        }
+    }
+
     var checkedHeaderText: String {
         if store.isRefreshing { return "Checking…" }
         let oldestCheck = store.popoverProviders.compactMap { store.lastChecked($0) }.min()
@@ -236,12 +247,31 @@ struct PopoverView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text("Tokenroom")
                     .font(.system(size: 15, weight: .semibold))
-                Text(checkedHeaderText)
-                    .font(.system(size: TokenroomTokens.captionSize))
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 5) {
+                    Text(checkedHeaderText)
+                    if let relay = store.relay, case .sent(let date) = relay.state {
+                        // Quiet when the iPhone is getting readings: a mark, with when as its tooltip.
+                        Image(systemName: "checkmark.icloud")
+                            .imageScale(.small)
+                            .help("Sent to your iPhone and Watch \(RelativeTime.ago(date, now: store.presentationNow))")
+                            .accessibilityLabel("Sent to your iPhone and Watch \(RelativeTime.ago(date, now: store.presentationNow))")
+                    }
+                }
+                .font(.system(size: TokenroomTokens.captionSize))
+                .foregroundStyle(.secondary)
+                if let problem = syncProblem {
+                    Button(action: onSettings) {
+                        Label(problem, systemImage: "exclamationmark.icloud")
+                            .font(.system(size: TokenroomTokens.captionSize, weight: .medium))
+                            .foregroundStyle(TokenroomTokens.accentText)
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(.plain)
+                    .help(store.relay?.statusText ?? "")
+                }
             }
             Spacer(minLength: 8)
             Button {
@@ -266,21 +296,37 @@ struct PopoverView: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 12) {
-            Button("Settings") {
+        HStack(spacing: 14) {
+            Button {
                 onSettings()
+            } label: {
+                Label("Settings", systemImage: "gearshape")
             }
             .buttonStyle(.plain)
-            Button("News") {
+            Button {
                 onNews(.today)
+            } label: {
+                Label("News", systemImage: "newspaper")
             }
             .buttonStyle(.plain)
             Spacer()
-            Button("Quit Tokenroom") {
-                NSApp.terminate(nil)
+            // Quit is one click further, as in the system's own extras: rarely wanted, never lost.
+            Menu {
+                Button("Quit Tokenroom") {
+                    NSApp.terminate(nil)
+                }
+                .keyboardShortcut("q")
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 13, weight: .medium))
             }
-            .buttonStyle(.plain)
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("More")
+            .accessibilityLabel("More")
         }
+        .labelStyle(.titleAndIcon)
         .font(.system(size: 12, weight: .medium))
         .foregroundStyle(.secondary)
         .frame(minHeight: 22)
