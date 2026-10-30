@@ -127,6 +127,29 @@ final class MobileSessionTests: XCTestCase {
         XCTAssertNil(store.reading(id: "grokBot"))
     }
 
+    func testSigningOutOfOnePlanReadsTheOthersOnTheSignOutsClock() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let keychain = MemoryKeychain()
+        try keychain.store.save(cursorSession(), for: .cursor, now: now)
+        let codex = PhoneSession(accessToken: "codex-access", refreshToken: "codex-refresh", expiresAt: now.addingTimeInterval(30 * 86_400),
+                                 tokenURL: PhoneSignIn.Codex.tokenURL, clientID: PhoneSignIn.Codex.clientID)
+        try keychain.store.save(codex, for: .openai, now: now)
+        let vendor = Vendor(now: now)
+        let store = makeStore(defaults: defaults, folder: folder, keychain: keychain, vendor: vendor)
+        await store.refresh(force: true, now: now)
+        XCTAssertEqual(store.sessionProviders, [.openai, .cursor, .grokBot])
+
+        // Ten minutes on, Cursor is due again. On the real clock its session, dated from this
+        // test's day, would be long expired and sent for renewal.
+        try await store.removeSession(for: .openai, now: now.addingTimeInterval(600))
+
+        XCTAssertEqual(store.sessionProviders, [.cursor, .grokBot])
+        XCTAssertNil(keychain.store.metadata(for: .openai))
+        XCTAssertNil(store.reading(id: "openai"))
+        XCTAssertEqual(vendor.calls(.cursor), 2, "Read again by the sign-out's refresh")
+    }
+
     func testAKeychainThatCantBeReadNowIsntASignOut() async throws {
         let defaults = makeDefaults()
         let folder = try makeFolder()
