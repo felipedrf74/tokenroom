@@ -4,19 +4,19 @@ A draft for App Store Connect. Provider names appear only in the description, as
 
 ## What's New — 1.2.1
 
-Submitted 30 October 2026 with build 1.2.1 (1): Waiting for Review, released automatically once approved. The promotional text below went in with it; the review notes are 1.2.0's, unchanged. [The delivery record](release-delivery-20261030.md) has the details.
+Submitted 30 October 2026 with build 1.2.1 (1): Waiting for Review, released automatically once approved. The promotional text below went in with it; the review notes and the description are 1.2.0's, unchanged, so the description still has the old privacy bullet (see Description). [The delivery record](release-delivery-20261030.md) has the details.
 
 Meters and rings now fill in the colour of their level, so a limit that's running low stands out at a glance, and percentages are easier to read. Provider icons look sharper. While Usage is open, Tokenroom looks for new readings every couple of minutes and shows when the newest one was checked. With Tokenroom for Mac 2.5.1, readings from your Mac arrive more often.
 
 ## What's New — 1.2.0
 
-Submitted 22 October 2026 with build 1.2.0 (1), approved and released on the App Store the same day. The name, subtitle, promotional text, and review notes below went in with it; the review notes as submitted are in [the delivery record](release-delivery-20261022.md).
+Submitted 22 October 2026 with build 1.2.0 (1), approved and released on the App Store the same day. The name, subtitle, promotional text, and review notes below went in with it, but not the description's new privacy bullet (see Description); the review notes as submitted are in [the delivery record](release-delivery-20261022.md).
 
 Sign in to Claude, Codex, Grok Build, Cursor and Grok Bot right on your iPhone, in Settings › Plans, and Tokenroom reads those plans without a Mac. One Cursor sign-in covers Grok Bot, and sign-ins stay in your iPhone's Keychain. News checks more often, adds Gemini CLI, Copilot CLI, OpenCode, Claude Code, Claude Agent SDK, Claude Skills and Google DeepMind, and marks new stories more accurately. Readings, widgets and alerts stay more reliable across your iPhone, Apple Watch and Mac.
 
 ## What's New — 1.0.3
 
-Submitted and released 5 October 2026. Preserved historical text; current public version is 1.1.1, below.
+Submitted and released 5 October 2026. Preserved historical text.
 
 This update improves usage sync and reliability across iPhone, Apple Watch, and Mac.
 
@@ -70,6 +70,8 @@ See how much of your AI plans you've used, your pace, and when each limit resets
 
 ## Description
 
+The text to enter with the next version. The live description (1.2.0, and 1.2.1 as submitted) is this text with the old privacy bullet, "Logins never leave your Mac, and keys never leave your iPhone. Only usage, reset times, and plan names sync, through your iCloud." Its first sentence stopped being true when 1.2.0 added plan sign-in. Only that bullet differs.
+
 Tokenroom shows how much of your AI coding and chat plans you've used, whether you're on pace, and when each limit resets, on your iPhone, your Lock Screen, and your wrist.
 
 YOUR PLANS AT A GLANCE
@@ -89,13 +91,15 @@ WIDGETS AND LIVE ACTIVITY
 ALERTS THAT DON'T NAG
 • At 80% and 95%, set apart for 5-hour and weekly limits, and before a limit runs out at your current pace
 • When a busy window resets, for banked resets, and when a balance runs low
-• Once per event, however many devices notice it
+• Updated devices coordinate reset-window alerts to avoid duplicate notifications
 • Quiet hours hold what can wait until morning
 
 NEWS
-• Today: a short daily paper with what's new since you last looked, a top story, and models retiring soon
-• New models from the labs you follow, with context window and prices
-• Each tool's official changelog and releases, grouped by tool, or newest first by day
+• Today, Following, Skills and Saved, with full story details, source dates, read markers and native sharing
+• Curated voices through public article feeds and X profile links; optional official release and status feeds
+• ClawHub Trending, Most downloaded and Newest skill listings, with clear sources and declared requirements. Listing metadata only; no skill installation or execution
+• Save stories and bounded excerpts on this device, keep them after a feed changes or a source is unfollowed, and undo removal
+• New models from the labs you follow, tool changelogs, source search and targeted retry
 
 APPLE WATCH
 • Rings for every plan, complications, and a Smart Stack widget when a limit nears its reset
@@ -112,16 +116,14 @@ Tokenroom isn't affiliated with any of the providers it shows. Their names are u
 
 `ai,usage,quota,limit,tokens,coding,assistant,meter,reset,pace,widget,api,credits,balance,llm,spend`
 
-## For 1.2.0
+## For a later version
 
-For 1.2.0, the next version submitted. Leave the 1.0.1 to 1.1.1 listings and notes as submitted.
+For the version after 1.2.1. Leave the 1.0.1 to 1.2.1 listings and notes as submitted.
 
 The next version can say that the Watch, widgets, and Lock Screen lead with the limit that is closest to running out, and that a pace measured on the Mac stays visible, marked projected, after that Mac sleeps.
 
-- The name and subtitle above (Tokenroom: AI News & Usage; Usage limits, resets & alerts) replace "Tokenroom: AI Usage & Limits" and "Plan limits, resets & alerts". App Store Connect takes a new name only with a new version, so enter them with the next version submitted. The home-screen name stays Tokenroom.
-
-- The iPhone now signs in to Claude, Codex, Grok Build, Cursor, and Grok Bot itself (`PhoneConnect.productionAllowlist`). This draft's promotional text, privacy bullet, and review notes now describe that version (the old bullet was "Logins never leave your Mac, and keys never leave your iPhone"); the 1.0.2 listing keeps its text.
-- Review notes for that version should say that Claude, Codex, Grok Build, Cursor, and Grok Bot sign in on each company's own page (Safari for Claude and Cursor, a short code for Codex and Grok Build; Grok Bot uses the Cursor sign-in), that Tokenroom reads only usage with the sign-in, and that the endpoints are the ones each company's command-line tool uses. Sample Data still shows every screen without an account.
+- Enter the Description above: its privacy bullet replaces the old one, which 1.2.0 and 1.2.1 still carry.
+- Done in 1.2.0: the name and subtitle above (the home-screen name stays Tokenroom), and promotional text and review notes that describe plan sign-in on the iPhone.
 - A later description can say the iPhone works without a Mac for every provider read with a key, Copilot's fine-grained token included, and lists the plans that still need Tokenroom for Mac (Antigravity and Devin).
 
 ## Review notes
@@ -190,7 +192,7 @@ At the 1.1.0 checkpoint, tracked versions matched the qualified archive override
 
 ## Mobile 1.1.1 — released 13 October 2026
 
-Version 1.1.1 build 1 is publicly released; Apple build `12b15493-c81e-4a63-b826-d1178056b33d`. Apple accepted submission `16200897-ca51-4994-817d-04ce82c1f1ed` on 12 October at 20:46 Europe/Lisbon, then approved the exact build on 13 October. The authorized manual release completed and the live official US/PT pages show 1.1.1 with the What's New text below. Cached iTunes lookup results remain distinct from the live pages. [The delivery record](ios-news-release-delivery-20261012.md) binds source, both successful pre-publication CI runs, package, approval, public availability and conservative cleanup. Current versions are Mac 2.4.1(1), mobile/widgets/Watch 1.1.1(1). Both mobile build numbers are consumed.
+Version 1.1.1 build 1 is publicly released; Apple build `12b15493-c81e-4a63-b826-d1178056b33d`. Apple accepted submission `16200897-ca51-4994-817d-04ce82c1f1ed` on 12 October at 20:46 Europe/Lisbon, then approved the exact build on 13 October. The authorized manual release completed and the live official US/PT pages show 1.1.1 with the What's New text below. Cached iTunes lookup results remain distinct from the live pages. [The delivery record](ios-news-release-delivery-20261012.md) binds source, both successful pre-publication CI runs, package, approval, public availability and conservative cleanup. Versions then were Mac 2.4.1(1), mobile/widgets/Watch 1.1.1(1). Both mobile build numbers are consumed.
 
 Public 1.1.1 What's New (unchanged from the qualified saved draft):
 
