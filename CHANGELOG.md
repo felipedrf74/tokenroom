@@ -1,8 +1,30 @@
 # Changelog
 
-## 2.5.0 for Mac — released 22 October 2026 / 1.2.0 for iPhone — submitted 22 October 2026
+## 2.5.1 for Mac and 1.2.1 for iPhone — not yet released
 
-Mac 2.5.0(1) is [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.5.0) and installed on this Mac. iPhone, widgets and Apple Watch 1.2.0(1) is submitted to App Review (Waiting for Review), released automatically once approved. Both carry the iPhone plan sign-in (#38) and the product audit's fixes with faster News (#39). [The delivery record](docs/release-delivery-20261022.md) binds both to their source.
+Mac 2.5.1(1) and iPhone, widgets and Apple Watch 1.2.1(1) carry the new finish for meters, rings and icons, and fresher readings on the iPhone (#42). Neither is uploaded or published yet.
+
+Meters and icons, on every device
+
+- Meters and rings fill in their level's colour, from a lighter tint where they start to the full colour at the tip, so 23% and 78% no longer start the same blue. Rings end in a shadowed cap, like Activity rings.
+- The percent sign is set smaller than the figure.
+- Provider icons get a fine edge and a soft shadow.
+
+Mac
+
+- The popover's header shows a small iCloud mark while the iPhone and Watch are getting readings, and says "Couldn't sync with iCloud" when sending fails.
+- Cards respond to the pointer, and captions say "resets in 3d 1h" instead of "3d 1h".
+- Settings and News have symbols; Quit moves into the ⋯ menu, and ⌘Q still works.
+- An unchanged reading goes to iCloud every 9 minutes instead of every 30, so the iPhone's "checked" time follows the Mac's own checks.
+
+iPhone and Apple Watch
+
+- While Usage is open, the iPhone looks for new readings every 2 minutes, also on a provider's page. The subtitle says when the newest reading was checked.
+- Each tile says on one line where its reading came from and how old it is. A provider's page shows how much is left next to its ring.
+
+## 2.5.0 for Mac — released 22 October 2026 / 1.2.0 for iPhone — released 22 October 2026
+
+Mac 2.5.0(1) is [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.5.0) and installed on this Mac. iPhone, widgets and Apple Watch 1.2.0(1) was approved and released on the App Store on 22 October 2026. Both carry the iPhone plan sign-in (#38) and the product audit's fixes with faster News (#39). [The delivery record](docs/release-delivery-20261022.md) binds both to their source.
 
 iPhone and Apple Watch
 
