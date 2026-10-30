@@ -1552,7 +1552,9 @@ final class MobileStore {
 
     /// Signs this iPhone out of a plan, and every plan sharing its session: the session is
     /// deleted after any renewal under way, so that renewal can't bring it back.
-    func removeSession(for provider: Provider) async throws {
+    /// - Parameter now: a fixed clock (tests), which the refresh that follows runs on too. A
+    ///   refresh queued behind another pass reads the real clock either way.
+    func removeSession(for provider: Provider, now: Date? = nil) async throws {
         guard let refresher else { return }
         let owner = PhoneSignIn.sessionOwner(for: provider)
         try await refresher.replace(owner, with: nil)
@@ -1569,7 +1571,7 @@ final class MobileStore {
         // Gone from iCloud on this refresh, as a removed key is.
         setSessionProviders(sessionProviders.filter { !covered.contains($0) })
         publishPolicy.reset()
-        await refresh(force: true)
+        await refresh(force: true, now: now ?? .now)
     }
 
     /// The selected Moonshot account takes precedence over a retained reading from another

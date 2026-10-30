@@ -163,11 +163,13 @@ final class NewsLiveTests: XCTestCase {
             partial.items["cursor"] = [FeedItem(id: "c", title: "Cursor post", link: URL(string: "https://example.com/c"), published: now.addingTimeInterval(-600), source: "Cursor", firstSeenAt: now.addingTimeInterval(-600))]
             await request.publish(partial)
             published.value = true
-            while held.value { try? await Task.sleep(for: .milliseconds(5)) }
+            for _ in 0..<1000 where held.value { try? await Task.sleep(for: .milliseconds(5)) }
+            XCTAssertFalse(held.value, "Still held after five seconds: a refresh waited on this pass")
             return NewsFetcher.Result(cache: partial, newModels: [])
         }, notify: { _, _, _ in })
         let pass = Task { await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: now) }
-        while !published.value { try await Task.sleep(for: .milliseconds(5)) }
+        for _ in 0..<1000 where !published.value { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertTrue(published.value, "The pass published what it had")
         XCTAssertTrue(news.isRefreshing, "The pass is still waiting")
         XCTAssertEqual(news.allAnnouncements.first { $0.sourceID == "cursor" }?.title, "Cursor post", "…but what came in shows")
         XCTAssertEqual(news.unseenAnnouncementCount, 0, "…and a first read's back catalog isn't new meanwhile either")
@@ -292,7 +294,8 @@ final class NewsLiveTests: XCTestCase {
             checked.save(to: folder)
             let news = NewsStore(defaults: makeDefaults(), directory: folder, now: Date(timeIntervalSince1970: 1_800_000_000), fetch: { request in
                 entered.value = true
-                while held.value { try? await Task.sleep(for: .milliseconds(5)) }
+                for _ in 0..<1000 where held.value { try? await Task.sleep(for: .milliseconds(5)) }
+                XCTAssertFalse(held.value, "Still held after five seconds: a refresh waited on this pass")
                 var cache = request.cache
                 cache.modelsFetchedAt = request.now
                 return NewsFetcher.Result(cache: cache, newModels: [Self.release("anthropic/claude-new", created: request.now)])
@@ -301,7 +304,8 @@ final class NewsLiveTests: XCTestCase {
             preferences.newModels = true
             if newsOnScreen { news.beginVisit() }
             let live = Task { await news.refresh(maxAge: NewsFetcher.liveInterval, preferences: preferences, notifies: false) }
-            while !entered.value { try await Task.sleep(for: .milliseconds(5)) }
+            for _ in 0..<1000 where !entered.value { try await Task.sleep(for: .milliseconds(5)) }
+            XCTAssertTrue(entered.value, "The pass reached its fetch")
             await news.refresh(preferences: preferences, notifies: true) // The background refresh.
             held.value = false
             await live.value
@@ -326,14 +330,16 @@ final class NewsLiveTests: XCTestCase {
             ages.value.append(request.maxAge)
             if ages.value.count == 1 {
                 entered.value = true
-                while held.value { try? await Task.sleep(for: .milliseconds(5)) }
+                for _ in 0..<1000 where held.value { try? await Task.sleep(for: .milliseconds(5)) }
+                XCTAssertFalse(held.value, "Still held after five seconds: a refresh waited on this pass")
                 return NewsFetcher.Result(cache: request.cache, newModels: [])
             }
             return NewsFetcher.Result(cache: request.cache, newModels: [Self.release("anthropic/claude-new", created: request.now)])
         }, notify: { _, _, _ in notified.value += 1 })
 
         let background = Task { await news.refresh(preferences: { var p = AlertPreferences(); p.newModels = true; return p }()) }
-        while !entered.value { try await Task.sleep(for: .milliseconds(5)) }
+        for _ in 0..<1000 where !entered.value { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertTrue(entered.value, "The pass reached its fetch")
         await news.refresh(maxAge: NewsFetcher.liveInterval, preferences: { var p = AlertPreferences(); p.newModels = true; return p }(), notifies: false)
         held.value = false
         await background.value
@@ -345,7 +351,8 @@ final class NewsLiveTests: XCTestCase {
         held.value = true
         entered.value = false
         let again = Task { await news.refresh(preferences: AlertPreferences()) }
-        while !entered.value { try await Task.sleep(for: .milliseconds(5)) }
+        for _ in 0..<1000 where !entered.value { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertTrue(entered.value, "The pass reached its fetch")
         await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false)
         await news.refresh(maxAge: NewsFetcher.liveInterval, preferences: AlertPreferences(), notifies: false)
         held.value = false

@@ -527,9 +527,8 @@ final class FoundationTests: XCTestCase {
             cache: SnapshotCache(directory: try makeFolder())
         )
         let first = Task { await store.refresh(force: true) }
-        while client.calls == 0 {
-            await Task.yield()
-        }
+        for _ in 0..<1000 where client.calls == 0 { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertEqual(client.calls, 1, "The first check reached the client")
         let waiting = (0..<3).map { _ in Task { await store.refresh(force: true) } }
         for _ in 0..<20 {
             await Task.yield()
