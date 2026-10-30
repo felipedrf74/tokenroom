@@ -12,7 +12,9 @@ description: >-
 
 **Previous delivery status (11 October 2026):** `docs/news-release-delivery-20261011.md` records the prior delivery. Mac 2.4.0 is public and installed on both Macs; mobile 1.1.0(1) is Waiting for Review, with automatic release after approval selected. Preparation/QA status prose below describes its dated checkpoint. Physical Production integration limits remain unverified.
 
-**Delivery status (22 October 2026):** Mac 2.5.0(1) is public (`v2.5.0`) and installed on this Mac; iPhone, widgets and Watch 1.2.0(1) is Waiting for Review with automatic release. `docs/release-delivery-20261022.md` is the current authority.
+**Delivery status (30 October 2026):** Mac 2.5.1(1) is public (`v2.5.1`) and installed on this Mac; iPhone, widgets and Watch 1.2.1(1) is in TestFlight and Waiting for Review with automatic release. `docs/release-delivery-20261030.md` is the current authority.
+
+**Previous delivery status (22 October 2026):** Mac 2.5.0(1) is public (`v2.5.0`); iPhone, widgets and Watch 1.2.0(1) was approved and released on the App Store on 22 October 2026. `docs/release-delivery-20261022.md` records it.
 
 **Delivery status (12 October 2026):** Mac 2.4.1(1) is public and installed on both Macs. `docs/mac-news-release-delivery-20261012.md` is the current Mac authority, with exact source/CI/public-package/install receipts. Neither app was launched after installation. Mobile 1.1.0(1) is unchanged; its portal status was not rechecked in this Mac-only release.
 
