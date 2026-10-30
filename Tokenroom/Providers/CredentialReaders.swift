@@ -776,6 +776,13 @@ enum CredentialReaders {
     /// The Keychain token last read, likewise as a fingerprint.
     private static let lastKeychainCursorToken = OSAllocatedUnfairLock<Int?>(initialState: nil)
 
+    /// Forgets both, as a restart does, for tests sharing this process. `invalidateCaches`
+    /// keeps them: another tool's sign-in doesn't make a revoked Cursor token work again.
+    static func forgetCursorRefusal() {
+        refusedCursorToken.withLock { $0 = nil }
+        lastKeychainCursorToken.withLock { $0 = nil }
+    }
+
     private static func fingerprint(_ token: String) -> Int {
         var hasher = Hasher()
         hasher.combine(token)

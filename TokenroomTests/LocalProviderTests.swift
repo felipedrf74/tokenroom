@@ -204,8 +204,13 @@ final class LocalProviderTests: XCTestCase {
     /// A Keychain token Cursor refused before its expiry (revoked) isn't tried first again: the
     /// database's goes first until the Keychain holds another, so a check makes one call, not two.
     func testARefusedCursorKeychainTokenIsntTriedFirstAgain() throws {
-        // The token cache is shared with the rest of the process.
-        defer { CredentialReaders.invalidateCaches() }
+        // The token cache and the refusal are shared with the rest of the process, and with this
+        // test's next iteration.
+        CredentialReaders.forgetCursorRefusal()
+        defer {
+            CredentialReaders.invalidateCaches()
+            CredentialReaders.forgetCursorRefusal()
+        }
         let folder = try makeFolder()
         let revoked = Self.jwt(expiringAt: now.addingTimeInterval(31 * 86_400))
         let working = Self.jwt(expiringAt: now.addingTimeInterval(21 * 86_400))
