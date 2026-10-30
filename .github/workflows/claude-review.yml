@@ -16,7 +16,8 @@
 # or marketplace is fetched at run time.
 #
 # Skips without the ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN repository
-# secret, on drafts, on forks, and on documentation-only changes. A
+# secret, on drafts, on forks, and on documentation-only changes other than
+# AGENTS.md and CLAUDE.md. A
 # pull_request run uses this file from the branch, so same-repository branch
 # authors are trusted with the secret.
 name: Claude Review
@@ -25,9 +26,14 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
+    # Later patterns win: skip docs and Markdown, but still review the files
+    # that hold the review rules.
+    paths:
+      - '**'
+      - '!docs/**'
+      - '!**/*.md'
+      - '**/AGENTS.md'
+      - '**/CLAUDE.md'
 
 concurrency:
   group: claude-review-${{ github.event.pull_request.number }}
