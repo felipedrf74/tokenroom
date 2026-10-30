@@ -2,9 +2,13 @@
 
 A draft for App Store Connect. Provider names appear only in the description, as facts, never in the name, subtitle, or keywords. Tokenroom isn't affiliated with any provider.
 
+## What's New — 1.2.1
+
+Meters and rings now fill in the colour of their level, so a limit that's running low stands out at a glance, and percentages are easier to read. Provider icons look sharper. While Usage is open, Tokenroom looks for new readings every couple of minutes and shows when the newest one was checked. With Tokenroom for Mac 2.5.1, readings from your Mac arrive more often.
+
 ## What's New — 1.2.0
 
-Submitted 22 October 2026 with build 1.2.0 (1): Waiting for Review, released automatically once approved. The name, subtitle, promotional text, and review notes below went in with it; the review notes as submitted are in [the delivery record](release-delivery-20261022.md).
+Submitted 22 October 2026 with build 1.2.0 (1), approved and released on the App Store the same day. The name, subtitle, promotional text, and review notes below went in with it; the review notes as submitted are in [the delivery record](release-delivery-20261022.md).
 
 Sign in to Claude, Codex, Grok Build, Cursor and Grok Bot right on your iPhone, in Settings › Plans, and Tokenroom reads those plans without a Mac. One Cursor sign-in covers Grok Bot, and sign-ins stay in your iPhone's Keychain. News checks more often, adds Gemini CLI, Copilot CLI, OpenCode, Claude Code, Claude Agent SDK, Claude Skills and Google DeepMind, and marks new stories more accurately. Readings, widgets and alerts stay more reliable across your iPhone, Apple Watch and Mac.
 
@@ -48,7 +52,7 @@ Usage readings now show when each provider was last checked and flag stale data.
 | Content rights | Yes: shows third-party content (provider names, model and feed titles) it has the right to use |
 | EU trader status (DSA) | Non-trader |
 | Tracking | None |
-| Release | 1.2.0 submitted 22 October 2026 (Waiting for Review, automatic release); 1.1.1 publicly released 13 October 2026 |
+| Release | 1.2.1 next; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
 
 ## App privacy
 
