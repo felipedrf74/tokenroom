@@ -48,6 +48,21 @@ final class LocalProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.planLabel, "Copilot Pro")
     }
 
+    func testCopilotOneRequestIntoOverageStillShowsTheMeter() throws {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: fixture("copilot-user-pro")) as? [String: Any])
+        var snapshots = try XCTUnwrap(object["quota_snapshots"] as? [String: Any])
+        var premium = try XCTUnwrap(snapshots["premium_interactions"] as? [String: Any])
+        premium["remaining"] = -1
+        premium["quota_remaining"] = -1.0
+        premium["percent_remaining"] = -0.33
+        premium["overage_count"] = 1
+        snapshots["premium_interactions"] = premium
+        object["quota_snapshots"] = snapshots
+        let snapshot = try CopilotParser.snapshot(from: JSONSerialization.data(withJSONObject: object), fetchedAt: now)
+        XCTAssertEqual(snapshot.windows.map(\.id), ["premium_interactions"], "-1 left is overage, not unlimited")
+        XCTAssertEqual(snapshot.windows[0].amount, QuotaAmount(used: 301, limit: 300, remaining: 0, unit: "requests"))
+    }
+
     func testCopilotOlderFreeShape() throws {
         let snapshot = try CopilotParser.snapshot(from: fixture("copilot-user-legacy"), fetchedAt: now)
         XCTAssertEqual(snapshot.windows.map(\.id), ["chat", "completions"])
