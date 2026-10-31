@@ -63,7 +63,7 @@ final class NewsEditionTests: XCTestCase {
         XCTAssertEqual(NewsEditions.labProviders["anthropic"], .anthropicOrg)
         XCTAssertEqual(NewsEditions.labProviders["deepseek"], .deepseek)
         XCTAssertNil(NewsEditions.labProviders["google"], "Google has no organization icon; its models show a monogram")
-        XCTAssertEqual(model("x", daysAgo: 1).contextText, "1M")
+        XCTAssertEqual(model("x", daysAgo: 1).contextText(locale: Locale(identifier: "en_US")), "1M", "In English; other languages abbreviate their own way")
     }
 
     func testTodayIsEmptyWhenOnlyDistantRetirementsAreCached() {

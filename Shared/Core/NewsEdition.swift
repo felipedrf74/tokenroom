@@ -118,8 +118,12 @@ enum NewsEditions {
 extension ModelRelease {
     /// "1M", "400K".
     var contextText: String? {
+        contextText(locale: .current)
+    }
+
+    func contextText(locale: Locale) -> String? {
         guard let context = contextLength, context > 0 else { return nil }
-        return context.formatted(.number.notation(.compactName))
+        return context.formatted(.number.notation(.compactName).locale(locale))
     }
 
     /// Days until it retires, counting a part day as one.
