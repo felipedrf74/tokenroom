@@ -440,20 +440,6 @@ final class NewsStore {
         }
     }
 
-    func freshness(for section: NewsFilter, now: Date = .now) -> String {
-        let models = cache.modelsFetchedAt.map { "Models checked \(RelativeTime.ago($0, now: now))" } ?? "Models not checked yet"
-        let times = sources.compactMap { cache.check(for: $0).succeededAt }
-        let feeds: String
-        if sources.isEmpty { feeds = "No announcement sources followed" }
-        else if times.count != sources.count { feeds = "Some sources have not loaded yet" }
-        else { feeds = "Sources checked \(RelativeTime.ago(times.min(), now: now))" }
-        switch section {
-        case .today: return models + " · " + feeds
-        case .models, .retiring: return models
-        case .announcements: return feeds
-        }
-    }
-
     func problem(for section: NewsFilter) -> String? {
         switch section {
         case .today: let problems = [modelProblem, announcementProblem].compactMap { $0 }

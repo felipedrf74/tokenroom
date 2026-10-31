@@ -39,15 +39,6 @@ extension View {
     }
 }
 
-struct NewsCard<Content: View>: View {
-    @ViewBuilder var content: () -> Content
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12, content: content)
-            .frame(maxWidth: .infinity, alignment: .leading).padding(16)
-            .background(TokenroomTokens.cardFill, in: RoundedRectangle(cornerRadius: 18))
-    }
-}
-
 struct NewsShelf<Content: View>: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     var title: String
@@ -124,33 +115,6 @@ struct NewsSaveButton: View {
             Label(!saved ? "Save" : "Saved", systemImage: !saved ? "bookmark" : "bookmark.fill")
         }
         #endif
-    }
-}
-
-struct NewsStoryRow: View {
-    var item: FeedItem
-    var isNew = false
-    var isRead = false
-    var prominent = false
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(item.source + " · " + (item.kind ?? .officialAnnouncement).label).font(.caption.weight(.medium)).foregroundStyle(NewsControlMetrics.secondaryText)
-            Text(item.displayTitle).font(.system(prominent ? .title2 : .headline, design: .serif, weight: .semibold))
-                .foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
-            if prominent, let excerpt = item.displayExcerpt { Text(excerpt).font(.subheadline).foregroundStyle(NewsControlMetrics.secondaryText).lineLimit(3) }
-            ViewThatFits(in: .horizontal) {
-                HStack { metadata }
-                VStack(alignment: .leading, spacing: 4) { metadata }
-            }
-        }.multilineTextAlignment(.leading).frame(maxWidth: .infinity, minHeight: NewsControlMetrics.minimumHeight, alignment: .leading)
-            .accessibilityElement(children: .combine)
-    }
-    @ViewBuilder private var metadata: some View {
-        if let date = item.publisherPublishedAt ?? item.updatedAt ?? item.published {
-            Text((item.publisherPublishedAt == nil && item.updatedAt != nil ? "Updated " : "") + RelativeTime.ago(date)).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText)
-        }
-        if isNew { NewBadge() }
-        if isRead { Text("Read").font(.caption).foregroundStyle(NewsControlMetrics.secondaryText) }
     }
 }
 
@@ -304,18 +268,6 @@ struct NewsSavedDetail: View {
                 Text("Saved on this device \(item.savedAt.formatted(date: .abbreviated, time: .omitted)). Original content requires a connection.").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
             }.newsDetailLayout()
         }.newsReaderCanvas().navigationTitle("Saved item").onAppear { library.markRead(id: item.id, aliases: item.aliases) }
-    }
-}
-
-struct NewsSavedList: View {
-    @Bindable var library: NewsLibrary
-    var query = ""
-    var body: some View {
-        #if os(macOS)
-        MacNewsSavedList(library: library, query: query)
-        #else
-        MobileNewsSavedList(library: library, query: query)
-        #endif
     }
 }
 

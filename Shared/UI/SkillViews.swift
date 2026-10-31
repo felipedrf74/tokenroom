@@ -30,16 +30,4 @@ struct SkillListingDetail: View {
     }
 }
 
-struct SkillsShelf: View {
-    @Bindable var skills: SkillsStore
-    @Bindable var library: NewsLibrary
-    var query = ""
-    var body: some View {
-        #if os(macOS)
-        MacNewsSkillsShelf(skills: skills, library: library, query: query)
-        #else
-        MobileNewsSkillsShelf(skills: skills, library: library, query: query)
-        #endif
-    }
-}
 #endif

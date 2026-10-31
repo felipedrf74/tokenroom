@@ -70,68 +70,6 @@ struct ModelReleaseRow: View {
     }
 }
 
-/// An official announcement or release: source, title, when. Opens the post.
-struct AnnouncementRow: View {
-    var item: FeedItem
-    var isNew = false
-
-    var body: some View {
-        let row = HStack(alignment: .top, spacing: 10) {
-            if let provider {
-                ProviderMark(provider: provider, size: 26)
-                    .padding(.top, 1)
-            }
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(item.source)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if isNew {
-                        NewBadge()
-                    }
-                    Spacer()
-                    if let published = item.published {
-                        Text(RelativeTime.ago(published))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Text(item.displayTitle)
-                    .font(.body)
-                    .foregroundStyle(.primary)
-                    .lineLimit(3)
-            }
-        }
-        .padding(.vertical, 2)
-        if let link = item.link {
-            Link(destination: link) { row }
-                .foregroundStyle(.primary)
-                .multilineTextAlignment(.leading)
-        } else {
-            row
-        }
-    }
-
-    private var provider: Provider? {
-        FeedSource.catalog.first { $0.name == item.source }?.provider
-    }
-}
-
-/// A News section's footer: where its items come from, after any feed that couldn't be read.
-struct NewsFooter: View {
-    var text: String
-    var problem: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if let problem {
-                Text(problem)
-            }
-            Text(text)
-        }
-    }
-}
-
 /// Marks an item published since News was last opened.
 struct NewBadge: View {
     var body: some View {
