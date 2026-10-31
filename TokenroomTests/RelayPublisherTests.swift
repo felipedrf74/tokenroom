@@ -72,6 +72,40 @@ final class RelayPublisherTests: XCTestCase {
         XCTAssertEqual(cloud.envelopes.count, 2, "Sent again at once: what was sent before is forgotten")
     }
 
+    /// A provider turned off while the last send was out: that send returns and records itself as
+    /// sent, but the round after it still goes at once, not after the minute's wait.
+    @MainActor
+    func testAProviderChangeDuringASendKeepsTheNextRoundDue() async {
+        let cloud = StandInCloud(holdsPublishes: 1)
+        let publisher = RelayPublisher(defaults: makeDefaults(), cloud: cloud, iCloudBudget: 5)
+        let now = Date()
+        let sending = Task { await publisher.publish(envelope(), now: now) }
+        await waitUntil { cloud.publishStarts == 1 }
+        publisher.providersChanged()
+        cloud.release()
+        await sending.value
+        XCTAssertEqual(cloud.envelopes.count, 1)
+
+        await publisher.publish(envelope(), now: now.addingTimeInterval(1))
+        XCTAssertEqual(cloud.envelopes.count, 2, "The change made while the first send was out goes now")
+        await publisher.publish(envelope(), now: now.addingTimeInterval(2))
+        XCTAssertEqual(cloud.envelopes.count, 2, "Then nothing changed")
+    }
+
+    /// The name field left blank: the iPhone still says where readings come from.
+    @MainActor
+    func testABlankNameOnIPhoneIsSentAsMac() async {
+        let cloud = StandInCloud()
+        let publisher = RelayPublisher(defaults: makeDefaults(), cloud: cloud, iCloudBudget: 5)
+        publisher.label = "  "
+        await publisher.publish(envelope())
+        await publisher.sendTestAlert()
+        publisher.label = " Studio "
+        await publisher.publish(envelope())
+        XCTAssertEqual(cloud.labels, ["Mac", "Studio"])
+        XCTAssertEqual(cloud.eventBodies, ["Test alert from Mac. Usage alerts will look like this."])
+    }
+
     /// Off stops new writes: alerts not yet sent stay queued. The one already out may still land.
     @MainActor
     func testTurningSyncOffStopsTheAlertsNotYetSent() async {
@@ -101,6 +135,8 @@ final class StandInCloud: RelayCloud, @unchecked Sendable {
     private var isReleased = false
     private var waiting: [CheckedContinuation<Void, Never>] = []
     private var sent: [RelayEnvelope] = []
+    private var sentLabels: [String] = []
+    private var events: [String] = []
     private var alerts: [String] = []
     private var starts = 0
     private var alertCalls = 0
@@ -113,6 +149,8 @@ final class StandInCloud: RelayCloud, @unchecked Sendable {
     }
 
     var envelopes: [RelayEnvelope] { lock.withLock { sent } }
+    var labels: [String] { lock.withLock { sentLabels } }
+    var eventBodies: [String] { lock.withLock { events } }
     var publishStarts: Int { lock.withLock { starts } }
     var savedAlerts: [String] { lock.withLock { alerts } }
     var alertStarts: Int { lock.withLock { alertCalls } }
@@ -153,7 +191,10 @@ final class StandInCloud: RelayCloud, @unchecked Sendable {
         if holds {
             await waitForRelease()
         }
-        lock.withLock { sent.append(envelope) }
+        lock.withLock {
+            sent.append(envelope)
+            sentLabels.append(label)
+        }
     }
 
     func publishHistory(sourceID: String, history: RelayHistory) async throws {}
@@ -182,7 +223,9 @@ final class StandInCloud: RelayCloud, @unchecked Sendable {
         return true
     }
     func pruneEvents(now: Date) async throws {}
-    func saveEvent(id: String, provider: String, level: Int, title: String, body: String, resetsAt: Date?, kind: String, key: String) async throws {}
+    func saveEvent(id: String, provider: String, level: Int, title: String, body: String, resetsAt: Date?, kind: String, key: String) async throws {
+        lock.withLock { events.append(body) }
+    }
 
     func resetZone() async {
         lock.withLock { resets += 1 }
