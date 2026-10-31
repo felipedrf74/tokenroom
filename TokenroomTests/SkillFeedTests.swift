@@ -2,6 +2,28 @@ import XCTest
 @testable import Tokenroom
 
 final class SkillFeedTests: XCTestCase {
+    /// Called from the main actor, as `SkillsStore` does, the body is still read off it.
+    @MainActor func testADownloadKeepsEveryByteQuicklyAndStopsPastTheLimit() async throws {
+        let body = Data((0..<300_000).map { UInt8(truncatingIfNeeded: $0) })
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        StubURLProtocol.handler = { _ in (200, body) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let request = URLRequest(url: URL(string: "https://clawhub.ai/api/v1/skills")!)
+
+        let started = ContinuousClock.now
+        let answer = await SkillsStore.download(request, session: session)
+        let elapsed = ContinuousClock.now - started
+        guard case .body(let data) = answer else { return XCTFail("Expected the body, got \(answer)") }
+        XCTAssertEqual(data, body, "Every byte, across buffer boundaries")
+        XCTAssertLessThan(elapsed, .seconds(1), "A main-actor hop per byte took seconds for this size")
+
+        StubURLProtocol.handler = { _ in (200, Data(count: SkillFeed.sizeLimit + 1)) }
+        guard case .unreachable = await SkillsStore.download(request, session: session) else { return XCTFail("Past the size limit") }
+    }
+
     @MainActor func testCancelledPhysicalRequestStillRecordsLateRetryAfter() async {
         let response = LockedBox<CheckedContinuation<SkillsStore.Answer, Never>?>(nil)
         let calls = LockedBox(0)

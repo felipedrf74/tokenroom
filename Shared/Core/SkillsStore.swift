@@ -189,16 +189,29 @@ import Observation
     }
     static func get(_ request: URLRequest) async -> Answer {
         guard !Task.isCancelled else { return .unreachable }
+        return await download(request)
+    }
+
+    /// Off the main actor and a buffer at a time, as `NewsFetcher.download` reads: a hop to the
+    /// main actor for every byte made a large answer take seconds.
+    @concurrent nonisolated static func download(_ request: URLRequest, session: URLSession = TokenroomHTTP.defaultSession) async -> Answer {
         do {
-            let (bytes, response) = try await TokenroomHTTP.defaultSession.bytes(for: request)
+            let (bytes, response) = try await session.bytes(for: request)
             defer { bytes.task.cancel() }
             guard let http = response as? HTTPURLResponse else { return .unreachable }
             guard (200..<300).contains(http.statusCode) else { return .status(http.statusCode, retryAfter: http.value(forHTTPHeaderField: "Retry-After")) }
             var data = Data()
+            var buffer: [UInt8] = []
+            buffer.reserveCapacity(64 * 1024)
             for try await byte in bytes {
-                guard data.count < SkillFeed.sizeLimit else { return .unreachable }
-                data.append(byte)
+                guard data.count + buffer.count < SkillFeed.sizeLimit else { return .unreachable }
+                buffer.append(byte)
+                if buffer.count == buffer.capacity {
+                    data.append(contentsOf: buffer)
+                    buffer.removeAll(keepingCapacity: true)
+                }
             }
+            data.append(contentsOf: buffer)
             return .body(data)
         } catch { return .unreachable }
     }
