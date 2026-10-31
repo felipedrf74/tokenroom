@@ -5,8 +5,26 @@ struct OpenAIClient: ProviderClient {
     var provider: Provider { .openai }
 
     /// Reset-credit expiries change rarely; look them up at most every six hours.
-    private static let expiryCache = OSAllocatedUnfairLock<(count: Int, expiries: [Date], at: Date)?>(initialState: nil)
+    private static let expiryCache = OSAllocatedUnfairLock<ExpiryEntry?>(initialState: nil)
     private static let expiryTTL: TimeInterval = 6 * 3_600
+
+    struct ExpiryEntry {
+        var count: Int
+        var expiries: [Date]
+        var at: Date
+    }
+
+    /// The cached expiries while they are for `count` banked resets and younger than `ttl`. A
+    /// redeemed or newly banked reset changes the count, so the old dates no longer fit.
+    static func cachedExpiries(_ entry: ExpiryEntry?, count: Int, now: Date, ttl: TimeInterval = .infinity) -> [Date]? {
+        guard let entry, entry.count == count, now.timeIntervalSince(entry.at) < ttl else { return nil }
+        return entry.expiries
+    }
+
+    /// Another account's banked resets aren't this one's.
+    func credentialsChanged() {
+        Self.expiryCache.withLock { $0 = nil }
+    }
 
     func fetch() async -> Result<QuotaSnapshot, ProviderError> {
         do {
@@ -56,9 +74,8 @@ struct OpenAIClient: ProviderClient {
 
     /// Best effort: a failure here never fails the usage reading.
     private func expiries(count: Int, token: String, headers: [String: String]) async -> [Date] {
-        if let cached = Self.expiryCache.withLock({ $0 }), cached.count == count,
-           Date().timeIntervalSince(cached.at) < Self.expiryTTL {
-            return cached.expiries
+        if let cached = Self.cachedExpiries(Self.expiryCache.withLock { $0 }, count: count, now: Date(), ttl: Self.expiryTTL) {
+            return cached
         }
         guard let data = try? await TokenroomHTTP.get(
             URL(string: "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits")!,
@@ -66,9 +83,9 @@ struct OpenAIClient: ProviderClient {
             headers: headers,
             provider: .openai
         ), let expiries = try? OpenAIParser.availableResetExpiries(from: data) else {
-            return Self.expiryCache.withLock { $0?.expiries } ?? []
+            return Self.cachedExpiries(Self.expiryCache.withLock { $0 }, count: count, now: Date()) ?? []
         }
-        Self.expiryCache.withLock { $0 = (count, expiries, Date()) }
+        Self.expiryCache.withLock { $0 = ExpiryEntry(count: count, expiries: expiries, at: Date()) }
         return expiries
     }
 }

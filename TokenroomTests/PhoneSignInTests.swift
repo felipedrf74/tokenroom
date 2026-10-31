@@ -329,6 +329,9 @@ final class PhoneSignInTests: XCTestCase {
         XCTAssertEqual(PhoneSignIn.pollAnswer(provider: .grokBot, status: 400, data: Data()), .failed)
         XCTAssertEqual(PhoneSignInClient.Failure.blockedByPolicy.message(for: .grokBot), "Couldn't sign in: your organization doesn't allow signing in to Cursor here.")
         XCTAssertTrue(PhoneSignInClient.Failure.denied.message(for: .grok).contains("xAI's page"), "The page the sheet sent the person to")
+        XCTAssertEqual(PhoneSignInClient.Failure.expired.message(for: .claude), "Couldn't sign in before the code expired. Start again.")
+        XCTAssertEqual(PhoneSignInClient.Failure.expired.message(for: .cursor), "Couldn't sign in before the sign-in page expired. Start again.", "Cursor shows no code")
+        XCTAssertEqual(PhoneSignInClient.Failure.expired.message(for: .grokBot), "Couldn't sign in before the sign-in page expired. Start again.")
         let tokens = Self.json(["accessToken": "a", "refreshToken": "r", "authId": "auth0|person"])
         XCTAssertEqual(PhoneSignIn.pollAnswer(provider: .cursor, status: 200, data: tokens), .granted(tokens))
     }

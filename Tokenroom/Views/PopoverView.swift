@@ -3,12 +3,13 @@ import SwiftUI
 
 struct PopoverView: View {
     @Bindable var store: QuotaStore
-    var onSettings: () -> Void
+    /// Opens Settings, on the given page or the last one shown.
+    var onSettings: (SettingsTab?) -> Void
     var onNews: (NewsSection) -> Void
     @State private var showsDisconnected = false
     @State private var expanded: Set<Provider>
 
-    init(store: QuotaStore, onSettings: @escaping () -> Void, onNews: @escaping (NewsSection) -> Void = { _ in }, expanded: Set<Provider> = []) {
+    init(store: QuotaStore, onSettings: @escaping (SettingsTab?) -> Void, onNews: @escaping (NewsSection) -> Void = { _ in }, expanded: Set<Provider> = []) {
         self.store = store
         self.onSettings = onSettings
         self.onNews = onNews
@@ -241,7 +242,9 @@ struct PopoverView: View {
 
     var checkedHeaderText: String {
         if store.isRefreshing { return "Checking…" }
-        let oldestCheck = store.popoverProviders.compactMap { store.lastChecked($0) }.min()
+        // A signed-out provider keeps its last check from before; it isn't on show to be current.
+        let shown = store.popoverProviders.filter { !(store.statuses[$0] ?? .loading).isDisconnected }
+        let oldestCheck = shown.compactMap { store.lastChecked($0) }.min()
         return "Checked \(RelativeTime.ago(oldestCheck, now: store.presentationNow))"
     }
 
@@ -263,7 +266,7 @@ struct PopoverView: View {
                 .font(.system(size: TokenroomTokens.captionSize))
                 .foregroundStyle(.secondary)
                 if let problem = syncProblem {
-                    Button(action: onSettings) {
+                    Button { onSettings(.iPhone) } label: {
                         Label(problem, systemImage: "exclamationmark.icloud")
                             .font(.system(size: TokenroomTokens.captionSize, weight: .medium))
                             .foregroundStyle(TokenroomTokens.accentText)
@@ -298,7 +301,7 @@ struct PopoverView: View {
     private var footer: some View {
         HStack(spacing: 14) {
             Button {
-                onSettings()
+                onSettings(nil)
             } label: {
                 Label("Settings", systemImage: "gearshape")
             }

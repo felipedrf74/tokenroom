@@ -8,7 +8,7 @@ private final class PassthroughHostingView<Content: View>: NSHostingView<Content
 @MainActor
 final class StatusItemController: NSObject {
     private let store: QuotaStore
-    private let onSettings: () -> Void
+    private let onSettings: (SettingsTab?) -> Void
     private let onNews: (NewsSection) -> Void
     private let item: NSStatusItem
     private let popover = NSPopover()
@@ -19,7 +19,7 @@ final class StatusItemController: NSObject {
     private var localClickMonitor: Any?
     private var globalClickMonitor: Any?
 
-    init(store: QuotaStore, onSettings: @escaping () -> Void, onNews: @escaping (NewsSection) -> Void) {
+    init(store: QuotaStore, onSettings: @escaping (SettingsTab?) -> Void, onNews: @escaping (NewsSection) -> Void) {
         self.store = store
         self.onSettings = onSettings
         self.onNews = onNews
@@ -29,9 +29,9 @@ final class StatusItemController: NSObject {
         item.isVisible = true
 
         let content = NSHostingController(
-            rootView: PopoverView(store: store, onSettings: { [weak self] in
+            rootView: PopoverView(store: store, onSettings: { [weak self] tab in
                 self?.closePopover()
-                onSettings()
+                onSettings(tab)
             }, onNews: { [weak self] section in
                 self?.closePopover()
                 onNews(section)

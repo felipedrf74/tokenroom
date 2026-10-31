@@ -122,7 +122,7 @@ Or build it on the Mac that will run it (a build signed on your Mac works, but c
 git clone https://github.com/felipedrf74/tokenroom.git
 cd tokenroom
 ./scripts/build.sh
-open /Applications/Tokenroom.app
+open ~/Applications/Tokenroom.app
 ```
 
 Xcode 27 is preferred. Command Line Tools are enough for the `swiftc` fallback.

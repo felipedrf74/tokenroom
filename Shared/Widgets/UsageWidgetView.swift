@@ -266,8 +266,8 @@ private struct RectangularWidget: View {
     private var statusLine: some View {
         if isSample {
             sampleLine
-        } else if let item = items.first(where: { ReadingText.attention($0.provider, now: date) != nil }),
-                  let note = ReadingText.attention(item.provider, now: date) {
+        } else if let item = items.first(where: { $0.attention(now: date) != nil }),
+                  let note = item.attention(now: date) {
             let stale = items.filter { !$0.provider.isLive }.count
             Text("\(item.provider.shortName) · \(note)" + (stale > 0 ? " · \(stale) stale" : ""))
                 .font(.caption2.weight(.semibold)).lineLimit(2).minimumScaleFactor(0.7)
@@ -291,6 +291,7 @@ private struct RectangularWidget: View {
                 Text(item.provider.shortName)
                     .font(.caption2.weight(.semibold))
                     .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                     .frame(width: 58, alignment: .leading)
                 Gauge(value: min(max(used, 0), 100), in: 0...100) {
                     EmptyView()

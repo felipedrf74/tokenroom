@@ -384,12 +384,24 @@ enum FeedParser {
     /// Strips HTML tags, decodes entities left over from HTML titles, and collapses whitespace.
     static func plainText(_ html: String) -> String {
         var text = html.replacingOccurrences(of: htmlTag, with: " ", options: .regularExpression)
-        for (entity, character) in ["&lt;": "<", "&gt;": ">", "&quot;": "\"", "&#39;": "'", "&apos;": "'", "&nbsp;": " "] {
-            text = text.replacingOccurrences(of: entity, with: character)
+        if text.contains("&") {
+            for (entity, character) in namedEntities {
+                text = text.replacingOccurrences(of: entity, with: character)
+            }
+            text = decodeNumericEntities(text).replacingOccurrences(of: "&amp;", with: "&")
         }
-        text = decodeNumericEntities(text).replacingOccurrences(of: "&amp;", with: "&")
         return text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
+
+    /// The named entities feeds put in titles and HTML excerpts. `&amp;` is decoded last, so
+    /// `&amp;lt;` stays the text `&lt;`.
+    private static let namedEntities = [
+        "&lt;": "<", "&gt;": ">", "&quot;": "\"", "&#39;": "'", "&apos;": "'", "&nbsp;": " ",
+        "&mdash;": "\u{2014}", "&ndash;": "\u{2013}", "&hellip;": "\u{2026}",
+        "&lsquo;": "\u{2018}", "&rsquo;": "\u{2019}", "&ldquo;": "\u{201C}", "&rdquo;": "\u{201D}",
+        "&laquo;": "\u{00AB}", "&raquo;": "\u{00BB}", "&middot;": "\u{00B7}", "&bull;": "\u{2022}",
+        "&copy;": "\u{00A9}", "&reg;": "\u{00AE}", "&trade;": "\u{2122}",
+    ]
 
     /// Excerpts can carry a complete HTML document; title token syntax stays
     /// governed by the narrower plainText contract above.
@@ -426,28 +438,50 @@ enum FeedParser {
     /// with the variants feeds write: no time zone (read as UTC), a space for the `T`, no seconds.
     static func date(_ text: String) -> Date? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Every RSS item has an empty <updated>, and every GitHub entry an empty <published>.
+        guard !trimmed.isEmpty else { return nil }
         if let iso = JSONFlex.parseISO(trimmed) {
             return iso
         }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        for format in dateFormats {
-            formatter.dateFormat = format
-            if let date = formatter.date(from: trimmed) {
-                return date
-            }
-        }
-        return nil
+        return dateFormatters.date(from: trimmed)
     }
 
+    /// One formatter per format, made once: making a DateFormatter costs more than parsing with it.
+    private static let dateFormatters = FeedDateFormatters()
+}
+
+private final class FeedDateFormatters: @unchecked Sendable {
+    private let lock = NSLock()
+    private let formatters: [DateFormatter]
+
     /// `yy` reads "26" as 2026 and "2026" as written; `yyyy` would read "26" as the year 26.
-    private static let dateFormats = [
+    private static let formats = [
         "EEE, dd MMM yy HH:mm:ss Z", "EEE, dd MMM yy HH:mm:ss zzz", "EEE, dd MMM yy HH:mm Z", "EEE, dd MMM yy HH:mm zzz",
         "dd MMM yy HH:mm:ss Z", "dd MMM yy HH:mm Z",
         "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mmXXXXX", "yyyy-MM-dd'T'HH:mm",
         "yyyy-MM-dd HH:mm:ssXXXXX", "yyyy-MM-dd HH:mm:ss",
     ]
+
+    init() {
+        formatters = Self.formats.map { format in
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            formatter.dateFormat = format
+            return formatter
+        }
+    }
+
+    func date(from text: String) -> Date? {
+        lock.withLock {
+            for formatter in formatters {
+                if let date = formatter.date(from: text) {
+                    return date
+                }
+            }
+            return nil
+        }
+    }
 }
 
 private final class FeedXMLDelegate: NSObject, XMLParserDelegate {

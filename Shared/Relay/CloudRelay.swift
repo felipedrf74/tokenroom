@@ -286,15 +286,7 @@ actor CloudRelay {
     }
 
     private static func source(from record: CKRecord) -> Source {
-        var envelope: RelayEnvelope?
-        var needsNewerApp = false
-        if let data = record[Field.payload] as? Data, let decoded = try? RelayEnvelope.decode(data) {
-            if decoded.isReadable {
-                envelope = decoded
-            } else {
-                needsNewerApp = true
-            }
-        }
+        let (envelope, needsNewerApp) = (record[Field.payload] as? Data).map(RelayEnvelope.read) ?? (nil, false)
         return Source(
             id: record.recordID.recordName,
             kind: record[Field.kind] as? String ?? "mac",

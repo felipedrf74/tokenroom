@@ -1,12 +1,13 @@
 # Security
 
-Tokenroom is a local macOS extra. It has no account and no server.
+Tokenroom is a macOS menu-bar extra with an iPhone app, widgets, and an Apple Watch app. It has no account and no server of its own: readings pass between your devices through your private iCloud.
 
 ## What to report
 
 - Unexpected network destinations
 - Token, email, or name persistence in Tokenroom storage or logs
 - A way to read another user's session files
+- Readings or credentials leaving your private iCloud database, or an iPhone sign-in leaving the iPhone app's Keychain group
 
 ## What not to report
 

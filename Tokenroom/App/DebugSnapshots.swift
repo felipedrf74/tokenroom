@@ -122,8 +122,8 @@ enum DebugSnapshots {
 
         for appearance in [NSAppearance.Name.aqua, .darkAqua] {
             let suffix = appearance == .aqua ? "" : "-dark"
-            render(PopoverView(store: store, onSettings: {}), width: TokenroomTokens.popoverWidth, appearance: appearance, to: output.appendingPathComponent("popover\(suffix).png"))
-            render(PopoverView(store: store, onSettings: {}, expanded: [.openai, .deepseek]), width: TokenroomTokens.popoverWidth, appearance: appearance, to: output.appendingPathComponent("popover-expanded\(suffix).png"))
+            render(PopoverView(store: store, onSettings: { _ in }), width: TokenroomTokens.popoverWidth, appearance: appearance, to: output.appendingPathComponent("popover\(suffix).png"))
+            render(PopoverView(store: store, onSettings: { _ in }, expanded: [.openai, .deepseek]), width: TokenroomTokens.popoverWidth, appearance: appearance, to: output.appendingPathComponent("popover-expanded\(suffix).png"))
         }
         for tab in [SettingsTab.general, .providers, .keys, .alerts, .news, .menuBar] {
             let request = SettingsTabRequest()

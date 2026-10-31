@@ -16,7 +16,7 @@ Xcode 27 is preferred. `./scripts/build.sh` falls back to `swiftc` when Xcode is
 
 DerivedData must stay local (`~/Library/Developer/Xcode/DerivedData/Tokenroom`). Do not let Xcode put build products in the source tree.
 
-Build settings live in `Config/*.xcconfig`, not in `project.pbxproj`. Never add `DEVELOPMENT_TEAM` or `CODE_SIGN_*` to the project file: they would override `Config/Local.xcconfig` (git-ignored; team ID and `TOKENROOM_MAC_SIGNING`). `TOKENROOM_FORCE_SWIFTC=1 ./scripts/build.sh` checks the Command Line Tools fallback.
+Build settings live in `Config/*.xcconfig`, not in `project.pbxproj`. Never add `DEVELOPMENT_TEAM` or `CODE_SIGN_*` to the project file: they would override `Config/Local.xcconfig` (git-ignored; team ID and `TOKENROOM_MAC_SIGNING`). `TOKENROOM_SKIP_INSTALL=1 TOKENROOM_FORCE_SWIFTC=1 ./scripts/build.sh` checks the Command Line Tools fallback; without `TOKENROOM_SKIP_INSTALL=1`, `build.sh` replaces the installed `Tokenroom.app` with that ad-hoc build, which can't use iCloud.
 
 On the Mac, Tokenroom renews Claude, Grok Build, and Codex access tokens in each tool's own login and writes the new tokens back. It does not keep a separate copy, and it does not refresh any other provider there. On the iPhone, a plan signed in to there (Claude, Codex, Grok Build, Cursor, Grok Bot) is Tokenroom's own session in the iPhone app's Keychain group, renewed by `PhoneSessionRefresher`; it is never a copy of a Mac login.
 

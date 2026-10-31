@@ -33,8 +33,10 @@ enum LocalKeys {
         case .minimax:
             return claudeSettings(global: ["api.minimax.io"], china: ["api.minimaxi.com"], claudeDirectory: claudeDirectory)
         case .kimiCode:
-            return kimiCLI(home: kimiHome, now: now)
-                ?? claudeSettings(global: ["api.kimi.ai"], china: ["api.kimi.com"], claudeDirectory: claudeDirectory)
+            // An expired CLI login gives way to a key Claude Code holds; with none, it says why.
+            let cli = kimiCLI(home: kimiHome, now: now)
+            if case .success = cli?.credential { return cli }
+            return claudeSettings(global: ["api.kimi.ai"], china: ["api.kimi.com"], claudeDirectory: claudeDirectory) ?? cli
         case .opencodeGo:
             let file = opencodeData.appendingPathComponent("auth.json")
             return LocalSources.jsonString(at: ["opencode-go", "key"], in: file).map {

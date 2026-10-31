@@ -522,9 +522,8 @@ final class QuotaStore {
             alertLedger.save(to: cache.directory)
             return
         }
-        let relayActive = relay.map { $0.isAvailable && $0.isEnabled } ?? false
         var delivery: AlertLedger.Delivery?
-        if relayActive, let relay {
+        if sendsAlertsToiCloud, let relay {
             delivery = await relay.sendAlerts(due, now: now)
         }
         // Without iCloud there's nowhere else to send them: this Mac showed them, or nothing will.
@@ -533,6 +532,12 @@ final class QuotaStore {
             MacAlerts.post(shown)
         }
         alertLedger.save(to: cache.directory)
+    }
+
+    /// Whether alerts this Mac sees go to the iPhone: only through iCloud, when this copy can use
+    /// it and sending is on.
+    var sendsAlertsToiCloud: Bool {
+        relay.map { $0.isAvailable && $0.isEnabled } ?? false
     }
 
     /// This Mac's alert choices in step with the shared copy: takes what the iPhone changed, and

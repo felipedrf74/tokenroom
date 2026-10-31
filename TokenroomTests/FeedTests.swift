@@ -196,6 +196,15 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(FeedParser.items(from: rss, source: claudeCode).map(\.title), ["Support for <thinking> blocks"], "Escaped in the feed, still text")
     }
 
+    func testCommonNamedEntitiesAreDecoded() {
+        XCTAssertEqual(FeedParser.plainText("Quote &mdash; Someone"), "Quote \u{2014} Someone")
+        XCTAssertEqual(FeedParser.plainText("&ldquo;Ship it&rdquo; &hellip; 1&ndash;2 days&rsquo; work"), "\u{201C}Ship it\u{201D} \u{2026} 1\u{2013}2 days\u{2019} work")
+        XCTAssertEqual(FeedParser.plainText("Tokens &amp;mdash; text"), "Tokens &mdash; text", "Escaped twice, so it is the text")
+        let atom = Data(#"<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>Notes</title><link href="https://example.com/notes"/><summary type="html">&lt;p&gt;A line &amp;mdash; quoted&lt;/p&gt;</summary></entry></feed>"#.utf8)
+        let item = FeedParser.items(from: atom, source: FeedSource(id: "voice", name: "Voice", url: URL(string: "https://example.com/atom.xml")!)).first
+        XCTAssertEqual(item?.excerpt, "A line \u{2014} quoted")
+    }
+
     func testLinksAreWebPagesOnly() {
         let rss = Data("""
         <rss version="2.0"><channel>

@@ -468,6 +468,34 @@ final class MobileLogicTests: XCTestCase {
         XCTAssertLessThan(24 * 3600 / WidgetSchedule.calmInterval, 40, "A calm day stays under WidgetKit's budget")
     }
 
+    /// A reading saved live, from a Mac that stopped checking three hours ago: stale as shown, so
+    /// widgets don't reload half-hourly for it, on the iPhone as on the Watch.
+    func testWidgetsJudgeTheReloadByTheReadingAsShownNow() throws {
+        let checked = now.addingTimeInterval(-3 * 3600)
+        let window = QuotaWindow(id: "session", kind: .session, title: "Session", usedPercent: 85, resetsAt: now.addingTimeInterval(2 * 3600), windowSeconds: 5 * 3600)
+        let snapshot = try QuotaSnapshot.headlined(by: [window], provider: .claude, fetchedAt: checked)
+        let item = ReadingCache.Item(provider: RelayProvider(provider: .claude, status: .live(snapshot), checkedAt: checked), source: "Mac")
+        let cache = ReadingCache(savedAt: now.addingTimeInterval(-60), isSample: false, items: [item])
+        XCTAssertEqual(WidgetSchedule.nextReload(after: now, items: cache.items), now.addingTimeInterval(1800), "Saved live, it still says live")
+        XCTAssertGreaterThan(cache.nextReload(after: now, reloads: 0), now.addingTimeInterval(1800))
+    }
+
+    /// The note under a widget's rows names the window its row doesn't lead with: picked with
+    /// the reading's history, as the row picks it.
+    func testAWidgetsNoteDoesntRepeatItsRow() throws {
+        let weeklyWindow = QuotaWindow(id: "weekly", kind: .weekly, title: "Weekly", usedPercent: 50, resetsAt: now.addingTimeInterval(36 * 3600), windowSeconds: 7 * 86_400)
+        let session = QuotaWindow(id: "session", kind: .session, title: "Session", usedPercent: 55, resetsAt: now.addingTimeInterval(2 * 3600), windowSeconds: 5 * 3600)
+        let snapshot = try QuotaSnapshot.headlined(by: [weeklyWindow, session], provider: .claude, fetchedAt: now)
+        let provider = RelayProvider(provider: .claude, status: .live(snapshot), checkedAt: now)
+        var weekly = UsageHistory(endingAt: now)
+        for (index, used) in [38, 40, 42, 44, 46, 48, 50].enumerated() { weekly.used[UsageHistory.capacity - 7 + index] = UInt8(used) }
+        let item = ReadingCache.Item(provider: provider, source: "This iPhone", history: ["weekly": weekly])
+        XCTAssertEqual(provider.primaryWindow?.id, "weekly")
+        XCTAssertEqual(provider.leadWindow(now: now, history: item.history)?.id, "weekly", "Rising two points an hour, the week runs out first")
+        XCTAssertEqual(ReadingText.attention(provider, now: now), "Weekly 50%", "Without the history, it would repeat the row")
+        XCTAssertNil(item.attention(now: now))
+    }
+
     // MARK: iCloud failures
 
     func testRelayErrorPolicy() {

@@ -169,7 +169,12 @@ struct FollowUsageIntent: LiveActivityIntent {
     static let description = IntentDescription("Shows your most urgent limit that resets within 8 hours on the Lock Screen and in the Dynamic Island, until it resets.")
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
+        // As the Follow button says it: otherwise this would read as nothing to follow.
+        guard LiveActivities.isEnabled else {
+            return .result(dialog: "Live Activities are off for Tokenroom. Turn them on in Settings › Tokenroom.")
+        }
         let started = try await LiveActivities.startMostUrgent()
-        return .result(dialog: started ? "Following it until it resets." : "Nothing resets within 8 hours right now.")
+        // What `windowToFollow` takes: a 5-hour limit, or another limit at 80% or more.
+        return .result(dialog: started ? "Following it until it resets." : "Nothing to follow: no 5-hour limit, or limit at 80% or more, resets within 8 hours.")
     }
 }

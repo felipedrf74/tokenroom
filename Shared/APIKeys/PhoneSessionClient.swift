@@ -85,6 +85,10 @@ struct PhoneSessionReader: Sendable {
         switch renewal {
         case .rejected, .noSession:
             return .failure(.signedOut(PhoneSessionClient.needsSignIn))
+        case .pendingWrite:
+            // Renewed, but not stored yet: the session waits mid-renewal and the next read writes
+            // the new tokens. Nothing to sign in again for.
+            return .failure(.unreachable)
         default:
             break
         }

@@ -61,7 +61,7 @@ final class RelayPublisher {
                 // Keyed on the switch, not on `state`: a send that was out when sync went off
                 // doesn't change what turning it back on does.
                 state = .waiting
-                policy.reset()
+                forgetWhatWasSent()
                 retryAt = nil
                 lastHistoryHour = nil
                 // Turning sync back on is how someone who deleted Tokenroom's iCloud data in
@@ -75,8 +75,14 @@ final class RelayPublisher {
     var label: String {
         didSet {
             defaults.set(label, forKey: Keys.label)
-            policy.reset()
+            forgetWhatWasSent()
         }
+    }
+
+    /// What the iPhone calls this Mac: the name typed in Settings, or "Mac" when it's blank.
+    var sharedLabel: String {
+        let name = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? "Mac" : name
     }
 
     let sourceID: String
@@ -89,6 +95,9 @@ final class RelayPublisher {
     private var preferencesCache: (preferences: AlertPreferences?, readAt: Date)?
     private var retryAt: Date?
     private var lastHistoryHour: Date?
+    /// How many times what was sent has been forgotten. A send out meanwhile records itself as
+    /// sent when it returns, so it checks this to keep the next round due.
+    private var forgets = 0
     private var loggedAccount = false
     private let logger = Logger(subsystem: TokenroomIdentity.bundleID, category: "relay")
 
@@ -125,7 +134,8 @@ final class RelayPublisher {
         guard policy.isDue(envelope, force: force, now: now) else { return }
 
         let sourceID = sourceID
-        let label = label
+        let label = sharedLabel
+        let forgetsBefore = forgets
         do {
             if case .noAccount = state {
                 guard try await iCloud({ try await relay.accountStatus() }) == .available else { return }
@@ -141,6 +151,10 @@ final class RelayPublisher {
                 logger.notice("relay account \(fingerprint, privacy: .private)")
             }
             policy.didSend(envelope, at: now)
+            if forgets != forgetsBefore {
+                // Forgotten while this was out (a provider turned off, sync turned on again).
+                policy.reset()
+            }
             retryAt = nil
             // Turned off while it was out: the switch keeps saying Off.
             if isEnabled {
@@ -154,7 +168,12 @@ final class RelayPublisher {
     /// The providers this Mac shares changed (one was turned on or off in Settings): the next
     /// round sends what it has, rather than waiting out the minute since the last send.
     func providersChanged() {
+        forgetWhatWasSent()
+    }
+
+    private func forgetWhatWasSent() {
         policy.reset()
+        forgets += 1
     }
 
     /// Sends the week of hourly history once per hour.
@@ -164,9 +183,12 @@ final class RelayPublisher {
         let hour = UsageHistory.hourStart(now)
         guard lastHistoryHour != hour else { return }
         let sourceID = sourceID
+        let forgetsBefore = forgets
         do {
             try await iCloud { try await relay.publishHistory(sourceID: sourceID, history: history) }
-            lastHistoryHour = hour
+            if forgets == forgetsBefore {
+                lastHistoryHour = hour
+            }
         } catch {
             handle(error, now: now)
         }
@@ -291,7 +313,7 @@ final class RelayPublisher {
     /// Creates an alert event the iPhone shows as a notification. Used by "Send Test Alert".
     func sendTestAlert(now: Date = .now) async {
         guard let relay, isEnabled else { return }
-        let body = "Test alert from \(label). Usage alerts will look like this."
+        let body = "Test alert from \(sharedLabel). Usage alerts will look like this."
         do {
             try await iCloud {
                 try await relay.saveEvent(

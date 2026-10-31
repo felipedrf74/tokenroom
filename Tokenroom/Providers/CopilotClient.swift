@@ -111,7 +111,8 @@ enum CopilotParser {
     static func window(_ bucket: [String: Any], id: String, title: String, unit: String, resetsAt: Date?, startsAt: Date?) -> QuotaWindow? {
         let entitlement = JSONFlex.number(bucket["entitlement"])
         let remaining = JSONFlex.number(bucket["remaining"]) ?? JSONFlex.number(bucket["quota_remaining"])
-        if (bucket["unlimited"] as? Bool) == true || entitlement == -1 || remaining == -1 {
+        // `remaining` alone says nothing: one request into overage it is -1 too.
+        if (bucket["unlimited"] as? Bool) == true || entitlement == -1 {
             return nil
         }
         guard let entitlement, entitlement > 0 else { return nil }

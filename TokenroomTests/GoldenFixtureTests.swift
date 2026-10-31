@@ -29,6 +29,33 @@ final class GoldenFixtureTests: XCTestCase {
         return folder
     }
 
+    /// A newer Mac's record: this build reads what it can and asks for an update otherwise, even
+    /// when the newer format changed shape and doesn't decode here.
+    func testANewerFormatAsksForAnUpdateEvenWhenItDoesntDecode() throws {
+        let current = try fixture("relay-envelope-v1")
+        XCTAssertNotNil(RelayEnvelope.read(current).envelope)
+        XCTAssertFalse(RelayEnvelope.read(current).needsNewerApp)
+
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: current) as? [String: Any])
+        object["v"] = 2
+        object["minReader"] = 2
+        let sameShape = try JSONSerialization.data(withJSONObject: object)
+        XCTAssertNil(RelayEnvelope.read(sameShape).envelope)
+        XCTAssertTrue(RelayEnvelope.read(sameShape).needsNewerApp)
+
+        object["checkedAt"] = "2027-01-15T08:00:00Z"
+        object["providers"] = nil
+        object["sources"] = []
+        let newShape = try JSONSerialization.data(withJSONObject: object)
+        XCTAssertThrowsError(try RelayEnvelope.decode(newShape))
+        XCTAssertNil(RelayEnvelope.read(newShape).envelope)
+        XCTAssertTrue(RelayEnvelope.read(newShape).needsNewerApp, "Not \"No readings yet\": this iPhone needs the update")
+
+        object["minReader"] = 1
+        XCTAssertFalse(RelayEnvelope.read(try JSONSerialization.data(withJSONObject: object)).needsNewerApp, "Broken, not newer")
+        XCTAssertFalse(RelayEnvelope.read(Data("not json".utf8)).needsNewerApp)
+    }
+
     /// A v1 Mac's record, from before providers carried a category and windows a pace.
     func testRelayEnvelopeFromAVersionOneMac() throws {
         let envelope = try RelayEnvelope.decode(fixture("relay-envelope-v1"))

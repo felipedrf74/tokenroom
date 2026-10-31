@@ -162,6 +162,18 @@ final class CodingPlanTests: XCTestCase {
         XCTAssertTrue(saved.contains("placeholder-refresh"), "The CLI's file is never rewritten")
     }
 
+    func testAnExpiredKimiCLILoginGivesWayToClaudeSettings() throws {
+        let home = try makeFolder()
+        try writeJSON(["access_token": "placeholder-access", "expires_at": now.addingTimeInterval(-3600).timeIntervalSince1970], to: home.appendingPathComponent("credentials/kimi-code.json"))
+        let claude = try makeFolder()
+        try writeJSON(["env": ["ANTHROPIC_BASE_URL": "https://api.kimi.ai/coding/", "ANTHROPIC_API_KEY": "placeholder-kimi"]], to: claude.appendingPathComponent("settings.json"))
+        let empty = try makeFolder()
+
+        let found = try XCTUnwrap(LocalKeys.find(.kimiCode, claudeDirectory: claude, kimiHome: home, opencodeData: empty, now: now))
+        XCTAssertEqual(try found.credential.get(), APIKeyCredential(key: "placeholder-kimi", region: "Global", source: "claude-settings"))
+        XCTAssertEqual(found.file, claude.appendingPathComponent("settings.json"))
+    }
+
     func testKimiFallsBackToClaudeSettingsAndOpenCodeReadsAuthJSON() throws {
         let claude = try makeFolder()
         try writeJSON(["env": ["ANTHROPIC_BASE_URL": "https://api.kimi.ai/coding/", "ANTHROPIC_API_KEY": "placeholder-kimi"]], to: claude.appendingPathComponent("settings.json"))

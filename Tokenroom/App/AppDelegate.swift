@@ -77,8 +77,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // the Claude bridge; they go whether Claude or the bridge is on or not.
         Task { await BlockingIO.run { ClaudeStatusLineBridge.standard.removeFullBackups() } }
         store.start()
-        statusItem = StatusItemController(store: store, onSettings: { [weak self] in
-            self?.openSettings()
+        statusItem = StatusItemController(store: store, onSettings: { [weak self] tab in
+            self?.openSettings(tab: tab)
         }, onNews: { [weak self] section in
             self?.openNews(section)
         })

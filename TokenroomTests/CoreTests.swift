@@ -77,7 +77,8 @@ final class PaceTests: XCTestCase {
     func testCaptionMoments() {
         let utc = TimeZone(identifier: "UTC")!
         let now = Date(timeIntervalSince1970: 1_790_000_000) // a Thursday
-        XCTAssertEqual(Pace.shortMoment(now.addingTimeInterval(3_600), now: now, timeZone: utc).contains(":"), true)
+        // The time as this Mac writes it: "15:13" in English, "15.13" in Finnish.
+        XCTAssertEqual(Pace.shortMoment(now.addingTimeInterval(3_600), now: now, timeZone: utc), clock(now.addingTimeInterval(3_600), in: utc))
         XCTAssertFalse(Pace.shortMoment(now.addingTimeInterval(2 * 86_400), now: now, timeZone: utc).isEmpty)
     }
 

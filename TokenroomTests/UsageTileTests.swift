@@ -56,6 +56,22 @@ final class UsageTileTests: XCTestCase {
         XCTAssertEqual(QuotaWindow(id: "session", kind: .session, title: "Session", usedPercent: 10, resetsAt: nil, windowSeconds: 5 * 3600).displayTitle, "5-hour")
     }
 
+    func testWindowNamesKeepWhatTellsLimitsApart() {
+        let gemini = QuotaWindow(id: "gemini-5h", kind: .session, title: "Gemini session", usedPercent: 80, resetsAt: nil, windowSeconds: 5 * 3600)
+        let others = QuotaWindow(id: "3p-5h", kind: .session, title: "Other models session", usedPercent: 80, resetsAt: nil, windowSeconds: 5 * 3600)
+        XCTAssertEqual(gemini.displayTitle, "Gemini 5-hour", "Two 5-hour limits on one card stay apart")
+        XCTAssertEqual(others.displayTitle, "Other models 5-hour")
+        XCTAssertEqual(RelayWindow(gemini).limitName, "Gemini 5-hour limit")
+        XCTAssertEqual(RelayWindow(others).limitName, "other models 5-hour limit")
+        XCTAssertEqual(RelayWindow(id: "seven_day_opus", kind: "weekly", title: "Opus weekly", used: 90, resetsAt: nil).limitName, "Opus weekly limit", "A model's name keeps its capital")
+        XCTAssertEqual(RelayWindow(id: "daily", kind: "daily", title: "Today", used: 80, resetsAt: nil).limitName, "daily limit", "Not \"today limit\"")
+        XCTAssertEqual(RelayWindow(id: "premium_interactions", kind: "monthly", title: "AI credits", used: 80, resetsAt: nil).limitName, "limit for AI credits")
+        XCTAssertEqual(RelayWindow(id: "cycle", kind: "billingCycle", title: "This cycle", used: 80, resetsAt: nil).limitName, "limit for this cycle")
+        XCTAssertEqual(WindowNames.inSentence("Cursor Models"), "Cursor Models")
+        XCTAssertEqual(WindowNames.inSentence("Weekly"), "weekly")
+        XCTAssertEqual(WindowNames.inSentence("5-hour"), "5-hour")
+    }
+
     func testCloseMeansEightyPercentUsedOrRunningOutBeforeTheReset() {
         XCTAssertTrue(UsageTiles.isClose(weekly(80), pace: nil))
         XCTAssertFalse(UsageTiles.isClose(weekly(79), pace: nil))
