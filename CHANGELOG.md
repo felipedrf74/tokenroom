@@ -1,8 +1,30 @@
 # Changelog
 
-## 2.5.1 for Mac — released 30 October 2026 / 1.2.1 for iPhone — submitted 30 October 2026
+## 2.5.2 for Mac and 1.2.2 for iPhone — not yet released
 
-Mac 2.5.1(1) is [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.5.1) and installed on this Mac. iPhone, widgets and Apple Watch 1.2.1(1) is in TestFlight and submitted to App Review (Waiting for Review), released automatically once approved. Both carry the new finish for meters, rings and icons, and fresher readings on the iPhone (#42). [The delivery record](docs/release-delivery-20261030.md) binds both to their source.
+Mac 2.5.2(1) and iPhone, widgets and Apple Watch 1.2.2(1) carry the fixes from #50. Neither is uploaded or published yet.
+
+Mac
+
+- The popover's "Checked …" leaves out providers you're signed out of, and "Couldn't sync with iCloud" opens Settings › iPhone & Watch.
+- Turning a provider off, renaming the Mac, or turning iCloud back on reaches the iPhone at once, even while a send is still out. A blank "Name on iPhone" shows as "Mac".
+- Settings › Alerts says where alerts go when Send readings to iCloud is off. Searching Settings hides empty sections, and VoiceOver reads each provider switch's on or off.
+- Copilot keeps its meter one request into overage. An expired Kimi CLI login gives way to the key in Claude Code's settings. Codex's banked-reset dates match the number of resets.
+
+iPhone and Apple Watch
+
+- A plan sign-in whose renewal isn't saved yet no longer asks you to sign in again. Cursor and Grok Bot sign-ins say the sign-in page expired, not the code.
+- The Lock Screen widget's note no longer repeats its row, widgets reload less often for an old reading, and long provider names shrink to fit. Follow Usage in Shortcuts says when Live Activities are off.
+- An older iPhone asks for an update when a newer Mac's readings can't be read.
+
+On both
+
+- Limit names keep what tells them apart: "Gemini 5-hour" and "Other models 5-hour", "Opus weekly limit", "daily limit".
+- News excerpts show dashes and quotes instead of "&mdash;", and feeds and Skills load with less work on the main thread.
+
+## 2.5.1 for Mac — released 30 October 2026 / 1.2.1 for iPhone — released 30 October 2026
+
+Mac 2.5.1(1) is [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.5.1) and installed on this Mac. iPhone, widgets and Apple Watch 1.2.1(1) was approved and released on the App Store on 30 October 2026 (the App Store lookup shows it released at 18:01 UTC). Both carry the new finish for meters, rings and icons, and fresher readings on the iPhone (#42). [The delivery record](docs/release-delivery-20261030.md) binds both to their source.
 
 Meters and icons, on every device
 
