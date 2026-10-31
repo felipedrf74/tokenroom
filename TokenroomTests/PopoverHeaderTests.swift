@@ -33,7 +33,7 @@ final class PopoverHeaderTests: XCTestCase {
 
     @MainActor
     private func header(_ store: QuotaStore) -> String {
-        PopoverView(store: store, onSettings: {}).checkedHeaderText
+        PopoverView(store: store, onSettings: { _ in }).checkedHeaderText
     }
 
     @MainActor
@@ -86,6 +86,22 @@ final class PopoverHeaderTests: XCTestCase {
                        "Use lastChecked, including snapshot fallback; a disabled provider is not presented")
         XCTAssertEqual(store.lastChecked(.claude), now.addingTimeInterval(-60), "Cards retain their individual check times")
         XCTAssertEqual(store.lastChecked(.cursor), oldestCheck)
+    }
+
+    @MainActor
+    func testASignedOutProvidersOldCheckIsLeftOut() throws {
+        let store = try makeStore(clients: [], enabled: [.claude, .cursor, .devin])
+        defer { store.stop() }
+        let now = Date.now
+        store.statuses[.claude] = .live(snapshot(.claude, at: now.addingTimeInterval(-60)))
+        store.checkedAt[.claude] = now.addingTimeInterval(-60)
+        store.statuses[.cursor] = .signedOut("Sign in to Cursor")
+        store.checkedAt[.cursor] = now.addingTimeInterval(-3 * 86_400)
+        store.statuses[.devin] = .expired("Session expired", cached: nil)
+        store.checkedAt[.devin] = now.addingTimeInterval(-2 * 86_400)
+        store.ageReadings(at: now)
+        XCTAssertEqual(header(store), "Checked \(RelativeTime.ago(now.addingTimeInterval(-60), now: now))",
+                       "Cursor was signed out days ago and shows no reading; its old check isn't the header's")
     }
 
     @MainActor
