@@ -40,7 +40,10 @@ struct PhoneSignInClient: Sendable {
             case .notOffered: "Couldn't start a code sign-in: \(vendor) isn't offering one right now."
             case .denied: "Couldn't sign in: the request was turned down on \(vendor)'s page."
             case .blockedByPolicy: "Couldn't sign in: your organization doesn't allow signing in to \(vendor) here."
-            case .expired: "Couldn't sign in before the code expired. Start again."
+            // Cursor's sign-in is a page, with no code to show.
+            case .expired: PhoneSignIn.sessionOwner(for: provider) == .cursor
+                ? "Couldn't sign in before the sign-in page expired. Start again."
+                : "Couldn't sign in before the code expired. Start again."
             case .emptyCode: "Couldn't find a code there. Copy the whole code \(vendor) shows, then paste it."
             case .otherSignIn: "Couldn't use that code: it's from another sign-in. Start again, then paste the new one."
             case .refused: "Couldn't finish signing in to \(PhoneSignIn.planName(for: provider)). Start again."
