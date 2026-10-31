@@ -1,8 +1,8 @@
 # Changelog
 
-## 2.5.2 for Mac and 1.2.2 for iPhone — not yet released
+## 2.5.2 for Mac — released 31 October 2026 / 1.2.2 for iPhone — submitted 31 October 2026
 
-Mac 2.5.2(1) and iPhone, widgets and Apple Watch 1.2.2(1) carry the fixes from #50. Neither is uploaded or published yet.
+Mac 2.5.2(1) is [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.5.2) and installed on this Mac. iPhone, widgets and Apple Watch 1.2.2(1) is in TestFlight and submitted to App Review (Waiting for Review), released automatically once approved. Both carry the fixes from #50. [The delivery record](docs/release-delivery-20261031.md) binds both to their source.
 
 Mac
 
@@ -24,7 +24,7 @@ On both
 
 ## 2.5.1 for Mac — released 30 October 2026 / 1.2.1 for iPhone — released 30 October 2026
 
-Mac 2.5.1(1) is [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.5.1) and installed on this Mac. iPhone, widgets and Apple Watch 1.2.1(1) was approved and released on the App Store on 30 October 2026 (the App Store lookup shows it released at 18:01 UTC). Both carry the new finish for meters, rings and icons, and fresher readings on the iPhone (#42). [The delivery record](docs/release-delivery-20261030.md) binds both to their source.
+Mac 2.5.1(1) was [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.5.1) and installed on this Mac, until 2.5.2 replaced it on 31 October. iPhone, widgets and Apple Watch 1.2.1(1) was approved and released on the App Store on 30 October 2026 (the App Store lookup shows it released at 18:01 UTC). Both carry the new finish for meters, rings and icons, and fresher readings on the iPhone (#42). [The delivery record](docs/release-delivery-20261030.md) binds both to their source.
 
 Meters and icons, on every device
 

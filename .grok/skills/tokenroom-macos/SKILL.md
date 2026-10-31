@@ -10,9 +10,11 @@ description: >-
 
 # Tokenroom macOS
 
-**Delivery status (30 October 2026):** Mac 2.5.1(1) is public (`v2.5.1`) and installed on this Mac; iPhone, widgets and Watch 1.2.1(1) is in TestFlight and Waiting for Review with automatic release. `docs/release-delivery-20261030.md` is the current authority.
+**Delivery status (31 October 2026):** Mac 2.5.2(1) is public (`v2.5.2`) and installed on this Mac; iPhone, widgets and Watch 1.2.2(1) is in TestFlight and Waiting for Review with automatic release. `docs/release-delivery-20261031.md` is the current authority.
 
-**Previous delivery status (22 October 2026):** Mac 2.5.0(1) is public (`v2.5.0`); iPhone, widgets and Watch 1.2.0(1) was approved and released on the App Store on 22 October 2026. `docs/release-delivery-20261022.md` records that release and the submission; `docs/release-delivery-20261030.md` records the approval.
+**Previous delivery status (30 October 2026):** Mac 2.5.1(1) is public (`v2.5.1`); iPhone, widgets and Watch 1.2.1(1) was approved and released on the App Store on 30 October 2026. `docs/release-delivery-20261030.md` records that release and the submission; `docs/release-delivery-20261031.md` records the approval.
+
+**Earlier delivery status (22 October 2026):** Mac 2.5.0(1) is public (`v2.5.0`); iPhone, widgets and Watch 1.2.0(1) was approved and released on the App Store on 22 October 2026. `docs/release-delivery-20261022.md` records that release and the submission; `docs/release-delivery-20261030.md` records the approval.
 
 **iPhone delivery update (13 October 2026):** Mobile 1.1.1(1) is approved, manually released and verified on live official US/PT pages. `docs/ios-news-release-delivery-20261012.md` records that separate release and conservative cache cleanup. Read-only checks that day confirmed both Macs matched the public Mac 2.4.1(1) package; no new Mac release, installation or production launch was performed in the iPhone closeout. Historical owned phone Simulators are already absent; the pre-existing Watch and other workflows' devices remain intact.
 
