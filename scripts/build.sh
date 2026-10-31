@@ -58,8 +58,10 @@ build_with_xcode() {
   export DEVELOPER_DIR="$1"
   local project="$ROOT/$APP_NAME.xcodeproj"
   local signing
+  # `|| true`: under pipefail, xcodebuild failing (or cut off when awk exits early) would end the
+  # script here with no message instead of falling back to ad-hoc signing.
   signing="$(xcodebuild -project "$project" -scheme "$APP_NAME" -configuration "$CONFIG" -showBuildSettings 2>/dev/null \
-    | awk '$1 == "TOKENROOM_MAC_SIGNING" { print $3; exit }')"
+    | awk '$1 == "TOKENROOM_MAC_SIGNING" { print $3; exit }' || true)"
   signing="${signing:-adhoc}"
   echo "Building with Xcode ($CONFIG, $signing signing)"
 
@@ -180,12 +182,14 @@ build_with_swiftc() {
   echo -n 'APPL????' > "$app/Contents/PkgInfo"
   write_info_plist "$app/Contents/Info.plist" "${prefix:-app.tokenroom}.mac" "${version:-0.0.0}" "${build_number:-1}"
 
-  local iconset
-  iconset="$(mktemp -d "${TMPDIR:-/tmp}/TokenroomIcon.XXXXXX").iconset"
+  # iconutil wants a folder named *.iconset; it goes inside the temporary folder, which is removed.
+  local icon_tmp iconset
+  icon_tmp="$(mktemp -d "${TMPDIR:-/tmp}/TokenroomIcon.XXXXXX")"
+  iconset="$icon_tmp/AppIcon.iconset"
   mkdir -p "$iconset"
   cp "$ASSETS/AppIcon.appiconset/"*.png "$iconset/"
   iconutil -c icns "$iconset" -o "$res/AppIcon.icns"
-  rm -rf "$iconset"
+  rm -rf "$icon_tmp"
   copy_loose_images "$res"
 
   codesign --force --sign - --entitlements "$ROOT/Tokenroom/Tokenroom.entitlements" --options runtime "$app"

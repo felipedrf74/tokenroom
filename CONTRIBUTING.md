@@ -14,7 +14,7 @@ Glance first. Keep the extra narrow, Apple-native, and free of identity data.
 
 ```bash
 ./scripts/build.sh
-open /Applications/Tokenroom.app
+open ~/Applications/Tokenroom.app
 ```
 
 Xcode 27 is preferred. Command Line Tools are enough for the `swiftc` fallback in `scripts/build.sh`. DerivedData stays at `~/Library/Developer/Xcode/DerivedData/Tokenroom`.
