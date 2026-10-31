@@ -2,9 +2,13 @@
 
 A draft for App Store Connect. Provider names appear only in the description, as facts, never in the name, subtitle, or keywords. Tokenroom isn't affiliated with any provider.
 
+## What's New — 1.2.2
+
+Limit names are clearer in alerts and widgets, such as "Opus weekly limit" and Antigravity's two 5-hour limits. The Lock Screen widget no longer repeats its row, widgets refresh less often for an old reading, and long provider names fit. A plan sign-in that's still renewing no longer asks you to sign in again. News shows dashes and quotes properly. With Tokenroom for Mac 2.5.2, a provider you turn off on your Mac leaves your iPhone sooner.
+
 ## What's New — 1.2.1
 
-Submitted 30 October 2026 with build 1.2.1 (1): Waiting for Review, released automatically once approved. The promotional text below went in with it; the review notes and the description are 1.2.0's, unchanged, so the description still has the old privacy bullet (see Description). [The delivery record](release-delivery-20261030.md) has the details.
+Submitted 30 October 2026 with build 1.2.1 (1), approved and released on the App Store the same day (18:01 UTC). The promotional text below went in with it; the review notes and the description are 1.2.0's, unchanged, so the description still has the old privacy bullet (see Description). [The delivery record](release-delivery-20261030.md) has the details.
 
 Meters and rings now fill in the colour of their level, so a limit that's running low stands out at a glance, and percentages are easier to read. Provider icons look sharper. While Usage is open, Tokenroom looks for new readings every couple of minutes and shows when the newest one was checked. With Tokenroom for Mac 2.5.1, readings from your Mac arrive more often.
 
@@ -54,7 +58,7 @@ Usage readings now show when each provider was last checked and flag stale data.
 | Content rights | Yes: shows third-party content (provider names, model and feed titles) it has the right to use |
 | EU trader status (DSA) | Non-trader |
 | Tracking | None |
-| Release | 1.2.1 submitted 30 October 2026 (Waiting for Review, automatic release); 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
+| Release | 1.2.2 next; 1.2.1 publicly released 30 October 2026; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
 
 ## App privacy
 
