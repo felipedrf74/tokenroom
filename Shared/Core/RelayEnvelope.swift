@@ -45,6 +45,18 @@ struct RelayEnvelope: Codable, Equatable, Sendable {
         minReader <= Self.version
     }
 
+    /// A payload as a reader takes it: the envelope when this build can read it, else whether a
+    /// newer app is needed. A newer format that changed shape doesn't decode here at all, but its
+    /// `minReader` still says this build is too old.
+    static func read(_ data: Data) -> (envelope: RelayEnvelope?, needsNewerApp: Bool) {
+        if let decoded = try? decode(data) {
+            return decoded.isReadable ? (decoded, false) : (nil, true)
+        }
+        struct Gate: Decodable { var minReader: Int? }
+        let minReader = (try? decoder.decode(Gate.self, from: data))?.minReader ?? 1
+        return (nil, minReader > version)
+    }
+
     /// Stable hash of what matters to readers, so unchanged usage isn't re-sent.
     /// Ignores `checkedAt` and per-provider check times. Amounts count as they're shown, so a
     /// balance or a month's spend changes it. A measured run-out drifts a little on every check,
