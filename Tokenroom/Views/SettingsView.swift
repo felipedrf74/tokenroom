@@ -107,7 +107,12 @@ struct SettingsView: View {
             case .paused: return "Paused"
             }
         case .alerts:
-            return store.settings.showsAlertsOnMac ? "On this Mac and iPhone" : "On iPhone"
+            switch (store.settings.showsAlertsOnMac, store.sendsAlertsToiCloud) {
+            case (true, true): return "On this Mac and iPhone"
+            case (false, true): return "On iPhone"
+            case (true, false): return "On this Mac"
+            case (false, false): return "Off on this Mac"
+            }
         case .general, .keys:
             return nil
         }
@@ -314,6 +319,7 @@ private struct ProvidersSettings: View {
             let connected = personal.filter { store.settings.isEnabled($0) }
             let detectedOff = personal.filter { !store.settings.isEnabled($0) && detected.contains($0) }
             let available = personal.filter { !store.settings.isEnabled($0) && !detected.contains($0) }
+            let orgSpend = Provider.allCases.filter { $0.category == .orgSpend && matches($0.displayName) }
 
             if !connected.isEmpty {
                 Section {
@@ -338,12 +344,15 @@ private struct ProvidersSettings: View {
                     ForEach(available) { providerRow($0) }
                 }
             }
-            Section {
-                ForEach(Provider.allCases.filter { $0.category == .orgSpend && matches($0.displayName) }) { providerRow($0) }
-            } header: {
-                Text("Organization billing")
-            } footer: {
-                Text("Month-to-date spend with an admin or management key. These never turn on by themselves; add a dedicated key you can revoke in API Keys.")
+            // A grouped form draws a section's header and footer even with no rows left.
+            if !orgSpend.isEmpty {
+                Section {
+                    ForEach(orgSpend) { providerRow($0) }
+                } header: {
+                    Text("Organization billing")
+                } footer: {
+                    Text("Month-to-date spend with an admin or management key. These never turn on by themselves; add a dedicated key you can revoke in API Keys.")
+                }
             }
         }
         .formStyle(.grouped)
@@ -412,8 +421,8 @@ private struct ProvidersSettings: View {
                 }
             }
         }
-        .accessibilityLabel(provider.displayName)
-        .accessibilityValue(caption(provider))
+        // The caption goes in the label: as the value it would replace the switch's on or off.
+        .accessibilityLabel("\(provider.displayName), \(caption(provider))")
     }
 
     /// What kind of connection it is, at a glance.
@@ -955,6 +964,17 @@ private struct AlertsSettings: View {
         store.settings.alertPreferences
     }
 
+    /// Alerts reach the iPhone only through iCloud; without it, this Mac is the only place.
+    private var iPhoneNote: String {
+        if store.sendsAlertsToiCloud {
+            return "Your iPhone gets these through iCloud either way, once each, whichever device sees them first."
+        }
+        if store.relay?.isAvailable == true {
+            return "Your iPhone gets these only while Send readings to iCloud is on, in iPhone & Watch."
+        }
+        return "This copy of Tokenroom can't use iCloud, so only this Mac can show these."
+    }
+
     var body: some View {
         Form {
             SettingsHeaderSection()
@@ -978,7 +998,7 @@ private struct AlertsSettings: View {
             } footer: {
                 Text(denied
                     ? "Notifications are off for Tokenroom. Turn them on in System Settings › Notifications."
-                    : "Your iPhone gets these through iCloud either way, once each, whichever device sees them first.")
+                    : iPhoneNote)
             }
 
             Section {
@@ -1088,29 +1108,35 @@ private struct NewsSettings: View {
             }
             if store.settings.newsEnabled, let news = store.news {
                 TextField("Search labs and sources", text: $search)
-                Section("Labs") {
-                    ForEach(news.vendorChoices.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }, id: \.id) { vendor in
-                        Toggle(vendor.name, isOn: Binding(
-                            get: { news.followedVendors.contains(vendor.id) },
-                            set: { isOn in
-                                if isOn { news.followedVendors.insert(vendor.id) } else { news.followedVendors.remove(vendor.id) }
-                            }
-                        ))
+                let vendors = news.vendorChoices.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }
+                let sources = FeedSource.toggles.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }
+                if !vendors.isEmpty {
+                    Section("Labs") {
+                        ForEach(vendors, id: \.id) { vendor in
+                            Toggle(vendor.name, isOn: Binding(
+                                get: { news.followedVendors.contains(vendor.id) },
+                                set: { isOn in
+                                    if isOn { news.followedVendors.insert(vendor.id) } else { news.followedVendors.remove(vendor.id) }
+                                }
+                            ))
+                        }
                     }
                 }
-                Section {
-                    ForEach(FeedSource.toggles.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }) { source in
-                        Toggle(source.name, isOn: Binding(
-                            get: { news.followedSources.contains(source.id) },
-                            set: { isOn in
-                                if isOn { news.followedSources.insert(source.id) } else { news.followedSources.remove(source.id) }
-                            }
-                        ))
+                if !sources.isEmpty {
+                    Section {
+                        ForEach(sources) { source in
+                            Toggle(source.name, isOn: Binding(
+                                get: { news.followedSources.contains(source.id) },
+                                set: { isOn in
+                                    if isOn { news.followedSources.insert(source.id) } else { news.followedSources.remove(source.id) }
+                                }
+                            ))
+                        }
+                    } header: {
+                        Text("Announcements")
+                    } footer: {
+                        Text("Choose curated voices and provider status in News → Following. Saves and reading choices stay on this device. Public articles open in your browser.")
                     }
-                } header: {
-                    Text("Announcements")
-                } footer: {
-                    Text("Choose curated voices and provider status in News → Following. Saves and reading choices stay on this device. Public articles open in your browser.")
                 }
             }
         }
