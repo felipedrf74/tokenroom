@@ -20,6 +20,12 @@ struct ReadingCache: Codable, Equatable, Sendable {
 
         var id: String { provider.id }
 
+        /// The note a widget puts under its rows for this reading, beside the window its row leads
+        /// with (picked with this reading's history), so it never repeats that row.
+        func attention(now: Date) -> String? {
+            ReadingText.attention(provider, now: now, lead: provider.leadWindow(now: now, history: history))
+        }
+
         /// The origin, or the label's best guess for an older cache.
         var resolvedOrigin: CollectorKind {
             origin ?? CollectorKind(legacyLabel: source)
@@ -205,6 +211,12 @@ struct ReadingCache: Codable, Equatable, Sendable {
     /// `reloadSignature` as the readings are drawn at `date` (see `materialHash(at:)`).
     func reloadSignature(at date: Date) -> Int {
         presented(at: date).reloadSignature
+    }
+
+    /// When a widget built from this cache reloads, judged by its readings as shown now: one
+    /// saved live hours ago is stale by then, and doesn't hurry the reload as a current one would.
+    func nextReload(after now: Date, reloads: Int) -> Date {
+        WidgetSchedule.nextReload(after: now, items: presented(at: now).items, reloads: reloads)
     }
 
     /// What these readings change from `previous`, both drawn at `date`: whether anything shown

@@ -47,7 +47,7 @@ struct ReadingsTimelineProvider: AppIntentTimelineProvider {
         let dates = [now] + boundaries.prefix(31)
         return Timeline(
             entries: dates.map { ReadingsEntry.make(cache, choice: configuration.provider, date: $0) },
-            policy: .after(WidgetSchedule.nextReload(after: now, items: cache?.items ?? [], reloads: reloads))
+            policy: .after(cache?.nextReload(after: now, reloads: reloads) ?? WidgetSchedule.nextReload(after: now, items: [], reloads: reloads))
         )
     }
 }

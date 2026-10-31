@@ -41,7 +41,7 @@ struct ComplicationProvider: TimelineProvider {
             let entries = ([now] + boundaries.prefix(31)).map { date in
                 ComplicationEntry(date: date, items: cache?.presented(at: date).items ?? [], isSample: cache?.isSample ?? false)
             }
-            completion(Timeline(entries: entries, policy: .after(WidgetSchedule.nextReload(after: now, items: cache?.presented(at: .now).items ?? [], reloads: reloads))))
+            completion(Timeline(entries: entries, policy: .after(cache?.nextReload(after: now, reloads: reloads) ?? WidgetSchedule.nextReload(after: now, items: [], reloads: reloads))))
         }
     }
 }
@@ -114,6 +114,7 @@ private struct ComplicationView: View {
                                 .font(.system(size: 12, weight: .semibold))
                                 .frame(width: 52, alignment: .leading)
                                 .lineLimit(1)
+                                .minimumScaleFactor(0.7)
                             if row?.isMetered == false, row?.amount != nil {
                                 // A balance: its amount, with no empty bar beside it.
                                 Spacer(minLength: 0)
@@ -130,8 +131,8 @@ private struct ComplicationView: View {
                         .opacity(item.provider.isLive && row?.isAwaitingReading(at: entry.date) != true ? 1 : 0.65)
                     }
                     let stale = entry.items.filter { !$0.provider.isLive }.count
-                    if let item = entry.items.first(where: { ReadingText.attention($0.provider, now: entry.date, lead: $0.provider.leadWindow(now: entry.date, history: $0.history)) != nil }),
-                       let note = ReadingText.attention(item.provider, now: entry.date, lead: item.provider.leadWindow(now: entry.date, history: item.history)) {
+                    if let item = entry.items.first(where: { $0.attention(now: entry.date) != nil }),
+                       let note = item.attention(now: entry.date) {
                         Text(note + (stale > 0 ? " · \(stale) stale" : ""))
                             .font(.caption2.weight(.semibold)).lineLimit(2).minimumScaleFactor(0.7)
                             .foregroundStyle(UsageRanking.limitWarning(for: item.provider, now: entry.date) == nil ? Color.secondary : TokenroomTokens.usageCritical)
@@ -273,7 +274,7 @@ private struct ResetSoonView: View {
             HStack(spacing: 8) {
                 ProviderMark(provider: item.provider, size: 28)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("\(item.provider.shortName) \(window.displayTitle.lowercased()) \(ReadingText.headline(window, now: date))")
+                    Text("\(item.provider.shortName) \(WindowNames.inSentence(window.displayTitle)) \(ReadingText.headline(window, now: date))")
                         .font(.headline)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
