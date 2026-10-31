@@ -396,6 +396,39 @@ final class PhoneSessionTests: XCTestCase {
         XCTAssertEqual(store.metadata(for: fixture)?.state, .ready)
     }
 
+    func testARenewalNotStoredYetIsntASignInAgain() async throws {
+        let keychain = FakeKeychain()
+        let store = makeStore(keychain)
+        try store.save(session("old", expiresIn: 120), for: fixture, now: now)
+        var failingWrites = PhoneSessionRefresher.writeAttempts
+        keychain.failure = { operation, query in
+            guard query[kSecAttrService as String] as? String == store.recoveryService, operation == .add else { return nil }
+            guard failingWrites > 0 else { return nil }
+            failingWrites -= 1
+            return errSecInteractionNotAllowed
+        }
+        let posts = Counter()
+        let refresher = PhoneSessionRefresher(store: store, allowlist: [fixture]) { _, _ in
+            posts.increment()
+            return .granted(Self.session("new", expiresIn: 3600))
+        }
+        let tokens = LockedBox<[String]>([])
+        let client = PhoneSessionClient(provider: fixture, store: store, allowlist: [fixture], request: Self.testRequest) { request in
+            tokens.value.append(request.value(forHTTPHeaderField: "Authorization") ?? "")
+            let window = QuotaWindow(id: "weekly", kind: .weekly, title: "Weekly", usedPercent: 30, resetsAt: Self.now.addingTimeInterval(86_400))
+            return Result { try QuotaSnapshot.headlined(by: [window], provider: Self.fixture, fetchedAt: Self.now) }.mapError { _ in .parse }
+        }
+        let reader = PhoneSessionReader(client: client, refresher: refresher)
+
+        let first = await reader.read(now: now)
+        XCTAssertEqual(first, .failure(.unreachable), "Renewed but not stored: try later, not sign in again")
+        XCTAssertEqual(tokens.value, [], "No usage call mid-renewal")
+        let second = await reader.read(now: now)
+        XCTAssertNoThrow(try second.get())
+        XCTAssertEqual(posts.count, 1, "The grant in memory is written; no second token request")
+        XCTAssertEqual(tokens.value, ["Bearer access-new"])
+    }
+
     func testARelaunchMidExchangeWithoutARecoveryItemIsRejectedWithoutPosting() async throws {
         let keychain = FakeKeychain()
         let store = makeStore(keychain)
