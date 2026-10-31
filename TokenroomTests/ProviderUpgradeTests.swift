@@ -37,6 +37,17 @@ final class ProviderUpgradeTests: XCTestCase {
         XCTAssertEqual(expiries, [iso.date(from: "2026-10-03T00:00:00Z")!, iso.date(from: "2026-10-10T00:00:00Z")!])
     }
 
+    func testCachedResetExpiriesFitOnlyTheSameCount() {
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let dates = [now.addingTimeInterval(86_400), now.addingTimeInterval(2 * 86_400)]
+        let entry = OpenAIClient.ExpiryEntry(count: 2, expiries: dates, at: now)
+        XCTAssertEqual(OpenAIClient.cachedExpiries(entry, count: 2, now: now.addingTimeInterval(60), ttl: 3_600), dates)
+        XCTAssertNil(OpenAIClient.cachedExpiries(entry, count: 2, now: now.addingTimeInterval(3_600), ttl: 3_600), "Looked up again after the TTL")
+        XCTAssertEqual(OpenAIClient.cachedExpiries(entry, count: 2, now: now.addingTimeInterval(86_400)), dates, "A failed lookup keeps dates for the same count")
+        XCTAssertNil(OpenAIClient.cachedExpiries(entry, count: 1, now: now.addingTimeInterval(60)), "One redeemed: the old two dates no longer fit")
+        XCTAssertNil(OpenAIClient.cachedExpiries(nil, count: 0, now: now))
+    }
+
     func testSpendControlBecomesAMeteredDollarWindow() throws {
         let snapshot = try OpenAIParser.snapshot(from: fixture("openai-spend-control"))
         XCTAssertEqual(snapshot.planLabel, "Business")

@@ -8,6 +8,11 @@ struct GrokClient: ProviderClient {
     private static let planCache = OSAllocatedUnfairLock<(label: String?, at: Date)?>(initialState: nil)
     private static let planTTL: TimeInterval = 6 * 3_600
 
+    /// Another account may be on another plan.
+    func credentialsChanged() {
+        Self.planCache.withLock { $0 = nil }
+    }
+
     func fetch() async -> Result<QuotaSnapshot, ProviderError> {
         do {
             let auth = try await LoginSession.shared.grok()
