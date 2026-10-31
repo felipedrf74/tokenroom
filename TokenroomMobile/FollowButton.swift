@@ -26,7 +26,7 @@ struct FollowButton: View {
                 guard allowsExternalEffects else { return }
                 isFollowing = LiveActivities.activity(for: provider.id) != nil
             }
-            .accessibilityHint(isFollowing ? "Removes the countdown from the Lock Screen" : "Shows a countdown to the \(window.displayTitle.lowercased()) reset on the Lock Screen and in the Dynamic Island")
+            .accessibilityHint(isFollowing ? "Removes the countdown from the Lock Screen" : "Shows a countdown to the \(WindowNames.inSentence(window.displayTitle)) reset on the Lock Screen and in the Dynamic Island")
         }
     }
 
