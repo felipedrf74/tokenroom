@@ -4,6 +4,8 @@ A draft for App Store Connect. Provider names appear only in the description, as
 
 ## What's New — 1.2.2
 
+Submitted 31 October 2026 with build 1.2.2 (1): Waiting for Review, released automatically once approved. The promotional text and the description below went in with it, the description with its current privacy bullet; the review notes are 1.2.1's, unchanged. [The delivery record](release-delivery-20261031.md) has the details.
+
 Limit names are clearer in alerts and widgets, such as "Opus weekly limit" and Antigravity's two 5-hour limits. The Lock Screen widget no longer repeats its row, widgets refresh less often for an old reading, and long provider names fit. A plan sign-in that's still renewing no longer asks you to sign in again. News shows dashes and quotes properly. With Tokenroom for Mac 2.5.2, a provider you turn off on your Mac leaves your iPhone sooner.
 
 ## What's New — 1.2.1
@@ -58,7 +60,7 @@ Usage readings now show when each provider was last checked and flag stale data.
 | Content rights | Yes: shows third-party content (provider names, model and feed titles) it has the right to use |
 | EU trader status (DSA) | Non-trader |
 | Tracking | None |
-| Release | 1.2.2 next; 1.2.1 publicly released 30 October 2026; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
+| Release | 1.2.2 submitted 31 October 2026 (Waiting for Review, automatic release); 1.2.1 publicly released 30 October 2026; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
 
 ## App privacy
 
@@ -74,7 +76,7 @@ See how much of your AI plans you've used, your pace, and when each limit resets
 
 ## Description
 
-The text to enter with the next version. The live description (1.2.0, and 1.2.1 as submitted) is this text with the old privacy bullet, "Logins never leave your Mac, and keys never leave your iPhone. Only usage, reset times, and plan names sync, through your iCloud." Its first sentence stopped being true when 1.2.0 added plan sign-in. Only that bullet differs.
+As submitted with 1.2.2 on 31 October 2026. 1.2.0 and 1.2.1 went out with an older privacy bullet, "Logins never leave your Mac, and keys never leave your iPhone. Only usage, reset times, and plan names sync, through your iCloud.", whose first sentence stopped being true when 1.2.0 added plan sign-in. Only that bullet differed.
 
 Tokenroom shows how much of your AI coding and chat plans you've used, whether you're on pace, and when each limit resets, on your iPhone, your Lock Screen, and your wrist.
 
