@@ -93,15 +93,41 @@ final class GrokBotCredentialsTests: XCTestCase {
             return .value("fixture")
         }))
         let allowed = CredentialReaders.ClaudeKeyAccess(partitions: ["apple-tool:"], hasPartitionList: true, wasRead: true)
-        XCTAssertEqual(CredentialReaders.grokBotStoragePassword(access: { _ in allowed }, read: { service, timeout in
+        XCTAssertEqual(CredentialReaders.grokBotStoragePassword(access: { _ in allowed }, read: { service, prompts in
             XCTAssertEqual(service, "Grok Bot Safe Storage")
-            XCTAssertEqual(timeout, 5)
+            XCTAssertFalse(prompts)
             return .value("fixture")
         }), "fixture")
-        XCTAssertEqual(CredentialReaders.grokBotStoragePassword(promptAllowed: true, access: { _ in XCTFail(); return .init() }, read: { _, timeout in
-            XCTAssertEqual(timeout, 180, "Only an explicit Sign In waits for the user's dialog")
+        XCTAssertEqual(CredentialReaders.grokBotStoragePassword(promptAllowed: true, access: { _ in XCTFail(); return .init() }, read: { _, prompts in
+            XCTAssertTrue(prompts, "Only an explicit Sign In may open the user's dialog")
             return .value("fixture")
         }), "fixture")
+    }
+
+    func testAnOpenSystemDialogDoesNotHoldOtherProvidersKeychainReads() async {
+        let dialogOpened = expectation(description: "System dialog open")
+        let otherProviderRead = expectation(description: "Another provider read through the gate")
+        let answer = DispatchSemaphore(value: 0)
+        defer { answer.signal() }
+        let prompt = Task {
+            await BlockingIO.run {
+                CredentialReaders.securityPassword(service: GrokBotCredentials.storageService, account: nil, promptAllowed: true, run: { _, _, timeout in
+                    XCTAssertEqual(timeout, 180)
+                    dialogOpened.fulfill()
+                    _ = answer.wait(timeout: .now() + 5)
+                    return .init(status: 0, stdout: Data("fixture-password".utf8), timedOut: false)
+                })
+            }
+        }
+        await fulfillment(of: [dialogOpened], timeout: 2)
+        let other = Task {
+            await BlockingIO.run { KeychainGate.sync { otherProviderRead.fulfill() } }
+        }
+        await fulfillment(of: [otherProviderRead], timeout: 2)
+        answer.signal()
+        let result = await prompt.value
+        await other.value
+        XCTAssertEqual(result, .value("fixture-password"))
     }
 
     func testClientRetriesTheNativeLoginAfterRenewalWithoutUsingCursor() async throws {

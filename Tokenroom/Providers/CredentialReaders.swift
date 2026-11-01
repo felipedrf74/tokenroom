@@ -337,7 +337,7 @@ enum CredentialReaders {
 
     /// What one call to `/usr/bin/security` found. A missing account is not a refusal:
     /// the login-password dialog is the refusal, and that must not be tried again.
-    enum SecurityPasswordResult: Equatable {
+    enum SecurityPasswordResult: Equatable, Sendable {
         case value(String)
         case missing
         case unavailable
@@ -702,7 +702,15 @@ enum CredentialReaders {
         return value
     }
 
-    private static func securityPassword(service: String, account: String?, keychain: String? = nil, timeout: TimeInterval = 5) -> SecurityPasswordResult {
+    static func securityPassword(
+        service: String,
+        account: String?,
+        keychain: String? = nil,
+        promptAllowed: Bool = false,
+        run: @escaping (URL, [String], TimeInterval) -> BlockingIO.ProcessOutput = {
+            BlockingIO.runProcess($0, arguments: $1, timeout: $2)
+        }
+    ) -> SecurityPasswordResult {
         var args = ["find-generic-password", "-s", service, "-w"]
         if let account {
             args.insert(contentsOf: ["-a", account], at: 3)
@@ -710,11 +718,13 @@ enum CredentialReaders {
         if let keychain {
             args.append(keychain)
         }
-        // Same gate as SecItem. The `security` tool talks to securityd too, and running
-        // it beside a keychain call in this process is the same deadlock.
-        let output = KeychainGate.sync {
-            BlockingIO.runProcess(URL(fileURLWithPath: "/usr/bin/security"), arguments: args, timeout: timeout)
+        let read = {
+            run(URL(fileURLWithPath: "/usr/bin/security"), args, promptAllowed ? 180 : 5)
         }
+        // Automated reads remain serialized. An explicit system dialog runs in its own
+        // process (with its own legacy Keychain lock), without retaining this app's gate
+        // while the user decides. In-process SecItem calls still always use that gate.
+        let output = promptAllowed ? read() : KeychainGate.sync(read)
         // 44 is errSecItemNotFound once the status is truncated to a process exit code.
         if !output.timedOut, output.status == 44 { return .missing }
         guard output.succeeded, let text = String(data: output.stdout, encoding: .utf8) else { return .unavailable }
@@ -727,11 +737,11 @@ enum CredentialReaders {
     static func grokBotStoragePassword(
         promptAllowed: Bool = false,
         access: (String) -> ClaudeKeyAccess = { claudeKeyAccess(service: $0) },
-        read: (String, TimeInterval) -> SecurityPasswordResult = { securityPassword(service: $0, account: nil, timeout: $1) }
+        read: (String, Bool) -> SecurityPasswordResult = { securityPassword(service: $0, account: nil, promptAllowed: $1) }
     ) -> String? {
         let service = GrokBotCredentials.storageService
         guard promptAllowed || access(service).trustsSecurityTool else { return nil }
-        guard case .value(let password) = read(service, promptAllowed ? 180 : 5) else { return nil }
+        guard case .value(let password) = read(service, promptAllowed) else { return nil }
         return present(password)
     }
 
