@@ -27,6 +27,7 @@ struct PopoverProviderView: View {
                 .onHover { isHovered = $0 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(summaryAccessibility(window))
+                .accessibilityAddTraits(.isButton)
                 .accessibilityHint("Opens usage insights and every limit")
                 .help("Show \(card.provider.displayName) details")
             }
