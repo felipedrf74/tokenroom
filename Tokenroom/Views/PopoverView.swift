@@ -8,18 +8,28 @@ struct PopoverView: View {
     var onNews: (NewsSection) -> Void
     @State private var showsDisconnected = false
     @State private var expanded: Set<Provider>
+    @State private var selectedProvider: Provider?
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var style: PopoverStyle { store.settings.popoverStyle }
+    private var isClassic: Bool { style == .classic }
+    private var detailProvider: Provider? {
+        guard !isClassic, let selectedProvider, store.popoverProviders.contains(selectedProvider) else { return nil }
+        return selectedProvider
+    }
 
     init(store: QuotaStore, onSettings: @escaping (SettingsTab?) -> Void, onNews: @escaping (NewsSection) -> Void = { _ in }, expanded: Set<Provider> = []) {
         self.store = store
         self.onSettings = onSettings
         self.onNews = onNews
         _expanded = State(initialValue: expanded)
+        _selectedProvider = State(initialValue: expanded.sorted { $0.rawValue < $1.rawValue }.first)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-                .padding(.horizontal, TokenroomTokens.cardPadding)
+                .padding(.horizontal, isClassic ? TokenroomTokens.cardPadding : 20)
                 .padding(.top, 14)
                 .padding(.bottom, 12)
 
@@ -35,13 +45,22 @@ struct PopoverView: View {
                     .padding(.horizontal, TokenroomTokens.cardPadding)
                     .padding(.bottom, 8)
             } else {
-                ViewThatFits(in: .vertical) {
-                    providerList
+                if let provider = detailProvider {
                     ScrollView {
-                        providerList
+                        PopoverProviderView(card: providerCard(provider, expanded: true), style: style, showsDetails: true)
                     }
+                    .frame(height: 520)
+                    .id(provider)
+                } else {
+                    ViewThatFits(in: .vertical) {
+                        providerList
+                            .fixedSize(horizontal: false, vertical: true)
+                        ScrollView {
+                            providerList
+                        }
+                    }
+                    .frame(maxHeight: 520)
                 }
-                .frame(maxHeight: 520)
             }
 
             highlights
@@ -56,7 +75,10 @@ struct PopoverView: View {
                 .padding(.horizontal, TokenroomTokens.cardPadding)
                 .padding(.vertical, 10)
         }
-        .frame(width: TokenroomTokens.popoverWidth)
+        .frame(width: style.width)
+        .background(PopoverSurface(style: style))
+        .environment(\.colorScheme, style == .instrument ? .dark : colorScheme)
+        .onChange(of: style) { _, _ in selectedProvider = nil }
         .transaction { $0.animation = nil }
     }
 
@@ -94,28 +116,33 @@ struct PopoverView: View {
     }
 
     private func cards(_ providers: [Provider]) -> some View {
-        VStack(spacing: isCompact ? 6 : TokenroomTokens.cardGap) {
+        VStack(spacing: isClassic ? (isCompact ? 6 : TokenroomTokens.cardGap) : 0) {
             ForEach(providers, id: \.self) { provider in
                 let isExpanded = expanded.contains(provider)
-                ProviderCard(
-                    provider: provider,
-                    status: store.presentationStatus(for: provider),
-                    checkedAt: store.lastChecked(provider),
-                    pace: store.pace(for: provider, now: store.presentationNow),
-                    windowPaces: isExpanded ? store.windowPaces(for: provider, now: store.presentationNow) : [:],
-                    weeks: store.weeks(for: provider),
-                    isExpanded: isExpanded,
-                    isCompact: isCompact,
-                    onToggleExpanded: { toggle(provider) },
-                    signInPhase: store.signIn.phase,
-                    onSignIn: { store.signIn.signIn(provider) },
-                    onCancelSignIn: { store.signIn.cancel() },
-                    onInstall: { store.signIn.openInstallPage(provider) },
-                    date: store.presentationNow
-                )
+                if isClassic {
+                    providerCard(provider, expanded: isExpanded)
+                } else {
+                    PopoverProviderView(card: providerCard(provider, expanded: false), style: style) {
+                        selectedProvider = provider
+                    }
+                    if provider != providers.last { Divider().padding(.horizontal, 20) }
+                }
             }
         }
-        .padding(.horizontal, TokenroomTokens.cardPadding)
+        .padding(.horizontal, isClassic ? TokenroomTokens.cardPadding : 0)
+    }
+
+    private func providerCard(_ provider: Provider, expanded: Bool) -> ProviderCard {
+        ProviderCard(
+            provider: provider, status: store.presentationStatus(for: provider), checkedAt: store.lastChecked(provider),
+            pace: store.pace(for: provider, now: store.presentationNow),
+            windowPaces: expanded ? store.windowPaces(for: provider, now: store.presentationNow) : [:],
+            weeks: store.weeks(for: provider), isExpanded: expanded, isCompact: isClassic && isCompact,
+            onToggleExpanded: { if isClassic { toggle(provider) } else { selectedProvider = provider } },
+            signInPhase: store.signIn.phase, onSignIn: { store.signIn.signIn(provider) },
+            onCancelSignIn: { store.signIn.cancel() }, onInstall: { store.signIn.openInstallPage(provider) },
+            date: store.presentationNow
+        )
     }
 
     private func toggle(_ provider: Provider) {
@@ -149,7 +176,8 @@ struct PopoverView: View {
                     title: short ? "\(banked.count) banked" : (banked.count == 1 ? "1 banked reset" : "\(banked.count) banked resets"),
                     systemImage: "arrow.counterclockwise"
                 ) {
-                    expanded.formUnion(banked.providers)
+                    if isClassic { expanded.formUnion(banked.providers) }
+                    else { selectedProvider = banked.providers.first }
                 }
                 .help("Resets you can use when a limit runs out")
             }
@@ -250,9 +278,17 @@ struct PopoverView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
+            if detailProvider != nil {
+                Button { selectedProvider = nil } label: {
+                    Image(systemName: "chevron.left").font(.system(size: 16, weight: .medium)).frame(width: 26, height: 30)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Back to all providers")
+                .help("Back to all providers")
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text("Tokenroom")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: isClassic ? 15 : 20, weight: .semibold))
                 HStack(spacing: 5) {
                     Text(checkedHeaderText)
                     if let relay = store.relay, case .sent(let date) = relay.state {
@@ -277,6 +313,20 @@ struct PopoverView: View {
                 }
             }
             Spacer(minLength: 8)
+            Menu {
+                Picker("Popover style", selection: $store.settings.popoverStyle) {
+                    ForEach(PopoverStyle.allCases) { style in
+                        Text(style.title).tag(style)
+                    }
+                }
+            } label: {
+                Image(systemName: "paintpalette").font(.system(size: 15)).frame(width: 28, height: 28)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .accessibilityLabel("Popover style, \(style.title)")
+            .help("Popover style · \(style.title)")
             Button {
                 Task { await store.refresh(force: true) }
             } label: {

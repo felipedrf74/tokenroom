@@ -32,6 +32,11 @@ final class AppSettings {
         didSet { persist() }
     }
 
+    /// Presentation only, local to this Mac; it never changes the menu bar or relay readings.
+    var popoverStyle: PopoverStyle {
+        didSet { persist() }
+    }
+
     /// Enabled providers that stay in the popover but out of the menu bar.
     var hiddenFromMenuBar: Set<Provider> {
         didSet { persist() }
@@ -102,6 +107,7 @@ final class AppSettings {
         static let known = "knownProviders"
         static let refreshMinutes = "refreshMinutes"
         static let menuStyle = "menuStyle"
+        static let popoverStyle = "popoverStyle"
         static let hiddenFromMenuBar = "menuBarHidden"
         static let budgets = "budgets"
         static let budgetReferences = BudgetReferencePreferences.referencesKey
@@ -126,6 +132,7 @@ final class AppSettings {
         } else {
             menuStyle = .meters
         }
+        popoverStyle = defaults.string(forKey: Keys.popoverStyle).flatMap(PopoverStyle.init(rawValue:)) ?? .orbit
         hiddenFromMenuBar = Set((defaults.array(forKey: Keys.hiddenFromMenuBar) as? [String] ?? []).compactMap(Provider.init(rawValue:)))
         var budgets: [Provider: Double] = [:]
         for (key, value) in defaults.dictionary(forKey: Keys.budgets) as? [String: Double] ?? [:] {
@@ -261,6 +268,7 @@ final class AppSettings {
         defaults.set((Provider.allCases.map(\.rawValue) + foreign.known).sorted(), forKey: Keys.known)
         defaults.set(refreshMinutes, forKey: Keys.refreshMinutes)
         defaults.set(menuStyle.rawValue, forKey: Keys.menuStyle)
+        defaults.set(popoverStyle.rawValue, forKey: Keys.popoverStyle)
         defaults.set((hiddenFromMenuBar.map(\.rawValue) + foreign.hidden).sorted(), forKey: Keys.hiddenFromMenuBar)
         defaults.set(Dictionary(uniqueKeysWithValues: budgets.map { ($0.key.rawValue, $0.value) }).merging(foreign.budgets) { mine, _ in mine }, forKey: Keys.budgets)
         defaults.set(Dictionary(uniqueKeysWithValues: budgetReferences.map { ($0.key.rawValue, $0.value.propertyList as Any) })

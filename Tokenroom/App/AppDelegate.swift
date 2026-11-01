@@ -53,7 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         #if DEBUG
         if DebugSnapshots.showNewsPreviewIfRequested() { return }
         if DebugSnapshots.runIfRequested() {
-            NSApp.terminate(nil)
+            if !UserDefaults.standard.bool(forKey: "TokenroomPopoverPreview") { NSApp.terminate(nil) }
             return
         }
         #endif
