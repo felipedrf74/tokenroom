@@ -1,8 +1,8 @@
 // Versions. The Mac collector is versioned on its own.
 // scripts/build.sh reads these for the swiftc fallback.
-// Mac 2.5.2 build 1 follows the published 2.5.1: the fixes from #50.
+// Mac 2.5.3 build 1 fixes the native Grok Bot connection from #53.
 // Mobile 1.2.2 build 1 follows the published 1.2.1: the same fixes.
-TOKENROOM_MAC_VERSION = 2.5.2
+TOKENROOM_MAC_VERSION = 2.5.3
 TOKENROOM_MAC_BUILD = 1
 
 // iPhone app, widgets, and Watch app share one version.

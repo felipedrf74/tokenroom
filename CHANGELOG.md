@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.5.3 for Mac — prepared 1 November 2026
+
+Prepared for public release; publication is pending. The iPhone, widgets and Watch app code and versions are unchanged.
+
+- Grok Bot reads its own desktop login, so being signed in there no longer requires a Cursor login.
+- Sign In asks macOS for access to Grok Bot's existing login. A one-time authorization remains usable while that login is unchanged, without a second access dialog.
+- Opening the Grok Bot authorization dialog keeps the other providers responsive. Automatic updates check the complete Keychain permission before reading the login.
+- A signed-out, unreadable or rejected Grok Bot login never switches to another saved account.
+
 ## 2.5.2 for Mac — released 31 October 2026 / 1.2.2 for iPhone — submitted 31 October 2026
 
 Mac 2.5.2(1) is [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.5.2) and installed on this Mac. iPhone, widgets and Apple Watch 1.2.2(1) is in TestFlight and submitted to App Review (Waiting for Review), released automatically once approved. Both carry the fixes from #50. [The delivery record](docs/release-delivery-20261031.md) binds both to their source.
