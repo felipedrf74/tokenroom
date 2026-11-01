@@ -517,6 +517,9 @@ enum CredentialReaders {
         var partitions: [String] = []
         var hasPartitionList: Bool = false
         var trustedPaths: [String] = []
+        /// A decrypt (or any-operation) ACL trusts the security tool or all applications.
+        /// Partition membership alone doesn't grant permission to decrypt a secret.
+        var allowsSecurityToolDecryption: Bool = false
         var trustsThisApp: Bool = false
         /// The access list was read. False when the Keychain didn't answer (locked, say), so
         /// whether the item trusts the tool isn't known yet.
@@ -564,14 +567,18 @@ enum CredentialReaders {
             let allowsRead = authorizations.contains(kSecACLAuthorizationDecrypt as String)
                 || authorizations.contains(kSecACLAuthorizationAny as String)
                 || authorizations.contains(kSecACLAuthorizationKeychainItemRead as String)
+            let allowsDecrypt = authorizations.contains(kSecACLAuthorizationDecrypt as String)
+                || authorizations.contains(kSecACLAuthorizationAny as String)
             var apps: CFArray?
             var description: CFString?
             var prompt = SecKeychainPromptSelector()
+            if isPartition { found.hasPartitionList = true }
             guard SecACLCopyContents(acl, &apps, &description, &prompt) == errSecSuccess else { continue }
             if isPartition, let text = description as String? {
                 found.hasPartitionList = true
                 found.partitions.append(contentsOf: partitions(inACLDescription: text))
             }
+            if allowsDecrypt, apps == nil { found.allowsSecurityToolDecryption = true }
             guard allowsRead, let apps else { continue }
             for index in 0..<CFArrayGetCount(apps) {
                 guard let raw = CFArrayGetValueAtIndex(apps, index) else { continue }
@@ -581,6 +588,7 @@ enum CredentialReaders {
                       let path = trustedApplicationPath(from: data)
                 else { continue }
                 found.trustedPaths.append(path)
+                if allowsDecrypt, path == "/usr/bin/security" { found.allowsSecurityToolDecryption = true }
             }
         }
         if found.hasPartitionList {
@@ -740,7 +748,12 @@ enum CredentialReaders {
         read: (String, Bool) -> SecurityPasswordResult = { securityPassword(service: $0, account: nil, promptAllowed: $1) }
     ) -> String? {
         let service = GrokBotCredentials.storageService
-        guard promptAllowed || access(service).trustsSecurityTool else { return nil }
+        if !promptAllowed {
+            let policy = access(service)
+            guard policy.wasRead, policy.allowsSecurityToolDecryption,
+                  !policy.hasPartitionList || policy.partitions.contains(where: isSecurityToolPartition)
+            else { return nil }
+        }
         guard case .value(let password) = read(service, promptAllowed) else { return nil }
         return present(password)
     }

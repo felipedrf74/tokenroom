@@ -13,6 +13,14 @@ enum GrokBotCredentials {
     static let storageService = "Grok Bot Safe Storage"
     static let accessHint = "Couldn't read Grok Bot's login. Choose Sign In, then Always Allow in the Keychain dialog."
     private static let refused = OSAllocatedUnfairLock<Int?>(initialState: nil)
+    // Retain only the already-authorized access token, never the storage password.
+    // Re-read the native file before every use, including after Sign In invalidates caches.
+    private struct AuthorizedToken {
+        var file: URL
+        var encrypted: String
+        var token: String
+    }
+    private static let authorized = OSAllocatedUnfairLock<AuthorizedToken?>(initialState: nil)
 
     static func read(
         file: URL = CredentialReaders.grokBotSecretsURL,
@@ -22,12 +30,26 @@ enum GrokBotCredentials {
         now: Date = .now
     ) throws -> Session {
         guard FileManager.default.fileExists(atPath: file.path) else {
+            authorized.withLock { $0 = nil }
             guard allowLegacyCursor else { throw ProviderError.signedOut(Provider.grokBot.signInHint) }
             do { return Session(token: try cursor(), isNative: false) }
             catch ProviderError.signedOut { throw ProviderError.signedOut(Provider.grokBot.signInHint) }
             catch ProviderError.expired { throw ProviderError.expired(Provider.grokBot.expiredHint) }
         }
-        let encrypted = try encryptedToken(from: Data(contentsOf: file))
+        let encrypted: String
+        do { encrypted = try encryptedToken(from: Data(contentsOf: file)) }
+        catch {
+            authorized.withLock { $0 = nil }
+            throw error
+        }
+        if let token = authorized.withLock({ cached -> String? in
+            guard let previous = cached, previous.file == file, previous.encrypted == encrypted,
+                  !CredentialReaders.tokenHasExpired(previous.token, now: now)
+            else { cached = nil; return nil }
+            return previous.token
+        }) {
+            return Session(token: token, isNative: true)
+        }
         guard let password = password(), !password.isEmpty else {
             throw ProviderError.expired(accessHint)
         }
@@ -37,6 +59,7 @@ enum GrokBotCredentials {
         guard !CredentialReaders.tokenHasExpired(token, now: now) else {
             throw ProviderError.expired(Provider.grokBot.expiredHint)
         }
+        authorized.withLock { $0 = AuthorizedToken(file: file, encrypted: encrypted, token: token) }
         return Session(token: token, isNative: true)
     }
 

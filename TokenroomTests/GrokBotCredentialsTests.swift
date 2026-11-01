@@ -52,6 +52,63 @@ final class GrokBotCredentialsTests: XCTestCase {
         }
     }
 
+    func testTheAuthorizedSessionSurvivesSignInInvalidationWithoutASecondKeychainRead() throws {
+        let file = try writeStore(active: "active-fixture")
+        let first = try GrokBotCredentials.read(file: file, password: { password })
+        CredentialReaders.invalidateCaches() // SignInCoordinator.finishSuccess does this.
+        let reread = try GrokBotCredentials.read(file: file, password: {
+            XCTFail("Allow Once already authorized this unchanged native access token")
+            return nil
+        })
+        XCTAssertEqual(reread.token, first.token)
+        let changed = try writeStore(active: NSNull())
+        try Data(contentsOf: changed).write(to: file)
+        XCTAssertThrowsError(try GrokBotCredentials.read(file: file, password: { XCTFail(); return nil })) {
+            XCTAssertEqual($0 as? ProviderError, .signedOut(Provider.grokBot.signInHint))
+        }
+    }
+
+    func testAStoragePartitionWithoutTrustedApplicationAccessDoesNotReadTheSecret() {
+        let partitionOnly = CredentialReaders.ClaudeKeyAccess(partitions: ["apple-tool:"], hasPartitionList: true, wasRead: true)
+        XCTAssertNil(CredentialReaders.grokBotStoragePassword(access: { _ in partitionOnly }, read: { _, _ in
+            XCTFail("A partition is not permission to decrypt: this would open a background dialog")
+            return .value("fixture-password")
+        }))
+    }
+
+    func testAChangedOrDeletedNativeLoginCannotReuseTheAuthorizedToken() throws {
+        let file = try writeStore(active: "active-fixture")
+        _ = try GrokBotCredentials.read(file: file, password: { password })
+        let changed = try writeStore(active: "active-fixture", token: "changed-ciphertext")
+        try Data(contentsOf: changed).write(to: file)
+        XCTAssertThrowsError(try GrokBotCredentials.read(file: file, password: { nil })) {
+            XCTAssertEqual($0 as? ProviderError, .expired(GrokBotCredentials.accessHint))
+        }
+        let original = try writeStore(active: "active-fixture")
+        try Data(contentsOf: original).write(to: file)
+        XCTAssertThrowsError(try GrokBotCredentials.read(file: file, password: { nil }))
+        _ = try GrokBotCredentials.read(file: file, password: { password })
+        try FileManager.default.removeItem(at: file)
+        XCTAssertThrowsError(try GrokBotCredentials.read(file: file, allowLegacyCursor: false)) {
+            XCTAssertEqual($0 as? ProviderError, .signedOut(Provider.grokBot.signInHint))
+        }
+    }
+
+    func testDecryptTrustStillRequiresAnAllowedPartitionAndReadablePolicy() {
+        for policy in [
+            CredentialReaders.ClaudeKeyAccess(partitions: ["teamid:fixture"], hasPartitionList: true, allowsSecurityToolDecryption: true, wasRead: true),
+            CredentialReaders.ClaudeKeyAccess(allowsSecurityToolDecryption: true),
+        ] {
+            XCTAssertNil(CredentialReaders.grokBotStoragePassword(access: { _ in policy }, read: { _, _ in
+                XCTFail("Incomplete permission must not attempt a secret read")
+                return .value("fixture-password")
+            }))
+        }
+        XCTAssertEqual(CredentialReaders.grokBotStoragePassword(access: { _ in
+            .init(allowsSecurityToolDecryption: true, wasRead: true)
+        }, read: { _, _ in .value("fixture-password") }), "fixture-password")
+    }
+
     func testAbsentNativeStoreRetainsLegacyCursorSupportWithGrokHints() throws {
         let missing = try folder().appendingPathComponent("missing.json")
         let session = try GrokBotCredentials.read(file: missing, password: { XCTFail(); return nil }, cursor: { "placeholder-cursor" })
@@ -92,7 +149,7 @@ final class GrokBotCredentialsTests: XCTestCase {
             XCTFail("No secret read before the ACL permits it")
             return .value("fixture")
         }))
-        let allowed = CredentialReaders.ClaudeKeyAccess(partitions: ["apple-tool:"], hasPartitionList: true, wasRead: true)
+        let allowed = CredentialReaders.ClaudeKeyAccess(partitions: ["apple-tool:"], hasPartitionList: true, trustedPaths: ["/usr/bin/security"], allowsSecurityToolDecryption: true, wasRead: true)
         XCTAssertEqual(CredentialReaders.grokBotStoragePassword(access: { _ in allowed }, read: { service, prompts in
             XCTAssertEqual(service, "Grok Bot Safe Storage")
             XCTAssertFalse(prompts)
