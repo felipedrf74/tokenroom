@@ -139,7 +139,10 @@ enum CredentialReaders {
         case .openai:
             guard let auth = try? codexAuth() else { return false }
             return auth.countsAsUsableSession()
-        case .cursor, .grokBot:
+        case .grokBot:
+            guard let session = try? GrokBotCredentials.read() else { return false }
+            return session.isNative ? !GrokBotCredentials.wasRefused(session.token) : hasUsableCursorSession()
+        case .cursor:
             return hasUsableCursorSession()
         default:
             return hasSession(provider)
@@ -699,7 +702,7 @@ enum CredentialReaders {
         return value
     }
 
-    private static func securityPassword(service: String, account: String?, keychain: String? = nil) -> SecurityPasswordResult {
+    private static func securityPassword(service: String, account: String?, keychain: String? = nil, timeout: TimeInterval = 5) -> SecurityPasswordResult {
         var args = ["find-generic-password", "-s", service, "-w"]
         if let account {
             args.insert(contentsOf: ["-a", account], at: 3)
@@ -710,13 +713,26 @@ enum CredentialReaders {
         // Same gate as SecItem. The `security` tool talks to securityd too, and running
         // it beside a keychain call in this process is the same deadlock.
         let output = KeychainGate.sync {
-            BlockingIO.runProcess(URL(fileURLWithPath: "/usr/bin/security"), arguments: args)
+            BlockingIO.runProcess(URL(fileURLWithPath: "/usr/bin/security"), arguments: args, timeout: timeout)
         }
         // 44 is errSecItemNotFound once the status is truncated to a process exit code.
         if !output.timedOut, output.status == 44 { return .missing }
         guard output.succeeded, let text = String(data: output.stdout, encoding: .utf8) else { return .unavailable }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? .unavailable : .value(trimmed)
+    }
+
+    /// As with Claude, inspect the ACL before a background secret read. SecItem's secret
+    /// read can hang even with prompts disabled. Sign In alone allows the system dialog.
+    static func grokBotStoragePassword(
+        promptAllowed: Bool = false,
+        access: (String) -> ClaudeKeyAccess = { claudeKeyAccess(service: $0) },
+        read: (String, TimeInterval) -> SecurityPasswordResult = { securityPassword(service: $0, account: nil, timeout: $1) }
+    ) -> String? {
+        let service = GrokBotCredentials.storageService
+        guard promptAllowed || access(service).trustsSecurityTool else { return nil }
+        guard case .value(let password) = read(service, promptAllowed ? 180 : 5) else { return nil }
+        return present(password)
     }
 
     /// A token Cursor already refused isn't a session to finish signing in with.

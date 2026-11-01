@@ -3,6 +3,37 @@ import XCTest
 
 final class SignInCoordinatorTests: XCTestCase {
     @MainActor
+    func testGrokBotPermissionCompletesWithoutRequiringTheLoginFileToChange() async throws {
+        let coordinator = SignInCoordinator(readStamp: { _ in "unchanged" }, readUsable: { _ in false }, authorizeGrokBot: { true })
+        var connected: [Provider] = []
+        coordinator.onConnected = { connected.append($0) }
+        await coordinator.signIn(.grokBot)?.value
+        XCTAssertEqual(connected, [.grokBot])
+        XCTAssertEqual(coordinator.phase, .idle)
+    }
+
+    @MainActor
+    func testDeniedGrokBotAccessExplainsThePermissionWithoutOpeningAnotherLogin() async {
+        let coordinator = SignInCoordinator(readStamp: { _ in "unchanged" }, readUsable: { _ in false }, authorizeGrokBot: { false })
+        coordinator.onConnected = { _ in XCTFail("Permission was declined") }
+        await coordinator.signIn(.grokBot)?.value
+        XCTAssertEqual(coordinator.phase, .failed(.grokBot, GrokBotCredentials.accessHint))
+    }
+
+    @MainActor
+    func testCancellationDuringGrokBotPermissionCannotCompleteSignIn() async throws {
+        let permission = SignInReadProbe()
+        let coordinator = SignInCoordinator(readStamp: { _ in "unchanged" }, readUsable: { _ in false }, authorizeGrokBot: { await permission.read() })
+        coordinator.onConnected = { _ in XCTFail("Cancelled permission cannot connect") }
+        let attempt = try XCTUnwrap(coordinator.signIn(.grokBot))
+        await permission.waitUntilStarted()
+        coordinator.cancel()
+        await permission.release()
+        await attempt.value
+        XCTAssertEqual(coordinator.phase, .idle)
+    }
+
+    @MainActor
     func testACancelledCredentialCheckCannotCompleteASignIn() async throws {
         let reader = SignInReadProbe()
         let coordinator = SignInCoordinator(readStamp: { _ in "fixture-stamp" }, readUsable: { _ in await reader.read() })
