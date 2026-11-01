@@ -139,7 +139,10 @@ enum CredentialReaders {
         case .openai:
             guard let auth = try? codexAuth() else { return false }
             return auth.countsAsUsableSession()
-        case .cursor, .grokBot:
+        case .grokBot:
+            guard let session = try? GrokBotCredentials.read() else { return false }
+            return session.isNative ? !GrokBotCredentials.wasRefused(session.token) : hasUsableCursorSession()
+        case .cursor:
             return hasUsableCursorSession()
         default:
             return hasSession(provider)
@@ -334,7 +337,7 @@ enum CredentialReaders {
 
     /// What one call to `/usr/bin/security` found. A missing account is not a refusal:
     /// the login-password dialog is the refusal, and that must not be tried again.
-    enum SecurityPasswordResult: Equatable {
+    enum SecurityPasswordResult: Equatable, Sendable {
         case value(String)
         case missing
         case unavailable
@@ -514,6 +517,9 @@ enum CredentialReaders {
         var partitions: [String] = []
         var hasPartitionList: Bool = false
         var trustedPaths: [String] = []
+        /// A decrypt (or any-operation) ACL trusts the security tool or all applications.
+        /// Partition membership alone doesn't grant permission to decrypt a secret.
+        var allowsSecurityToolDecryption: Bool = false
         var trustsThisApp: Bool = false
         /// The access list was read. False when the Keychain didn't answer (locked, say), so
         /// whether the item trusts the tool isn't known yet.
@@ -561,14 +567,18 @@ enum CredentialReaders {
             let allowsRead = authorizations.contains(kSecACLAuthorizationDecrypt as String)
                 || authorizations.contains(kSecACLAuthorizationAny as String)
                 || authorizations.contains(kSecACLAuthorizationKeychainItemRead as String)
+            let allowsDecrypt = authorizations.contains(kSecACLAuthorizationDecrypt as String)
+                || authorizations.contains(kSecACLAuthorizationAny as String)
             var apps: CFArray?
             var description: CFString?
             var prompt = SecKeychainPromptSelector()
+            if isPartition { found.hasPartitionList = true }
             guard SecACLCopyContents(acl, &apps, &description, &prompt) == errSecSuccess else { continue }
             if isPartition, let text = description as String? {
                 found.hasPartitionList = true
                 found.partitions.append(contentsOf: partitions(inACLDescription: text))
             }
+            if allowsDecrypt, apps == nil { found.allowsSecurityToolDecryption = true }
             guard allowsRead, let apps else { continue }
             for index in 0..<CFArrayGetCount(apps) {
                 guard let raw = CFArrayGetValueAtIndex(apps, index) else { continue }
@@ -578,6 +588,7 @@ enum CredentialReaders {
                       let path = trustedApplicationPath(from: data)
                 else { continue }
                 found.trustedPaths.append(path)
+                if allowsDecrypt, path == "/usr/bin/security" { found.allowsSecurityToolDecryption = true }
             }
         }
         if found.hasPartitionList {
@@ -699,7 +710,15 @@ enum CredentialReaders {
         return value
     }
 
-    private static func securityPassword(service: String, account: String?, keychain: String? = nil) -> SecurityPasswordResult {
+    static func securityPassword(
+        service: String,
+        account: String?,
+        keychain: String? = nil,
+        promptAllowed: Bool = false,
+        run: @escaping (URL, [String], TimeInterval) -> BlockingIO.ProcessOutput = {
+            BlockingIO.runProcess($0, arguments: $1, timeout: $2)
+        }
+    ) -> SecurityPasswordResult {
         var args = ["find-generic-password", "-s", service, "-w"]
         if let account {
             args.insert(contentsOf: ["-a", account], at: 3)
@@ -707,16 +726,36 @@ enum CredentialReaders {
         if let keychain {
             args.append(keychain)
         }
-        // Same gate as SecItem. The `security` tool talks to securityd too, and running
-        // it beside a keychain call in this process is the same deadlock.
-        let output = KeychainGate.sync {
-            BlockingIO.runProcess(URL(fileURLWithPath: "/usr/bin/security"), arguments: args)
+        let read = {
+            run(URL(fileURLWithPath: "/usr/bin/security"), args, promptAllowed ? 180 : 5)
         }
+        // Automated reads remain serialized. An explicit system dialog runs in its own
+        // process (with its own legacy Keychain lock), without retaining this app's gate
+        // while the user decides. In-process SecItem calls still always use that gate.
+        let output = promptAllowed ? read() : KeychainGate.sync(read)
         // 44 is errSecItemNotFound once the status is truncated to a process exit code.
         if !output.timedOut, output.status == 44 { return .missing }
         guard output.succeeded, let text = String(data: output.stdout, encoding: .utf8) else { return .unavailable }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? .unavailable : .value(trimmed)
+    }
+
+    /// As with Claude, inspect the ACL before a background secret read. SecItem's secret
+    /// read can hang even with prompts disabled. Sign In alone allows the system dialog.
+    static func grokBotStoragePassword(
+        promptAllowed: Bool = false,
+        access: (String) -> ClaudeKeyAccess = { claudeKeyAccess(service: $0) },
+        read: (String, Bool) -> SecurityPasswordResult = { securityPassword(service: $0, account: nil, promptAllowed: $1) }
+    ) -> String? {
+        let service = GrokBotCredentials.storageService
+        if !promptAllowed {
+            let policy = access(service)
+            guard policy.wasRead, policy.allowsSecurityToolDecryption,
+                  !policy.hasPartitionList || policy.partitions.contains(where: isSecurityToolPartition)
+            else { return nil }
+        }
+        guard case .value(let password) = read(service, promptAllowed) else { return nil }
+        return present(password)
     }
 
     /// A token Cursor already refused isn't a session to finish signing in with.

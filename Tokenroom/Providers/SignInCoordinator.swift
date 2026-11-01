@@ -18,6 +18,7 @@ final class SignInCoordinator {
     private var attemptID: UUID?
     private let readStamp: @Sendable (Provider) async -> String?
     private let readUsable: @Sendable (Provider) async -> Bool
+    private let authorizeGrokBot: @Sendable () async -> Bool?
     var onConnected: ((Provider) -> Void)?
     /// API-key providers are connected in Settings, not by signing in.
     var onAddKey: ((Provider) -> Void)?
@@ -29,10 +30,14 @@ final class SignInCoordinator {
         },
         readUsable: @escaping @Sendable (Provider) async -> Bool = { provider in
             await BlockingIO.run { CredentialReaders.hasUsableSession(provider) }
+        },
+        authorizeGrokBot: @escaping @Sendable () async -> Bool? = {
+            await BlockingIO.run { GrokBotCredentials.authorize() }
         }
     ) {
         self.readStamp = readStamp
         self.readUsable = readUsable
+        self.authorizeGrokBot = authorizeGrokBot
     }
 
     func isWorking(_ provider: Provider) -> Bool {
@@ -90,6 +95,14 @@ final class SignInCoordinator {
             finishSuccess(provider, attempt: attempt)
             return
         }
+
+        if provider == .grokBot, let authorized = await authorizeGrokBot() {
+            guard ownsAttempt(attempt) else { return }
+            if authorized { finishSuccess(provider, attempt: attempt) }
+            else { phase = .failed(provider, GrokBotCredentials.accessHint) }
+            return
+        }
+        guard ownsAttempt(attempt) else { return }
 
         if provider.cliExecutable != nil {
             guard let executable = Tooling.resolveProviderCLI(provider) else {
