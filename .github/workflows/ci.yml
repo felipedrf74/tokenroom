@@ -4,6 +4,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,16 +14,43 @@ permissions:
 # A newer push to a pull request replaces its run. Pushes to main get a group per commit, so a
 # merge's run is never cancelled, or dropped while waiting, by the next merge.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: ci-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
-    name: Build and test
+  changes:
+    name: Classify changes
+    runs-on: ubuntu-latest
+    outputs:
+      build_required: ${{ steps.changes.outputs.build_required }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - name: Test change selection
+        run: python3 -B scripts/tests/ci-changes-test.py
+      - name: Classify the complete diff
+        id: changes
+        env:
+          CHANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 -B scripts/ci-changes.py
+
+  apple:
+    name: ${{ matrix.lane }}
+    needs: changes
+    if: needs.changes.outputs.build_required == 'true'
     runs-on: macos-26
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [Shared typecheck, Mac tests, iPhone and Watch, Command Line Tools]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       # The newest Xcode on the image. Xcode 27 adds iOS 27 APIs the app uses when available;
       # Xcode 26 builds skip them.
@@ -35,13 +65,18 @@ jobs:
           xcodebuild -version
 
       - name: Typecheck Shared for macOS, iOS, and watchOS
-        run: ./scripts/typecheck-shared.sh
+        if: matrix.lane == 'Shared typecheck'
+        run: |
+          python3 -B scripts/tests/pre-push-test.py
+          ./scripts/typecheck-shared.sh
 
       # Without Config/Local.xcconfig the Mac app is ad-hoc signed, which is all tests need.
       - name: Mac tests
+        if: matrix.lane == 'Mac tests'
         run: xcodebuild test -project Tokenroom.xcodeproj -scheme Tokenroom -destination 'platform=macOS'
 
       - name: iPhone app, widgets, and Watch app
+        if: matrix.lane == 'iPhone and Watch'
         run: >
           xcodebuild build -project Tokenroom.xcodeproj -scheme TokenroomMobile
           -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO
@@ -49,9 +84,29 @@ jobs:
       # Compiles the iPhone tests. Running them needs a signed host (iCloud, App Group, and
       # Keychain entitlements), which an unsigned runner build doesn't have.
       - name: iPhone tests compile
+        if: matrix.lane == 'iPhone and Watch'
         run: >
           xcodebuild build-for-testing -project Tokenroom.xcodeproj -scheme TokenroomMobile
           -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO TOKENROOM_CK_CONTAINER=
 
       - name: Command Line Tools build
-        run: TOKENROOM_FORCE_SWIFTC=1 ./scripts/build.sh
+        if: matrix.lane == 'Command Line Tools'
+        run: TOKENROOM_SKIP_INSTALL=1 TOKENROOM_FORCE_SWIFTC=1 ./scripts/build.sh
+
+  build-and-test:
+    name: Build and test
+    needs: [changes, apple]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every applicable check
+        env:
+          CLASSIFICATION: ${{ needs.changes.result }}
+          BUILD_REQUIRED: ${{ needs.changes.outputs.build_required }}
+          APPLE_RESULT: ${{ needs.apple.result }}
+        run: |
+          test "$CLASSIFICATION" = success
+          case "$BUILD_REQUIRED:$APPLE_RESULT" in
+            true:success | false:skipped) ;;
+            *) echo 'CI did not complete every required check.' >&2; exit 1 ;;
+          esac
