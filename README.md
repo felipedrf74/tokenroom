@@ -167,6 +167,17 @@ DerivedData is forced to `~/Library/Developer/Xcode/DerivedData/Tokenroom`. UI, 
 
 Tests: `TokenroomTests` (on the Mac, including all the shared logic) and `TokenroomMobileTests` (in the iPhone app). The images above come from sample data: a debug build of the Mac app renders them with `-TokenroomSnapshots <folder>`.
 
+CI runs Shared typechecks, Mac tests, the iPhone/Watch build and test compilation,
+and the Command Line Tools build in four parallel jobs. `Build and test` accepts
+only a complete successful matrix, or a checked prose-only diff (README.md,
+CHANGELOG.md and Markdown under docs/). The full matrix also runs nightly on main.
+
+After updating this checkout and its worktrees, run `scripts/install-hooks.sh`
+once to enable the pre-push hook. It checks whitespace and parses changed Swift
+files from the actual commits being pushed, without editing them. It refuses to
+replace an existing hook. Swift semantic typechecking remains in CI because it
+requires the complete module and each platform SDK.
+
 The app icons come from one drawing in `scripts/make-icons.py`: it writes the Icon Composer files for the iPhone, Watch, and Mac, and the Mac PNGs the Command Line Tools build needs. Change the script and run it, rather than editing the icons.
 
 Build settings live in `Config/*.xcconfig`. Builds are ad-hoc signed by default. To sign with your own team, copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig` (git-ignored) and set `TOKENROOM_TEAM_ID` and `TOKENROOM_MAC_SIGNING = team`. `TOKENROOM_SKIP_INSTALL=1 TOKENROOM_FORCE_SWIFTC=1 ./scripts/build.sh` exercises the Command Line Tools fallback.
