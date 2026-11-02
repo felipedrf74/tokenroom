@@ -10,7 +10,9 @@ description: >-
 
 # Tokenroom macOS
 
-**Delivery status (31 October 2026):** Mac 2.5.2(1) is public (`v2.5.2`) and installed on this Mac; iPhone, widgets and Watch 1.2.2(1) is in TestFlight and Waiting for Review with automatic release. `docs/release-delivery-20261031.md` is the current authority.
+**Mac delivery status (2 November 2026):** Mac 2.5.3(1) is publicly released (`v2.5.3`), with Orbit, selectable popover styles, usage insights and the native Grok Bot connection fix. `docs/release-delivery-20261102.md` records the merged source, verification and public package. Mobile source and versions are unchanged; the dated mobile status below was not reverified for this Mac-only release.
+
+**Previous delivery status (31 October 2026):** Mac 2.5.2(1) is public (`v2.5.2`) and installed on this Mac; iPhone, widgets and Watch 1.2.2(1) is in TestFlight and Waiting for Review with automatic release. `docs/release-delivery-20261031.md` is the current authority.
 
 **Previous delivery status (30 October 2026):** Mac 2.5.1(1) is public (`v2.5.1`); iPhone, widgets and Watch 1.2.1(1) was approved and released on the App Store on 30 October 2026. `docs/release-delivery-20261030.md` records that release and the submission; `docs/release-delivery-20261031.md` records the approval.
 
