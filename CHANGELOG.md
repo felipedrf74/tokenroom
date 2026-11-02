@@ -1,8 +1,8 @@
 # Changelog
 
-## 2.5.3 for Mac — prepared 2 November 2026
+## 2.5.3 for Mac — released 2 November 2026
 
-Prepared for public release; publication is pending. The iPhone, widgets and Watch app code and versions are unchanged.
+Mac 2.5.3(1) is [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.5.3). The iPhone, widgets and Watch app code and versions are unchanged. [The delivery record](docs/release-delivery-20261102.md) binds the package to the merged source.
 
 - Orbit is the default usage popover, with larger percentages, circular meters and a focused provider detail. Instrument, Strata, Aurora and the original Classic presentation are available from the palette button and Settings > Menu Bar; the choice is saved on this Mac.
 - Provider details show remaining quota, an even daily allowance until reset when applicable, seven-day usage, consumption versus elapsed time, and existing run-out forecasts. Stale readings and elapsed limits retain their explicit labels and do not create new usage advice.

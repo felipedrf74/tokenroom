@@ -33,7 +33,7 @@ Shared logic (relay, alerts, ranking, parsers, forecasts) is tested on the Mac i
 
 ## Code Review Rules
 
-Every reviewer follows these rules: Codex, Claude Code, Grok Build, the advisory CI review (`.github/workflows/claude-review.yml`), and fresh-context review sessions. A review reports evidence; it never approves or merges. The merge gate stays the maintainer's code-owner approval on `main`. The `CI` workflow's `Build and test` job is expected to pass, but it is not a required check.
+Every reviewer follows these rules: Codex, Claude Code, Grok Build, the advisory CI review (`.github/workflows/claude-review.yml`), and fresh-context review sessions. A review reports evidence; it does not grant merge authority. This is a solo-maintainer repository: changes still go through pull requests, but no human or code-owner approval is required. The maintainer may merge, or explicitly authorize an agent to merge normally after verification. AI review stays advisory. The `CI` workflow's `Build and test` job is expected to pass, but it is not a required check. Keep the `main` protections against deletion and force-push. Do not request a second contributor or an administrative bypass just to approve the maintainer's own PR.
 
 ### Important (P0/P1)
 

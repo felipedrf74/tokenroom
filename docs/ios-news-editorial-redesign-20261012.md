@@ -4,7 +4,7 @@ Status on 13 October: implementation complete and integrated as `740f9a0`; exact
 
 ## Selected direction
 
-Felipe selected option 1 from the iPhone concepts. Visual truth: `/Users/felipedominguez/Documents/ChatGPT/TokenRoom/ios-news-design-20261012/03-option-1.png`, SHA-256 `f3356dbdc58ac1589f662e047a7a9fc58b28885d93c420ecc4d7ee438e2c63ee`. It restores the editorial hierarchy lost when the old illustrated phone cards were replaced by a uniform reader-card layout.
+The maintainer selected option 1 from the iPhone concepts. Visual truth: `~/Documents/ChatGPT/TokenRoom/ios-news-design-20261012/03-option-1.png`, SHA-256 `f3356dbdc58ac1589f662e047a7a9fc58b28885d93c420ecc4d7ee438e2c63ee`. It restores the editorial hierarchy lost when the old illustrated phone cards were replaced by a uniform reader-card layout.
 
 This is native SwiftUI. The mock omits OS chrome and uses illustrative copy; production views retain native status/navigation/tab bars, actual supplied titles/excerpts/dates and official catalog assets. The decorative portrait artwork is the exact already-approved Mac asset, SHA-256 `1e602ee9993b68c81bd673ecc751e9ad4e44a617b71c00fd19dfd15bfec6039a`, reused in the mobile catalog. Voices use honest initials; no fabricated portrait or X feed is introduced.
 
@@ -28,7 +28,7 @@ Metadata: `Config/Version.xcconfig`. Documentation: changelog, Apple/macOS skill
 
 ## Validation boundary
 
-Evidence root: `/Users/felipedominguez/Documents/ChatGPT/TokenRoom/ios-news-implementation-20261012/`. DerivedData remains outside source. Root [visual QA](../design-qa.md) is the current authority for exact checks, captures and dispositions.
+Evidence root: `~/Documents/ChatGPT/TokenRoom/ios-news-implementation-20261012/`. DerivedData remains outside source. Root [visual QA](../design-qa.md) is the current authority for exact checks, captures and dispositions.
 
 A task-owned iPhone 13 Simulator on iOS 27 (`C409E3C9-807D-4F67-AB32-6E1ADAD7FCF3`) runs with `-TokenroomSnapshotNews <fixture>/news.json -onboarded YES -TokenroomOpen tokenroom://news`. This selects inert stores, isolated preferences, mocked keys, nil cloud/disk storage and no device SDK effects. Public fixture files are inputs, not modified outputs; saves are intentionally memory-only there. Registry fixture check times represent an inert fetch, not a live ranking refresh.
 
@@ -36,8 +36,8 @@ The final full Mac suite passed 780 tests and the full hosted iOS suite passed 3
 
 The independent source review confirmed both earlier P2 fixes and found two P3 issues, now fixed and re-reviewed: short hero titles have a 44-point rectangular tap target, and retained Undo speaks the removed snapshot's title after hero promotion. Native captures demonstrate both behaviors. Skills-unavailable Retry completed honestly without a successful-check date; Share dismissed without sending; Reduce Motion reader/Back passed and its original off setting was restored. Repeated external Simulator shutdowns are recorded separately from app behavior.
 
-Current qualification evidence: `/Users/felipedominguez/Documents/ChatGPT/TokenRoom/ios-news-release-20261012/`. Earlier visual evidence remains under the implementation root. Test runs follow both source fixes; version metadata subsequently changed to unused 1.1.1(1), which the final Debug build and signed Release archive compile. The production-input manifest binds 198 source/resource/config/project files to the signed candidate.
+Current qualification evidence: `~/Documents/ChatGPT/TokenRoom/ios-news-release-20261012/`. Earlier visual evidence remains under the implementation root. Test runs follow both source fixes; version metadata subsequently changed to unused 1.1.1(1), which the final Debug build and signed Release archive compile. The production-input manifest binds 198 source/resource/config/project files to the signed candidate.
 
-The design gate remains separate from publication. Spoken VoiceOver focus, production iCloud/notifications/App Group effects, physical phone/Watch delivery and real device persistence are not established by isolated native captures. The user stopped physical phone work and has no Watch/shared-account device set. These are explicit integration limits of the approved finite News scope. Current accessibility labels/large-text/native navigation and mocked persistence/isolation tests are distinct evidence. Felipe accepted proceeding with spoken VoiceOver recorded as an unverified limitation.
+The design gate remains separate from publication. Spoken VoiceOver focus, production iCloud/notifications/App Group effects, physical phone/Watch delivery and real device persistence are not established by isolated native captures. The user stopped physical phone work and has no Watch/shared-account device set. These are explicit integration limits of the approved finite News scope. Current accessibility labels/large-text/native navigation and mocked persistence/isolation tests are distinct evidence. The maintainer accepted proceeding with spoken VoiceOver recorded as an unverified limitation.
 
 The reusable [independent QA prompt](ios-news-independent-qa-prompt-20261012.md) asks for separate source, visual and release verdicts.
