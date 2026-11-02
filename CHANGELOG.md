@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — Mac popover styles
+
+- Orbit is the default usage popover, with larger percentages, circular meters and a focused provider detail. Instrument, Strata, Aurora and the original Classic presentation are available from the palette button and Settings > Menu Bar; the choice is saved on this Mac.
+- Provider details show remaining quota, an even daily allowance until reset when applicable, seven-day usage, consumption versus elapsed time, and existing run-out forecasts. Stale readings and elapsed limits retain their explicit labels and do not create new usage advice.
+- API balances, secondary limits, banked resets, sign-in controls, refresh, News and iCloud status remain available in every style.
+
 ## 2.5.2 for Mac — released 31 October 2026 / 1.2.2 for iPhone — submitted 31 October 2026
 
 Mac 2.5.2(1) is [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.5.2) and installed on this Mac. iPhone, widgets and Apple Watch 1.2.2(1) is in TestFlight and submitted to App Review (Waiting for Review), released automatically once approved. Both carry the fixes from #50. [The delivery record](docs/release-delivery-20261031.md) binds both to their source.
