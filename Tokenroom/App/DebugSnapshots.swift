@@ -10,6 +10,7 @@ import SwiftUI
 enum DebugSnapshots {
     private static var previewWindow: NSWindow?
     private static var previewObservers: [NSObjectProtocol] = []
+    private static var previewStatusItem: StatusItemController?
 
     /// A real, interactive News window over input-only fixtures. This path
     /// returns before status items, migrations and production collectors start.
@@ -119,6 +120,64 @@ enum DebugSnapshots {
             store.statuses[provider] = .signedOut(provider.signInHint)
         }
         store.lastAttempt = now.addingTimeInterval(-60)
+
+        // The selected design's four-provider overview and its actual detail route, in every
+        // saved style. Synthetic Grok Bot data is independent of all native credentials.
+        let bot = try! QuotaSnapshot.headlined(by: [QuotaWindow(id: "weekly", kind: .weekly, title: "Weekly", usedPercent: 12,
+            resetsAt: now.addingTimeInterval(3 * 86_400), windowSeconds: 7 * 86_400)], provider: .grokBot, fetchedAt: now)
+        store.statuses[.grokBot] = .live(bot)
+        store.checkedAt[.grokBot] = now
+        let allEnabled = settings.enabled
+        for style in PopoverStyle.allCases {
+            settings.popoverStyle = style
+            settings.enabled = [.openai, .claude, .grok, .grokBot]
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                let suffix = appearance == .aqua ? "" : "-dark"
+                render(PopoverView(store: store, onSettings: { _ in }), width: style.width, appearance: appearance,
+                       to: output.appendingPathComponent("popover-\(style.rawValue)\(suffix).png"))
+                render(PopoverView(store: store, onSettings: { _ in }, expanded: [.openai]), width: style.width, appearance: appearance,
+                       to: output.appendingPathComponent("popover-\(style.rawValue)-detail\(suffix).png"))
+            }
+        }
+        settings.popoverStyle = .orbit
+        settings.enabled = allEnabled
+        render(PopoverView(store: store, onSettings: { _ in }), width: PopoverStyle.orbit.width, appearance: .aqua,
+               to: output.appendingPathComponent("popover-orbit-many.png"))
+        render(PopoverView(store: store, onSettings: { _ in }, expanded: [.deepseek]), width: PopoverStyle.orbit.width, appearance: .aqua,
+               to: output.appendingPathComponent("popover-orbit-balance.png"))
+        if let openai = store.statuses[.openai]?.snapshot {
+            settings.enabled = [.openai, .claude, .grok, .grokBot]
+            store.statuses[.openai] = .rateLimited(until: now.addingTimeInterval(600), cached: openai)
+            render(PopoverView(store: store, onSettings: { _ in }, expanded: [.openai]), width: PopoverStyle.orbit.width, appearance: .aqua,
+                   to: output.appendingPathComponent("popover-orbit-stale.png"))
+            var elapsed = openai
+            elapsed.resetsAt = now.addingTimeInterval(-1)
+            elapsed.windows[0].resetsAt = elapsed.resetsAt
+            store.statuses[.openai] = .live(elapsed)
+            render(PopoverView(store: store, onSettings: { _ in }), width: PopoverStyle.orbit.width, appearance: .aqua,
+                   to: output.appendingPathComponent("popover-orbit-reset.png"))
+            var limited = openai
+            limited.windows[1].usedPercent = 100
+            store.statuses[.openai] = .live(limited)
+            render(PopoverView(store: store, onSettings: { _ in }), width: PopoverStyle.orbit.width, appearance: .aqua,
+                   to: output.appendingPathComponent("popover-orbit-secondary-limit.png"))
+            store.statuses[.openai] = .live(openai)
+            store.statuses[.openai] = .expired("Session expired. Run codex login to reconnect.", cached: openai)
+            render(PopoverView(store: store, onSettings: { _ in }), width: PopoverStyle.orbit.width, appearance: .aqua,
+                   to: output.appendingPathComponent("popover-orbit-expired.png"))
+            store.statuses[.openai] = .live(openai)
+        }
+        if UserDefaults.standard.bool(forKey: "TokenroomPopoverPreview") {
+            // A real NSPopover, but over sample-only settings/history and no provider clients.
+            // No sign-in path is offered by these four live fixture providers.
+            settings.newsEnabled = false
+            previewStatusItem = StatusItemController(store: store, onSettings: { _ in }, onNews: { _ in })
+            previewStatusItem?.showPopover()
+            return true
+        }
+        if UserDefaults.standard.bool(forKey: "TokenroomPopoverSnapshotsOnly") { return true }
+        settings.enabled = allEnabled
+        settings.popoverStyle = .classic
 
         for appearance in [NSAppearance.Name.aqua, .darkAqua] {
             let suffix = appearance == .aqua ? "" : "-dark"

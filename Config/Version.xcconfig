@@ -1,6 +1,6 @@
 // Versions. The Mac collector is versioned on its own.
 // scripts/build.sh reads these for the swiftc fallback.
-// Mac 2.5.3 build 1 fixes the native Grok Bot connection from #53.
+// Mac 2.5.3 build 1 includes the Grok Bot connection fix and selectable popover styles.
 // Mobile 1.2.2 build 1 follows the published 1.2.1: the same fixes.
 TOKENROOM_MAC_VERSION = 2.5.3
 TOKENROOM_MAC_BUILD = 1

@@ -1153,6 +1153,19 @@ private struct MenuBarSettings: View {
         Form {
             SettingsHeaderSection()
             Section {
+                Picker("Popover style", selection: $store.settings.popoverStyle) {
+                    ForEach(PopoverStyle.allCases) { style in
+                        Text(style.title).tag(style)
+                    }
+                }
+                Text(store.settings.popoverStyle.summary)
+                    .font(.callout).foregroundStyle(.secondary)
+            } header: {
+                Text("Usage popover")
+            } footer: {
+                Text("Orbit is the default. You can also switch styles with the palette button in the popover.")
+            }
+            Section {
                 Picker("Style", selection: $store.settings.menuStyle) {
                     ForEach(MenuBarStyle.allCases) { style in
                         Text(style.title).tag(style)
