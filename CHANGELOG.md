@@ -1,10 +1,16 @@
 # Changelog
 
-## Unreleased — Mac popover styles
+## 2.5.3 for Mac — prepared 2 November 2026
+
+Prepared for public release; publication is pending. The iPhone, widgets and Watch app code and versions are unchanged.
 
 - Orbit is the default usage popover, with larger percentages, circular meters and a focused provider detail. Instrument, Strata, Aurora and the original Classic presentation are available from the palette button and Settings > Menu Bar; the choice is saved on this Mac.
 - Provider details show remaining quota, an even daily allowance until reset when applicable, seven-day usage, consumption versus elapsed time, and existing run-out forecasts. Stale readings and elapsed limits retain their explicit labels and do not create new usage advice.
 - API balances, secondary limits, banked resets, sign-in controls, refresh, News and iCloud status remain available in every style.
+- Grok Bot reads its own desktop login, so being signed in there no longer requires a Cursor login.
+- Sign In asks macOS for access to Grok Bot's existing login. A one-time authorization remains usable while that login is unchanged, without a second access dialog.
+- Opening the Grok Bot authorization dialog keeps the other providers responsive. Automatic updates check the complete Keychain permission before reading the login.
+- A signed-out, unreadable or rejected Grok Bot login never switches to another saved account.
 
 ## 2.5.2 for Mac — released 31 October 2026 / 1.2.2 for iPhone — submitted 31 October 2026
 
