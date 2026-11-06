@@ -139,7 +139,7 @@ struct ProviderCard: View {
                 }
                     .foregroundStyle(stale ? Color.secondary : Color.primary)
                     .lineLimit(1)
-                    .frame(width: 118, alignment: .leading)
+                    .frame(width: 136, alignment: .leading)
                 if metered {
                     MeterTrack(
                         usedPercent: snapshot.usedPercent,
@@ -151,12 +151,16 @@ struct ProviderCard: View {
                 } else {
                     Spacer(minLength: 0)
                 }
-                if !meterStale, let pace, pace.verdict == .ahead || pace.verdict == .limitReached {
-                    Image(systemName: "arrow.up.right")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(paceColor(pace))
-                        .help(pace.caption())
+                // Held open in every row, so all the meters end at one edge.
+                Group {
+                    if !meterStale, let pace, pace.verdict == .ahead || pace.verdict == .limitReached {
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(paceColor(pace))
+                            .help(pace.caption())
+                    }
                 }
+                .frame(width: 10)
                 if let note {
                     Image(systemName: note.symbol)
                         .font(.system(size: 9, weight: .semibold))
@@ -339,6 +343,7 @@ struct ProviderCard: View {
         VStack(alignment: .leading, spacing: 10) {
             // Reset, pace against an even spread, plan, and last check, as a grid.
             UsageFactsGrid(
+                // The caption above already says when it resets.
                 facts: UsageFacts.facts(
                     for: snapshot.windows.first.map(RelayWindow.init),
                     pace: pace,
@@ -346,19 +351,20 @@ struct ProviderCard: View {
                     checkedAt: checkedAt,
                     isStale: stale,
                     now: date
-                ),
+                ).filter { $0.label != "Resets" },
                 columns: 2,
-                labelFont: .system(size: 9, weight: .medium),
-                valueFont: .system(size: 12, weight: .semibold),
-                detailFont: .system(size: 10),
-                spacing: 8
+                labelFont: .system(size: 11),
+                valueFont: .system(size: 13, weight: .medium),
+                detailFont: .system(size: 11),
+                spacing: 8,
+                isStale: stale
             )
             if let primary = snapshot.windows.first, primary.isMetered, let week = weeks[primary.id], !week.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Last 7 days")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
-                    Sparkline(history: week, level: stale ? nil : TokenroomTokens.usageColor(usedPercent: primary.usedPercent, isStale: false))
+                    Sparkline(history: week, level: stale || RelayWindow(primary).isAwaitingReading(at: date) ? nil : TokenroomTokens.usageColor(usedPercent: primary.usedPercent, isStale: false))
                         .frame(height: 36)
                 }
                 // The line itself is hidden from VoiceOver; the group says what it shows.
@@ -374,20 +380,20 @@ struct ProviderCard: View {
                     isStale: stale || RelayWindow(window).isAwaitingReading(at: date),
                     paceMark: RelayWindow(window).isAwaitingReading(at: date) ? nil : windowPaces[window.id]?.elapsedFraction,
                     caption: windowDetail(window, stale: stale),
-                    titleFont: .system(size: 11),
-                    captionFont: .system(size: 10)
+                    titleFont: .system(size: 12),
+                    captionFont: .system(size: 11)
                 )
             }
             if let banked = snapshot.banked, banked.available > 0 {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(banked.available == 1 ? "1 banked reset" : "\(banked.available) banked resets")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 12, weight: .medium))
                     Text("Use one in \(provider.toolName) to reset a limit early.")
-                        .font(.system(size: 10))
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                     ForEach(banked.expiries.filter { $0 > date }.sorted(), id: \.self) { expiry in
                         Text("Expires \(expiry.formatted(date: .abbreviated, time: .shortened))")
-                            .font(.system(size: 10))
+                            .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
                 }

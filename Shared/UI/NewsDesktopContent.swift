@@ -177,8 +177,7 @@ struct MacNewsFreshnessView: View {
     private func checks(_ summary: NewsSourceFreshness, now: Date) -> some View {
         HStack(spacing: 10) {
             if news.isRefreshing { ProgressView().controlSize(.small).accessibilityLabel("Checking your sources") }
-            Text(summary.caption)
-            if let date = news.cache.modelsFetchedAt { Text("Models checked \(RelativeTime.ago(date, now: now))") }
+            Text([summary.caption, news.cache.modelsFetchedAt.map { "Models checked \(RelativeTime.ago($0, now: now))" }].compactMap(\.self).joined(separator: " · "))
             Spacer(minLength: 0)
         }.font(.caption).foregroundStyle(TokenroomTokens.newsSecondaryText)
     }

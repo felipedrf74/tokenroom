@@ -198,7 +198,7 @@ enum DebugSnapshots {
                 let request = SettingsTabRequest()
                 request.tab = tab
                 renderWindow(SettingsView(store: tab == .iPhone ? relayStore : store, request: request), size: NSSize(width: 820, height: 620), appearance: appearance,
-                             title: SettingsPage.page(for: tab).title,
+                             title: SettingsPage.page(for: tab).title, showsTitle: false,
                              to: output.appendingPathComponent("settings-\(tab.rawValue)\(appearance == .aqua ? "" : "-dark").png"))
             }
         }
@@ -208,7 +208,7 @@ enum DebugSnapshots {
         let localStore = QuotaStore(settings: settings, clients: [], cache: SnapshotCache(directory: scratch),
                                     relay: RelayPublisher(defaults: defaults, cloud: nil), news: news)
         renderWindow(SettingsView(store: localStore, request: unavailable), size: NSSize(width: 820, height: 620),
-                     title: SettingsPage.page(for: .iPhone).title, to: output.appendingPathComponent("settings-iPhone-unavailable.png"))
+                     title: SettingsPage.page(for: .iPhone).title, showsTitle: false, to: output.appendingPathComponent("settings-iPhone-unavailable.png"))
         let newsPages: [(page: NewsPage, name: String, title: String)] = [
             (.destination(.today), "news", "Today"), (.destination(.following), "news-following", "Following"),
             (.destination(.skills), "news-skills", "Skills"), (.destination(.saved), "news-saved", "Saved"),
@@ -281,19 +281,23 @@ enum DebugSnapshots {
 
     /// A view in a real titled window with a unified toolbar, as Settings opens: a split view's
     /// sidebar, its search field, and the toolbar only lay out there.
-    private static func renderWindow<Content: View>(_ view: Content, size: NSSize, appearance: NSAppearance.Name = .aqua, title: String = "Tokenroom", to url: URL) {
+    private static func renderWindow<Content: View>(_ view: Content, size: NSSize, appearance: NSAppearance.Name = .aqua, title: String = "Tokenroom", showsTitle: Bool = true, to url: URL) {
         let hosting = NSHostingController(rootView: view.environment(\.controlActiveState, .key).environment(\.appearsActive, true))
         hosting.sceneBridgingOptions = [.toolbars, .title]
         let window = ActiveSnapshotWindow(contentViewController: hosting)
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.toolbarStyle = .unified
         window.title = title
+        window.titleVisibility = showsTitle ? .visible : .hidden
         window.appearance = NSAppearance(named: appearance)
         window.setContentSize(size)
         // Past every screen, so a run doesn't flash windows, but on screen as far as AppKit knows:
         // a split view's sidebar only lays out and draws in an ordered-in window.
         window.setFrameOrigin(NSPoint(x: -20_000, y: -20_000))
         window.orderFrontRegardless()
+        // Nothing focused, as a window opens: a field that took focus would turn the sidebar's
+        // selection grey on some pages and leave it blue on others.
+        window.makeFirstResponder(nil)
         RunLoop.main.run(until: Date().addingTimeInterval(1.2))
         // A text field that took the keyboard would show its selection, and differ between runs.
         if window.firstResponder is NSText {

@@ -53,6 +53,7 @@ struct PopoverView: View {
                         ScrollView {
                             providerDetail(provider)
                         }
+                        .mask(Self.scrollFade)
                     }
                     .frame(maxHeight: 520)
                     .id(provider)
@@ -63,6 +64,7 @@ struct PopoverView: View {
                         ScrollView {
                             providerList
                         }
+                        .mask(Self.scrollFade)
                     }
                     .frame(maxHeight: 520)
                 }
@@ -85,6 +87,14 @@ struct PopoverView: View {
         .environment(\.colorScheme, style == .instrument ? .dark : colorScheme)
         .onChange(of: style) { _, _ in selectedProvider = nil }
         .transaction { $0.animation = nil }
+    }
+
+    /// Fades what scrolls under the footer, so a row is never cut through by a hard line.
+    private static var scrollFade: some View {
+        VStack(spacing: 0) {
+            Color.black
+            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 18)
+        }
     }
 
     /// One edge for the header, rows, and footer.
@@ -168,7 +178,8 @@ struct PopoverView: View {
     /// Banked resets and news at a glance: "2 banked resets · 3 new models · 5 updates".
     @ViewBuilder
     private var highlights: some View {
-        let banked = store.bankedResets
+        // A provider's page lists its own banked resets, and another's don't belong on it.
+        let banked: (count: Int, providers: [Provider]) = detailProvider == nil ? store.bankedResets : (0, [])
         let news = store.settings.newsEnabled ? store.news : nil
         let models = news?.unseenModelCount ?? 0
         let updates = news?.unseenReleaseCount ?? 0
@@ -282,6 +293,7 @@ struct PopoverView: View {
 
     var checkedHeaderText: String {
         if store.isRefreshing { return "Checking…" }
+        if let detailProvider { return "Checked \(RelativeTime.ago(store.lastChecked(detailProvider), now: store.presentationNow))" }
         // A signed-out provider keeps its last check from before; it isn't on show to be current.
         let shown = store.popoverProviders.filter { !(store.statuses[$0] ?? .loading).isDisconnected }
         let oldestCheck = shown.compactMap { store.lastChecked($0) }.min()
@@ -336,6 +348,7 @@ struct PopoverView: View {
                 }
             } label: {
                 Image(systemName: "paintpalette").font(.system(size: 13)).frame(width: 26, height: 26)
+                    .foregroundStyle(.secondary)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)

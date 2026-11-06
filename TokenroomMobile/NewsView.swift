@@ -44,6 +44,9 @@ struct NewsView: View {
             }
             .onChange(of: destination) { _, _ in search = "" }
         }
+        // A new page, not a scrolled one, so search stays behind its button on every destination
+        // and the selector doesn't move between them.
+        .id(destination)
         // News reads in ink: its one coloured control is Read article. Pushed pages inherit this.
         .tint(.primary)
     }
@@ -108,6 +111,6 @@ struct NewsSettingsView: View {
         .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search labs and sources")
         .navigationTitle("Follow")
         .navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
-        .tint(.accentColor)
+        .tint(TokenroomTokens.control)
     }
 }

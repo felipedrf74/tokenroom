@@ -98,10 +98,9 @@ struct SettingsView: View {
         case .providers:
             let personal = Provider.allCases.filter { $0.category != .orgSpend }
             return "\(personal.filter { store.settings.isEnabled($0) }.count) of \(personal.count) on"
-        case .news:
-            return store.settings.newsEnabled ? "On" : "Off"
-        case .menuBar:
-            return store.settings.menuStyle.title
+        case .news, .menuBar:
+            // Their first control already says so.
+            return nil
         case .iPhone:
             guard let relay = store.relay else { return nil }
             switch relay.state {
@@ -109,7 +108,7 @@ struct SettingsView: View {
             case .off: return "Off"
             case .waiting: return "Waiting for readings"
             case .noAccount: return "Sign in to iCloud"
-            case .sent: return "Sent"
+            case .sent: return nil
             case .failed: return "Couldn't sync"
             case .paused: return "Paused"
             }

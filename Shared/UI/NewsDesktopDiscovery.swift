@@ -112,7 +112,7 @@ struct MacNewsFollowing: View {
                         MacNewsSourceMark(sourceID: source.id, name: source.name, size: 28)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(source.name).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
-                            Text([source.kind.label, health?.caption].compactMap(\.self).joined(separator: " · "))
+                            Text(health?.followingCaption ?? source.kind.label)
                                 .font(.caption).foregroundStyle(TokenroomTokens.newsSecondaryText)
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }.multilineTextAlignment(.leading).contentShape(Rectangle())

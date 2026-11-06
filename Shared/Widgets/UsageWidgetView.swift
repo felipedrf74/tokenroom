@@ -176,7 +176,7 @@ private struct ListRow: View {
                 Group {
                     let series = window.flatMap { item.history[$0.id] }
                     if let series, !series.isEmpty {
-                        Sparkline(history: series, lineWidth: 1, level: provider.isLive ? window.map { TokenroomTokens.usageColor(usedPercent: $0.used, isStale: false) } : nil)
+                        Sparkline(history: series, lineWidth: 1, level: provider.isLive && window?.isAwaitingReading(at: date) != true ? window.map { TokenroomTokens.usageColor(usedPercent: $0.used, isStale: false) } : nil)
                     } else {
                         Color.clear
                     }
@@ -298,6 +298,8 @@ private struct RectangularWidget: View {
                     EmptyView()
                 }
                 .gaugeStyle(.accessoryLinearCapacity)
+                // The reading's level, wherever colour shows; a tinted Lock Screen flattens it.
+                .tint(TokenroomTokens.usageColor(usedPercent: used, isStale: false))
                 .widgetAccentable()
                 Text(ReadingText.headline(window, now: date))
                     .font(.caption2.monospacedDigit())

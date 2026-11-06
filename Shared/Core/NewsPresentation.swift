@@ -80,8 +80,17 @@ struct NewsCollectionHealth {
     var caption: String {
         if isModelList { return checkedAt.map { "Models checked \(RelativeTime.ago($0))" } ?? "Models not checked yet" }
         if sourceCount == 0 { return "No sources followed for this collection" }
-        if uncheckedCount > 0 { return "\(sourceCount - uncheckedCount) of \(sourceCount) sources checked" }
+        if uncheckedCount > 0 { return "\(sourceCount - uncheckedCount) of \(sourceCount) source\(sourceCount == 1 ? "" : "s") checked" }
         return checkedAt.map { "Sources checked \(RelativeTime.ago($0))" } ?? "Sources not checked yet"
+    }
+}
+
+extension NewsCollectionHealth {
+    /// A source's line in Following: quiet when it's fine, saying so when it isn't. Every row here
+    /// is an official source, so its kind says nothing; a problem or a source awaiting its first
+    /// read does.
+    var followingCaption: String? {
+        problem ?? (uncheckedCount > 0 ? caption : nil)
     }
 }
 

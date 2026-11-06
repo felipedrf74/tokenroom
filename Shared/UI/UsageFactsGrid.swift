@@ -9,6 +9,8 @@ struct UsageFactsGrid: View {
     var valueFont: Font = .subheadline.weight(.semibold)
     var detailFont: Font = .caption2
     var spacing: CGFloat = 12
+    /// A last reading rather than a current one: its figures fade like every other stale figure.
+    var isStale = false
 
     var body: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: spacing, alignment: .topLeading), count: max(columns, 1)),
@@ -40,10 +42,11 @@ struct UsageFactsGrid: View {
     }
 
     private func color(_ severity: Pace.Severity?) -> Color {
-        switch severity {
+        if isStale { return Color.secondary.opacity(TokenroomTokens.staleOpacity) }
+        return switch severity {
         case .critical: TokenroomTokens.criticalText
         case .tight: TokenroomTokens.accentText
-        default: .primary
+        default: Color.primary
         }
     }
 }

@@ -110,7 +110,7 @@ struct MobileNewsFollowing: View {
                         MobileNewsSourceMark(sourceID: source.id, name: source.name, size: 30)
                         VStack(alignment: .leading, spacing: 2) {
                             rowTitle(source.name)
-                            Text([source.kind.label, health?.caption].compactMap(\.self).joined(separator: " · "))
+                            Text(health?.followingCaption ?? source.kind.label)
                                 .font(.caption).foregroundStyle(MobileNewsPalette.secondary)
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }.frame(minHeight: 44).contentShape(Rectangle())

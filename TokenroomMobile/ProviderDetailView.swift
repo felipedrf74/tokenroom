@@ -17,11 +17,18 @@ struct ProviderDetailView: View {
 
     var body: some View {
         List {
-            Section {
-                header
+            // A balance has no ring to lead with: its section carries the mark instead of a card
+            // of its own.
+            if heroWindow != nil {
+                Section {
+                    header
+                }
             }
             ForEach(Array(orderedWindows.enumerated()), id: \.element.id) { index, window in
                 Section(window.displayTitle) {
+                    if heroWindow == nil, index == 0 {
+                        sourceRow
+                    }
                     WindowDetail(
                         window: window,
                         history: reading.history[window.id],
@@ -118,7 +125,7 @@ struct ProviderDetailView: View {
             let facts = UsageFacts.facts(for: heroWindow, pace: heroPace, plan: provider.plan, checkedAt: nil, isStale: !provider.isLive, now: date)
             if !facts.isEmpty {
                 Divider()
-                UsageFactsGrid(facts: facts, columns: facts.count == 3 && typeSize < .xxLarge ? 3 : 2, labelFont: .caption, valueFont: .subheadline.weight(.medium))
+                UsageFactsGrid(facts: facts, columns: facts.count == 3 && typeSize < .xxLarge ? 3 : 2, labelFont: .caption, valueFont: .subheadline.weight(.medium), detailFont: .caption)
             }
         }
         .padding(.vertical, 6)

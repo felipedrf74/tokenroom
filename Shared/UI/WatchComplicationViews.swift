@@ -69,16 +69,13 @@ struct ComplicationView: View {
                         HStack(spacing: 4) {
                             Text(item.provider.shortName)
                                 .font(.system(size: 12, weight: .semibold))
-                                .frame(width: 52, alignment: .leading)
+                                .frame(width: 62, alignment: .leading)
                                 .lineLimit(1)
-                                .minimumScaleFactor(0.7)
                             if row?.isMetered == false, row?.amount != nil {
                                 // A balance: its amount, with no empty bar beside it.
                                 Spacer(minLength: 0)
                             } else {
-                                Gauge(value: min(max(row?.used ?? 0, 0), 100), in: 0...100) { EmptyView() }
-                                    .gaugeStyle(.accessoryLinearCapacity)
-                                    .tint(ringTint(row?.used ?? 0))
+                                ComplicationMeter(used: row?.used ?? 0, tint: ringTint(row?.used ?? 0))
                             }
                             Text(ReadingText.headline(row, now: entry.date))
                                 .font(.system(size: 12).monospacedDigit())
@@ -122,7 +119,12 @@ struct ComplicationView: View {
                     }
                 } else {
                     Gauge(value: used, in: 0...100) {
-                        Text(window?.isAwaitingReading(at: entry.date) == true ? "Reset" : first.provider.monogram)
+                        if window?.isAwaitingReading(at: entry.date) == true {
+                            Text("Reset")
+                        } else {
+                            // The provider's mark in a colour face, its monogram when tinted.
+                            ProviderMark(provider: first.provider, size: 13)
+                        }
                     } currentValueLabel: {
                         // Samples say so where the number goes; the ring still shows the level.
                         if entry.isSample {
@@ -156,6 +158,26 @@ struct ComplicationView: View {
     /// The reading's one level colour, as a meter's, rather than every level at once.
     private func ringTint(_ used: Double) -> Color {
         TokenroomTokens.usageColor(usedPercent: used, isStale: false)
+    }
+}
+
+/// A thin bar on a neutral track: the system's linear gauge tints its track with the reading, which
+/// on a watch face is the loudest thing there.
+private struct ComplicationMeter: View {
+    var used: Double
+    var tint: Color
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Capsule().fill(.white.opacity(0.18))
+                Capsule().fill(tint)
+                    .frame(width: max(4, geometry.size.width * min(max(used, 0), 100) / 100))
+                    .widgetAccentable()
+            }
+        }
+        .frame(height: 4)
+        .accessibilityHidden(true)
     }
 }
 

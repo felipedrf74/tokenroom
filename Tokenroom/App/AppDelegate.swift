@@ -119,6 +119,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.title = "Tokenroom Settings"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
             window.toolbarStyle = .unified
+            // Each page opens with its own header, so the bar doesn't say its name a third time.
+            window.titleVisibility = .hidden
             window.setContentSize(NSSize(width: 820, height: 620))
             window.isReleasedWhenClosed = false
             window.hidesOnDeactivate = false

@@ -186,6 +186,7 @@ extension Provider {
                 tintHex: "#636366",
                 enabledByDefault: true,
                 assetName: "ProviderCursor",
+                menuGlyphName: "GlyphCursor",
                 signInHint: "Sign in to Cursor to see usage.",
                 expiredHint: "Session expired. Sign in to Cursor again."
             )
@@ -198,6 +199,7 @@ extension Provider {
                 tintHex: "#24292F",
                 assetName: "ProviderCopilot",
                 iconIsMark: true,
+                menuGlyphName: "ProviderCopilot",
                 signInHint: "Sign in with gh auth login, or in a Copilot editor extension, to see usage.",
                 expiredHint: "GitHub session expired. Run gh auth login again.",
                 fallbackKey: KeySpec(
@@ -237,7 +239,7 @@ extension Provider {
         case .zai:
             ProviderDescriptor(
                 displayName: "Z.ai",
-                shortName: "GLM",
+                shortName: "Z.ai",
                 letter: "Z",
                 monogram: "Z",
                 tintHex: "#2D5BFF",

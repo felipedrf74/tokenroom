@@ -31,7 +31,7 @@ struct PopoverSurface: View {
             Color(hex: "1A2430")
         case .aurora:
             Rectangle().fill(.regularMaterial)
-                .overlay(Color.blue.opacity(scheme == .dark ? 0.09 : 0.045))
+                .overlay(Color.blue.opacity(scheme == .dark ? 0.06 : 0.025))
         case .orbit, .strata:
             Color(nsColor: .windowBackgroundColor)
         }
@@ -96,14 +96,10 @@ struct PopoverMeter: View {
             GeometryReader { geometry in
                 RoundedRectangle(cornerRadius: height / 2).fill(TokenroomTokens.track)
                     .overlay(alignment: .leading) {
-                        Rectangle().fill(tint.opacity(0.42))
+                        Rectangle().fill(tint.opacity(isStale ? 1 : 0.8))
                             .frame(width: geometry.size.width * fraction)
                     }
                     .clipShape(RoundedRectangle(cornerRadius: height / 2))
-                if fraction > 0 {
-                    Capsule().fill(tint).frame(width: 2, height: height)
-                        .offset(x: max(0, min(geometry.size.width - 2, geometry.size.width * fraction - 1)))
-                }
                 paceTick(width: geometry.size.width)
             }
             .frame(height: height)

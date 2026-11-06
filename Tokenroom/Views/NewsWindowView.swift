@@ -9,7 +9,7 @@ extension NewsFilter {
     var symbol: String {
         switch self {
         case .today: "newspaper"
-        case .models: "sparkles"
+        case .models: "cpu"
         case .announcements: "megaphone"
         case .retiring: "hourglass"
         }
@@ -86,7 +86,7 @@ struct NewsWindowView: View {
                 }
                 Section(isExpanded: $collectionsExpanded) {
                         ForEach(NewsFilter.allCases.filter { $0 != .today }) { item in Label(item.rawValue, systemImage: item.symbol).tag(NewsPage.filter(item)).listItemTint(.monochrome) }
-                        Label("Voices", systemImage: "person.2").tag(NewsPage.tool("voices")).listItemTint(.monochrome)
+                        Label("Voices", systemImage: "quote.bubble").tag(NewsPage.tool("voices")).listItemTint(.monochrome)
                         Label("Status", systemImage: "waveform.path.ecg").tag(NewsPage.tool("status")).listItemTint(.monochrome)
                 } header: { Text("Collections") }
                 Section("Sources") {

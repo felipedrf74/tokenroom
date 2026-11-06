@@ -193,6 +193,7 @@ struct SettingsDisclosure: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .tint(.secondary)
     }
 }
 

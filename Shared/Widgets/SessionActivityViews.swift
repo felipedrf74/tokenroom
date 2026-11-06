@@ -37,7 +37,7 @@ struct SessionLockScreenView: View {
                             .accessibilityLabel(state.accessibilityPercent)
                             .font(.system(.title2, design: .rounded, weight: .semibold))
                             .monospacedDigit()
-                            .foregroundStyle(color)
+                            .foregroundStyle(TokenroomTokens.ink(remaining: 100 - state.used, isStale: state.isStale))
                     }
                     MeterTrack(usedPercent: state.used, remaining: 100 - state.used, isStale: state.isStale, paceMark: attributes.paceMark(for: state), height: 6)
                     HStack {

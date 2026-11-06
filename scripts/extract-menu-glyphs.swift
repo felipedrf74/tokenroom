@@ -7,6 +7,8 @@ import UniformTypeIdentifiers
 enum Kind {
     case lightOnDark
     case darkOnLight
+    /// A mark drawn in several greys, such as a cube's faces: each keeps its weight as opacity.
+    case shadedOnDark
 }
 
 struct Job {
@@ -28,6 +30,11 @@ let jobs = [
         name: "GlyphBot",
         source: URL(fileURLWithPath: "/Applications/Grok Bot.app/Contents/Resources/icon.icns"),
         kind: .lightOnDark
+    ),
+    Job(
+        name: "GlyphCursor",
+        source: URL(fileURLWithPath: "/Applications/Cursor.app/Contents/Resources/Cursor.icns"),
+        kind: .shadedOnDark
     ),
     Job(
         name: "GlyphGPT",
@@ -83,6 +90,8 @@ func markAlpha(luminance l: Double, alpha a: Double, kind: Kind) -> Double {
         return smoothstep(0.46, 0.78, l)
     case .darkOnLight:
         return smoothstep(0.42, 0.16, l)
+    case .shadedOnDark:
+        return 0.42 * smoothstep(0.09, 0.16, l) + 0.58 * smoothstep(0.3, 0.8, l)
     }
 }
 

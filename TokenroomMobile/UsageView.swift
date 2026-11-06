@@ -137,7 +137,8 @@ struct UsageView: View {
                 GridRow {
                     ForEach(row) { reading in
                         NavigationLink(value: reading.id) {
-                            UsageTileView(reading: reading, date: date, showsOrigin: showsOrigin(reading))
+                            UsageTileView(reading: reading, date: date, showsOrigin: showsOrigin(reading),
+                                          warnedWindows: Set(closeWindows(at: date).filter { $0.provider.id == reading.id }.map(\.window.id)))
                         }
                         .buttonStyle(.plain)
                         .contextMenu {

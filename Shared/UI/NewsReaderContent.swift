@@ -138,7 +138,7 @@ struct NewsVoiceDetail: View {
                 Text(voice.feed == nil ? "Profile only" : "Public articles").foregroundStyle(NewsControlMetrics.secondaryText)
                 Toggle("Follow in Tokenroom", isOn: Binding(get: { news.followedVoices.contains(voice.id) }, set: { on in
                     if on { news.followedVoices.insert(voice.id) } else { news.followedVoices.remove(voice.id) }
-                })).frame(minHeight: NewsControlMetrics.minimumHeight).tint(.accentColor)
+                })).frame(minHeight: NewsControlMetrics.minimumHeight).tint(TokenroomTokens.control)
                 Text("A local reading preference. It doesn't follow this person on X.").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
                 Link("Open on X", destination: voice.profileURL).frame(minHeight: NewsControlMetrics.minimumHeight)
                 Link("Publisher identity", destination: voice.evidenceURL).frame(minHeight: NewsControlMetrics.minimumHeight)

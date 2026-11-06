@@ -8,6 +8,9 @@ struct UsageTileView: View {
     var date: Date = .now
     /// Where the reading came from and its age, when the header above doesn't cover it.
     var showsOrigin = true
+    /// Windows the Close to a limit card already speaks for: the tile says when they reset,
+    /// rather than repeating the same warning a few lines down.
+    var warnedWindows: Set<String> = []
 
     private var provider: RelayProvider { reading.provider }
     private var isStale: Bool { !provider.isLive }
@@ -102,7 +105,7 @@ struct UsageTileView: View {
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            WindowStatus(window: ring, pace: pace(ring), isStale: isStale, date: date)
+            WindowStatus(window: ring, pace: warnedWindows.contains(ring.id) ? nil : pace(ring), isStale: isStale, date: date)
         }
     }
 
@@ -117,7 +120,7 @@ struct UsageTileView: View {
                     .foregroundStyle(TokenroomTokens.ink(remaining: 100 - bar.used, isStale: isStale))
             }
             MeterTrack(usedPercent: bar.used, remaining: 100 - bar.used, isStale: isStale || bar.isAwaitingReading(at: date), paceMark: pace(bar)?.elapsedFraction, height: 5)
-            WindowStatus(window: bar, pace: pace(bar), isStale: isStale, date: date)
+            WindowStatus(window: bar, pace: warnedWindows.contains(bar.id) ? nil : pace(bar), isStale: isStale, date: date)
         }
     }
 

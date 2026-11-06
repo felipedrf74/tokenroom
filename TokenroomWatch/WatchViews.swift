@@ -105,6 +105,7 @@ private struct WatchEmptyView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
+                        .padding(.horizontal, 8)
                     if offersConnect {
                         Button("Set up on iPhone", systemImage: "iphone") { store.openConnectOnPhone() }
                     }
@@ -140,7 +141,7 @@ private struct WatchEmptyView: View {
         case .noAccount: "Use the same Apple Account on this Watch as on your iPhone and Mac."
         case .unreachable: "The Watch shows what your iPhone and Mac send through iCloud. It tries again soon."
         case nil where offersConnect: "Open Tokenroom on your iPhone."
-        case nil: "Open Tokenroom on your iPhone or Mac. The Watch shows what they send through your iCloud."
+        case nil: "Open Tokenroom on your iPhone or Mac."
         }
     }
 }
@@ -162,12 +163,16 @@ private struct WatchRow: View {
                 ProviderMark(provider: provider, size: 36)
             }
             VStack(alignment: .leading, spacing: 1) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                // A balance's amount is too wide to share the name's line: it takes its own.
+                let names = window?.isMetered == false
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0))
+                    : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 6))
+                names {
                     Text(provider.shortName)
                         .font(.system(.body, weight: .semibold))
                         .lineLimit(1)
                         .minimumScaleFactor(0.65)
-                    Spacer(minLength: 0)
+                    if window?.isMetered != false { Spacer(minLength: 0) }
                     Text(ReadingText.headline(window, now: date))
                         .font(.system(.body, weight: .medium).monospacedDigit())
                         .foregroundStyle(headlineColor(window, isLive: provider.isLive, now: date))
@@ -234,9 +239,23 @@ struct WatchDetailView: View {
                 .padding(.vertical, 4)
                 .accessibilityElement(children: .combine)
             }
+            if let lead = shown, !lead.isMetered {
+                // The amount leads, as a ring's figure does.
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(ReadingText.headline(lead, now: date))
+                        .font(.system(.title3, design: .rounded, weight: .semibold))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    Text(lead.displayTitle)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 2)
+                .accessibilityElement(children: .combine)
+            }
             ForEach(provider.windows.filter { window in
-                if let shown, shown.isMetered, window.id == shown.id { return false }
-                return true
+                window.id != shown?.id
             }) { window in
                 let pace = window.isMetered ? UsageRanking.pace(for: window, isStale: !provider.isLive, history: item.history[window.id], now: date) : nil
                 WindowRow(

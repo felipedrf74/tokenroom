@@ -111,7 +111,7 @@ struct MobileNewsFreshnessView: View {
                         Text("Details").font(.footnote)
                         Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
                     }.foregroundStyle(MobileNewsPalette.secondary)
-                }.frame(minHeight: 28).contentShape(Rectangle())
+                }.frame(minHeight: 44).contentShape(Rectangle())
             }.buttonStyle(.plain)
                 .accessibilityLabel(statusLabel + (statusLabel.hasSuffix(".") ? " " : ". ") + "Source check details")
         }
