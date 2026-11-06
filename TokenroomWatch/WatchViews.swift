@@ -166,7 +166,7 @@ private struct WatchRow: View {
                     Text(provider.shortName)
                         .font(.system(.body, weight: .semibold))
                         .lineLimit(1)
-                        .minimumScaleFactor(0.75)
+                        .minimumScaleFactor(0.65)
                     Spacer(minLength: 0)
                     Text(ReadingText.headline(window, now: date))
                         .font(.system(.body, weight: .medium).monospacedDigit())
