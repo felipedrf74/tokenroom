@@ -8,6 +8,18 @@ struct WatchRootView: View {
     private var items: [ReadingCache.Item] { store.items(at: date) }
 
     var body: some View {
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "TokenroomGallery") {
+            WatchComplicationGallery(date: date)
+        } else {
+            list
+        }
+        #else
+        list
+        #endif
+    }
+
+    private var list: some View {
         NavigationStack(path: $path) {
             Group {
                 if items.isEmpty {
@@ -85,7 +97,7 @@ private struct WatchEmptyView: View {
                 VStack(spacing: 8) {
                     Image(systemName: symbol)
                         .font(.title2)
-                        .foregroundStyle(.tint)
+                        .foregroundStyle(.secondary)
                     Text(title)
                         .font(.headline)
                         .multilineTextAlignment(.center)
@@ -150,22 +162,23 @@ private struct WatchRow: View {
                 ProviderMark(provider: provider, size: 36)
             }
             VStack(alignment: .leading, spacing: 1) {
-                HStack {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(provider.shortName)
-                        .font(.headline)
+                        .font(.system(.body, weight: .semibold))
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
-                    Spacer(minLength: 2)
+                    Spacer(minLength: 0)
                     Text(ReadingText.headline(window, now: date))
-                        .font(.headline.monospacedDigit())
+                        .font(.system(.body, weight: .medium).monospacedDigit())
                         .foregroundStyle(headlineColor(window, isLive: provider.isLive, now: date))
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
+                        .layoutPriority(1)
                 }
                 if let note = ReadingText.attention(provider, now: date, lead: window),
                    UsageRanking.limitWarning(for: provider, now: date) != nil || window?.isAwaitingReading(at: date) != true {
                     Text(note).font(.caption2.weight(.semibold))
-                        .foregroundStyle(UsageRanking.limitWarning(for: provider, now: date) == nil ? Color.secondary : TokenroomTokens.usageCritical)
+                        .foregroundStyle(UsageRanking.limitWarning(for: provider, now: date) == nil ? Color.secondary : TokenroomTokens.criticalText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if !provider.isLive, let checked = provider.checkedAt ?? provider.fetchedAt {
@@ -191,27 +204,31 @@ struct WatchDetailView: View {
     var body: some View {
         let provider = item.provider
         List {
-            if let plan = provider.plan {
-                Text(plan)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
             let shown = provider.leadWindow(now: date, history: item.history)
             if let lead = shown, lead.isMetered {
                 let pace = UsageRanking.pace(for: lead, isStale: !provider.isLive, history: item.history[lead.id], now: date)
-                HStack(spacing: 10) {
-                    UsageRing(used: lead.used, isStale: !provider.isLive || lead.isAwaitingReading(at: date),
-                              label: ReadingText.headline(lead, now: date), lineWidth: 6, paceMark: pace?.elapsedFraction)
-                        .frame(width: 58, height: 58)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(lead.displayTitle)
-                            .font(.footnote.weight(.semibold))
-                        if let detail = detail(lead, pace: pace) {
-                            Text(detail)
-                                .font(.caption2)
-                                .foregroundStyle(pace?.needsAttention == true ? TokenroomTokens.accentText : .secondary)
-                                .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 10) {
+                        UsageRing(used: lead.used, isStale: !provider.isLive || lead.isAwaitingReading(at: date),
+                                  label: ReadingText.headline(lead, now: date), lineWidth: 6, paceMark: pace?.elapsedFraction)
+                            .frame(width: 58, height: 58)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(lead.displayTitle)
+                                .font(.footnote.weight(.semibold))
+                            if let reset = ReadingText.reset(lead, now: date) {
+                                Text(reset)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
                         }
+                    }
+                    // The whole row's width, so what matters stays on two lines at most.
+                    if let pace, pace.needsAttention || pace.isProjected {
+                        Text(pace.caption(now: date))
+                            .font(.caption2)
+                            .foregroundStyle(pace.needsAttention ? TokenroomTokens.accentText : .secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(.vertical, 4)
@@ -242,6 +259,10 @@ struct WatchDetailView: View {
                 Text(text)
                     .font(.footnote)
             }
+            if let plan = provider.plan {
+                LabeledContent("Plan", value: plan)
+                    .font(.footnote)
+            }
             if let checked = provider.checkedAt ?? provider.fetchedAt {
                 Text("Last successful check \(RelativeTime.ago(checked, now: date))").font(.footnote).foregroundStyle(.secondary)
             }
@@ -269,3 +290,29 @@ private func headlineColor(_ window: RelayWindow?, isLive: Bool, now: Date = .no
     guard let window, window.isMetered else { return .primary }
     return TokenroomTokens.ink(remaining: 100 - window.used, isStale: !isLive || window.isAwaitingReading(at: now))
 }
+
+#if DEBUG
+/// Every complication and the Smart Stack card, drawn in the app for screenshots:
+/// `-TokenroomGallery YES`.
+private struct WatchComplicationGallery: View {
+    var date: Date
+    private var items: [ReadingCache.Item] { SampleData.cache(now: date).items }
+    private var entry: ComplicationEntry { ComplicationEntry(date: date, items: items) }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 14) {
+                    ComplicationView(entry: entry, preview: .accessoryCircular).frame(width: 52, height: 52)
+                    ComplicationView(entry: ComplicationEntry(date: date, items: items.filter { !($0.provider.primaryWindow?.isMetered ?? true) }), preview: .accessoryCircular).frame(width: 52, height: 52)
+                    ComplicationView(entry: entry, preview: .accessoryCorner).frame(width: 52, height: 52)
+                }
+                ComplicationView(entry: entry, preview: .accessoryRectangular).frame(height: 72)
+                ComplicationView(entry: entry, preview: .accessoryInline).lineLimit(1)
+                ResetSoonView(item: items.first, windowID: items.first?.provider.primaryWindow?.id)
+            }
+            .padding(.horizontal, 6)
+        }
+    }
+}
+#endif

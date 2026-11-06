@@ -48,6 +48,8 @@ final class WatchStore {
     private let link = PhoneLink()
     /// Launched with `-sampleMode YES` (debug builds): the sample readings stay for the launch.
     private var showsSample = false
+    /// Launched with `-TokenroomEmpty YES` (debug builds): nothing fills the empty state.
+    private var showsEmpty = false
 
     init() {
         cache = WatchCacheAccess.load(at: cacheURL, defaults: AppGroup.defaults)
@@ -56,6 +58,11 @@ final class WatchStore {
         if UserDefaults.standard.bool(forKey: "sampleMode") {
             cache = SampleData.cache()
             showsSample = true
+        }
+        // `-TokenroomEmpty YES` shows the empty state, whatever is saved, for screenshots.
+        if UserDefaults.standard.bool(forKey: "TokenroomEmpty") {
+            cache = nil
+            showsEmpty = true
         }
         // `-TokenroomOpen tokenroom://provider/claude` opens a provider, for screenshots.
         if let link = UserDefaults.standard.string(forKey: "TokenroomOpen").flatMap(URL.init(string:)),
@@ -89,6 +96,7 @@ final class WatchStore {
     }
 
     func refresh(force: Bool = false, now: Date = .now) async {
+        guard !showsEmpty else { return }
         // Sample readings aren't replaced by what iCloud says this launch.
         guard WatchCacheAccess.mayReplace(cache, showsSample: showsSample) else { return }
         _ = synchronizeAccountCutoff()

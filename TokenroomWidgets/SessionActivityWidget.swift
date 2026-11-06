@@ -26,7 +26,7 @@ struct SessionActivityWidget: Widget {
                     .accessibilityLabel(state.accessibilityPercent)
                         .font(.system(.title2, design: .rounded, weight: .semibold))
                         .monospacedDigit()
-                        .foregroundStyle(TokenroomTokens.usageColor(usedPercent: state.used, isStale: state.isStale))
+                        .foregroundStyle(TokenroomTokens.ink(remaining: 100 - state.used, isStale: state.isStale))
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(alignment: .leading, spacing: 6) {

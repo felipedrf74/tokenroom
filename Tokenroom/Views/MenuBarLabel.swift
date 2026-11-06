@@ -151,7 +151,7 @@ struct MenuUsageBar: View {
                     with: .color(TokenroomTokens.usageColor(usedPercent: usedPercent, isStale: isStale))
                 )
             }
-            context.stroke(rim, with: .color(Color.primary), lineWidth: stroke)
+            context.stroke(rim, with: .color(Color.primary.opacity(0.65)), lineWidth: stroke)
         }
         .frame(width: TokenroomTokens.menuMeterBarWidth, height: TokenroomTokens.menuMeterBarHeight)
         .accessibilityHidden(true)

@@ -20,6 +20,9 @@ struct ProviderCard: View {
     var onCancelSignIn: () -> Void = {}
     var onInstall: () -> Void = {}
     var date: Date = .now
+    /// In a popover style's own list, which has its rows and edges: no surface of its own, and its
+    /// content lines up with the rows around it.
+    var isPlain = false
     /// The pointer over a card or row: it lifts a little, as a list row does on macOS.
     @State private var isHovered = false
 
@@ -80,19 +83,18 @@ struct ProviderCard: View {
                 }
             }
         }
-        .padding(TokenroomTokens.cardPadding)
+        .padding(.horizontal, isPlain ? 20 : TokenroomTokens.cardPadding)
+        .padding(.vertical, isPlain ? 10 : TokenroomTokens.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(cardSurface(cornerRadius: 10))
+        .background { if !isPlain { cardSurface(cornerRadius: 10) } }
         .onHover { isHovered = onToggleExpanded != nil && $0 }
     }
 
-    /// The card's surface: a light fill on the popover's material with a hairline edge, a
-    /// little brighter under the pointer.
+    /// The card's surface: a light fill on the popover's material, a little brighter under the
+    /// pointer. No edge: the fill already says where the card is.
     private func cardSurface(cornerRadius: CGFloat) -> some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        return shape
-            .fill(Color.primary.opacity(isHovered ? 0.075 : 0.045))
-            .overlay(shape.strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(Color.primary.opacity(isHovered ? 0.07 : 0.04))
     }
 
     /// Readings that can collapse to one line: nothing to sign in to.
@@ -121,7 +123,7 @@ struct ProviderCard: View {
                     Text(provider.displayName).font(.system(size: 12, weight: .semibold))
                     if let attention {
                         Text(attention).font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(limitWarning == nil ? Color.secondary : TokenroomTokens.usageCritical)
+                            .foregroundStyle(limitWarning == nil ? Color.secondary : TokenroomTokens.criticalText)
                             .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     } else if let reset = compactReset(snapshot) {
                         // The window's name too when it fits; "resets in" always, so the time
@@ -207,8 +209,9 @@ struct ProviderCard: View {
         "Last good reading, \(RelativeTime.ago(checkedAt, now: now))."
     }
 
+    /// Sign In, or what's in the way of it. A popover style's expired row shows these too.
     @ViewBuilder
-    private var signInControls: some View {
+    var signInControls: some View {
         if isWorking {
             HStack(spacing: 8) {
                 ProgressView()
@@ -294,7 +297,7 @@ struct ProviderCard: View {
         }
         if !stale, let warning = limitWarning {
             Text(warning).font(.system(size: TokenroomTokens.captionSize, weight: .semibold))
-                .foregroundStyle(TokenroomTokens.usageCritical)
+                .foregroundStyle(TokenroomTokens.criticalText)
         }
         if isExpanded {
             expandedDetails(snapshot, stale: stale)
@@ -348,15 +351,14 @@ struct ProviderCard: View {
                 labelFont: .system(size: 9, weight: .medium),
                 valueFont: .system(size: 12, weight: .semibold),
                 detailFont: .system(size: 10),
-                spacing: 6,
-                cornerRadius: 7
+                spacing: 8
             )
             if let primary = snapshot.windows.first, primary.isMetered, let week = weeks[primary.id], !week.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Last 7 days")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
-                    Sparkline(history: week, tint: Color(hex: provider.tintHex))
+                    Sparkline(history: week, level: stale ? nil : TokenroomTokens.usageColor(usedPercent: primary.usedPercent, isStale: false))
                         .frame(height: 36)
                 }
                 // The line itself is hidden from VoiceOver; the group says what it shows.

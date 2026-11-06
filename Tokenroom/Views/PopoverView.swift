@@ -29,9 +29,9 @@ struct PopoverView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-                .padding(.horizontal, isClassic ? TokenroomTokens.cardPadding : 20)
+                .padding(.horizontal, sideInset)
                 .padding(.top, 14)
-                .padding(.bottom, 12)
+                .padding(.bottom, 10)
 
             if store.showsLegacyNotice {
                 legacyNotice
@@ -46,10 +46,15 @@ struct PopoverView: View {
                     .padding(.bottom, 8)
             } else {
                 if let provider = detailProvider {
-                    ScrollView {
-                        PopoverProviderView(card: providerCard(provider, expanded: true), style: style, showsDetails: true)
+                    // A short page sits at its own height, so a balance doesn't float in space.
+                    ViewThatFits(in: .vertical) {
+                        providerDetail(provider)
+                            .fixedSize(horizontal: false, vertical: true)
+                        ScrollView {
+                            providerDetail(provider)
+                        }
                     }
-                    .frame(height: 520)
+                    .frame(maxHeight: 520)
                     .id(provider)
                 } else {
                     ViewThatFits(in: .vertical) {
@@ -64,7 +69,7 @@ struct PopoverView: View {
             }
 
             highlights
-                .padding(.horizontal, TokenroomTokens.cardPadding)
+                .padding(.horizontal, sideInset)
                 .padding(.top, 10)
 
             Divider()
@@ -72,7 +77,7 @@ struct PopoverView: View {
                 .opacity(0.7)
 
             footer
-                .padding(.horizontal, TokenroomTokens.cardPadding)
+                .padding(.horizontal, sideInset)
                 .padding(.vertical, 10)
         }
         .frame(width: style.width)
@@ -80,6 +85,13 @@ struct PopoverView: View {
         .environment(\.colorScheme, style == .instrument ? .dark : colorScheme)
         .onChange(of: style) { _, _ in selectedProvider = nil }
         .transaction { $0.animation = nil }
+    }
+
+    /// One edge for the header, rows, and footer.
+    private var sideInset: CGFloat { isClassic ? TokenroomTokens.cardPadding : 20 }
+
+    private func providerDetail(_ provider: Provider) -> some View {
+        PopoverProviderView(card: providerCard(provider, expanded: true), style: style, showsDetails: true)
     }
 
     private var providerList: some View {
@@ -101,7 +113,7 @@ struct PopoverView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .padding(.horizontal, TokenroomTokens.cardPadding)
+                .padding(.horizontal, sideInset)
                 .accessibilityLabel("Not connected, \(disconnected.count) providers")
                 if showsDisconnected {
                     cards(disconnected)
@@ -280,15 +292,18 @@ struct PopoverView: View {
         HStack(spacing: 10) {
             if detailProvider != nil {
                 Button { selectedProvider = nil } label: {
-                    Image(systemName: "chevron.left").font(.system(size: 16, weight: .medium)).frame(width: 26, height: 30)
+                    Image(systemName: "chevron.left").font(.system(size: 13, weight: .semibold)).frame(width: 20, height: 28).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Back to all providers")
                 .help("Back to all providers")
             }
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Tokenroom")
-                    .font(.system(size: isClassic ? 15 : 20, weight: .semibold))
+            if let provider = detailProvider {
+                ProviderIcon(provider: provider, size: 26)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(detailProvider?.displayName ?? "Tokenroom")
+                    .font(.system(size: 15, weight: .semibold))
                 HStack(spacing: 5) {
                     Text(checkedHeaderText)
                     if let relay = store.relay, case .sent(let date) = relay.state {
@@ -320,7 +335,7 @@ struct PopoverView: View {
                     }
                 }
             } label: {
-                Image(systemName: "paintpalette").font(.system(size: 15)).frame(width: 28, height: 28)
+                Image(systemName: "paintpalette").font(.system(size: 13)).frame(width: 26, height: 26)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -333,15 +348,16 @@ struct PopoverView: View {
                 if store.isRefreshing {
                     ProgressView()
                         .controlSize(.small)
-                        .frame(width: 28, height: 28)
+                        .frame(width: 26, height: 26)
                 } else {
                     Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 13, weight: .semibold))
-                        .frame(width: 28, height: 28)
+                        .font(.system(size: 13))
+                        .frame(width: 26, height: 26)
                         .contentShape(Rectangle())
                 }
             }
             .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
             .disabled(store.isRefreshing)
             .help("Refresh")
             .accessibilityLabel("Refresh")

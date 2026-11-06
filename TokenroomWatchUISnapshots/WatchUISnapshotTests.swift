@@ -31,20 +31,24 @@ final class WatchUISnapshotTests: XCTestCase {
     func testScreens() {
         let list = launch(["-sampleMode", "YES"])
         shoot("watch-list")
-        list.swipeUp()
+        XCUIDevice.shared.rotateDigitalCrown(delta: 0.45)
         Thread.sleep(forTimeInterval: 1)
         shoot("watch-list-scrolled")
+        list.swipeUp()
         list.swipeUp()
         Thread.sleep(forTimeInterval: 1)
         shoot("watch-list-end")
         for (id, name) in [("claude", "claude"), ("openai", "openai"), ("deepseek", "balance")] {
             let app = launch(["-sampleMode", "YES", "-TokenroomOpen", "tokenroom://provider/\(id)"])
             shoot("watch-detail-\(name)")
-            app.swipeUp()
+            XCUIDevice.shared.rotateDigitalCrown(delta: 0.45)
             Thread.sleep(forTimeInterval: 1)
             shoot("watch-detail-\(name)-scrolled")
+            app.swipeUp()
         }
-        _ = launch([])
+        _ = launch(["-TokenroomEmpty", "YES"])
         shoot("watch-empty")
+        _ = launch(["-TokenroomGallery", "YES"])
+        shoot("watch-complications")
     }
 }

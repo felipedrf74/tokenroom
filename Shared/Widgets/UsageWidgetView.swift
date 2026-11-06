@@ -84,7 +84,7 @@ private struct SmallWidget: View {
             if let note = ReadingText.attention(provider, now: entry.date, lead: window),
                UsageRanking.limitWarning(for: provider, now: entry.date) != nil || window?.isAwaitingReading(at: entry.date) != true {
                 Text(note).font(.caption2.weight(.semibold))
-                    .foregroundStyle(UsageRanking.limitWarning(for: provider, now: entry.date) == nil ? Color.secondary : TokenroomTokens.usageCritical).lineLimit(2)
+                    .foregroundStyle(UsageRanking.limitWarning(for: provider, now: entry.date) == nil ? Color.secondary : TokenroomTokens.criticalText).lineLimit(2)
             }
             if !provider.isLive {
                 Text("Stale · checked \(RelativeTime.ago(provider.checkedAt ?? provider.fetchedAt, now: entry.date))")
@@ -127,11 +127,12 @@ private struct ListWidget: View {
             ForEach(entry.items.prefix(count)) { item in
                 Link(destination: DeepLink.provider(item.id).url) {
                     ListRow(item: item, showsHistory: showsHistory, date: entry.date)
+                        // Rows share the widget's height, whatever their number.
+                        .frame(maxHeight: .infinity)
                 }
                 // Links tint their labels; rows keep their own colors.
                 .foregroundStyle(.primary)
             }
-            Spacer(minLength: 0)
         }
     }
 }
@@ -165,7 +166,7 @@ private struct ListRow: View {
                 }
                 if let note = ReadingText.attention(provider, now: date, lead: window) {
                     Text(note).font(.caption2.weight(.semibold))
-                        .foregroundStyle(UsageRanking.limitWarning(for: provider, now: date) == nil ? Color.secondary : TokenroomTokens.usageCritical).lineLimit(2)
+                        .foregroundStyle(UsageRanking.limitWarning(for: provider, now: date) == nil ? Color.secondary : TokenroomTokens.criticalText).lineLimit(2)
                 }
                 if let window, window.isMetered {
                     WidgetMeter(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(at: date), height: 5)
@@ -175,7 +176,7 @@ private struct ListRow: View {
                 Group {
                     let series = window.flatMap { item.history[$0.id] }
                     if let series, !series.isEmpty {
-                        Sparkline(history: series, tint: Color(hex: provider.tint), lineWidth: 1.2)
+                        Sparkline(history: series, lineWidth: 1, level: provider.isLive ? window.map { TokenroomTokens.usageColor(usedPercent: $0.used, isStale: false) } : nil)
                     } else {
                         Color.clear
                     }
@@ -271,7 +272,7 @@ private struct RectangularWidget: View {
             let stale = items.filter { !$0.provider.isLive }.count
             Text("\(item.provider.shortName) · \(note)" + (stale > 0 ? " · \(stale) stale" : ""))
                 .font(.caption2.weight(.semibold)).lineLimit(2).minimumScaleFactor(0.7)
-                .foregroundStyle(UsageRanking.limitWarning(for: item.provider, now: date) == nil ? Color.secondary : TokenroomTokens.usageCritical)
+                .foregroundStyle(UsageRanking.limitWarning(for: item.provider, now: date) == nil ? Color.secondary : TokenroomTokens.criticalText)
         } else if items.contains(where: { !$0.provider.isLive }) {
             Text("\(items.filter { !$0.provider.isLive }.count) stale").font(.caption2).lineLimit(1)
         } else if let first = items.first, let resetsAt = first.provider.leadWindow(now: date, history: first.history)?.resetsAt, resetsAt > date {
@@ -350,7 +351,7 @@ private struct EmptyWidget: View {
             VStack(alignment: .leading, spacing: 6) {
                 Image(systemName: "gauge.with.dots.needle.50percent")
                     .font(.title2)
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
                 Text(name ?? "No readings yet")
                     .font(.headline)
@@ -434,8 +435,8 @@ private struct SampleTag: View {
             .font(.system(size: 9, weight: .semibold))
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
-            .background(.tint.opacity(0.18), in: Capsule())
-            .foregroundStyle(.tint)
+            .background(Color.primary.opacity(0.08), in: Capsule())
+            .foregroundStyle(.secondary)
     }
 }
 
