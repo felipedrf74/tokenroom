@@ -125,7 +125,11 @@ struct ProviderDetailView: View {
             let facts = UsageFacts.facts(for: heroWindow, pace: heroPace, plan: provider.plan, checkedAt: nil, isStale: !provider.isLive, now: date)
             if !facts.isEmpty {
                 Divider()
-                UsageFactsGrid(facts: facts, columns: facts.count == 3 && typeSize < .xxLarge ? 3 : 2, labelFont: .caption, valueFont: .subheadline.weight(.medium), detailFont: .caption, detailLines: 1)
+                // One row as wide as its text, when it fits; columns that wrap when it doesn't.
+                ViewThatFits(in: .horizontal) {
+                    UsageFactsGrid(facts: facts, fitsContent: true, labelFont: .caption, valueFont: .subheadline.weight(.medium), detailFont: .caption)
+                    UsageFactsGrid(facts: facts, columns: typeSize.isAccessibilitySize ? 1 : 2, labelFont: .caption, valueFont: .subheadline.weight(.medium), detailFont: .caption, detailLines: 4)
+                }
             }
         }
         .padding(.vertical, 6)
@@ -142,12 +146,21 @@ struct ProviderDetailView: View {
                     Text(amount).font(.subheadline)
                 }
                 if let forecast {
-                    Text(forecast).font(.footnote).foregroundStyle(.secondary)
+                    forecastText(forecast)
+                        .font(.footnote)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .accessibilityElement(children: .combine)
         }
+    }
+
+    /// A forecast in quiet ink, with a projected overrun carried as a warning about the reading.
+    private func forecastText(_ forecast: String) -> Text {
+        let warning = ", over budget"
+        guard forecast.hasSuffix(warning) else { return Text(forecast).foregroundStyle(.secondary) }
+        let lead = Text(forecast.dropLast(warning.count)).foregroundStyle(.secondary)
+        return Text("\(lead)\(Text(warning).foregroundStyle(TokenroomTokens.accentText))")
     }
 
     /// Whose reading this is and, when it isn't current, why. The title above names the provider;

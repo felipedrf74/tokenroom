@@ -159,6 +159,11 @@ enum DebugSnapshots {
             store.statuses[.openai] = .live(elapsed)
             render(PopoverView(store: store, onSettings: { _ in }), width: PopoverStyle.orbit.width, appearance: .aqua,
                    to: output.appendingPathComponent("popover-orbit-reset.png"))
+            var nearly = openai
+            nearly.windows[0].usedPercent = 97
+            store.statuses[.openai] = .live(nearly)
+            render(PopoverView(store: store, onSettings: { _ in }), width: PopoverStyle.orbit.width, appearance: .aqua,
+                   to: output.appendingPathComponent("popover-orbit-critical.png"))
             var limited = openai
             limited.windows[1].usedPercent = 100
             store.statuses[.openai] = .live(limited)

@@ -21,9 +21,7 @@ struct WindowRow: View {
                     .font(titleFont)
                     .lineLimit(1)
                 Spacer(minLength: 6)
-                Text(headline)
-                    .font(titleFont.weight(.semibold))
-                    .monospacedDigit()
+                HeadlineValue(text: headline, font: titleFont.weight(.semibold), signFont: captionFont)
                     .foregroundStyle(ink)
             }
             if let usedPercent {

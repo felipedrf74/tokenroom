@@ -179,7 +179,10 @@ struct NewsStoryDetail: View {
                 }
                 Text(item.displayTitle).font(.system(.largeTitle, design: .serif, weight: .bold)).fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
                 NewsDates(published: item.publisherPublishedAt, updated: item.updatedAt)
-                if let excerpt = item.displayExcerpt { Text(excerpt).font(.body).textSelection(.enabled) }
+                if let excerpt = item.displayExcerpt {
+                    // About 70 characters a line, however wide the window.
+                    Text(excerpt).font(.body).textSelection(.enabled).frame(maxWidth: 540, alignment: .leading)
+                }
                 if item.kind == .officialStatus {
                     Text("Provider report. Your experience may differ. Only updates observed by this device are shown.").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
                     ForEach(Array((item.observedUpdates ?? []).enumerated()), id: \.offset) { _, update in

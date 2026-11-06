@@ -44,7 +44,7 @@ struct ProviderCard: View {
     }
 
     private var fullCard: some View {
-        VStack(alignment: .leading, spacing: TokenroomTokens.rhythm) {
+        VStack(alignment: .leading, spacing: 5) {
             switch status {
             case .loading:
                 header(percent: nil, remaining: 100, stale: false)
@@ -279,7 +279,7 @@ struct ProviderCard: View {
             }
         } else {
             toggleable {
-                VStack(alignment: .leading, spacing: TokenroomTokens.rhythm) {
+                VStack(alignment: .leading, spacing: 7) {
                     header(value: headlineValue(snapshot), remaining: snapshot.remainingPercent, stale: stale || awaiting)
                     MeterTrack(
                         usedPercent: snapshot.usedPercent,

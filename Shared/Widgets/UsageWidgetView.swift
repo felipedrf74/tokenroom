@@ -74,7 +74,8 @@ private struct SmallWidget: View {
                 .widgetAccentable()
             if let window {
                 if window.isMetered {
-                    WidgetMeter(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(at: entry.date))
+                    WidgetMeter(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(at: entry.date),
+                                pace: UsageRanking.pace(for: window, isStale: !provider.isLive, history: item.history[window.id], now: entry.date)?.elapsedFraction)
                 }
                 Text(window.displayTitle)
                     .font(.caption2.weight(.medium))
@@ -165,6 +166,10 @@ private struct ListRow: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
+                    // Beside another window's note, this figure needs its own name.
+                    if note != nil, !isLimit, let window {
+                        Text(window.displayTitle).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
                     Text(ReadingText.headline(window, now: date))
                         .font(.caption.weight(.semibold).monospacedDigit())
                         .foregroundStyle(headlineStyle(window, isLive: provider.isLive))
@@ -175,7 +180,8 @@ private struct ListRow: View {
                         .foregroundStyle(TokenroomTokens.criticalText).lineLimit(2)
                 }
                 if let window, window.isMetered {
-                    WidgetMeter(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(at: date), height: 5)
+                    WidgetMeter(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(at: date),
+                                pace: UsageRanking.pace(for: window, isStale: !provider.isLive, history: item.history[window.id], now: date)?.elapsedFraction, height: 5)
                 }
             }
             if showsHistory {
@@ -377,13 +383,15 @@ private struct EmptyWidget: View {
 private struct WidgetMeter: View {
     var used: Double
     var isStale: Bool
+    /// The even pace, 0–1 of the window, as on the app's meters.
+    var pace: Double? = nil
     var height: CGFloat = 6
     @Environment(\.widgetRenderingMode) private var systemRenderingMode
     @Environment(\.widgetPreviewStyle) private var preview
 
     var body: some View {
         if (preview?.renderingMode ?? systemRenderingMode) == .fullColor {
-            MeterTrack(usedPercent: used, remaining: 100 - used, isStale: isStale, height: height)
+            MeterTrack(usedPercent: used, remaining: 100 - used, isStale: isStale, paceMark: pace, height: height)
         } else {
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {

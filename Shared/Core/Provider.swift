@@ -359,7 +359,7 @@ extension Provider {
         case .anthropicOrg:
             ProviderDescriptor(
                 displayName: "Anthropic API",
-                shortName: "Anthropic API",
+                shortName: "Anthropic",
                 letter: "A",
                 monogram: "AN",
                 tintHex: "#B85C38",

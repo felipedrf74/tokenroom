@@ -90,7 +90,7 @@ extension NewsCollectionHealth {
     /// is an official source, so its kind says nothing; a problem or a source awaiting its first
     /// read does.
     var followingCaption: String? {
-        problem ?? (uncheckedCount > 0 ? caption : nil)
+        problem ?? (uncheckedCount >= sourceCount ? "Not checked yet" : uncheckedCount > 0 ? caption : nil)
     }
 }
 

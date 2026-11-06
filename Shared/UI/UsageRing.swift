@@ -83,16 +83,21 @@ struct UsageRing: View {
         CGFloat(min(max(used, 0), 100) / 100)
     }
 
-    /// From a slightly lighter tint of the level's colour to the colour itself at the tip, around
-    /// the arc from 12 o'clock.
+    /// From a slightly lighter tint of the level's colour to the colour itself at the tip. The
+    /// sweep starts a little before 12 o'clock and comes back to the tint, so the round cap at
+    /// the start of the arc takes the tint rather than the far end's full colour.
     private func fill(center: CGPoint, start: Angle) -> GraphicsContext.Shading {
         if isStale {
             return .color(Color.secondary)
         }
         let tones = TokenroomTokens.usageTones(usedPercent: used)
+        let lead = 10.0 / 360
+        let tip = min(Double(fraction) + lead, 1 - lead / 2)
         let stops = [Gradient.Stop(color: tones.start, location: 0),
-                     Gradient.Stop(color: tones.end, location: max(Double(fraction), 0.01)),
-                     Gradient.Stop(color: tones.end, location: 1)]
-        return .conicGradient(Gradient(stops: stops), center: center, angle: start)
+                     Gradient.Stop(color: tones.start, location: lead / 2),
+                     Gradient.Stop(color: tones.end, location: tip),
+                     Gradient.Stop(color: tones.end, location: tip + (1 - tip) / 2),
+                     Gradient.Stop(color: tones.start, location: 1)]
+        return .conicGradient(Gradient(stops: stops), center: center, angle: start - .degrees(10))
     }
 }
