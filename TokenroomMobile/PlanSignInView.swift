@@ -40,7 +40,7 @@ struct PlanSignInView: View {
                 if case .failed(let message) = phase {
                     Section {
                         Label(message, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(TokenroomTokens.accentText)
+                            .foregroundStyle(.primary)
                         if PhoneSignIn.method(for: provider) == .deviceCode {
                             Button("Try Again") { startDeviceCode() }
                         }
