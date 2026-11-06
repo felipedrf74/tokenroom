@@ -55,10 +55,6 @@ items = {
         item("deepmind", "Google DeepMind", "Sample research note: planning across long tasks", 4 * day,
              "Placeholder research summary for layout review."),
     ],
-    "voice-simonw": [
-        item("voice-simonw", "Simon Willison", "Sample commentary: notes on this week's models", 6 * hour,
-             "Placeholder commentary for layout review.", "commentary"),
-    ],
 }
 
 models = [
