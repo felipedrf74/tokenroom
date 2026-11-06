@@ -57,10 +57,11 @@ struct AlertsSettingsView: View {
                 Toggle("Banked resets", isOn: $store.alertPreferences.banked)
                 Toggle("A balance or budget runs low", isOn: $store.alertPreferences.lowBalance)
                 Toggle("New models from labs you follow", isOn: $store.alertPreferences.newModels)
+                SettingsDisclosure("About These Alerts", text: "\"A busy window resets\" means one that reached 80%. Banked resets alert when one is added and before it expires. Low balance needs a reference or budget in API Keys. Your Macs share these choices through iCloud; a change on either applies to both.")
             } header: {
                 Text("Also notify me when")
             } footer: {
-                Text("Once per window, whichever device notices first. \"A busy window resets\" means one that reached 80%. Banked resets alert when one is added and before it expires. Low balance needs a reference or budget in API Keys. Your Macs share these choices through iCloud; a change on either applies to both.")
+                Text("Once per window, whichever device notices first.")
             }
 
             Section {

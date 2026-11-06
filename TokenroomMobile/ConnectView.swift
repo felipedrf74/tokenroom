@@ -67,10 +67,11 @@ struct ConnectView: View {
                         }
                         .foregroundStyle(.primary)
                     }
+                    SettingsDisclosure("How These Sign-Ins Work", text: "Tokenroom reads these plans the way their own apps and command-line tools do, which those companies don't document for other apps. Tokenroom isn't affiliated with Anthropic, OpenAI, xAI, or Cursor.")
                 } header: {
                     Text("Sign in on this iPhone")
                 } footer: {
-                    Text("You sign in on each company's own page; Tokenroom never sees your password. It reads these plans the way their own apps and command-line tools do, which those companies don't document for other apps, so a sign-in can stop working without notice. Tokenroom isn't affiliated with Anthropic, OpenAI, xAI, or Cursor.")
+                    Text("You sign in on each company's own page; Tokenroom never sees your password. This reading is unofficial, so a sign-in can stop working without notice.")
                 }
             }
             if !fromMac.isEmpty {
