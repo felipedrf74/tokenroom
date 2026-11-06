@@ -196,6 +196,8 @@ struct CloseToLimitCard: View {
     var windows: [CloseWindow]
     var date: Date = .now
     var open: (String) -> Void
+    /// The rows it shows. Tiles keep their own warning for any window past these.
+    static let rowLimit = 4
     @State private var followError: String?
     @Environment(\.dynamicTypeSize) private var typeSize
 
@@ -216,7 +218,7 @@ struct CloseToLimitCard: View {
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isHeader)
 
-            ForEach(Array(windows.prefix(4).enumerated()), id: \.element.id) { index, item in
+            ForEach(Array(windows.prefix(Self.rowLimit).enumerated()), id: \.element.id) { index, item in
                 if index > 0 {
                     Divider()
                         .padding(.leading, 52)

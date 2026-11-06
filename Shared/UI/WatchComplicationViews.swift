@@ -69,7 +69,7 @@ struct ComplicationView: View {
                         HStack(spacing: 4) {
                             Text(item.provider.shortName)
                                 .font(.system(size: 12, weight: .semibold))
-                                .frame(width: 62, alignment: .leading)
+                                .frame(width: 72, alignment: .leading)
                                 .lineLimit(1)
                             if row?.isMetered == false, row?.amount != nil {
                                 // A balance: its amount, with no empty bar beside it.
@@ -87,8 +87,8 @@ struct ComplicationView: View {
                     let stale = entry.items.filter { !$0.provider.isLive }.count
                     if let item = entry.items.first(where: { $0.attention(now: entry.date) != nil }),
                        let note = item.attention(now: entry.date) {
-                        Text(note + (stale > 0 ? " · \(stale) stale" : ""))
-                            .font(.caption2.weight(.semibold)).lineLimit(2).minimumScaleFactor(0.7)
+                        Text("\(item.provider.shortName) · \(note)" + (stale > 0 ? " · \(stale) stale" : ""))
+                            .font(.caption2).lineLimit(2).minimumScaleFactor(0.7)
                             .foregroundStyle(UsageRanking.limitWarning(for: item.provider, now: entry.date) == nil ? Color.secondary : TokenroomTokens.criticalText)
                     } else {
                         if stale > 0 { Text("\(stale) stale").font(.caption2).foregroundStyle(.secondary) }

@@ -145,6 +145,8 @@ private struct ListRow: View {
     var body: some View {
         let provider = item.provider
         let window = provider.leadWindow(now: date, history: item.history)
+        let note = ReadingText.attention(provider, now: date, lead: window)
+        let isLimit = UsageRanking.limitWarning(for: provider, now: date) != nil
         HStack(spacing: 8) {
             ProviderMark(provider: provider, size: 20)
             VStack(alignment: .leading, spacing: 3) {
@@ -152,6 +154,10 @@ private struct ListRow: View {
                     Text(provider.shortName)
                         .font(.caption.weight(.semibold))
                         .lineLimit(1)
+                    // Beside the name, so every row keeps one height; a reached limit gets a line.
+                    if let note, !isLimit {
+                        Text(note).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
                     Spacer(minLength: 4)
                     if let resetsAt = window?.resetsAt, resetsAt > date {
                         ResetCountdown(resetsAt: resetsAt, date: date)
@@ -164,9 +170,9 @@ private struct ListRow: View {
                         .foregroundStyle(headlineStyle(window, isLive: provider.isLive))
                         .widgetAccentable()
                 }
-                if let note = ReadingText.attention(provider, now: date, lead: window) {
+                if let note, isLimit {
                     Text(note).font(.caption2.weight(.semibold))
-                        .foregroundStyle(UsageRanking.limitWarning(for: provider, now: date) == nil ? Color.secondary : TokenroomTokens.criticalText).lineLimit(2)
+                        .foregroundStyle(TokenroomTokens.criticalText).lineLimit(2)
                 }
                 if let window, window.isMetered {
                     WidgetMeter(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(at: date), height: 5)

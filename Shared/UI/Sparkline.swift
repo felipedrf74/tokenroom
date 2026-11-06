@@ -13,7 +13,9 @@ struct Sparkline: View {
         Canvas { context, size in
             let values = history.used
             guard values.count > 1 else { return }
-            let step = size.width / CGFloat(values.count - 1)
+            // Room for the latest reading's dot at the right edge, so it isn't cut in half.
+            let radius = lineWidth * 1.8
+            let step = (size.width - (level == nil ? 0 : radius)) / CGFloat(values.count - 1)
             for segment in Self.segments(values) {
                 let points = segment.map { index, value in
                     CGPoint(x: CGFloat(index) * step, y: size.height * (1 - CGFloat(value) / 100))
@@ -33,8 +35,7 @@ struct Sparkline: View {
                 }
             }
             if let level, let (index, value) = Self.segments(values).last?.last {
-                let point = CGPoint(x: CGFloat(index) * step, y: size.height * (1 - CGFloat(value) / 100))
-                let radius = lineWidth * 1.8
+                let point = CGPoint(x: CGFloat(index) * step, y: min(max(size.height * (1 - CGFloat(value) / 100), radius), size.height - radius))
                 context.fill(Path(ellipseIn: CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)), with: .color(level))
             }
         }

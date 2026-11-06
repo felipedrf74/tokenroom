@@ -139,7 +139,7 @@ struct ProviderCard: View {
                 }
                     .foregroundStyle(stale ? Color.secondary : Color.primary)
                     .lineLimit(1)
-                    .frame(width: 136, alignment: .leading)
+                    .frame(width: 166, alignment: .leading)
                 if metered {
                     MeterTrack(
                         usedPercent: snapshot.usedPercent,
@@ -152,15 +152,16 @@ struct ProviderCard: View {
                     Spacer(minLength: 0)
                 }
                 // Held open in every row, so all the meters end at one edge.
-                Group {
-                    if !meterStale, let pace, pace.verdict == .ahead || pace.verdict == .limitReached {
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(paceColor(pace))
-                            .help(pace.caption())
+                Color.clear
+                    .frame(width: 10, height: 10)
+                    .overlay {
+                        if !meterStale, let pace, pace.verdict == .ahead || pace.verdict == .limitReached {
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(paceColor(pace))
+                                .help(pace.caption())
+                        }
                     }
-                }
-                .frame(width: 10)
                 if let note {
                     Image(systemName: note.symbol)
                         .font(.system(size: 9, weight: .semibold))
@@ -189,7 +190,7 @@ struct ProviderCard: View {
     private func compactReset(_ snapshot: QuotaSnapshot) -> (full: String, short: String)? {
         guard let primary = snapshot.windows.first, let resetsAt = primary.resetsAt, resetsAt > date else { return nil }
         let short = "resets in \(UsageFacts.countdown(to: resetsAt, now: date))"
-        return ("\(primary.displayTitle) · \(short)", short)
+        return (ReadingText.caption(RelayWindow(primary), now: date), short)
     }
 
     /// What a one-line row says about a reading that isn't current, besides graying it: a symbol
@@ -288,7 +289,8 @@ struct ProviderCard: View {
                     )
                 }
             }
-            caption(primaryCaption(snapshot))
+            // Expanded, the Resets fact below says when, to the minute.
+            caption(isExpanded && !awaiting ? snapshot.primaryTitle : primaryCaption(snapshot))
             if !stale, let primary = snapshot.windows.first, let forecast = Forecast.text(for: primary, history: weeks[primary.id], checkedAt: checkedAt ?? snapshot.fetchedAt, now: date) {
                 caption(forecast)
             }
@@ -343,7 +345,6 @@ struct ProviderCard: View {
         VStack(alignment: .leading, spacing: 10) {
             // Reset, pace against an even spread, plan, and last check, as a grid.
             UsageFactsGrid(
-                // The caption above already says when it resets.
                 facts: UsageFacts.facts(
                     for: snapshot.windows.first.map(RelayWindow.init),
                     pace: pace,
@@ -351,7 +352,7 @@ struct ProviderCard: View {
                     checkedAt: checkedAt,
                     isStale: stale,
                     now: date
-                ).filter { $0.label != "Resets" },
+                ),
                 columns: 2,
                 labelFont: .system(size: 11),
                 valueFont: .system(size: 13, weight: .medium),

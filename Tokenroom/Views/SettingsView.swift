@@ -1325,12 +1325,10 @@ private struct MenuBarSettings: View {
                         Text(style.title).tag(style)
                     }
                 }
-                Text(store.settings.popoverStyle.summary)
-                    .font(.callout).foregroundStyle(.secondary)
             } header: {
                 SettingsSectionTitle("Usage popover")
             } footer: {
-                Text("Orbit is the default. You can also switch styles with the palette button in the popover.")
+                Text("\(store.settings.popoverStyle.summary) You can also switch styles with the palette button in the popover.")
             }
             Section {
                 Picker("Style", selection: $store.settings.menuStyle) {
@@ -1348,6 +1346,8 @@ private struct MenuBarSettings: View {
                     Text("15 minutes").tag(15)
                     Text("30 minutes").tag(30)
                 }
+            } header: {
+                SettingsSectionTitle("Menu bar")
             } footer: {
                 if store.menuMeters.count > 6, store.settings.menuStyle != .highest {
                     Text("Many providers are showing. Highest only keeps the menu bar narrow so macOS doesn't hide it.")

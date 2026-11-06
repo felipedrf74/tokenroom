@@ -9,6 +9,8 @@ struct UsageFactsGrid: View {
     var valueFont: Font = .subheadline.weight(.semibold)
     var detailFont: Font = .caption2
     var spacing: CGFloat = 12
+    /// Lines a fact's detail may take before it shrinks to fit.
+    var detailLines = 2
     /// A last reading rather than a current one: its figures fade like every other stale figure.
     var isStale = false
 
@@ -31,8 +33,8 @@ struct UsageFactsGrid: View {
                             .font(detailFont)
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .lineLimit(detailLines)
+                            .minimumScaleFactor(0.8)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

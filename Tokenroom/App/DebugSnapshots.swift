@@ -218,7 +218,7 @@ enum DebugSnapshots {
         for entry in newsPages {
             for appearance in [NSAppearance.Name.aqua, .darkAqua] {
                 renderWindow(NewsWindowView(store: store, onOpenSettings: {}, page: entry.page), size: NSSize(width: 1160, height: 800), appearance: appearance,
-                             title: entry.title, to: output.appendingPathComponent("\(entry.name)\(appearance == .aqua ? "" : "-dark").png"))
+                             title: entry.title, showsTitle: false, to: output.appendingPathComponent("\(entry.name)\(appearance == .aqua ? "" : "-dark").png"))
             }
         }
         if let item = news.allAnnouncements.first {

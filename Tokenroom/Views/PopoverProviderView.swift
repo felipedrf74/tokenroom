@@ -215,7 +215,7 @@ struct PopoverProviderView: View {
     }
 
     private func detail(_ snapshot: QuotaSnapshot, window: RelayWindow) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 14) {
             hero(window)
             if let attention {
                 Text(attention).font(.system(size: 13, weight: .medium))
@@ -265,7 +265,10 @@ struct PopoverProviderView: View {
             }
             metadata(snapshot)
         }
-        .padding(20)
+        .padding(.horizontal, 20)
+        .padding(.top, 14)
+        // Past the footer's fade, so the last line can be read at the end of the scroll.
+        .padding(.bottom, 24)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -305,13 +308,12 @@ struct PopoverProviderView: View {
                         .foregroundStyle(pace.needsAttention ? TokenroomTokens.accentText : Color.secondary)
                 }
                 PopoverMeter(style: style, used: window.used, isStale: false, paceMark: pace.elapsedFraction, height: 7)
-                Text("\(PopoverInsights.paceDetail(pace)), with \(TokenroomFormat.percentText(pace.elapsedFraction * 100))% of the period elapsed.")
+                Text(PopoverInsights.paceSummary(pace))
                     .font(.system(size: 12)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .help(PopoverInsights.paceDetail(pace))
                 if pace.runsOutAt != nil {
-                    Text("Run-out is an estimate at the observed pace; future usage can change it.")
+                    Text("Estimated at this pace; usage may change.")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .accessibilityElement(children: .combine)
@@ -338,7 +340,7 @@ struct PopoverProviderView: View {
                     Text("0%")
                 }.font(.system(size: 9)).foregroundStyle(.secondary)
                 Sparkline(history: history, level: level(for: history, window: window))
-            }.frame(height: 60)
+            }.frame(height: 54)
             Text(Sparkline.summary(history)).font(.system(size: 11)).foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .ignore)

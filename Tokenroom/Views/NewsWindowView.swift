@@ -85,7 +85,7 @@ struct NewsWindowView: View {
                     ForEach(NewsDestination.allCases) { item in Label(item.rawValue, systemImage: item.symbol).tag(NewsPage.destination(item)).listItemTint(.monochrome) }
                 }
                 Section(isExpanded: $collectionsExpanded) {
-                        ForEach(NewsFilter.allCases.filter { $0 != .today }) { item in Label(item.rawValue, systemImage: item.symbol).tag(NewsPage.filter(item)).listItemTint(.monochrome) }
+                        ForEach(NewsFilter.allCases.filter { $0 != .today }) { item in Label(item == .retiring ? "Retirements" : item.rawValue, systemImage: item.symbol).tag(NewsPage.filter(item)).listItemTint(.monochrome) }
                         Label("Voices", systemImage: "quote.bubble").tag(NewsPage.tool("voices")).listItemTint(.monochrome)
                         Label("Status", systemImage: "waveform.path.ecg").tag(NewsPage.tool("status")).listItemTint(.monochrome)
                 } header: { Text("Collections") }

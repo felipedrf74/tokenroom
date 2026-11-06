@@ -179,7 +179,7 @@ struct PopoverView: View {
     @ViewBuilder
     private var highlights: some View {
         // A provider's page lists its own banked resets, and another's don't belong on it.
-        let banked: (count: Int, providers: [Provider]) = detailProvider == nil ? store.bankedResets : (0, [])
+        let banked: (count: Int, providers: [Provider]) = showsBankedPill ? store.bankedResets : (0, [])
         let news = store.settings.newsEnabled ? store.news : nil
         let models = news?.unseenModelCount ?? 0
         let updates = news?.unseenReleaseCount ?? 0
@@ -190,6 +190,11 @@ struct PopoverView: View {
                 highlightPills(banked: banked, models: models, updates: updates, short: true)
             }
         }
+    }
+
+    /// Hidden once the cards that list the resets are open: it only opens them.
+    private var showsBankedPill: Bool {
+        detailProvider == nil && !(isClassic && !store.bankedResets.providers.isEmpty && store.bankedResets.providers.allSatisfy(expanded.contains))
     }
 
     private func highlightPills(banked: (count: Int, providers: [Provider]), models: Int, updates: Int, short: Bool) -> some View {
@@ -348,7 +353,6 @@ struct PopoverView: View {
                 }
             } label: {
                 Image(systemName: "paintpalette").font(.system(size: 13)).frame(width: 26, height: 26)
-                    .foregroundStyle(.secondary)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -370,7 +374,6 @@ struct PopoverView: View {
                 }
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
             .disabled(store.isRefreshing)
             .help("Refresh")
             .accessibilityLabel("Refresh")

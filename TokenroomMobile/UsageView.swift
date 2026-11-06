@@ -66,6 +66,13 @@ struct UsageView: View {
                         .padding(.horizontal, -20)
                     }
                     if !store.readings.isEmpty {
+                        if !close.isEmpty {
+                            Text("All plans")
+                                .font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 16)
+                                .padding(.top, 4)
+                                .accessibilityAddTraits(.isHeader)
+                        }
                         tiles(at: date)
                     }
                     if !store.disconnected.isEmpty {
@@ -138,7 +145,7 @@ struct UsageView: View {
                     ForEach(row) { reading in
                         NavigationLink(value: reading.id) {
                             UsageTileView(reading: reading, date: date, showsOrigin: showsOrigin(reading),
-                                          warnedWindows: Set(closeWindows(at: date).filter { $0.provider.id == reading.id }.map(\.window.id)))
+                                          warnedWindows: Set(closeWindows(at: date).prefix(CloseToLimitCard.rowLimit).filter { $0.provider.id == reading.id }.map(\.window.id)))
                         }
                         .buttonStyle(.plain)
                         .contextMenu {

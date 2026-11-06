@@ -58,6 +58,13 @@ Removing popover styles. Two reviewers asked for it and two did not; it deletes 
 so it's the maintainer's product decision. Provider marks are never recoloured or redrawn. The
 copy-owned rules (errors start with "Couldn't…", sample labels) stay.
 
+## Decisions
+
+- The iPhone's "Turn on alerts" chip shows once there are readings. With none, there's nothing to
+  alert on and the first action should be connecting; Alerts stays in Settings.
+- In widgets the system tints, the monogram stands in for a provider's mark, since a mark can't be
+  tinted without recolouring it.
+
 ## Evidence
 
 `./scripts/ui-snapshots.sh <folder>` renders every screen from sample data. No login, key, or

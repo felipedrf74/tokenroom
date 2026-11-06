@@ -72,7 +72,7 @@ struct ProviderDetailView: View {
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(reading.source == SampleData.sourceLabel ? "Sample data" : reading.origin.phrase)
-                    Text("The line on each meter marks an even pace: where usage would be if spread evenly across the window. Tokenroom isn't affiliated with \(provider.name).")
+                    Text((provider.windows.contains(where: \.isMetered) ? "The line on each meter marks an even pace: where usage would be if spread evenly across the window. " : "") + "Tokenroom isn't affiliated with \(provider.name).")
                 }
             }
         }
@@ -125,7 +125,7 @@ struct ProviderDetailView: View {
             let facts = UsageFacts.facts(for: heroWindow, pace: heroPace, plan: provider.plan, checkedAt: nil, isStale: !provider.isLive, now: date)
             if !facts.isEmpty {
                 Divider()
-                UsageFactsGrid(facts: facts, columns: facts.count == 3 && typeSize < .xxLarge ? 3 : 2, labelFont: .caption, valueFont: .subheadline.weight(.medium), detailFont: .caption)
+                UsageFactsGrid(facts: facts, columns: facts.count == 3 && typeSize < .xxLarge ? 3 : 2, labelFont: .caption, valueFont: .subheadline.weight(.medium), detailFont: .caption, detailLines: 1)
             }
         }
         .padding(.vertical, 6)
@@ -295,7 +295,7 @@ private struct HistoryChart: View {
             // When the window reset during the week.
             ForEach(history.resets ?? [], id: \.self) { reset in
                 RuleMark(x: .value("Reset", reset))
-                    .foregroundStyle(.secondary.opacity(0.6))
+                    .foregroundStyle(Color.primary.opacity(0.25))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                     .accessibilityLabel("Reset")
                     .accessibilityValue(reset.formatted(date: .abbreviated, time: .shortened))

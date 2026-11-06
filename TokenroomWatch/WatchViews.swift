@@ -156,7 +156,8 @@ private struct WatchRow: View {
         HStack(spacing: 10) {
             if let window, window.isMetered {
                 // The provider's icon in the ring; the row reads its name, so the ring has no label.
-                UsageRing(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(at: date), label: "")
+                UsageRing(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(at: date), label: "",
+                          paceMark: UsageRanking.pace(for: window, isStale: !provider.isLive, history: item.history[window.id], now: date)?.elapsedFraction)
                     .frame(width: 40, height: 40)
                     .overlay { ProviderMark(provider: provider, size: 22) }
             } else {
@@ -171,7 +172,8 @@ private struct WatchRow: View {
                     Text(provider.shortName)
                         .font(.system(.body, weight: .semibold))
                         .lineLimit(1)
-                        .minimumScaleFactor(0.65)
+                        .minimumScaleFactor(0.8)
+                        .allowsTightening(true)
                     if window?.isMetered != false { Spacer(minLength: 0) }
                     Text(ReadingText.headline(window, now: date))
                         .font(.system(.body, weight: .medium).monospacedDigit())

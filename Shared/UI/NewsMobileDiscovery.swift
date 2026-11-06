@@ -92,13 +92,9 @@ struct MobileNewsFollowing: View {
     private func heading(_ title: String) -> some View {
         Text(title).font(.headline).accessibilityAddTraits(.isHeader)
     }
-    /// The row's name with a small chevron beside it: tapping it opens the source, while the mark
-    /// at the row's end follows it.
+    /// The row's name. Tapping the row opens the source; the mark at its end follows it.
     private func rowTitle(_ name: String) -> some View {
-        HStack(spacing: 4) {
-            Text(name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
-            Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
-        }
+        Text(name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
     }
     private func sourceRow(_ source: FeedSource) -> some View {
         let layout = typeSize >= .xxLarge ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout(alignment: .center, spacing: 4))
@@ -110,8 +106,9 @@ struct MobileNewsFollowing: View {
                         MobileNewsSourceMark(sourceID: source.id, name: source.name, size: 30)
                         VStack(alignment: .leading, spacing: 2) {
                             rowTitle(source.name)
-                            Text(health?.followingCaption ?? source.kind.label)
-                                .font(.caption).foregroundStyle(MobileNewsPalette.secondary)
+                            if let caption = health?.followingCaption {
+                                Text(caption).font(.caption).foregroundStyle(MobileNewsPalette.secondary)
+                            }
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }.frame(minHeight: 44).contentShape(Rectangle())
                 }.buttonStyle(.plain)
@@ -259,7 +256,9 @@ struct MobileNewsSavedList: View {
                     }
                 }
             }
-            Text("Original articles require a connection.").font(.caption).foregroundStyle(MobileNewsPalette.secondary)
+            if !items.isEmpty {
+                Text("Original articles require a connection.").font(.caption).foregroundStyle(MobileNewsPalette.secondary)
+            }
         }
     }
     private func savedRow(_ item: NewsBookmark) -> some View {

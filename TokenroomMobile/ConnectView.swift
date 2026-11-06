@@ -93,7 +93,7 @@ struct ConnectView: View {
                     ForEach(needsMac, id: \.provider) { entry in
                         if case .needsMac(let reason) = entry.action {
                             // The header and footer cover what most have in common.
-                            ConnectRow(provider: entry.provider, detail: reason == Self.commonReason ? nil : reason)
+                            ConnectRow(provider: entry.provider, detail: reason == Self.commonReason ? nil : reason.replacingOccurrences(of: "Needs Tokenroom on a Mac. ", with: ""))
                         }
                     }
                 } header: {

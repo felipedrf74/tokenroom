@@ -96,8 +96,14 @@ struct PopoverMeter: View {
             GeometryReader { geometry in
                 RoundedRectangle(cornerRadius: height / 2).fill(TokenroomTokens.track)
                     .overlay(alignment: .leading) {
-                        Rectangle().fill(tint.opacity(isStale ? 1 : 0.8))
+                        Rectangle().fill(tint.opacity(isStale ? 1 : 0.85))
                             .frame(width: geometry.size.width * fraction)
+                            .overlay(alignment: .leading) {
+                                // Past the even pace, the same colour a step lighter, as other meters.
+                                if let start = aheadStart {
+                                    Color.white.opacity(0.28).padding(.leading, geometry.size.width * start)
+                                }
+                            }
                     }
                     .clipShape(RoundedRectangle(cornerRadius: height / 2))
                 paceTick(width: geometry.size.width)
@@ -109,10 +115,25 @@ struct PopoverMeter: View {
         }
     }
 
+    /// Where a fill runs ahead of the even pace, as a fraction of the meter.
+    private var aheadStart: Double? {
+        guard let paceMark, paceMark.isFinite, !isStale, fraction > paceMark + 0.015 else { return nil }
+        return max(paceMark, 0)
+    }
+
     @ViewBuilder private func paceTick(width: CGFloat) -> some View {
         if let paceMark, paceMark.isFinite, !isStale {
-            Capsule().fill(TokenroomTokens.paceMark).frame(width: 1.5, height: height + 2)
-                .offset(x: max(0, min(width - 1.5, width * min(max(paceMark, 0), 1) - 0.75)), y: -1)
+            let x = width * min(max(paceMark, 0), 1)
+            if style == .instrument {
+                // A gap in the segments, in the panel's own colour, with the mark in it.
+                Rectangle().fill(Color(hex: "1A2430")).frame(width: 4, height: height + 2)
+                    .offset(x: max(0, min(width - 4, x - 2)), y: -1)
+                Capsule().fill(Color.white.opacity(0.7)).frame(width: 1.5, height: height + 2)
+                    .offset(x: max(0, min(width - 1.5, x - 0.75)), y: -1)
+            } else {
+                Capsule().fill(TokenroomTokens.paceMark).frame(width: 1.5, height: height + 2)
+                    .offset(x: max(0, min(width - 1.5, x - 0.75)), y: -1)
+            }
         }
     }
 }
