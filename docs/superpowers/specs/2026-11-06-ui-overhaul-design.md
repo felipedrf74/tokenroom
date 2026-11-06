@@ -65,9 +65,10 @@ copy-owned rules (errors start with "Couldn't…", sample labels) stay.
 - In widgets the system tints, the monogram stands in for a provider's mark, since a mark can't be
   tinted without recolouring it.
 
-- News's text actions (Check collection, Mark these stories read, Add the tools I use) are ink at a
-  medium weight. Caption grey read as status, and system blue shares a hue with a healthy reading;
-  News's one coloured control is Read article.
+- News's text actions (Check collection, Mark these stories read, Add the tools I use, Choose what to
+  follow, Explore skills.sh) are ink at a medium weight. Caption grey read as status, and system
+  blue shares a hue with a healthy reading; News's one coloured control is Read article. A link
+  that stands alone adds the app's own glyph: a chevron into the app, an arrow out of it.
 
 ## Evidence
 
