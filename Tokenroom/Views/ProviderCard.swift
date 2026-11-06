@@ -348,8 +348,7 @@ struct ProviderCard: View {
                 labelFont: .system(size: 9, weight: .medium),
                 valueFont: .system(size: 12, weight: .semibold),
                 detailFont: .system(size: 10),
-                spacing: 6,
-                cornerRadius: 7
+                spacing: 6
             )
             if let primary = snapshot.windows.first, primary.isMetered, let week = weeks[primary.id], !week.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
