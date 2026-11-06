@@ -77,57 +77,49 @@ struct MeterTrack: View {
 }
 
 /// A meter of plain shapes, for surfaces the system tints or that can't blend: a watch face, the
-/// Lock Screen. The same reading as `MeterTrack`: a track, the fill, the even pace as a gap with a
-/// slim mark, and the stretch past it a step lighter.
+/// Lock Screen, a tinted widget. The same reading as `MeterTrack`: one capsule, the fill, and past
+/// the even pace the same fill a step lighter, with a slim mark on the join.
 struct FlatMeter: View {
     var used: Double
     var pace: Double? = nil
     var tint: Color
     var height: CGFloat = 4
 
-    /// Where the fill runs, in points of `width`: up to the pace's gap, and on from it when use has
+    /// Where the fill runs, in points of `width`: up to the even pace, and on from it when use has
     /// passed the pace. Exactly the reading, so a meter at 0% draws nothing, as `MeterLayout` says.
     static func runs(used: Double, pace: Double?, width: CGFloat) -> (fill: ClosedRange<CGFloat>?, ahead: ClosedRange<CGFloat>?) {
         let end = MeterLayout.fillLength(usedPercent: used, total: width)
         guard end > 0 else { return (nil, nil) }
         guard let pace else { return (0...end, nil) }
         let mark = width * CGFloat(min(max(pace, 0), 1))
-        let fill = min(end, mark - gap / 2)
-        let ahead = mark + gap / 2
-        return (fill > 0 ? 0...fill : nil, end > ahead ? ahead...end : nil)
+        return (mark > 0 ? 0...min(end, mark) : nil, end > mark ? mark...end : nil)
     }
 
-    private static let gap: CGFloat = 3
-
+    /// A stretch of the bar, square at both ends: the capsule around them rounds the bar's own.
     private struct Run: Shape {
         var span: ClosedRange<CGFloat>?
 
         func path(in rect: CGRect) -> Path {
             guard let span, span.upperBound > span.lowerBound else { return Path() }
-            let length = span.upperBound - span.lowerBound
-            return Path(roundedRect: CGRect(x: span.lowerBound, y: 0, width: length, height: rect.height),
-                        cornerRadius: min(rect.height, length) / 2, style: .continuous)
+            return Path(CGRect(x: span.lowerBound, y: 0, width: span.upperBound - span.lowerBound, height: rect.height))
         }
     }
 
     var body: some View {
         GeometryReader { geometry in
             let width = geometry.size.width
-            let mark = pace.map { width * CGFloat(min(max($0, 0), 1)) }
             let runs = Self.runs(used: used, pace: pace, width: width)
             ZStack(alignment: .leading) {
-                if let mark {
-                    Run(span: 0...max(mark - Self.gap / 2, 0)).fill(.primary.opacity(0.18))
-                    Run(span: min(mark + Self.gap / 2, width)...width).fill(.primary.opacity(0.18))
-                } else {
-                    Run(span: 0...width).fill(.primary.opacity(0.18))
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.primary.opacity(0.18))
+                    Run(span: runs.fill).fill(tint).widgetAccentable()
+                    Run(span: runs.ahead).fill(tint.mix(with: .white, by: 0.3)).widgetAccentable()
                 }
-                Run(span: runs.fill).fill(tint).widgetAccentable()
-                Run(span: runs.ahead).fill(tint.mix(with: .white, by: 0.3)).widgetAccentable()
-                if let mark {
+                .clipShape(Capsule())
+                if let pace {
                     Rectangle().fill(.primary.opacity(0.5))
                         .frame(width: 1.5, height: height + 2)
-                        .offset(x: mark - 0.75, y: -1)
+                        .offset(x: width * CGFloat(min(max(pace, 0), 1)) - 0.75, y: -1)
                 }
             }
         }

@@ -76,10 +76,10 @@ final class ParserTests: XCTestCase {
         XCTAssertNil(FlatMeter.runs(used: 0, pace: 0.5, width: 100).ahead)
         XCTAssertEqual(FlatMeter.runs(used: 1, pace: nil, width: 100).fill?.upperBound, 1)
         XCTAssertEqual(FlatMeter.runs(used: 1, pace: 0.5, width: 100).fill?.upperBound, 1)
-        // Past the pace, the fill stops at the gap and carries on from it to the reading.
+        // Past the pace, the fill stops there and the lighter stretch carries on to the reading.
         let ahead = FlatMeter.runs(used: 78, pace: 0.5, width: 100)
-        XCTAssertEqual(ahead.fill?.upperBound, 48.5)
-        XCTAssertEqual(ahead.ahead?.lowerBound, 51.5)
+        XCTAssertEqual(ahead.fill?.upperBound, 50)
+        XCTAssertEqual(ahead.ahead?.lowerBound, 50)
         XCTAssertEqual(ahead.ahead?.upperBound, 78)
         // Behind the pace, no stretch; a pace at the very start leaves only the stretch.
         XCTAssertNil(FlatMeter.runs(used: 40, pace: 0.5, width: 100).ahead)

@@ -111,6 +111,10 @@ enum TokenroomTokens {
     /// the tab bar's ink it would turn filled buttons into white on white.
     static let control = Color(light: (0, 122, 255), dark: (10, 132, 255))
 
+    /// News's text actions. News reads in ink, with Read article its one coloured control, so these
+    /// are ink at a medium weight: not caption grey, and not a level's hue.
+    static let newsAction = Color.primary
+
     /// Where a chart's line and area sit: neutral, so a week of history never competes with the
     /// level colour on the meter beside it.
     static let chartLine = Color.secondary

@@ -85,7 +85,7 @@ struct MacNewsReaderContent: View {
         if latest == nil, edition.topStory == nil, models.isEmpty, updates.isEmpty, voices.isEmpty, status.isEmpty, retiring.isEmpty {
             ContentUnavailableView("Your briefing is quiet", systemImage: "newspaper", description: Text("Follow tools and voices, browse the model archive, or check again."))
             NewsNavigationLink("Choose what to follow") { ScrollView { MacNewsFollowing(news: news, library: library, suggestedProviders: suggestedProviders).padding(24) }.navigationTitle("Following") }
-                .foregroundStyle(TokenroomTokens.control).tint(TokenroomTokens.control)
+                .foregroundStyle(TokenroomTokens.newsAction).fontWeight(.medium).tint(TokenroomTokens.newsAction)
         }
         Text("Original sources · Personal reset times are in Usage")
             .font(.caption).foregroundStyle(TokenroomTokens.newsSecondaryText).padding(.top, 4)
@@ -223,13 +223,13 @@ struct MacNewsCollectionContent: View {
                     HStack {
                         Text("\(items.count) \(items.count == 1 ? "story" : "stories")").font(.caption).foregroundStyle(TokenroomTokens.newsSecondaryText)
                         Spacer()
-                        Button("Mark these stories read") { library.markAllRead(items) }.buttonStyle(.plain).font(.caption).foregroundStyle(TokenroomTokens.control)
+                        Button("Mark these stories read") { library.markAllRead(items) }.buttonStyle(.plain).font(.caption).fontWeight(.medium).foregroundStyle(TokenroomTokens.newsAction)
                     }
                     MacNewsStoryList(items: items, news: news, library: library)
                 }
             }
             NewsNavigationLink("Choose what to follow") { ScrollView { MacNewsFollowing(news: news, library: library).padding(24) }.navigationTitle("Following") }
-                .foregroundStyle(TokenroomTokens.control).tint(TokenroomTokens.control)
+                .foregroundStyle(TokenroomTokens.newsAction).fontWeight(.medium).tint(TokenroomTokens.newsAction)
                 .buttonStyle(.plain).foregroundStyle(TokenroomTokens.newsSecondaryText)
         }.padding(24).frame(maxWidth: 1160, alignment: .leading).frame(maxWidth: .infinity)
     }

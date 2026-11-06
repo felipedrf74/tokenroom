@@ -65,6 +65,10 @@ copy-owned rules (errors start with "Couldn't…", sample labels) stay.
 - In widgets the system tints, the monogram stands in for a provider's mark, since a mark can't be
   tinted without recolouring it.
 
+- News's text actions (Check collection, Mark these stories read, Add the tools I use) are ink at a
+  medium weight. Caption grey read as status, and system blue shares a hue with a healthy reading;
+  News's one coloured control is Read article.
+
 ## Evidence
 
 `./scripts/ui-snapshots.sh <folder>` renders every screen from sample data. No login, key, or
