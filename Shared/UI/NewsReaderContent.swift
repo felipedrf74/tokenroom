@@ -46,13 +46,18 @@ struct NewsCollectionView: View {
                     let collectionItems = NewsDiscovery.stories(news.allAnnouncements, collection: collection, query: query)
                     let source = sourceID.flatMap { id in news.sources.first { $0.id == id } }
                     let items = source.map { NewsDiscovery.stories(collectionItems, source: $0) } ?? collectionItems.filter { sourceID == nil || $0.sourceID == sourceID }
-                    Button { library.markAllRead(items) } label: { NewsLinkLabel(title: "Mark these stories read", symbol: "checkmark.circle") }
-                        .buttonStyle(.plain).disabled(items.isEmpty)
                     if items.isEmpty {
-                        ContentUnavailableView("No stories here yet", systemImage: "newspaper", description: Text("Choose sources in Following, change your search, or refresh."))
-                        followLink
+                        if query.isEmpty {
+                            ContentUnavailableView("No stories here yet", systemImage: "newspaper", description: Text("Choose sources in Following, change your search, or refresh."))
+                            followLink
+                        } else {
+                            ContentUnavailableView.search(text: query)
+                        }
+                    } else {
+                        Button { library.markAllRead(items) } label: { NewsLinkLabel(title: "Mark these stories read", symbol: "checkmark.circle") }
+                            .buttonStyle(.plain)
+                        MobileNewsStoryList(items: items, news: news, library: library)
                     }
-                    if !items.isEmpty { MobileNewsStoryList(items: items, news: news, library: library) }
                 }
             }.padding(20).frame(maxWidth: 820, alignment: .leading).frame(maxWidth: .infinity)
             #endif

@@ -66,7 +66,7 @@ copy-owned rules (errors start with "Couldn't…", sample labels) stay.
   tinted without recolouring it.
 
 - News's text actions (Check collection, Mark these stories read, Add the tools I use, Choose what to
-  follow, Explore skills.sh) are ink at a medium weight. Caption grey read as status, and system
+  follow, Explore skills.sh, Browse collections) are ink at a medium weight. Caption grey read as status, and system
   blue shares a hue with a healthy reading; News's one coloured control is Read article. An action
   that stands alone adds a glyph: a chevron into the app, an arrow out of it, or what it does.
 

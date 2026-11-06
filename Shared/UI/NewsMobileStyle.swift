@@ -135,11 +135,14 @@ struct MobileNewsHero: View {
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
             }.buttonStyle(.plain)
+            // At the accessibility sizes the action comes first: the excerpt can run under the tab
+            // bar, the page's one coloured control can't.
+            if typeSize.isAccessibilitySize { heroActions }
             if let excerpt = item.displayExcerpt, !excerpt.isEmpty {
                 Text(excerpt).font(.subheadline).foregroundStyle(MobileNewsPalette.secondary)
                     .lineLimit(typeSize.isAccessibilitySize ? 3 : 2)
             }
-            heroActions
+            if !typeSize.isAccessibilitySize { heroActions }
         }
     }
     private var byline: some View {

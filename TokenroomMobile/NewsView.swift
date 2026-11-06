@@ -54,7 +54,14 @@ struct NewsView: View {
         if typeSize.isAccessibilitySize {
             Menu {
                 ForEach(NewsDestination.allCases) { item in Button(item.rawValue, systemImage: item.symbol) { destination = item } }
-            } label: { Label(destination.rawValue, systemImage: destination.symbol).frame(minHeight: 44) }
+            } label: {
+                // The only way to the other destinations at these sizes, so it has to look like one.
+                HStack(spacing: 6) {
+                    Label(destination.rawValue, systemImage: destination.symbol)
+                    Image(systemName: "chevron.up.chevron.down").font(.footnote.weight(.semibold)).foregroundStyle(MobileNewsPalette.secondary).accessibilityHidden(true)
+                }
+                .frame(minHeight: 44)
+            }
         } else {
             Picker("News destination", selection: $destination) {
                 ForEach(NewsDestination.allCases) { Text($0.rawValue).tag($0) }

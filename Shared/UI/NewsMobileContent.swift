@@ -55,7 +55,7 @@ struct MobileNewsReaderContent: View {
             ForEach(NewsCollection.allCases) { collection in
                 NewsNavigationLink(collection.rawValue) { NewsCollectionView(news: news, library: library, collection: collection) }
             }
-        } label: { Label("Browse collections", systemImage: "square.grid.2x2").frame(minHeight: 44) }
+        } label: { NewsLinkLabel(title: "Browse collections", symbol: "chevron.up.chevron.down") }
         Text("Original sources · Personal reset times are in Usage").font(.caption).foregroundStyle(MobileNewsPalette.secondary)
     }
     private func shelf(_ title: String, collection: NewsCollection, items: [FeedItem]) -> some View {
@@ -110,7 +110,7 @@ struct MobileNewsFreshnessView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     HStack(spacing: 4) {
                         Text("Details").font(.footnote)
-                        Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
+                        Image(systemName: "chevron.right").font(.caption2.weight(.semibold))
                     }.foregroundStyle(MobileNewsPalette.secondary)
                 }.frame(minHeight: 44).contentShape(Rectangle())
             }.buttonStyle(.plain)

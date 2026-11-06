@@ -143,16 +143,21 @@ final class UISnapshotTests: XCTestCase {
             }
         }
         fixture = normal
-        let app = launch(["-onboarded", "YES", "-TokenroomOpen", "tokenroom://news", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityL"])
-        shoot("iphone-news-large-text")
-        for _ in 0..<4 where !openCollection(app) {
-            app.swipeUp()
-            Thread.sleep(forTimeInterval: 0.5)
+        for (name, path) in [("", normal), ("-failed", folder.appendingPathComponent("failed/news.json").path)] {
+            fixture = path
+            for look in Look.allCases {
+                let app = launch(["-onboarded", "YES", "-TokenroomOpen", "tokenroom://news", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityL"], look: look)
+                if name.isEmpty { shoot("iphone-news-large-text\(look.suffix)") }
+                for _ in 0..<6 {
+                    if openCollection(app) {
+                        shoot("iphone-news-collection-large-text\(name)\(look.suffix)")
+                        break
+                    }
+                    app.swipeUp()
+                    Thread.sleep(forTimeInterval: 0.5)
+                }
+            }
         }
-        app.swipeDown()
-        app.swipeDown()
-        Thread.sleep(forTimeInterval: 0.8)
-        shoot("iphone-news-collection-large-text")
     }
 
     func testSettings() {
