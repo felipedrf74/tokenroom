@@ -28,7 +28,7 @@ final class UISnapshotTests: XCTestCase {
         XCUIDevice.shared.appearance = look.appearance
         let app = XCUIApplication()
         app.terminate()
-        app.launchArguments = ["-TokenroomSnapshotNews", fixture, "-AppleLocale", "en_US", "-AppleLanguages", "(en)"]
+        app.launchArguments = ["-TokenroomSnapshotNews", fixture, "-TokenroomSnapshotConnect", "YES", "-AppleLocale", "en_US", "-AppleLanguages", "(en)"]
             + (sample ? ["-sampleMode", "YES"] : []) + arguments
         app.launch()
         Thread.sleep(forTimeInterval: 1.6)
@@ -102,6 +102,8 @@ final class UISnapshotTests: XCTestCase {
             shoot("iphone-settings-alerts\(look.suffix)")
             _ = launch(["-onboarded", "YES", "-TokenroomOpen", "tokenroom://keys"], look: look)
             shoot("iphone-settings-keys\(look.suffix)")
+            _ = launch(["-onboarded", "YES", "-TokenroomOpen", "tokenroom://connect"], look: look)
+            shoot("iphone-settings-plans\(look.suffix)")
         }
     }
 

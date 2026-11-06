@@ -14,9 +14,21 @@ import SwiftUI
                            keys: APIKeyStore(servicePrefix: "app.tokenroom.inert-host.", keychain: .init(
                                copy: { _ in (errSecItemNotFound, nil) }, add: { _ in errSecInteractionNotAllowed },
                                update: { _, _ in errSecInteractionNotAllowed }, delete: { _ in errSecItemNotFound })),
-                           directory: nil, connectOnIPhone: false,
+                           directory: nil, connectOnIPhone: showsConnect(launchDefaults),
                            notificationScheduler: { _ in }, allowsExternalEffects: false,
                            launchDefaults: launchDefaults)
+    }
+}
+
+extension MobileRuntime {
+    /// `-TokenroomSnapshotConnect YES`: an inert snapshot still shows the plan screens and choices
+    /// a real user gets. Nothing in them works without a store that can reach out.
+    private static func showsConnect(_ launchDefaults: UserDefaults) -> Bool {
+        #if DEBUG
+        launchDefaults.bool(forKey: "TokenroomSnapshotConnect")
+        #else
+        false
+        #endif
     }
 }
 
