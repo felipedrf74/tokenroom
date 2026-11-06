@@ -106,7 +106,7 @@ struct FlatMeter: View {
                 Run(from: 0, to: gapStart).fill(.primary.opacity(0.18))
                 Run(from: gapEnd, to: width).fill(.primary.opacity(0.18))
                 Run(from: 0, to: min(max(end, height), gapStart)).fill(tint).widgetAccentable()
-                Run(from: gapEnd, to: end).fill(tint.opacity(0.6)).widgetAccentable()
+                Run(from: gapEnd, to: end).fill(tint.mix(with: .white, by: 0.3)).widgetAccentable()
                 if let mark {
                     Rectangle().fill(.primary.opacity(0.5))
                         .frame(width: 1.5, height: height + 2)
