@@ -16,8 +16,10 @@ struct ProviderMark: View {
             let shape = RoundedRectangle(cornerRadius: size * 0.23, style: .continuous)
             Group {
                 if provider.iconIsMark {
+                    // White in light; a step down in dark, where a pure white tile is the
+                    // brightest thing on screen. The mark on it is untouched.
                     shape
-                        .fill(Color.white)
+                        .fill(Color(light: (255, 255, 255), dark: (230, 230, 234)))
                         .overlay {
                             image
                                 .resizable()
@@ -34,7 +36,7 @@ struct ProviderMark: View {
             }
             .frame(width: size, height: size)
             .clipShape(shape)
-            .overlay(shape.strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
+            .overlay(shape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
             .modifier(IconLift(size: size))
             .accessibilityHidden(true)
         } else {
@@ -52,14 +54,14 @@ struct ProviderMark: View {
     }
 }
 
-/// A provider tile sits a hair above its card, as app icons do in Apple's own lists: a soft
+/// A provider tile sits a hair above its card, as app icons do in Apple's own lists: a faint
 /// shadow under it, none at glyph sizes where it would only blur the edge.
 struct IconLift: ViewModifier {
     var size: CGFloat
 
     func body(content: Content) -> some View {
         if size >= 20 {
-            content.shadow(color: .black.opacity(0.14), radius: size * 0.05, y: size * 0.025)
+            content.shadow(color: .black.opacity(0.08), radius: size * 0.04, y: size * 0.02)
         } else {
             content
         }

@@ -1,9 +1,8 @@
 import SwiftUI
 
-/// A ring for one window: used percent in its level's colour, a lighter tint at the start running
-/// to the full colour at the tip, where a rounded cap casts a soft shadow, as Apple's Activity
-/// rings do. A label (the monogram or the percent) sits in the middle. Scales to its frame, from a
-/// Watch row to the iPhone's summary card.
+/// A ring for one window: used percent in its level's colour, a slightly lighter tint at the start
+/// running to the full colour at its rounded tip. A label (the monogram or the percent) sits in
+/// the middle. Scales to its frame, from a Watch row to the iPhone's summary card.
 struct UsageRing: View {
     var used: Double
     var isStale: Bool
@@ -26,20 +25,11 @@ struct UsageRing: View {
                         .trim(from: 0, to: fraction)
                         .stroke(fill, style: StrokeStyle(lineWidth: width, lineCap: .round))
                         .rotationEffect(.degrees(-90))
-                    if showsTip {
-                        // The tip: a cap in the full colour with a soft shadow, so the end reads
-                        // as raised above the track (and above the start once it laps).
-                        Circle()
-                            .fill(TokenroomTokens.usageTones(usedPercent: used).end)
-                            .frame(width: width, height: width)
-                            .shadow(color: .black.opacity(0.28), radius: width * 0.22)
-                            .offset(tipOffset(radius: side / 2))
-                    }
                     if let pace {
                         // A notch cut through the ring where an even pace would be.
                         Capsule()
                             .fill(.black)
-                            .frame(width: 4, height: width + 2)
+                            .frame(width: 3, height: width + 2)
                             .offset(y: -side / 2)
                             .rotationEffect(.degrees(360 * pace))
                             .blendMode(.destinationOut)
@@ -48,15 +38,15 @@ struct UsageRing: View {
                 .compositingGroup()
                 if let pace {
                     Capsule()
-                        .fill(Color.primary.opacity(0.8))
-                        .frame(width: 2, height: width + 5)
+                        .fill(TokenroomTokens.paceMark)
+                        .frame(width: 1.5, height: width + 1)
                         .offset(y: -side / 2)
                         .rotationEffect(.degrees(360 * pace))
                 }
                 HeadlineValue(
                     text: label,
-                    font: .system(size: side * 0.3, weight: .semibold, design: .rounded),
-                    signFont: .system(size: side * 0.17, weight: .semibold, design: .rounded)
+                    font: .system(size: side * 0.29, weight: .semibold, design: .rounded),
+                    signFont: .system(size: side * 0.16, weight: .medium, design: .rounded)
                 )
                 .minimumScaleFactor(0.5)
                 .lineLimit(1)
@@ -78,17 +68,6 @@ struct UsageRing: View {
 
     private var fraction: CGFloat {
         CGFloat(min(max(used, 0), 100) / 100)
-    }
-
-    /// A tip needs room to show as one: not on a sliver, not on a faded reading.
-    private var showsTip: Bool {
-        !isStale && fraction >= 0.04
-    }
-
-    /// Where the tip sits: the end of the arc, clockwise from 12 o'clock.
-    private func tipOffset(radius: CGFloat) -> CGSize {
-        let angle = Double(fraction) * 2 * .pi - .pi / 2
-        return CGSize(width: radius * cos(angle), height: radius * sin(angle))
     }
 
     /// From a lighter tint of the level's colour to the colour itself at the tip. It starts a
