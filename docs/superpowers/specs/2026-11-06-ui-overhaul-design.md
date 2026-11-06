@@ -1,6 +1,6 @@
 # Tokenroom UI overhaul
 
-Date: 6 November 2026. Status: approved by the design council in rounds; see the pull request.
+Date: 6 November 2026. Status: implemented. Approved by the design council at `347e0b9`, round 13.
 
 ## Goal
 
