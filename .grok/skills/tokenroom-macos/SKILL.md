@@ -108,7 +108,7 @@ A debug build renders the popover, Settings tabs, the News window, and the menu 
 
 ## Settings window
 
-Settings is a `NavigationSplitView`: a sidebar with "Search settings" (matches page titles, descriptions, and provider names, and jumps to the first match), sections Essentials (General, Menu Bar), Usage (Providers, API Keys, Alerts), and More (News, iPhone & Watch), each page a System Settings tile (`SettingsIcon`). Each page's form starts with `SettingsHeaderSection` (tile, title, one line, a `SettingsTag` count such as "11 of 16 on"). Provider rows carry tags: Unofficial, Key, Admin key, Login or token, Detected. The window opens at 820 × 620 with a unified toolbar; snapshots render it in a titled window (`renderWindow`).
+Settings is a `NavigationSplitView`: a sidebar with "Search settings" (matches page titles, descriptions, and provider names, and jumps to the first match), sections Essentials (General, Menu Bar), Usage (Providers, API Keys, Alerts), and More (News, iPhone & Watch), each page a System Settings tile (`SettingsIcon`). Each page's form starts with `SettingsHeaderSection` (tile, title, one line, a `SettingsTag` count such as "11 of 16 on"). Provider rows carry no tags: the first section with an unofficial source says so in its footnote (and each such row in its tooltip and VoiceOver label), and only exceptions name their connection in the caption (Key, Admin key, Login or token). Add Key and Sign In sit on the row's trailing edge. The window opens at 820 × 620 with a unified toolbar; snapshots render it in a titled window (`renderWindow`).
 
 ## Test host
 

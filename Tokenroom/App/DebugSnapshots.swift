@@ -1,5 +1,6 @@
 #if DEBUG
 import AppKit
+import CloudKit
 import SwiftUI
 
 /// `-TokenroomSnapshots <folder>`: renders the popover, Settings, and News with sample data to
@@ -186,15 +187,28 @@ enum DebugSnapshots {
             render(PopoverView(store: store, onSettings: { _ in }), width: TokenroomTokens.popoverWidth, appearance: appearance, to: output.appendingPathComponent("popover\(suffix).png"))
             render(PopoverView(store: store, onSettings: { _ in }, expanded: [.openai, .deepseek]), width: TokenroomTokens.popoverWidth, appearance: appearance, to: output.appendingPathComponent("popover-expanded\(suffix).png"))
         }
+        // The page needs a relay. Its own store, so the popover shots above show no sync line, and
+        // a stand-in for iCloud that goes nowhere, over the throwaway defaults.
+        let relay = RelayPublisher(defaults: defaults, cloud: SnapshotCloud())
+        let relayStore = QuotaStore(settings: settings, clients: [], cache: SnapshotCache(directory: scratch), relay: relay, news: news)
+        Task { await relay.publish(store.relayEnvelope(at: now), force: true, now: now.addingTimeInterval(-120)) }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
         for tab in SettingsTab.allCases {
             for appearance in [NSAppearance.Name.aqua, .darkAqua] {
                 let request = SettingsTabRequest()
                 request.tab = tab
-                renderWindow(SettingsView(store: store, request: request), size: NSSize(width: 820, height: 620), appearance: appearance,
+                renderWindow(SettingsView(store: tab == .iPhone ? relayStore : store, request: request), size: NSSize(width: 820, height: 620), appearance: appearance,
                              title: SettingsPage.page(for: tab).title,
                              to: output.appendingPathComponent("settings-\(tab.rawValue)\(appearance == .aqua ? "" : "-dark").png"))
             }
         }
+        // What a copy without iCloud shows, as an ad-hoc build does.
+        let unavailable = SettingsTabRequest()
+        unavailable.tab = .iPhone
+        let localStore = QuotaStore(settings: settings, clients: [], cache: SnapshotCache(directory: scratch),
+                                    relay: RelayPublisher(defaults: defaults, cloud: nil), news: news)
+        renderWindow(SettingsView(store: localStore, request: unavailable), size: NSSize(width: 820, height: 620),
+                     title: SettingsPage.page(for: .iPhone).title, to: output.appendingPathComponent("settings-iPhone-unavailable.png"))
         let newsPages: [(page: NewsPage, name: String, title: String)] = [
             (.destination(.today), "news", "Today"), (.destination(.following), "news-following", "Following"),
             (.destination(.skills), "news-skills", "Skills"), (.destination(.saved), "news-saved", "Saved"),
@@ -231,6 +245,23 @@ enum DebugSnapshots {
         return true
     }
 
+    /// iCloud for the iPhone & Watch capture: it accepts everything and keeps nothing.
+    private struct SnapshotCloud: RelayCloud {
+        func accountStatus() async throws -> CKAccountStatus { .available }
+        func accountFingerprint() async throws -> String { "" }
+        func publish(sourceID: String, kind: String, label: String, envelope: RelayEnvelope) async throws {}
+        func publishHistory(sourceID: String, history: RelayHistory) async throws {}
+        func alertPreferences() async throws -> AlertPreferences? { nil }
+        func syncAlertPreferences(base: AlertPreferences?, local: AlertPreferences) async throws -> AlertPreferencesSync.Resolution {
+            .init(preferences: local, needsPublish: false)
+        }
+        func wentOutOnANeighbouringDay(_ alert: UsageAlert, now: Date) async throws -> Bool { false }
+        func saveAlert(_ alert: UsageAlert) async throws -> Bool { false }
+        func pruneEvents(now: Date) async throws {}
+        func saveEvent(id: String, provider: String, level: Int, title: String, body: String, resetsAt: Date?, kind: String, key: String) async throws {}
+        func resetZone() async {}
+    }
+
     /// Each provider's mark at the popover's size and the sidebar's, with its name.
     private struct ProviderIconSheet: View {
         var body: some View {
@@ -264,6 +295,11 @@ enum DebugSnapshots {
         window.setFrameOrigin(NSPoint(x: -20_000, y: -20_000))
         window.orderFrontRegardless()
         RunLoop.main.run(until: Date().addingTimeInterval(1.2))
+        // A text field that took the keyboard would show its selection, and differ between runs.
+        if window.firstResponder is NSText {
+            window.makeFirstResponder(nil)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        }
         if let image = composited(window) {
             try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: url)
         } else if let frame = window.contentView?.superview, let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) {
@@ -285,10 +321,13 @@ enum DebugSnapshots {
     }
 
     /// Draws as the active window, as it is in use: an inactive one greys out its controls, which
-    /// makes every switch read as off.
+    /// makes every switch read as off. The last two are what those controls ask; AppKit doesn't
+    /// publish them.
     private final class ActiveSnapshotWindow: NSWindow {
         override var isKeyWindow: Bool { true }
         override var isMainWindow: Bool { true }
+        @objc var hasKeyAppearance: Bool { true }
+        @objc var hasMainAppearance: Bool { true }
     }
 
     private static func render<Content: View>(_ view: Content, width: CGFloat?, height: CGFloat? = nil, appearance: NSAppearance.Name, to url: URL) {
