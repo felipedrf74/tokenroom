@@ -107,6 +107,10 @@ enum TokenroomTokens {
         return (end.mix(with: .white, by: 0.14), end)
     }
 
+    /// The controls' accent, spelled out: `Color.accentColor` follows the nearest `.tint`, so under
+    /// the tab bar's ink it would turn filled buttons into white on white.
+    static let control = Color(light: (0, 122, 255), dark: (10, 132, 255))
+
     /// Where a chart's line and area sit: neutral, so a week of history never competes with the
     /// level colour on the meter beside it.
     static let chartLine = Color.secondary
