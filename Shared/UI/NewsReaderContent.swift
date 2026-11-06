@@ -47,7 +47,7 @@ struct NewsCollectionView: View {
                     let source = sourceID.flatMap { id in news.sources.first { $0.id == id } }
                     let items = source.map { NewsDiscovery.stories(collectionItems, source: $0) } ?? collectionItems.filter { sourceID == nil || $0.sourceID == sourceID }
                     if items.isEmpty {
-                        if query.isEmpty {
+                        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             ContentUnavailableView("No stories here yet", systemImage: "newspaper", description: Text("Choose sources in Following, change your search, or refresh."))
                             followLink
                         } else {

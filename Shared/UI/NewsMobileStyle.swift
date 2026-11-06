@@ -135,14 +135,18 @@ struct MobileNewsHero: View {
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
             }.buttonStyle(.plain)
-            // At the accessibility sizes the action comes first: the excerpt can run under the tab
-            // bar, the page's one coloured control can't.
-            if typeSize.isAccessibilitySize { heroActions }
-            if let excerpt = item.displayExcerpt, !excerpt.isEmpty {
-                Text(excerpt).font(.subheadline).foregroundStyle(MobileNewsPalette.secondary)
-                    .lineLimit(typeSize.isAccessibilitySize ? 3 : 2)
-            }
-            if !typeSize.isAccessibilitySize { heroActions }
+            // At the accessibility sizes the excerpt moves below the actions: it can run under the
+            // tab bar, the page's one coloured control can't. The excerpt moves rather than the
+            // actions, so Save keeps one owner, and a pending Undo, when the text size changes.
+            if !typeSize.isAccessibilitySize { heroExcerpt }
+            heroActions
+            if typeSize.isAccessibilitySize { heroExcerpt }
+        }
+    }
+    @ViewBuilder private var heroExcerpt: some View {
+        if let excerpt = item.displayExcerpt, !excerpt.isEmpty {
+            Text(excerpt).font(.subheadline).foregroundStyle(MobileNewsPalette.secondary)
+                .lineLimit(typeSize.isAccessibilitySize ? 3 : 2)
         }
     }
     private var byline: some View {
@@ -160,7 +164,7 @@ struct MobileNewsHero: View {
         return layout {
             readAction
             if typeSize < .xxLarge { Spacer(minLength: 0) }
-            NewsSaveButton(library: library, item: item.bookmark(), compact: true).padding(.trailing, -12)
+            NewsSaveButton(library: library, item: item.bookmark(), compact: true).padding(typeSize >= .xxLarge ? .leading : .trailing, -12)
         }
     }
     private var readAction: some View {
