@@ -46,7 +46,7 @@ struct NewsCollectionView: View {
                     let collectionItems = NewsDiscovery.stories(news.allAnnouncements, collection: collection, query: query)
                     let source = sourceID.flatMap { id in news.sources.first { $0.id == id } }
                     let items = source.map { NewsDiscovery.stories(collectionItems, source: $0) } ?? collectionItems.filter { sourceID == nil || $0.sourceID == sourceID }
-                    Button { library.markAllRead(items) } label: { NewsLinkLabel(title: "Mark these stories read", symbol: "checkmark") }
+                    Button { library.markAllRead(items) } label: { NewsLinkLabel(title: "Mark these stories read", symbol: "checkmark.circle") }
                         .buttonStyle(.plain).frame(minHeight: NewsControlMetrics.minimumHeight).disabled(items.isEmpty)
                     if items.isEmpty {
                         ContentUnavailableView("No stories here yet", systemImage: "newspaper", description: Text("Choose sources in Following, change your search, or refresh."))
@@ -91,7 +91,12 @@ struct NewsCollectionHealthView: View {
                     .underline(health.problem != nil)
             }
             #else
-            Text(health.caption).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText)
+            // One row, as Today's freshness line and the Mac's: the stories start sooner.
+            HStack(alignment: .firstTextBaseline) {
+                Text(health.caption).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText)
+                Spacer(minLength: 8)
+                checkButton
+            }
             #endif
             if news.isRefreshing { ProgressView("Checking News…") }
             if let problem = health.problem {
@@ -100,9 +105,6 @@ struct NewsCollectionHealthView: View {
                 }
                 Text(problem + (hasPreviousItems ? " Previous items remain available." : "")).font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
             }
-            #if os(iOS)
-            checkButton
-            #endif
         }
     }
     @ViewBuilder private var checkButton: some View {
