@@ -1,0 +1,16 @@
+// Screenshots of the iPhone app from sample data, for design review. Not part of CI or the
+// TokenroomMobile scheme; `./scripts/ui-snapshots.sh` runs it.
+#include "Version.xcconfig"
+
+SDKROOT = iphoneos
+SUPPORTED_PLATFORMS = iphoneos iphonesimulator
+TARGETED_DEVICE_FAMILY = 1
+IPHONEOS_DEPLOYMENT_TARGET = 26.0
+
+PRODUCT_NAME = $(TARGET_NAME)
+PRODUCT_BUNDLE_IDENTIFIER = $(TOKENROOM_BUNDLE_PREFIX).ios.uisnapshots
+MARKETING_VERSION = $(TOKENROOM_MOBILE_VERSION)
+CURRENT_PROJECT_VERSION = $(TOKENROOM_MOBILE_BUILD)
+GENERATE_INFOPLIST_FILE = YES
+CODE_SIGN_STYLE = Automatic
+TEST_TARGET_NAME = TokenroomMobile

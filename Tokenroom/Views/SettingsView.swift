@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-enum SettingsTab: String {
+enum SettingsTab: String, CaseIterable {
     case general
     case providers
     case keys

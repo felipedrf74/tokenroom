@@ -106,7 +106,9 @@ enum DebugSnapshots {
         settings.newsEnabled = true
         settings.showsAlertsOnMac = true
         settings.setBudget(1000, for: .anthropicOrg)
-        let news = NewsStore(defaults: defaults, directory: scratch, now: now.addingTimeInterval(-2 * 86_400))
+        // Sample data only: a check here would put live feeds on the page and move it between runs.
+        let news = NewsStore(defaults: defaults, directory: scratch, now: now.addingTimeInterval(-2 * 86_400),
+                             fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
         if UserDefaults.standard.string(forKey: "TokenroomSnapshotNews") != nil {
             news.followedVoices = Set(NewsVoice.catalog.filter { $0.feed.map { news.cache.items[$0.id] != nil } ?? false }.map(\.id))
             news.followedStatusSources = Set(NewsStatusSource.catalog.filter { news.cache.items[$0.id] != nil }.map(\.id))
@@ -184,16 +186,27 @@ enum DebugSnapshots {
             render(PopoverView(store: store, onSettings: { _ in }), width: TokenroomTokens.popoverWidth, appearance: appearance, to: output.appendingPathComponent("popover\(suffix).png"))
             render(PopoverView(store: store, onSettings: { _ in }, expanded: [.openai, .deepseek]), width: TokenroomTokens.popoverWidth, appearance: appearance, to: output.appendingPathComponent("popover-expanded\(suffix).png"))
         }
-        for tab in [SettingsTab.general, .providers, .keys, .alerts, .news, .menuBar] {
-            let request = SettingsTabRequest()
-            request.tab = tab
-            renderWindow(SettingsView(store: store, request: request), size: NSSize(width: 820, height: 620), to: output.appendingPathComponent("settings-\(tab.rawValue).png"))
+        for tab in SettingsTab.allCases {
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                let request = SettingsTabRequest()
+                request.tab = tab
+                renderWindow(SettingsView(store: store, request: request), size: NSSize(width: 820, height: 620), appearance: appearance,
+                             title: SettingsPage.page(for: tab).title,
+                             to: output.appendingPathComponent("settings-\(tab.rawValue)\(appearance == .aqua ? "" : "-dark").png"))
+            }
         }
-        renderWindow(NewsWindowView(store: store, onOpenSettings: {}, page: .destination(.today)), size: NSSize(width: 920, height: 660), appearance: .aqua, to: output.appendingPathComponent("news.png"))
-        renderWindow(NewsWindowView(store: store, onOpenSettings: {}, page: .destination(.today)), size: NSSize(width: 920, height: 660), appearance: .darkAqua, to: output.appendingPathComponent("news-dark.png"))
-        renderWindow(NewsWindowView(store: store, onOpenSettings: {}, page: .filter(.announcements)), size: NSSize(width: 920, height: 660), appearance: .aqua, to: output.appendingPathComponent("news-announcements.png"))
-
-        renderWindow(NewsWindowView(store: store, onOpenSettings: {}, page: .destination(.following)), size: NSSize(width: 920, height: 660), appearance: .aqua, to: output.appendingPathComponent("news-following.png"))
+        let newsPages: [(page: NewsPage, name: String, title: String)] = [
+            (.destination(.today), "news", "Today"), (.destination(.following), "news-following", "Following"),
+            (.destination(.skills), "news-skills", "Skills"), (.destination(.saved), "news-saved", "Saved"),
+            (.filter(.models), "news-models", "Models"), (.filter(.announcements), "news-announcements", "Announcements"),
+            (.filter(.retiring), "news-retiring", "Retiring"),
+        ]
+        for entry in newsPages {
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                renderWindow(NewsWindowView(store: store, onOpenSettings: {}, page: entry.page), size: NSSize(width: 1160, height: 800), appearance: appearance,
+                             title: entry.title, to: output.appendingPathComponent("\(entry.name)\(appearance == .aqua ? "" : "-dark").png"))
+            }
+        }
         if let item = news.allAnnouncements.first {
             render(NewsStoryDetail(item: item, library: NewsLibrary(directory: nil)), width: 720, height: 660, appearance: .aqua, to: output.appendingPathComponent("news-story-detail.png"))
         }
@@ -237,23 +250,45 @@ enum DebugSnapshots {
 
     /// A view in a real titled window with a unified toolbar, as Settings opens: a split view's
     /// sidebar, its search field, and the toolbar only lay out there.
-    private static func renderWindow<Content: View>(_ view: Content, size: NSSize, appearance: NSAppearance.Name = .aqua, to url: URL) {
-        let hosting = NSHostingController(rootView: view)
+    private static func renderWindow<Content: View>(_ view: Content, size: NSSize, appearance: NSAppearance.Name = .aqua, title: String = "Tokenroom", to url: URL) {
+        let hosting = NSHostingController(rootView: view.environment(\.controlActiveState, .key).environment(\.appearsActive, true))
         hosting.sceneBridgingOptions = [.toolbars, .title]
-        let window = NSWindow(contentViewController: hosting)
+        let window = ActiveSnapshotWindow(contentViewController: hosting)
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.toolbarStyle = .unified
+        window.title = title
         window.appearance = NSAppearance(named: appearance)
         window.setContentSize(size)
-        window.alphaValue = 0
-        window.center()
+        // Past every screen, so a run doesn't flash windows, but on screen as far as AppKit knows:
+        // a split view's sidebar only lays out and draws in an ordered-in window.
+        window.setFrameOrigin(NSPoint(x: -20_000, y: -20_000))
         window.orderFrontRegardless()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
-        guard let frame = window.contentView?.superview,
-              let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) else { return }
-        frame.cacheDisplay(in: frame.bounds, to: rep)
-        try? rep.representation(using: .png, properties: [:])?.write(to: url)
+        RunLoop.main.run(until: Date().addingTimeInterval(1.2))
+        if let image = composited(window) {
+            try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: url)
+        } else if let frame = window.contentView?.superview, let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) {
+            frame.cacheDisplay(in: frame.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: url)
+        }
         window.orderOut(nil)
+    }
+
+    /// The window as WindowServer composites it. A process may always read its own windows, so
+    /// this needs no Screen Recording permission. `cacheDisplay` leaves a glass sidebar's contents
+    /// out, which is why it's only the fallback. Looked up at run time: the SDK hides the call.
+    private static func composited(_ window: NSWindow) -> CGImage? {
+        typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
+        let capture = unsafeBitCast(symbol, to: Capture.self)
+        // .optionIncludingWindow, .boundsIgnoreFraming | .bestResolution
+        return capture(.null, 1 << 3, CGWindowID(window.windowNumber), 1 << 0 | 1 << 3)?.takeRetainedValue()
+    }
+
+    /// Draws as the active window, as it is in use: an inactive one greys out its controls, which
+    /// makes every switch read as off.
+    private final class ActiveSnapshotWindow: NSWindow {
+        override var isKeyWindow: Bool { true }
+        override var isMainWindow: Bool { true }
     }
 
     private static func render<Content: View>(_ view: Content, width: CGFloat?, height: CGFloat? = nil, appearance: NSAppearance.Name, to url: URL) {
