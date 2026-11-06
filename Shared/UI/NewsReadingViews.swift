@@ -337,7 +337,7 @@ struct NewsSourceDetail: View {
                 Text(source.name).font(.system(.largeTitle, design: .serif, weight: .bold)).fixedSize(horizontal: false, vertical: true)
                 #endif
                 Text(source.kind.label).foregroundStyle(NewsControlMetrics.secondaryText)
-                Toggle("Follow in Tokenroom", isOn: followBinding).frame(minHeight: NewsControlMetrics.minimumHeight).tint(.accentColor)
+                Toggle("Follow in Tokenroom", isOn: followBinding).frame(minHeight: NewsControlMetrics.minimumHeight).tint(TokenroomTokens.control)
                 NewsSourceHealth(news: news, source: source)
                 Link("Open source feed", destination: source.url).frame(minHeight: NewsControlMetrics.minimumHeight)
                 Text(source.kind == .commentary ? "Articles from this publisher's public feed. These are not X posts." : "Updates supplied by this official source.").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)

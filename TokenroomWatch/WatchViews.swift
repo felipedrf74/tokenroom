@@ -252,6 +252,12 @@ struct WatchDetailView: View {
                     Text(lead.displayTitle)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                    if let caption = detail(lead, pace: nil) {
+                        Text(caption)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 .padding(.vertical, 2)
                 .accessibilityElement(children: .combine)

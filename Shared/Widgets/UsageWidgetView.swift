@@ -306,10 +306,12 @@ private struct RectangularWidget: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                     .frame(width: 58, alignment: .leading)
-                // The reading's level, wherever colour shows; a tinted Lock Screen flattens it.
-                FlatMeter(used: used,
-                          pace: window.flatMap { UsageRanking.pace(for: $0, isStale: !item.provider.isLive, history: item.history[$0.id], now: date)?.elapsedFraction },
-                          tint: TokenroomTokens.usageColor(usedPercent: used, isStale: false))
+                // The reading's level where colour shows. The Lock Screen flattens colour to
+                // brightness, where a critical red would read dimmer than a healthy blue.
+                WidgetMeter(used: used,
+                            isStale: !item.provider.isLive || window?.isAwaitingReading(at: date) == true,
+                            pace: window.flatMap { UsageRanking.pace(for: $0, isStale: !item.provider.isLive, history: item.history[$0.id], now: date)?.elapsedFraction },
+                            height: 4)
                 Text(ReadingText.headline(window, now: date))
                     .font(.caption2.monospacedDigit())
                     .lineLimit(1)

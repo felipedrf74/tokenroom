@@ -62,7 +62,8 @@ struct PopoverView: View {
                         providerList
                             .fixedSize(horizontal: false, vertical: true)
                         ScrollView {
-                            providerList
+                            // Room under the last row, so the fade never covers it for good.
+                            providerList.padding(.bottom, 24)
                         }
                         .mask(Self.scrollFade)
                     }

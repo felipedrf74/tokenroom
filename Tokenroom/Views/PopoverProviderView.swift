@@ -70,7 +70,8 @@ struct PopoverProviderView: View {
                         }
                     }
                     Spacer(minLength: 0)
-                    if let window, style != .orbit {
+                    // Orbit's ring carries a percent; a balance has no ring, so its amount shows here.
+                    if let window, style != .orbit || !window.isMetered {
                         PopoverValue(text: ReadingText.headline(window, now: card.date), size: window.isMetered ? 24 : 18, monospaced: style == .instrument)
                             .foregroundStyle(.secondary)
                             .opacity(TokenroomTokens.staleOpacity)
@@ -311,7 +312,12 @@ struct PopoverProviderView: View {
                 Text(PopoverInsights.paceSummary(pace))
                     .font(.system(size: 12)).foregroundStyle(.secondary)
                     .help(PopoverInsights.paceDetail(pace))
-                if pace.runsOutAt != nil {
+                if let runOut = pace.runsOutAt {
+                    // Ahead of pace says when in the caption above; on pace it doesn't.
+                    if !pace.needsAttention {
+                        Text("Projected limit: \(Pace.shortMoment(runOut, now: card.date, timeZone: .current))")
+                            .font(.system(size: 12, weight: .medium)).foregroundStyle(TokenroomTokens.accentText)
+                    }
                     Text("Estimated at this pace; usage may change.")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }

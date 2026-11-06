@@ -16,6 +16,7 @@ struct ComplicationView: View {
     /// The family to draw when it isn't on a watch face: the debug gallery's.
     var preview: WidgetFamily? = nil
     @Environment(\.widgetFamily) private var systemFamily
+    @Environment(\.widgetRenderingMode) private var renderingMode
 
     private var family: WidgetFamily { preview ?? systemFamily }
 
@@ -75,9 +76,11 @@ struct ComplicationView: View {
                                 // A balance: its amount, with no empty bar beside it.
                                 Spacer(minLength: 0)
                             } else {
+                                let stale = !item.provider.isLive || row?.isAwaitingReading(at: entry.date) == true
                                 FlatMeter(used: row?.used ?? 0,
-                                          pace: row.flatMap { UsageRanking.pace(for: $0, isStale: !item.provider.isLive, history: item.history[$0.id], now: entry.date)?.elapsedFraction },
-                                          tint: ringTint(row?.used ?? 0))
+                                          pace: stale ? nil : row.flatMap { UsageRanking.pace(for: $0, isStale: false, history: item.history[$0.id], now: entry.date)?.elapsedFraction },
+                                          // A tinted face turns colour into brightness: ink keeps a critical meter bright.
+                                          tint: renderingMode == .fullColor ? ringTint(row?.used ?? 0) : .primary)
                             }
                             Text(ReadingText.headline(row, now: entry.date))
                                 .font(.system(size: 12).monospacedDigit())

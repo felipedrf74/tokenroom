@@ -17,9 +17,9 @@ struct ProviderDetailView: View {
 
     var body: some View {
         List {
-            // A balance has no ring to lead with: its section carries the mark instead of a card
-            // of its own.
-            if heroWindow != nil {
+            // A balance has no ring to lead with: its section carries the header instead of a card
+            // of its own. With no windows at all, the header is what says why.
+            if heroWindow != nil || orderedWindows.isEmpty {
                 Section {
                     header
                 }
@@ -27,7 +27,7 @@ struct ProviderDetailView: View {
             ForEach(Array(orderedWindows.enumerated()), id: \.element.id) { index, window in
                 Section(window.displayTitle) {
                     if heroWindow == nil, index == 0 {
-                        sourceRow
+                        header
                     }
                     WindowDetail(
                         window: window,
