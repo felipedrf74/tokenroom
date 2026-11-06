@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/hero.png" width="920" alt="Tokenroom's popover on the Mac, the Usage tab on iPhone, and the Apple Watch app">
+  <img src="docs/images/hero.png" width="920" alt="Tokenroom's Orbit popover on the Mac, the Usage tab on iPhone, and the Apple Watch app">
 </p>
 
 Tokenroom is a menu-bar extra. It does not live in the Dock. It reuses logins you already have. For pay-as-you-go and organization billing you can add an API key, which stays in your Keychain. It does not keep private account names, emails, or tokens on disk. News retains public publisher and skill-owner names for attribution.
@@ -52,8 +52,8 @@ The extra shows **used %** for every provider you turned on, leading with its op
 Click the extra for the popover. **Orbit** is the default, with larger percentages and circular meters. Choose **Instrument**, **Strata**, **Aurora** or the original **Classic** presentation from the palette button or **Settings → Menu Bar**; the choice is saved on this Mac. Open a provider for remaining quota, a daily allowance until reset, seven-day history and usage versus elapsed time. Classic keeps the original cards, including compact rows when more than five providers are connected.
 
 <p align="center">
-  <img src="docs/images/popover.png" width="400" alt="Classic popover with ten providers on one line each">
-  <img src="docs/images/popover-details.png" width="400" alt="An expanded card: every window, a week of history, pace, and banked resets">
+  <img src="docs/images/popover.png" width="400" alt="The Orbit popover: a ring for each provider with its window, reset time, and pace">
+  <img src="docs/images/popover-details.png" width="400" alt="A provider's page: remaining quota, daily allowance, a week of history, and usage against time">
 </p>
 
 Click a provider for its details:
@@ -89,6 +89,7 @@ Each of those tools already knows how much quota you have left. None of them put
 - **Local-first.** No Tokenroom account, no Tokenroom server, no telemetry.
 - **Your logins.** Sessions stay where each tool keeps them. Claude, Grok Build, and Codex are renewed there; every other login is only read.
 - **Independent meters.** One provider failing never blanks the others.
+- **Colour that means something.** Percentages stay in ink until a limit is critical, charts are neutral with a dot at the current level, and controls are blue.
 - **Three looks.** Percents, vertical used-bars, or only the highest, for the providers you pick. Refresh every 5, 10, 15, or 30 minutes. Launch at login if you want.
 
 Numbers in the screenshots are sample data.
@@ -101,7 +102,7 @@ Numbers in the screenshots are sample data.
 
 Tokenroom for iPhone shows the same meters, pace, and a week of history. They come from your Mac through your own iCloud. The iPhone also reads plans itself, so it works without a Mac: sign in to Claude, Codex, Grok Build, Cursor, and Grok Bot in **Settings → Plans** (on each company's own page, where Cursor also takes a Grok or X account; Tokenroom never sees the password), and add keys for coding plans (including GitHub Copilot with a fine-grained token), pay-as-you-go balances, and organization spend. Antigravity and Devin keep their login in a tool on a Mac and need Tokenroom for Mac. A sign-in or key you add on your iPhone stays on that iPhone, a login on your Mac stays on your Mac, and only usage syncs. It adds:
 
-- a tile for every plan: its weekly (or monthly) limit as a ring and its 5-hour limit as a bar, each with the even-pace mark and when it resets or runs out
+- a tile for every plan, under **All plans**: its weekly (or monthly) limit as a ring and its 5-hour limit as a bar, each with the even-pace mark and when it resets or runs out
 - **Close to a limit**: every limit at 80% or more, or on course to run out before it resets, most urgent first, with Follow on Lock Screen
 - Home Screen and Lock Screen widgets, with countdowns that tick without draining the widget budget
 - a Live Activity that follows a session, or a nearly spent week, to its reset; start it from the app, Control Center, the Action button, or Siri ("Follow usage in Tokenroom")
@@ -110,7 +111,7 @@ Tokenroom for iPhone shows the same meters, pace, and a week of history. They co
 
 The Apple Watch app and its complications read the same iCloud records, so they keep working with the iPhone away. Refresh on the Watch also asks a reachable paired iPhone to check its own providers and share its newest readings. Provider tiles identify the collecting device and its last successful check; sync failures remain visible beside saved readings. Plans collected only on a Mac still need that Mac running to obtain new usage. The Smart Stack shows a limit as it nears its reset or passes 80%. The signed download of Tokenroom for Mac sends its readings on its own (**Settings → iPhone & Watch** turns that off). A copy you build and sign yourself can't use iCloud.
 
-Tokenroom for iPhone and Apple Watch is available on the App Store. It has a sample mode for looking around first.
+Tokenroom for iPhone and Apple Watch is [available on the App Store](https://apps.apple.com/app/id6816126110). It has a sample mode for looking around first.
 
 ## Install
 
@@ -152,7 +153,7 @@ Tokenroom caches readings (percentages, reset times, window labels, and any bala
 - **Providers**: what's connected, what Tokenroom found signed in on this Mac, and what's available, plus organization billing.
 - **API Keys**: coding-plan keys, a fine-grained token for Copilot, pay-as-you-go keys with a reference amount, and organization keys with a monthly budget.
 - **Alerts** and **News**: as above.
-- **Menu Bar**: Percents, Meters, or Highest, and which providers show.
+- **Menu Bar**: Percents, Meters, or Highest, which providers show, and the popover's style.
 - **iPhone & Watch**: sync through iCloud.
 
 Bundle ID is `app.tokenroom.mac`.
@@ -165,7 +166,7 @@ Bundle ID is `app.tokenroom.mac`.
 
 DerivedData is forced to `~/Library/Developer/Xcode/DerivedData/Tokenroom`. UI, tokens, and provider contracts: [`.grok/skills/tokenroom-macos/SKILL.md`](.grok/skills/tokenroom-macos/SKILL.md). The iPhone, widgets, and Watch: [`.grok/skills/tokenroom-apple/SKILL.md`](.grok/skills/tokenroom-apple/SKILL.md).
 
-Tests: `TokenroomTests` (on the Mac, including all the shared logic) and `TokenroomMobileTests` (in the iPhone app). The images above come from sample data: a debug build of the Mac app renders them with `-TokenroomSnapshots <folder>`.
+Tests: `TokenroomTests` (on the Mac, including all the shared logic) and `TokenroomMobileTests` (in the iPhone app). The images above come from sample data: `./scripts/ui-snapshots.sh <folder>` renders every Mac, iPhone, and Watch screen from it.
 
 CI runs Shared typechecks, Mac tests, the iPhone/Watch build and test compilation,
 and the Command Line Tools build in four parallel jobs. `Build and test` accepts

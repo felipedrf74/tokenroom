@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.6.0 for Mac and 1.3.0 for iPhone — not yet released
+
+Mac 2.6.0(1) and iPhone, widgets and Apple Watch 1.3.0(1) carry the UI overhaul from #58. Neither is uploaded or published yet.
+
+On every device
+
+- Colour now means something. Percentages stay in ink until a limit is critical, charts are neutral with a dot at the current level, and controls are blue.
+- Meters are flat, the pace mark is finer, and rings have a cleaner notch. Fewer boxes: facts sit in plain columns.
+
+Mac
+
+- The Orbit popover is about a third shorter with the same providers: smaller rings with a pace mark, and one caption line.
+- A provider's page puts its name in the header and its ring beside the text, so more of the page fits. An expired session is a row, not a card that pushes the others away.
+- The menu bar uses Cursor's and GitHub Copilot's own marks, at the same widths as before.
+- Settings > Providers has a flatter header and one unofficial note per section, with Sign In on the provider's own line. News has fewer cards and a neutral sidebar.
+
+iPhone, widgets and Apple Watch
+
+- Usage doesn't repeat its alarm: Close to a limit is calm, and plans sit under All plans with their full names.
+- A provider's page has one title. Welcome leads with one action, and the other ways in share a list. Long Settings notes move behind How Readings Work.
+- News drops the status card, keeps its main story to two lines, and puts actions under the title.
+- Widgets show the pace mark, and the large one uses its full height. On the Lock Screen and tinted watch faces, meters are ink, so a critical one stays bright.
+- Apple Watch shows the title in ink and leads a provider's page with its reading, then the plan.
+
 ## 2.5.3 for Mac — released 2 November 2026
 
 Mac 2.5.3(1) is [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.5.3). The iPhone, widgets and Watch app code and versions are unchanged. [The delivery record](docs/release-delivery-20261102.md) binds the package to the merged source.
