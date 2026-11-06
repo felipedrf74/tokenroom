@@ -81,6 +81,14 @@ cache = {
 }
 (folder / "news.json").write_text(json.dumps(cache))
 
+# The same News with a source that failed, and with no stories at all, for the exception states.
+failed = dict(cache, unreadable=["openai-news"], sourceChecks=dict(checks, **{"openai-news": {"failedAt": now - 300, "failures": 2}}))
+(folder / "failed").mkdir(exist_ok=True)
+(folder / "failed" / "news.json").write_text(json.dumps(failed))
+quiet = dict(cache, items={}, models=[], sourceChecks={})
+(folder / "quiet").mkdir(exist_ok=True)
+(folder / "quiet" / "news.json").write_text(json.dumps(quiet))
+
 skills = [
     ("sample-labs", "repo-map", "Repo map", "Draws a map of an unfamiliar repository before you change it.", 1240),
     ("sample-labs", "release-notes", "Release notes", "Turns a branch's commits into notes people read.", 980),

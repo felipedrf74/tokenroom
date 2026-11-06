@@ -188,7 +188,7 @@ struct MobileNewsSkillsShelf: View {
                     }
                 }
             }
-            Link(destination: URL(string: "https://skills.sh")!) { NewsLinkLabel(title: "Explore skills.sh", symbol: "arrow.up.right") }.frame(minHeight: 44)
+            Link(destination: URL(string: "https://skills.sh")!) { NewsLinkLabel(title: "Explore skills.sh", symbol: "arrow.up.right") }
         }.task { await skills.refresh(sort: skills.sort) }
     }
     private func skillRow(_ item: SkillListing) -> some View {

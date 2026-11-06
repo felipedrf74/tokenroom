@@ -111,6 +111,50 @@ final class UISnapshotTests: XCTestCase {
         }
     }
 
+    /// News's exceptions: nothing to show, a collection with a failed source, one a search emptied
+    /// (its actions disabled), and one at a large text size, where its header stacks.
+    func testNewsExceptions() {
+        let folder = URL(fileURLWithPath: fixture).deletingLastPathComponent()
+        let normal = fixture
+        defer { fixture = normal }
+        func openCollection(_ app: XCUIApplication) -> Bool {
+            let links = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH[c] 'See All'"))
+            guard links.count > 0 else { return false }
+            links.element(boundBy: 0).tap()
+            Thread.sleep(forTimeInterval: 1)
+            return true
+        }
+        for look in Look.allCases {
+            fixture = folder.appendingPathComponent("quiet/news.json").path
+            _ = launch(["-onboarded", "YES", "-TokenroomOpen", "tokenroom://news"], look: look)
+            shoot("iphone-news-quiet\(look.suffix)")
+            fixture = folder.appendingPathComponent("failed/news.json").path
+            let app = launch(["-onboarded", "YES", "-TokenroomOpen", "tokenroom://news"], look: look)
+            if openCollection(app) {
+                shoot("iphone-news-collection-failed\(look.suffix)")
+                let search = app.searchFields.firstMatch
+                if search.waitForExistence(timeout: 3) {
+                    search.tap()
+                    search.typeText("zzz")
+                    app.swipeDown()
+                    Thread.sleep(forTimeInterval: 1)
+                    shoot("iphone-news-collection-empty\(look.suffix)")
+                }
+            }
+        }
+        fixture = normal
+        let app = launch(["-onboarded", "YES", "-TokenroomOpen", "tokenroom://news", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityL"])
+        shoot("iphone-news-large-text")
+        for _ in 0..<4 where !openCollection(app) {
+            app.swipeUp()
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        app.swipeDown()
+        app.swipeDown()
+        Thread.sleep(forTimeInterval: 0.8)
+        shoot("iphone-news-collection-large-text")
+    }
+
     func testSettings() {
         for look in Look.allCases {
             let app = launch(["-onboarded", "YES", "-TokenroomOpen", "tokenroom://settings"], look: look)

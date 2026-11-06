@@ -47,7 +47,7 @@ struct NewsCollectionView: View {
                     let source = sourceID.flatMap { id in news.sources.first { $0.id == id } }
                     let items = source.map { NewsDiscovery.stories(collectionItems, source: $0) } ?? collectionItems.filter { sourceID == nil || $0.sourceID == sourceID }
                     Button { library.markAllRead(items) } label: { NewsLinkLabel(title: "Mark these stories read", symbol: "checkmark.circle") }
-                        .buttonStyle(.plain).frame(minHeight: NewsControlMetrics.minimumHeight).disabled(items.isEmpty)
+                        .buttonStyle(.plain).disabled(items.isEmpty)
                     if items.isEmpty {
                         ContentUnavailableView("No stories here yet", systemImage: "newspaper", description: Text("Choose sources in Following, change your search, or refresh."))
                         followLink
@@ -74,7 +74,7 @@ struct NewsCollectionView: View {
             .toolbar(.visible, for: .navigationBar).navigationBarTitleDisplayMode(.inline)
             #endif
         } label: { NewsLinkLabel(title: "Choose what to follow") }
-            .buttonStyle(.plain).frame(minHeight: NewsControlMetrics.minimumHeight)
+            .buttonStyle(.plain)
     }
 }
 
@@ -91,11 +91,19 @@ struct NewsCollectionHealthView: View {
                     .underline(health.problem != nil)
             }
             #else
-            // One row, as Today's freshness line and the Mac's: the stories start sooner.
-            HStack(alignment: .firstTextBaseline) {
-                Text(health.caption).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText)
-                Spacer(minLength: 8)
-                checkButton
+            // One row, as Today's freshness line and the Mac's: the stories start sooner. At larger
+            // text the two stack, so neither wraps into a narrow column.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(health.caption).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText).fixedSize()
+                    Spacer(minLength: 8)
+                    checkButton.fixedSize()
+                }
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(health.caption).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    checkButton
+                }
             }
             #endif
             if news.isRefreshing { ProgressView("Checking News…") }
@@ -118,9 +126,11 @@ struct NewsCollectionHealthView: View {
                 NewsLinkLabel(title: health.problem == nil ? "Check collection" : "Retry failed sources", symbol: "arrow.clockwise")
                 #endif
             }
-            .frame(minHeight: NewsControlMetrics.minimumHeight).disabled(news.isRefreshing)
+            .disabled(news.isRefreshing)
             #if os(iOS)
             .buttonStyle(.plain)
+            #else
+            .frame(minHeight: NewsControlMetrics.minimumHeight)
             #endif
         }
     }

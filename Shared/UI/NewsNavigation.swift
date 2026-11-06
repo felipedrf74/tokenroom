@@ -31,13 +31,18 @@ struct NewsNavigationLink<Destination: View, Label: View>: View {
 struct NewsLinkLabel: View {
     var title: String
     var symbol = "chevron.right"
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         HStack(spacing: 4) {
-            Text(title).font(.subheadline.weight(.medium)).foregroundStyle(TokenroomTokens.newsAction)
+            // Its own colours don't dim by themselves, so an action that can't run says so.
+            Text(title).font(.subheadline.weight(.medium)).foregroundStyle(isEnabled ? TokenroomTokens.newsAction : NewsControlMetrics.secondaryText)
             // Named, not `.secondary`: inside a Mac `Link` that takes the link colour.
             Image(systemName: symbol).font(.caption.weight(.semibold)).foregroundStyle(NewsControlMetrics.secondaryText).accessibilityHidden(true)
         }
+        // The whole height is the target: a frame outside a plain button only takes up space.
+        .frame(minHeight: NewsControlMetrics.minimumHeight)
+        .contentShape(Rectangle())
     }
 }
 

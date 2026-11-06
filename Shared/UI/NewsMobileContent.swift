@@ -49,7 +49,7 @@ struct MobileNewsReaderContent: View {
             NewsNavigationLink {
                 ScrollView { MobileNewsFollowing(news: news, library: library, suggestedProviders: suggestedProviders).padding(20) }.newsReaderCanvas().navigationTitle("Following").navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
             } label: { NewsLinkLabel(title: "Choose what to follow") }
-                .buttonStyle(.plain).frame(minHeight: 44)
+                .buttonStyle(.plain)
         }
         Menu {
             ForEach(NewsCollection.allCases) { collection in
