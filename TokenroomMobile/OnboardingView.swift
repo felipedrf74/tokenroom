@@ -99,6 +99,7 @@ struct OnboardingView: View {
                 Text("Tokenroom isn't affiliated with any of the providers it shows.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .buttonStyle(.plain)

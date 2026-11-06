@@ -72,6 +72,8 @@ struct UsageView: View {
                         disconnectedSection
                     }
                 }
+                // With nothing in it yet, the empty state's overlay takes this column's width.
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20)
                 .padding(.top, 4)
                 .padding(.bottom, 24)
