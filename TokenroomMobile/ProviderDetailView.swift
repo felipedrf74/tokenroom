@@ -96,9 +96,11 @@ struct ProviderDetailView: View {
             sourceRow
             if let window = heroWindow {
                 let stale = !provider.isLive || window.isAwaitingReading(at: date)
-                HStack(spacing: 16) {
+                HStack(spacing: 11.5) {
+                    // The stroke straddles the frame: this keeps it on the card's text edge.
                     UsageRing(used: window.used, isStale: stale, label: ReadingText.headline(window, now: date), lineWidth: 9, paceMark: heroPace?.elapsedFraction)
                         .frame(width: 100, height: 100)
+                        .padding(.leading, 4.5)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(window.displayTitle)
                             .font(.subheadline)

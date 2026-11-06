@@ -306,13 +306,10 @@ private struct RectangularWidget: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                     .frame(width: 58, alignment: .leading)
-                Gauge(value: min(max(used, 0), 100), in: 0...100) {
-                    EmptyView()
-                }
-                .gaugeStyle(.accessoryLinearCapacity)
                 // The reading's level, wherever colour shows; a tinted Lock Screen flattens it.
-                .tint(TokenroomTokens.usageColor(usedPercent: used, isStale: false))
-                .widgetAccentable()
+                FlatMeter(used: used,
+                          pace: window.flatMap { UsageRanking.pace(for: $0, isStale: !item.provider.isLive, history: item.history[$0.id], now: date)?.elapsedFraction },
+                          tint: TokenroomTokens.usageColor(usedPercent: used, isStale: false))
                 Text(ReadingText.headline(window, now: date))
                     .font(.caption2.monospacedDigit())
                     .lineLimit(1)

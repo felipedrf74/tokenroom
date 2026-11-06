@@ -75,7 +75,9 @@ struct ComplicationView: View {
                                 // A balance: its amount, with no empty bar beside it.
                                 Spacer(minLength: 0)
                             } else {
-                                ComplicationMeter(used: row?.used ?? 0, tint: ringTint(row?.used ?? 0))
+                                FlatMeter(used: row?.used ?? 0,
+                                          pace: row.flatMap { UsageRanking.pace(for: $0, isStale: !item.provider.isLive, history: item.history[$0.id], now: entry.date)?.elapsedFraction },
+                                          tint: ringTint(row?.used ?? 0))
                             }
                             Text(ReadingText.headline(row, now: entry.date))
                                 .font(.system(size: 12).monospacedDigit())
@@ -158,26 +160,6 @@ struct ComplicationView: View {
     /// The reading's one level colour, as a meter's, rather than every level at once.
     private func ringTint(_ used: Double) -> Color {
         TokenroomTokens.usageColor(usedPercent: used, isStale: false)
-    }
-}
-
-/// A thin bar on a neutral track: the system's linear gauge tints its track with the reading, which
-/// on a watch face is the loudest thing there.
-private struct ComplicationMeter: View {
-    var used: Double
-    var tint: Color
-
-    var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                Capsule().fill(.white.opacity(0.18))
-                Capsule().fill(tint)
-                    .frame(width: max(4, geometry.size.width * min(max(used, 0), 100) / 100))
-                    .widgetAccentable()
-            }
-        }
-        .frame(height: 4)
-        .accessibilityHidden(true)
     }
 }
 

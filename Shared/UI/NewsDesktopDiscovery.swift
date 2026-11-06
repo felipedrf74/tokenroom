@@ -189,7 +189,7 @@ struct MacNewsSkillsShelf: View {
                     }
                 }
             }
-            Link("Explore skills.sh", destination: URL(string: "https://skills.sh")!).font(.subheadline).foregroundStyle(TokenroomTokens.newsSecondaryText)
+            Link("Explore skills.sh", destination: URL(string: "https://skills.sh")!).font(.subheadline).foregroundStyle(TokenroomTokens.control)
         }.task { await skills.refresh(sort: skills.sort) }
     }
 }

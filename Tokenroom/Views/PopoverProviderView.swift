@@ -288,7 +288,7 @@ struct PopoverProviderView: View {
             VStack(alignment: .leading, spacing: 10) {
                 headline(window, size: window.isMetered ? 44 : 30)
                 if window.isMetered {
-                    PopoverMeter(style: style, used: window.used, isStale: isDimmed(window), height: style == .strata ? 14 : 9)
+                    PopoverMeter(style: style, used: window.used, isStale: isDimmed(window), paceMark: listPace(window), height: style == .strata ? 14 : 9)
                 }
                 Text(ReadingText.caption(window, now: card.date)).font(.system(size: 13)).foregroundStyle(.secondary)
             }

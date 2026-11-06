@@ -174,7 +174,8 @@ struct NewsStoryDetail: View {
                     #endif
                     VStack(alignment: .leading, spacing: 2) {
                         Text(item.source).font(.subheadline.weight(.semibold))
-                        Text((item.kind ?? .officialAnnouncement).label).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText)
+                        Text([(item.kind ?? .officialAnnouncement).label, item.link?.host()].compactMap(\.self).joined(separator: " · "))
+                            .font(.caption).foregroundStyle(NewsControlMetrics.secondaryText)
                     }
                 }
                 Text(item.displayTitle).font(.system(.largeTitle, design: .serif, weight: .bold)).fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
@@ -192,7 +193,7 @@ struct NewsStoryDetail: View {
                         }
                     }
                 }
-                NewsDetailActions(library: library, item: item.bookmark())
+                NewsDetailActions(library: library, item: item.bookmark(), showsHost: item.link?.host() == nil)
                 if let other = item.alsoIn { Text("Also reported in \(other)").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText) }
             }.newsDetailLayout()
         }.newsReaderCanvas().navigationTitle("Story")
@@ -217,6 +218,8 @@ struct NewsDetailActions: View {
     @Bindable var library: NewsLibrary
     var item: NewsBookmark
     var openLabel = "Open Original"
+    /// Off where the page already names where the link goes.
+    var showsHost = true
     var body: some View {
         #if os(macOS)
         VStack(alignment: .leading, spacing: 12) {
@@ -232,7 +235,7 @@ struct NewsDetailActions: View {
                 }
                 NewsSaveButton(library: library, item: item)
             }
-            if let url = item.url { Text(url.host ?? url.absoluteString).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText) }
+            if showsHost, let url = item.url { Text(url.host ?? url.absoluteString).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText) }
         }.controlSize(.regular)
         #else
         VStack(alignment: .leading, spacing: 12) {
@@ -242,7 +245,7 @@ struct NewsDetailActions: View {
                         .frame(minHeight: 44).padding(.horizontal, 14)
                         .foregroundStyle(.white).background(MobileNewsPalette.actionFill, in: RoundedRectangle(cornerRadius: 12))
                 }.buttonStyle(.plain)
-                Text(url.host ?? url.absoluteString).font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
+                if showsHost { Text(url.host ?? url.absoluteString).font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText) }
             }
             let layout = typeSize >= .xxLarge ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12)) : AnyLayout(HStackLayout(alignment: .top, spacing: 16))
             layout { saveAndShare }

@@ -64,7 +64,7 @@ struct MacNewsReaderContent: View {
         if !models.isEmpty {
             MacNewsPanel {
                 MacNewsSectionHeading(title: "New models") { NewsCollectionView(news: news, library: library, collection: .model) }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 32)], alignment: .leading, spacing: 16) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 32, alignment: .top)], alignment: .leading, spacing: 16) {
                     ForEach(models) { MacNewsModelCard(model: $0, news: news, library: library) }
                 }
             }
@@ -77,7 +77,7 @@ struct MacNewsReaderContent: View {
         if !retiring.isEmpty {
             MacNewsPanel {
                 MacNewsSectionHeading(title: "Retiring soon") { NewsCollectionView(news: news, library: library, collection: .retirement) }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 32)], alignment: .leading, spacing: 16) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 32, alignment: .top)], alignment: .leading, spacing: 16) {
                     ForEach(retiring.prefix(3)) { MacNewsModelCard(model: $0, news: news, library: library) }
                 }
             }
@@ -85,6 +85,7 @@ struct MacNewsReaderContent: View {
         if latest == nil, edition.topStory == nil, models.isEmpty, updates.isEmpty, voices.isEmpty, status.isEmpty, retiring.isEmpty {
             ContentUnavailableView("Your briefing is quiet", systemImage: "newspaper", description: Text("Follow tools and voices, browse the model archive, or check again."))
             NewsNavigationLink("Choose what to follow") { ScrollView { MacNewsFollowing(news: news, library: library, suggestedProviders: suggestedProviders).padding(24) }.navigationTitle("Following") }
+                .foregroundStyle(TokenroomTokens.control).tint(TokenroomTokens.control)
         }
         Text("Original sources · Personal reset times are in Usage")
             .font(.caption).foregroundStyle(TokenroomTokens.newsSecondaryText).padding(.top, 4)
@@ -126,7 +127,7 @@ struct MacNewsReaderContent: View {
         if !stories.isEmpty { MacNewsPanel { MacNewsStoryList(items: stories, news: news, library: library) } }
         if !models.isEmpty {
             Text("Models").font(.title3.weight(.semibold))
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 250), spacing: 32)], alignment: .leading, spacing: 16) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 250), spacing: 32, alignment: .top)], alignment: .leading, spacing: 16) {
                 ForEach(models) { MacNewsModelCard(model: $0, news: news, library: library) }
             }
         }
@@ -150,9 +151,8 @@ struct MacNewsFreshnessView: View {
             let summary = NewsSourceFreshness(cache: news.cache, sources: news.sources, now: context.date)
             VStack(alignment: .leading, spacing: 8) {
                 if availableWidth >= 760 {
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Text(context.date.formatted(.dateTime.weekday(.wide).day().month(.wide)))
-                        Text("·")
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(context.date.formatted(.dateTime.weekday(.wide).day().month(.wide)) + " ·")
                         checks(summary, now: context.date)
                     }.font(.caption).foregroundStyle(TokenroomTokens.newsSecondaryText)
                 } else {
@@ -210,7 +210,7 @@ struct MacNewsCollectionContent: View {
                 if models.isEmpty {
                     ContentUnavailableView(collection == .retirement ? "No upcoming retirements" : "No models found", systemImage: collection == .retirement ? "hourglass" : "sparkles", description: Text("Change the search or lab selection, or check again.")).frame(maxWidth: .infinity)
                 }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 32)], alignment: .leading, spacing: 20) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 32, alignment: .top)], alignment: .leading, spacing: 20) {
                     ForEach(models) { MacNewsModelCard(model: $0, news: news, library: library) }
                 }
             } else {
@@ -229,6 +229,7 @@ struct MacNewsCollectionContent: View {
                 }
             }
             NewsNavigationLink("Choose what to follow") { ScrollView { MacNewsFollowing(news: news, library: library).padding(24) }.navigationTitle("Following") }
+                .foregroundStyle(TokenroomTokens.control).tint(TokenroomTokens.control)
                 .buttonStyle(.plain).foregroundStyle(TokenroomTokens.newsSecondaryText)
         }.padding(24).frame(maxWidth: 1160, alignment: .leading).frame(maxWidth: .infinity)
     }

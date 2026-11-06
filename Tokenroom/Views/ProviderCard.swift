@@ -315,15 +315,15 @@ struct ProviderCard: View {
             if let banked = snapshot.banked, banked.available > 0 {
                 caption(Self.bankedText(banked, now: date))
             }
-            if let extra = snapshot.extra, let text = Self.extraText(extra) {
-                caption(text)
+            // One line for what's left beyond the plan and the plan itself, neither worth two.
+            let plan = snapshot.planLabel.flatMap { $0 == snapshot.primaryTitle ? nil : $0 }
+            let beyond = snapshot.extra.flatMap { Self.extraText($0) }
+            if plan != nil || beyond != nil {
+                caption([beyond, plan].compactMap(\.self).joined(separator: " · "))
             }
         }
         if let source = Self.sourceCaption(snapshot) {
             caption(source)
-        }
-        if !isExpanded, let plan = snapshot.planLabel, plan != snapshot.primaryTitle {
-            caption(plan)
         }
         if stale {
             caption(Self.lastGoodText(checkedAt ?? snapshot.fetchedAt, now: date))

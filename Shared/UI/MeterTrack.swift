@@ -75,3 +75,46 @@ struct MeterTrack: View {
                                endPoint: CGPoint(x: max(fillEnd, 1), y: 0))
     }
 }
+
+/// A meter of plain shapes, for surfaces the system tints or that can't blend: a watch face, the
+/// Lock Screen. The same reading as `MeterTrack`: a track, the fill, the even pace as a gap with a
+/// slim mark, and the stretch past it a step lighter.
+struct FlatMeter: View {
+    var used: Double
+    var pace: Double? = nil
+    var tint: Color
+    var height: CGFloat = 4
+
+    private struct Run: Shape {
+        var from: CGFloat
+        var to: CGFloat
+
+        func path(in rect: CGRect) -> Path {
+            guard to > from else { return Path() }
+            return Path(roundedRect: CGRect(x: from, y: 0, width: to - from, height: rect.height), cornerRadius: rect.height / 2, style: .continuous)
+        }
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let end = width * CGFloat(MeterLayout.usedFraction(used))
+            let mark = pace.map { width * CGFloat(min(max($0, 0), 1)) }
+            let gapStart = mark.map { $0 - 1.5 } ?? width
+            let gapEnd = mark.map { $0 + 1.5 } ?? width
+            ZStack(alignment: .leading) {
+                Run(from: 0, to: gapStart).fill(.primary.opacity(0.18))
+                Run(from: gapEnd, to: width).fill(.primary.opacity(0.18))
+                Run(from: 0, to: min(max(end, height), gapStart)).fill(tint).widgetAccentable()
+                Run(from: gapEnd, to: end).fill(tint.opacity(0.6)).widgetAccentable()
+                if let mark {
+                    Rectangle().fill(.primary.opacity(0.5))
+                        .frame(width: 1.5, height: height + 2)
+                        .offset(x: mark - 0.75, y: -1)
+                }
+            }
+        }
+        .frame(height: height)
+        .accessibilityHidden(true)
+    }
+}

@@ -96,9 +96,11 @@ struct UsageTileView: View {
 
     private func ringRow(_ ring: RelayWindow) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
+            HStack(spacing: 7) {
+                // The stroke straddles the frame: this keeps it on the tile's text edge.
                 UsageRing(used: ring.used, isStale: isStale || ring.isAwaitingReading(at: date), label: ReadingText.headline(ring, now: date), lineWidth: 5.5, paceMark: pace(ring)?.elapsedFraction)
                     .frame(width: 52, height: 52)
+                    .padding(.leading, 2.75)
                 Text(ring.displayTitle)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
