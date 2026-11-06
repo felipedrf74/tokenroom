@@ -9,7 +9,7 @@ struct SkillListingDetail: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Image(systemName: "puzzlepiece.extension").font(.largeTitle).foregroundStyle(TokenroomTokens.accentText).accessibilityHidden(true)
+                Image(systemName: "puzzlepiece.extension").font(.largeTitle).foregroundStyle(NewsControlMetrics.secondaryText).accessibilityHidden(true)
                 Text("ClawHub · \(item.owner)").font(.headline).foregroundStyle(NewsControlMetrics.secondaryText)
                 Text(item.name).font(.system(.largeTitle, design: .serif, weight: .bold)).fixedSize(horizontal: false, vertical: true)
                 if let summary = item.summary { Text(summary).textSelection(.enabled) }
