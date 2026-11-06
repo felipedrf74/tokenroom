@@ -189,12 +189,7 @@ struct MacNewsSkillsShelf: View {
                     }
                 }
             }
-            Link(destination: URL(string: "https://skills.sh")!) {
-                HStack(spacing: 4) {
-                    Text("Explore skills.sh").fontWeight(.medium).foregroundStyle(TokenroomTokens.newsAction)
-                    Image(systemName: "arrow.up.right").font(.caption.weight(.semibold)).foregroundStyle(TokenroomTokens.newsSecondaryText).accessibilityHidden(true)
-                }
-            }.font(.subheadline)
+            Link(destination: URL(string: "https://skills.sh")!) { NewsLinkLabel(title: "Explore skills.sh", symbol: "arrow.up.right") }
         }.task { await skills.refresh(sort: skills.sort) }
     }
 }

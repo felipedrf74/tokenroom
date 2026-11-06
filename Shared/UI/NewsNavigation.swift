@@ -25,6 +25,20 @@ struct NewsNavigationLink<Destination: View, Label: View>: View {
     }
 }
 
+/// A link that stands alone: ink at a medium weight, with the app's own glyph to say it's one, a
+/// chevron into the app or an arrow out of it. News's one coloured control is Read article.
+struct NewsLinkLabel: View {
+    var title: String
+    var symbol = "chevron.right"
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(title).font(.subheadline.weight(.medium)).foregroundStyle(TokenroomTokens.newsAction)
+            Image(systemName: symbol).font(.caption.weight(.semibold)).foregroundStyle(.secondary).accessibilityHidden(true)
+        }
+    }
+}
+
 extension View {
     /// AppKit-hosted stacks need an explicit Back command for view-based links.
     /// iOS keeps its built-in navigation controls; a Mac root never gets Dismiss.

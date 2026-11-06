@@ -188,12 +188,7 @@ struct MobileNewsSkillsShelf: View {
                     }
                 }
             }
-            Link(destination: URL(string: "https://skills.sh")!) {
-                HStack(spacing: 4) {
-                    Text("Explore skills.sh").fontWeight(.medium)
-                    Image(systemName: "arrow.up.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary).accessibilityHidden(true)
-                }
-            }.font(.subheadline).frame(minHeight: 44)
+            Link(destination: URL(string: "https://skills.sh")!) { NewsLinkLabel(title: "Explore skills.sh", symbol: "arrow.up.right") }.frame(minHeight: 44)
         }.task { await skills.refresh(sort: skills.sort) }
     }
     private func skillRow(_ item: SkillListing) -> some View {

@@ -46,9 +46,10 @@ struct MobileNewsReaderContent: View {
         }
         if latest == nil, edition.topStory == nil, models.isEmpty, updates.isEmpty, voices.isEmpty, status.isEmpty, edition.retiring.isEmpty {
             ContentUnavailableView("Your briefing is quiet", systemImage: "newspaper", description: Text("Follow tools and voices, browse the model archive, or check again."))
-            NewsNavigationLink("Choose what to follow") {
+            NewsNavigationLink {
                 ScrollView { MobileNewsFollowing(news: news, library: library, suggestedProviders: suggestedProviders).padding(20) }.newsReaderCanvas().navigationTitle("Following").navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
-            }.frame(minHeight: 44)
+            } label: { NewsLinkLabel(title: "Choose what to follow") }
+                .buttonStyle(.plain).frame(minHeight: 44)
         }
         Menu {
             ForEach(NewsCollection.allCases) { collection in

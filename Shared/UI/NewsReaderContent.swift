@@ -46,7 +46,8 @@ struct NewsCollectionView: View {
                     let collectionItems = NewsDiscovery.stories(news.allAnnouncements, collection: collection, query: query)
                     let source = sourceID.flatMap { id in news.sources.first { $0.id == id } }
                     let items = source.map { NewsDiscovery.stories(collectionItems, source: $0) } ?? collectionItems.filter { sourceID == nil || $0.sourceID == sourceID }
-                    Button("Mark these stories read") { library.markAllRead(items) }.frame(minHeight: NewsControlMetrics.minimumHeight).disabled(items.isEmpty)
+                    Button { library.markAllRead(items) } label: { NewsLinkLabel(title: "Mark these stories read", symbol: "checkmark") }
+                        .buttonStyle(.plain).frame(minHeight: NewsControlMetrics.minimumHeight).disabled(items.isEmpty)
                     if items.isEmpty {
                         ContentUnavailableView("No stories here yet", systemImage: "newspaper", description: Text("Choose sources in Following, change your search, or refresh."))
                         followLink
@@ -67,12 +68,13 @@ struct NewsCollectionView: View {
             .refreshable { await news.retrySources(health.sourceIDs) }
     }
     private var followLink: some View {
-        NewsNavigationLink("Choose what to follow") {
+        NewsNavigationLink {
             ScrollView { NewsFollowing(news: news, library: library).padding(20) }.newsReaderCanvas().navigationTitle("Following")
             #if os(iOS)
             .toolbar(.visible, for: .navigationBar).navigationBarTitleDisplayMode(.inline)
             #endif
-        }.frame(minHeight: NewsControlMetrics.minimumHeight)
+        } label: { NewsLinkLabel(title: "Choose what to follow") }
+            .buttonStyle(.plain).frame(minHeight: NewsControlMetrics.minimumHeight)
     }
 }
 
@@ -105,9 +107,19 @@ struct NewsCollectionHealthView: View {
     }
     @ViewBuilder private var checkButton: some View {
         if !health.sourceIDs.isEmpty {
-            Button(health.problem == nil ? "Check collection" : "Retry failed sources") {
+            Button {
                 Task { await news.retrySources(health.problem == nil ? health.sourceIDs : health.retryIDs) }
-            }.frame(minHeight: NewsControlMetrics.minimumHeight).disabled(news.isRefreshing)
+            } label: {
+                #if os(macOS)
+                Text(health.problem == nil ? "Check collection" : "Retry failed sources")
+                #else
+                NewsLinkLabel(title: health.problem == nil ? "Check collection" : "Retry failed sources", symbol: "arrow.clockwise")
+                #endif
+            }
+            .frame(minHeight: NewsControlMetrics.minimumHeight).disabled(news.isRefreshing)
+            #if os(iOS)
+            .buttonStyle(.plain)
+            #endif
         }
     }
 }

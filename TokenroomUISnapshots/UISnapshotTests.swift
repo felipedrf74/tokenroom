@@ -87,6 +87,26 @@ final class UISnapshotTests: XCTestCase {
             for destination in ["Following", "Skills", "Saved"] {
                 tap(app, destination)
                 shoot("iphone-news-\(destination.lowercased())\(look.suffix)")
+                if destination == "Skills" {
+                    app.swipeUp()
+                    app.swipeUp()
+                    Thread.sleep(forTimeInterval: 0.8)
+                    shoot("iphone-news-skills-end\(look.suffix)")
+                }
+            }
+            // A story collection, then a model collection: each reached from Today's "See All".
+            tap(app, "Today")
+            for (index, name) in ["releases", "models"].enumerated() {
+                let links = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH[c] 'See All'"))
+                if links.count > index {
+                    links.element(boundBy: index).tap()
+                    Thread.sleep(forTimeInterval: 1)
+                    shoot("iphone-news-collection-\(name)\(look.suffix)")
+                    app.navigationBars.buttons.element(boundBy: 0).tap()
+                    Thread.sleep(forTimeInterval: 0.8)
+                }
+                app.swipeUp()
+                Thread.sleep(forTimeInterval: 0.6)
             }
         }
     }

@@ -84,12 +84,8 @@ struct MacNewsReaderContent: View {
         }
         if latest == nil, edition.topStory == nil, models.isEmpty, updates.isEmpty, voices.isEmpty, status.isEmpty, retiring.isEmpty {
             ContentUnavailableView("Your briefing is quiet", systemImage: "newspaper", description: Text("Follow tools and voices, browse the model archive, or check again."))
-            NewsNavigationLink { ScrollView { MacNewsFollowing(news: news, library: library, suggestedProviders: suggestedProviders).padding(24) }.navigationTitle("Following") } label: {
-                HStack(spacing: 4) {
-                    Text("Choose what to follow").fontWeight(.medium).foregroundStyle(TokenroomTokens.newsAction)
-                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(TokenroomTokens.newsSecondaryText).accessibilityHidden(true)
-                }
-            }
+            NewsNavigationLink { ScrollView { MacNewsFollowing(news: news, library: library, suggestedProviders: suggestedProviders).padding(24) }.navigationTitle("Following") } label: { NewsLinkLabel(title: "Choose what to follow") }
+                .buttonStyle(.plain)
         }
         Text("Original sources · Personal reset times are in Usage")
             .font(.caption).foregroundStyle(TokenroomTokens.newsSecondaryText).padding(.top, 4)
@@ -232,12 +228,7 @@ struct MacNewsCollectionContent: View {
                     MacNewsStoryList(items: items, news: news, library: library)
                 }
             }
-            NewsNavigationLink { ScrollView { MacNewsFollowing(news: news, library: library).padding(24) }.navigationTitle("Following") } label: {
-                HStack(spacing: 4) {
-                    Text("Choose what to follow").fontWeight(.medium).foregroundStyle(TokenroomTokens.newsAction)
-                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(TokenroomTokens.newsSecondaryText).accessibilityHidden(true)
-                }
-            }
+            NewsNavigationLink { ScrollView { MacNewsFollowing(news: news, library: library).padding(24) }.navigationTitle("Following") } label: { NewsLinkLabel(title: "Choose what to follow") }
                 .buttonStyle(.plain)
         }.padding(24).frame(maxWidth: 1160, alignment: .leading).frame(maxWidth: .infinity)
     }
