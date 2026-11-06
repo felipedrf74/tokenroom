@@ -2,6 +2,10 @@
 
 A draft for App Store Connect. Provider names appear only in the description, as facts, never in the name, subtitle, or keywords. Tokenroom isn't affiliated with any provider.
 
+## What's New — 1.3.0
+
+A lighter, calmer Tokenroom on iPhone, widgets and Apple Watch. Colour now means something: percentages stay in ink until a limit is critical, charts are neutral with a dot at your current level, and controls are blue. Provider pages have one title and plain facts. News has fewer boxes, with actions under each title. Welcome starts with one clear step.
+
 ## What's New — 1.2.2
 
 Submitted 31 October 2026 with build 1.2.2 (1): Waiting for Review, released automatically once approved. The promotional text and the description below went in with it, the description with its current privacy bullet; the review notes are 1.2.1's, unchanged. [The delivery record](release-delivery-20261031.md) has the details.
@@ -147,6 +151,8 @@ The Watch app reads the same iCloud records. Notifications are optional and come
 ## Screenshots
 
 6.9" iPhone (1320 × 2868), from sample data on the iPhone 18 Pro Max simulator in US English, with the status bar set to 9:41:
+
+Replace all of these with 1.3.0: they show the interface before the overhaul.
 
 1. Usage: Close to a limit and the plan tiles
 2. Detail with pace and a week of history (OpenAI)
