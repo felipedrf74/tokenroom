@@ -82,12 +82,12 @@ struct NewsWindowView: View {
         NavigationSplitView {
             List(selection: $page) {
                 Section {
-                    ForEach(NewsDestination.allCases) { item in Label(item.rawValue, systemImage: item.symbol).tag(NewsPage.destination(item)) }
+                    ForEach(NewsDestination.allCases) { item in Label(item.rawValue, systemImage: item.symbol).tag(NewsPage.destination(item)).listItemTint(.monochrome) }
                 }
                 Section(isExpanded: $collectionsExpanded) {
-                        ForEach(NewsFilter.allCases.filter { $0 != .today }) { item in Label(item.rawValue, systemImage: item.symbol).tag(NewsPage.filter(item)) }
-                        Label("Voices", systemImage: "person.2").tag(NewsPage.tool("voices"))
-                        Label("Status", systemImage: "waveform.path.ecg").tag(NewsPage.tool("status"))
+                        ForEach(NewsFilter.allCases.filter { $0 != .today }) { item in Label(item.rawValue, systemImage: item.symbol).tag(NewsPage.filter(item)).listItemTint(.monochrome) }
+                        Label("Voices", systemImage: "person.2").tag(NewsPage.tool("voices")).listItemTint(.monochrome)
+                        Label("Status", systemImage: "waveform.path.ecg").tag(NewsPage.tool("status")).listItemTint(.monochrome)
                 } header: { Text("Collections") }
                 Section("Sources") {
                     DisclosureGroup("Model labs", isExpanded: $labsExpanded) {
@@ -107,6 +107,8 @@ struct NewsWindowView: View {
                 detail(news)
                     .navigationTitle(title)
             }
+            // The page's own heading says this: the title stays for the Window menu and VoiceOver.
+            .toolbar(removing: .title)
             .toolbar {
                 if #available(macOS 26, *) {
                     ToolbarItem(placement: .principal) { windowBrand }.sharedBackgroundVisibility(.hidden)

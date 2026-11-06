@@ -9,7 +9,7 @@ struct MobileNewsReaderContent: View {
     var query: String
     var suggestedProviders: Set<String> = []
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 16) {
             switch destination {
             case .today: if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { today } else { results }
             case .following: MobileNewsFollowing(news: news, library: library, query: query, suggestedProviders: suggestedProviders)
@@ -29,21 +29,25 @@ struct MobileNewsReaderContent: View {
         if !updates.isEmpty { shelf("Latest releases", collection: .release, items: Array(updates.prefix(5))) }
         let models = Array((latest == nil ? edition.moreModels : news.models().filter { NewsEditions.isRecentModel($0) }).prefix(4))
         if !models.isEmpty {
-            MobileNewsSectionHeading(title: "New models") { NewsCollectionView(news: news, library: library, collection: .model) }
-            ForEach(models) { MobileNewsModelCard(model: $0, news: news, library: library) }
+            VStack(alignment: .leading, spacing: 0) {
+                MobileNewsSectionHeading(title: "New models") { NewsCollectionView(news: news, library: library, collection: .model) }
+                MobileNewsModelList(models: models, news: news, library: library)
+            }
         }
         let voices = NewsDiscovery.stories(news.allAnnouncements, collection: .voice)
         if !voices.isEmpty { shelf("From voices you follow", collection: .voice, items: Array(voices.prefix(3))) }
         let status = NewsDiscovery.stories(news.allAnnouncements, collection: .status)
         if !status.isEmpty { shelf("Provider status", collection: .status, items: Array(status.prefix(2))) }
         if !edition.retiring.isEmpty {
-            MobileNewsSectionHeading(title: "Retiring soon") { NewsCollectionView(news: news, library: library, collection: .retirement) }
-            ForEach(edition.retiring.prefix(3)) { MobileNewsModelCard(model: $0, news: news, library: library) }
+            VStack(alignment: .leading, spacing: 0) {
+                MobileNewsSectionHeading(title: "Retiring soon") { NewsCollectionView(news: news, library: library, collection: .retirement) }
+                MobileNewsModelList(models: Array(edition.retiring.prefix(3)), news: news, library: library)
+            }
         }
         if latest == nil, edition.topStory == nil, models.isEmpty, updates.isEmpty, voices.isEmpty, status.isEmpty, edition.retiring.isEmpty {
             ContentUnavailableView("Your briefing is quiet", systemImage: "newspaper", description: Text("Follow tools and voices, browse the model archive, or check again."))
             NewsNavigationLink("Choose what to follow") {
-                ScrollView { MobileNewsFollowing(news: news, library: library, suggestedProviders: suggestedProviders).padding(20) }.newsReaderCanvas().navigationTitle("Following").toolbar(.visible, for: .navigationBar)
+                ScrollView { MobileNewsFollowing(news: news, library: library, suggestedProviders: suggestedProviders).padding(20) }.newsReaderCanvas().navigationTitle("Following").navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
             }.frame(minHeight: 44)
         }
         Menu {
@@ -54,7 +58,7 @@ struct MobileNewsReaderContent: View {
         Text("Original sources · Personal reset times are in Usage").font(.caption).foregroundStyle(MobileNewsPalette.secondary)
     }
     private func shelf(_ title: String, collection: NewsCollection, items: [FeedItem]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 0) {
             MobileNewsSectionHeading(title: title) { NewsCollectionView(news: news, library: library, collection: collection) }
             MobileNewsStoryList(items: items, news: news, library: library)
         }
@@ -67,7 +71,7 @@ struct MobileNewsReaderContent: View {
         if !stories.isEmpty { MobileNewsStoryList(items: stories, news: news, library: library) }
         if !models.isEmpty {
             Text("Models").font(.title3.weight(.semibold)).accessibilityAddTraits(.isHeader)
-            ForEach(models) { MobileNewsModelCard(model: $0, news: news, library: library) }
+            MobileNewsModelList(models: models, news: news, library: library)
         }
         if !saved.isEmpty {
             Text("Saved").font(.title3.weight(.semibold)).accessibilityAddTraits(.isHeader)
@@ -93,21 +97,21 @@ struct MobileNewsFreshnessView: View {
             NewsNavigationLink {
                 MobileNewsSourceHealthDetail(news: news, library: library)
             } label: {
-                let layout = typeSize >= .xxLarge ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(alignment: .center, spacing: 10))
+                let layout = typeSize >= .xxLarge ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout(alignment: .center, spacing: 10))
+                let needsAttention = problem != nil || summary.delayedCount > 0
                 layout {
-                    HStack(spacing: 10) {
-                        if news.isRefreshing { ProgressView().accessibilityLabel("Checking sources") }
-                        else { Image(systemName: problem == nil ? "clock" : "exclamationmark.circle").font(.system(size: 18)).foregroundStyle(TokenroomTokens.accentText) }
+                    HStack(spacing: 8) {
+                        if news.isRefreshing { ProgressView().controlSize(.small).accessibilityLabel("Checking sources") }
+                        else if problem != nil { Image(systemName: "exclamationmark.circle").font(.footnote) }
                         Text(problem != nil ? "Some sources need attention" : (summary.delayedCount > 0 ? "Some feeds delayed" : articleCaption))
-                            .font(.footnote).foregroundStyle(MobileNewsPalette.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                    HStack(spacing: 6) {
+                            .font(.footnote).fixedSize(horizontal: false, vertical: true)
+                    }.foregroundStyle(needsAttention ? Color.primary : MobileNewsPalette.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: 4) {
                         Text("Details").font(.footnote)
-                        Image(systemName: "chevron.right").font(.system(size: 12))
-                    }.foregroundStyle(TokenroomTokens.accentText)
-                }.frame(minHeight: 44).padding(.horizontal, 12).padding(.vertical, typeSize >= .xxLarge ? 10 : 0)
-                    .background(TokenroomTokens.cardFill, in: RoundedRectangle(cornerRadius: 12))
+                        Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
+                    }.foregroundStyle(MobileNewsPalette.secondary)
+                }.frame(minHeight: 28).contentShape(Rectangle())
             }.buttonStyle(.plain)
                 .accessibilityLabel(statusLabel + (statusLabel.hasSuffix(".") ? " " : ". ") + "Source check details")
         }

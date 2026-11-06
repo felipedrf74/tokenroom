@@ -16,6 +16,8 @@ extension TokenroomTokens {
         Color(white: 0.12)
         #endif
     }
+    /// A monogram's tile: a source with no mark of its own stays neutral beside those that have one.
+    static let newsMonogramTint = Color(hex: "#636366")
 }
 
 /// A lab's mark in News: its organization's icon where Tokenroom has one, else a monogram.
@@ -28,7 +30,7 @@ struct LabMark: View {
         if let provider = NewsEditions.labProviders[vendor] {
             ProviderMark(provider: provider, size: size)
         } else {
-            MonogramMark(text: String(name.prefix(1)).uppercased(), tint: Color(hex: "#636366"), size: size)
+            MonogramMark(text: String(name.prefix(1)).uppercased(), tint: TokenroomTokens.newsMonogramTint, size: size)
         }
     }
 

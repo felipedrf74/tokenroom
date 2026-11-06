@@ -17,19 +17,6 @@ struct NewsReaderContent: View {
     }
 }
 
-struct NewsModelLink: View {
-    var model: ModelRelease
-    @Bindable var news: NewsStore
-    @Bindable var library: NewsLibrary
-    var body: some View {
-        #if os(macOS)
-        MacNewsModelCard(model: model, news: news, library: library)
-        #else
-        MobileNewsModelCard(model: model, news: news, library: library)
-        #endif
-    }
-}
-
 struct NewsCollectionView: View {
     @Bindable var news: NewsStore
     @Bindable var library: NewsLibrary
@@ -54,7 +41,7 @@ struct NewsCollectionView: View {
                         ContentUnavailableView(collection == .retirement ? "No upcoming retirements" : "No models found", systemImage: "sparkles", description: Text("Change the search or lab selection, or check again."))
                         followLink
                     }
-                    ForEach(models) { NewsModelLink(model: $0, news: news, library: library) }
+                    if !models.isEmpty { MobileNewsModelList(models: models, news: news, library: library) }
                 } else {
                     let collectionItems = NewsDiscovery.stories(news.allAnnouncements, collection: collection, query: query)
                     let source = sourceID.flatMap { id in news.sources.first { $0.id == id } }
@@ -83,7 +70,7 @@ struct NewsCollectionView: View {
         NewsNavigationLink("Choose what to follow") {
             ScrollView { NewsFollowing(news: news, library: library).padding(20) }.newsReaderCanvas().navigationTitle("Following")
             #if os(iOS)
-            .toolbar(.visible, for: .navigationBar)
+            .toolbar(.visible, for: .navigationBar).navigationBarTitleDisplayMode(.inline)
             #endif
         }.frame(minHeight: NewsControlMetrics.minimumHeight)
     }
@@ -94,7 +81,16 @@ struct NewsCollectionHealthView: View {
     var health: NewsCollectionHealth
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            #if os(macOS)
+            // A caption with a link beside it, as Today's checks read: the page's heading leads.
+            HStack(spacing: 12) {
+                Text(health.caption).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText)
+                checkButton.buttonStyle(.plain).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText)
+                    .underline(health.problem != nil)
+            }
+            #else
             Text(health.caption).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText)
+            #endif
             if news.isRefreshing { ProgressView("Checking News…") }
             if let problem = health.problem {
                 let hasPreviousItems = health.sourceIDs.contains { id in
@@ -102,11 +98,16 @@ struct NewsCollectionHealthView: View {
                 }
                 Text(problem + (hasPreviousItems ? " Previous items remain available." : "")).font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
             }
-            if !health.sourceIDs.isEmpty {
-                Button(health.problem == nil ? "Check collection" : "Retry failed sources") {
-                    Task { await news.retrySources(health.problem == nil ? health.sourceIDs : health.retryIDs) }
-                }.frame(minHeight: NewsControlMetrics.minimumHeight).disabled(news.isRefreshing)
-            }
+            #if os(iOS)
+            checkButton
+            #endif
+        }
+    }
+    @ViewBuilder private var checkButton: some View {
+        if !health.sourceIDs.isEmpty {
+            Button(health.problem == nil ? "Check collection" : "Retry failed sources") {
+                Task { await news.retrySources(health.problem == nil ? health.sourceIDs : health.retryIDs) }
+            }.frame(minHeight: NewsControlMetrics.minimumHeight).disabled(news.isRefreshing)
         }
     }
 }
@@ -132,12 +133,12 @@ struct NewsVoiceDetail: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                MonogramMark(text: voice.name.split(separator: " ").prefix(2).compactMap(\.first).map(String.init).joined(), tint: TokenroomTokens.accentText, size: 44).accessibilityHidden(true)
+                MonogramMark(text: voice.name.split(separator: " ").prefix(2).compactMap(\.first).map(String.init).joined(), tint: TokenroomTokens.newsMonogramTint, size: 44).accessibilityHidden(true)
                 Text(voice.name).font(.system(.largeTitle, design: .serif, weight: .bold)).fixedSize(horizontal: false, vertical: true)
                 Text(voice.feed == nil ? "Profile only" : "Public articles").foregroundStyle(NewsControlMetrics.secondaryText)
                 Toggle("Follow in Tokenroom", isOn: Binding(get: { news.followedVoices.contains(voice.id) }, set: { on in
                     if on { news.followedVoices.insert(voice.id) } else { news.followedVoices.remove(voice.id) }
-                })).frame(minHeight: NewsControlMetrics.minimumHeight)
+                })).frame(minHeight: NewsControlMetrics.minimumHeight).tint(.accentColor)
                 Text("A local reading preference. It doesn't follow this person on X.").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
                 Link("Open on X", destination: voice.profileURL).frame(minHeight: NewsControlMetrics.minimumHeight)
                 Link("Publisher identity", destination: voice.evidenceURL).frame(minHeight: NewsControlMetrics.minimumHeight)
@@ -157,7 +158,7 @@ struct NewsVoiceDetail: View {
                     #if os(iOS)
                     if !items.isEmpty { MobileNewsStoryList(items: items, news: news, library: library) }
                     #else
-                    ForEach(items, id: \.stableID) { NewsStoryLink(item: $0, news: news, library: library) }
+                    if !items.isEmpty { MacNewsStoryList(items: items, news: news, library: library) }
                     #endif
                 } else { Text("This curated profile has no public article feed. Open on X to see their posts; X may ask you to sign in.").foregroundStyle(NewsControlMetrics.secondaryText) }
                 Text("Identity links checked \(voice.verifiedAt)").font(.caption).foregroundStyle(NewsControlMetrics.secondaryText)
