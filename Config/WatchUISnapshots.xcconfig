@@ -1,0 +1,16 @@
+// Screenshots of the Watch app from sample data, for design review. Not part of CI;
+// `./scripts/ui-snapshots.sh` runs it.
+#include "Version.xcconfig"
+
+SDKROOT = watchos
+SUPPORTED_PLATFORMS = watchos watchsimulator
+TARGETED_DEVICE_FAMILY = 4
+WATCHOS_DEPLOYMENT_TARGET = 26.0
+
+PRODUCT_NAME = $(TARGET_NAME)
+PRODUCT_BUNDLE_IDENTIFIER = $(TOKENROOM_BUNDLE_PREFIX).ios.watchkitapp.uisnapshots
+MARKETING_VERSION = $(TOKENROOM_MOBILE_VERSION)
+CURRENT_PROJECT_VERSION = $(TOKENROOM_MOBILE_BUILD)
+GENERATE_INFOPLIST_FILE = YES
+CODE_SIGN_STYLE = Automatic
+TEST_TARGET_NAME = TokenroomWatch

@@ -74,7 +74,8 @@ private struct SmallWidget: View {
                 .widgetAccentable()
             if let window {
                 if window.isMetered {
-                    WidgetMeter(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(at: entry.date))
+                    WidgetMeter(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(at: entry.date),
+                                pace: UsageRanking.pace(for: window, isStale: !provider.isLive, history: item.history[window.id], now: entry.date)?.elapsedFraction)
                 }
                 Text(window.displayTitle)
                     .font(.caption2.weight(.medium))
@@ -84,7 +85,7 @@ private struct SmallWidget: View {
             if let note = ReadingText.attention(provider, now: entry.date, lead: window),
                UsageRanking.limitWarning(for: provider, now: entry.date) != nil || window?.isAwaitingReading(at: entry.date) != true {
                 Text(note).font(.caption2.weight(.semibold))
-                    .foregroundStyle(UsageRanking.limitWarning(for: provider, now: entry.date) == nil ? Color.secondary : TokenroomTokens.usageCritical).lineLimit(2)
+                    .foregroundStyle(UsageRanking.limitWarning(for: provider, now: entry.date) == nil ? Color.secondary : TokenroomTokens.criticalText).lineLimit(2)
             }
             if !provider.isLive {
                 Text("Stale · checked \(RelativeTime.ago(provider.checkedAt ?? provider.fetchedAt, now: entry.date))")
@@ -127,11 +128,12 @@ private struct ListWidget: View {
             ForEach(entry.items.prefix(count)) { item in
                 Link(destination: DeepLink.provider(item.id).url) {
                     ListRow(item: item, showsHistory: showsHistory, date: entry.date)
+                        // Rows share the widget's height, whatever their number.
+                        .frame(maxHeight: .infinity)
                 }
                 // Links tint their labels; rows keep their own colors.
                 .foregroundStyle(.primary)
             }
-            Spacer(minLength: 0)
         }
     }
 }
@@ -144,6 +146,8 @@ private struct ListRow: View {
     var body: some View {
         let provider = item.provider
         let window = provider.leadWindow(now: date, history: item.history)
+        let note = ReadingText.attention(provider, now: date, lead: window)
+        let isLimit = UsageRanking.limitWarning(for: provider, now: date) != nil
         HStack(spacing: 8) {
             ProviderMark(provider: provider, size: 20)
             VStack(alignment: .leading, spacing: 3) {
@@ -151,6 +155,10 @@ private struct ListRow: View {
                     Text(provider.shortName)
                         .font(.caption.weight(.semibold))
                         .lineLimit(1)
+                    // Beside the name, so every row keeps one height; a reached limit gets a line.
+                    if let note, !isLimit {
+                        Text(note).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
                     Spacer(minLength: 4)
                     if let resetsAt = window?.resetsAt, resetsAt > date {
                         ResetCountdown(resetsAt: resetsAt, date: date)
@@ -158,24 +166,29 @@ private struct ListRow: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
+                    // Beside another window's note, this figure needs its own name.
+                    if note != nil, !isLimit, let window {
+                        Text(window.displayTitle).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
                     Text(ReadingText.headline(window, now: date))
                         .font(.caption.weight(.semibold).monospacedDigit())
                         .foregroundStyle(headlineStyle(window, isLive: provider.isLive))
                         .widgetAccentable()
                 }
-                if let note = ReadingText.attention(provider, now: date, lead: window) {
+                if let note, isLimit {
                     Text(note).font(.caption2.weight(.semibold))
-                        .foregroundStyle(UsageRanking.limitWarning(for: provider, now: date) == nil ? Color.secondary : TokenroomTokens.usageCritical).lineLimit(2)
+                        .foregroundStyle(TokenroomTokens.criticalText).lineLimit(2)
                 }
                 if let window, window.isMetered {
-                    WidgetMeter(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(at: date), height: 5)
+                    WidgetMeter(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(at: date),
+                                pace: UsageRanking.pace(for: window, isStale: !provider.isLive, history: item.history[window.id], now: date)?.elapsedFraction, height: 5)
                 }
             }
             if showsHistory {
                 Group {
                     let series = window.flatMap { item.history[$0.id] }
                     if let series, !series.isEmpty {
-                        Sparkline(history: series, tint: Color(hex: provider.tint), lineWidth: 1.2)
+                        Sparkline(history: series, lineWidth: 1, level: provider.isLive && window?.isAwaitingReading(at: date) != true ? window.map { TokenroomTokens.usageColor(usedPercent: $0.used, isStale: false) } : nil)
                     } else {
                         Color.clear
                     }
@@ -271,7 +284,7 @@ private struct RectangularWidget: View {
             let stale = items.filter { !$0.provider.isLive }.count
             Text("\(item.provider.shortName) · \(note)" + (stale > 0 ? " · \(stale) stale" : ""))
                 .font(.caption2.weight(.semibold)).lineLimit(2).minimumScaleFactor(0.7)
-                .foregroundStyle(UsageRanking.limitWarning(for: item.provider, now: date) == nil ? Color.secondary : TokenroomTokens.usageCritical)
+                .foregroundStyle(UsageRanking.limitWarning(for: item.provider, now: date) == nil ? Color.secondary : TokenroomTokens.criticalText)
         } else if items.contains(where: { !$0.provider.isLive }) {
             Text("\(items.filter { !$0.provider.isLive }.count) stale").font(.caption2).lineLimit(1)
         } else if let first = items.first, let resetsAt = first.provider.leadWindow(now: date, history: first.history)?.resetsAt, resetsAt > date {
@@ -293,11 +306,12 @@ private struct RectangularWidget: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                     .frame(width: 58, alignment: .leading)
-                Gauge(value: min(max(used, 0), 100), in: 0...100) {
-                    EmptyView()
-                }
-                .gaugeStyle(.accessoryLinearCapacity)
-                .widgetAccentable()
+                // The reading's level where colour shows. The Lock Screen flattens colour to
+                // brightness, where a critical red would read dimmer than a healthy blue.
+                WidgetMeter(used: used,
+                            isStale: !item.provider.isLive || window?.isAwaitingReading(at: date) == true,
+                            pace: window.flatMap { UsageRanking.pace(for: $0, isStale: !item.provider.isLive, history: item.history[$0.id], now: date)?.elapsedFraction },
+                            height: 4)
                 Text(ReadingText.headline(window, now: date))
                     .font(.caption2.monospacedDigit())
                     .lineLimit(1)
@@ -350,7 +364,7 @@ private struct EmptyWidget: View {
             VStack(alignment: .leading, spacing: 6) {
                 Image(systemName: "gauge.with.dots.needle.50percent")
                     .font(.title2)
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
                 Text(name ?? "No readings yet")
                     .font(.headline)
@@ -368,24 +382,17 @@ private struct EmptyWidget: View {
 private struct WidgetMeter: View {
     var used: Double
     var isStale: Bool
+    /// The even pace, 0–1 of the window, as on the app's meters.
+    var pace: Double? = nil
     var height: CGFloat = 6
     @Environment(\.widgetRenderingMode) private var systemRenderingMode
     @Environment(\.widgetPreviewStyle) private var preview
 
     var body: some View {
         if (preview?.renderingMode ?? systemRenderingMode) == .fullColor {
-            MeterTrack(usedPercent: used, remaining: 100 - used, isStale: isStale, height: height)
+            MeterTrack(usedPercent: used, remaining: 100 - used, isStale: isStale, paceMark: pace, height: height)
         } else {
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.primary.opacity(0.2))
-                    Capsule()
-                        .fill(.primary)
-                        .frame(width: geometry.size.width * min(max(used, 0), 100) / 100)
-                        .widgetAccentable()
-                }
-            }
-            .frame(height: height)
+            FlatMeter(used: used, pace: isStale ? nil : pace, tint: .primary, height: height)
         }
     }
 }
@@ -434,8 +441,8 @@ private struct SampleTag: View {
             .font(.system(size: 9, weight: .semibold))
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
-            .background(.tint.opacity(0.18), in: Capsule())
-            .foregroundStyle(.tint)
+            .background(Color.primary.opacity(0.08), in: Capsule())
+            .foregroundStyle(.secondary)
     }
 }
 

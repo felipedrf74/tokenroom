@@ -32,10 +32,11 @@ struct UsageView: View {
     private func content(at date: Date) -> some View {
         NavigationStack(path: $path) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 12) {
                     if store.sampleMode {
                         SampleBanner(store: store)
-                            .padding(16)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
                             .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color(.secondarySystemGroupedBackground)))
                     }
                     if !store.sampleMode, !store.readings.isEmpty || !store.disconnected.isEmpty {
@@ -45,15 +46,16 @@ struct UsageView: View {
                     if !close.isEmpty {
                         CloseToLimitCard(windows: close, date: date) { id in path = [id] }
                     }
-                    if !highlights.isEmpty {
+                    if !highlights.isEmpty, !store.readings.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
                                 ForEach(highlights) { highlight in
                                     Button(action: highlight.action) {
                                         Label(highlight.title, systemImage: highlight.symbol)
-                                            .font(.subheadline.weight(.medium))
+                                            .font(.footnote.weight(.medium))
+                                            .foregroundStyle(.secondary)
                                             .padding(.horizontal, 12)
-                                            .padding(.vertical, 8)
+                                            .padding(.vertical, 7)
                                             .background(Capsule().fill(Color(.secondarySystemGroupedBackground)))
                                     }
                                     .buttonStyle(.plain)
@@ -64,12 +66,21 @@ struct UsageView: View {
                         .padding(.horizontal, -20)
                     }
                     if !store.readings.isEmpty {
+                        if !close.isEmpty {
+                            Text("All plans")
+                                .font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 16)
+                                .padding(.top, 4)
+                                .accessibilityAddTraits(.isHeader)
+                        }
                         tiles(at: date)
                     }
                     if !store.disconnected.isEmpty {
                         disconnectedSection
                     }
                 }
+                // With nothing in it yet, the empty state's overlay takes this column's width.
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20)
                 .padding(.top, 4)
                 .padding(.bottom, 24)
@@ -133,7 +144,8 @@ struct UsageView: View {
                 GridRow {
                     ForEach(row) { reading in
                         NavigationLink(value: reading.id) {
-                            UsageTileView(reading: reading, date: date)
+                            UsageTileView(reading: reading, date: date, showsOrigin: showsOrigin(reading),
+                                          warnedWindows: Set(closeWindows(at: date).prefix(CloseToLimitCard.rowLimit).filter { $0.provider.id == reading.id }.map(\.window.id)))
                         }
                         .buttonStyle(.plain)
                         .contextMenu {
@@ -150,6 +162,12 @@ struct UsageView: View {
                 }
             }
         }
+    }
+
+    /// The header already says where readings come from and when they were checked. A tile repeats
+    /// that only when it's the exception: readings from more than one place.
+    private func showsOrigin(_ reading: MobileStore.Reading) -> Bool {
+        !store.sampleMode && Set(store.readings.map(\.origin)).count > 1
     }
 
     private var disconnectedSection: some View {
@@ -321,10 +339,10 @@ private struct SampleBanner: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "sparkles")
-                .foregroundStyle(.tint)
-            VStack(alignment: .leading, spacing: 2) {
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
                 Text("Sample data")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.footnote.weight(.semibold))
                 Text("These readings aren't real.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -334,7 +352,9 @@ private struct SampleBanner: View {
                 store.sampleMode = false
                 Task { await store.refresh(force: true) }
             }
+            .font(.footnote)
             .buttonStyle(.bordered)
+            .controlSize(.small)
         }
     }
 }

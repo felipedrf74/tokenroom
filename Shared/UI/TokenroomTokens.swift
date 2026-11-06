@@ -49,7 +49,7 @@ enum TokenroomTokens {
     static let usageTight = Color(red: 232 / 255, green: 122 / 255, blue: 16 / 255)
     static let usageCritical = Color(red: 214 / 255, green: 45 / 255, blue: 38 / 255)
     static let fill = Color.primary.opacity(0.85)
-    static let track = Color.primary.opacity(0.12)
+    static let track = Color.primary.opacity(0.08)
     static let staleOpacity = 0.55
 
     static let menuLabelSize: CGFloat = 10
@@ -77,11 +77,10 @@ enum TokenroomTokens {
         if isStale {
             return Color.secondary.opacity(staleOpacity)
         }
+        // Figures stay ink: the meter beside them says the level, and a screen of orange numbers
+        // reads as an alarm. Only a critical reading colours its figure.
         if remaining <= criticalRemaining {
-            return critical
-        }
-        if remaining <= tightRemaining {
-            return tight
+            return criticalText
         }
         return Color.primary
     }
@@ -101,10 +100,25 @@ enum TokenroomTokens {
         return usageHealthy
     }
 
-    /// A fill with depth in its level's colour: a lighter tint where a meter or ring starts, the
-    /// colour itself where it ends. The colour still says the level; the tint gives it travel.
+    /// A fill in its level's colour: a slightly lighter tint where a meter or ring starts, the
+    /// colour itself where it ends. The colour says the level; the tint only gives it travel.
     static func usageTones(usedPercent: Double) -> (start: Color, end: Color) {
         let end = usageColor(usedPercent: usedPercent, isStale: false)
-        return (end.mix(with: .white, by: 0.34), end)
+        return (end.mix(with: .white, by: 0.14), end)
     }
+
+    /// The controls' accent, spelled out: `Color.accentColor` follows the nearest `.tint`, so under
+    /// the tab bar's ink it would turn filled buttons into white on white.
+    static let control = Color(light: (0, 122, 255), dark: (10, 132, 255))
+
+    /// News's text actions. News reads in ink, with Read article its one coloured control, so these
+    /// are ink at a medium weight: not caption grey, and not a level's hue.
+    static let newsAction = Color.primary
+
+    /// Where a chart's line and area sit: neutral, so a week of history never competes with the
+    /// level colour on the meter beside it.
+    static let chartLine = Color.secondary
+    static let chartArea = Color.primary.opacity(0.06)
+    /// The pace mark: there when you look for it, never the sharpest thing on screen.
+    static let paceMark = Color.primary.opacity(0.5)
 }

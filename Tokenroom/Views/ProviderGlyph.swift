@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Menu-bar marks. Brand logos as template images so they tint with the extra;
-/// Claude and Cursor stay as paths.
+/// Claude stays as a path.
 struct ProviderGlyph: View {
     var provider: Provider
     var size: CGFloat = 11
@@ -30,10 +30,6 @@ struct ProviderGlyph: View {
                     ClaudeMark()
                         .stroke(style: StrokeStyle(lineWidth: max(1.2, size * 0.12), lineCap: .round))
                         .padding(size * 0.08)
-                case .cursor:
-                    CursorMark()
-                        .fill()
-                        .padding(size * 0.06)
                 default:
                     // Providers without a drawn mark get their monogram ("GH"), tinted like the rest.
                     Text(provider.monogram)
@@ -59,25 +55,6 @@ private struct ClaudeMark: Shape {
             path.move(to: CGPoint(x: c.x + CGFloat(cos(a)) * r, y: c.y + CGFloat(sin(a)) * r))
             path.addLine(to: CGPoint(x: c.x - CGFloat(cos(a)) * r, y: c.y - CGFloat(sin(a)) * r))
         }
-        return path
-    }
-}
-
-private struct CursorMark: Shape {
-    func path(in rect: CGRect) -> Path {
-        let inset = rect.insetBy(dx: 0.4, dy: 0.4)
-        let x = inset.minX
-        let y = inset.minY
-        let w = inset.width
-        let h = inset.height
-        var path = Path()
-        path.move(to: CGPoint(x: x + w * 0.20, y: y + h * 0.12))
-        path.addLine(to: CGPoint(x: x + w * 0.84, y: y + h * 0.50))
-        path.addLine(to: CGPoint(x: x + w * 0.20, y: y + h * 0.88))
-        path.addLine(to: CGPoint(x: x + w * 0.20, y: y + h * 0.68))
-        path.addLine(to: CGPoint(x: x + w * 0.56, y: y + h * 0.50))
-        path.addLine(to: CGPoint(x: x + w * 0.20, y: y + h * 0.32))
-        path.closeSubpath()
         return path
     }
 }

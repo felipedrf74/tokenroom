@@ -31,9 +31,62 @@ struct PopoverProviderView: View {
                 .accessibilityHint("Opens usage insights and every limit")
                 .help("Show \(card.provider.displayName) details")
             }
+        } else if style != .classic, !showsDetails, case .expired(let hint, _?) = card.status {
+            expiredRow(hint: hint)
         } else {
-            card
+            plainCard
         }
+    }
+
+    /// Signed-out and loading rows keep the card's controls, without its box in a style's list.
+    private var plainCard: ProviderCard {
+        var plain = card
+        plain.isPlain = style != .classic
+        return plain
+    }
+
+    /// The same row as a live reading, grey, with what went wrong and how to fix it. It opens the
+    /// provider's page like any row, for the last reading's other limits, credits, and plan.
+    private func expiredRow(hint: String) -> some View {
+        let window = reading.primaryWindow
+        return VStack(alignment: .leading, spacing: 6) {
+            Button(action: onOpen) {
+                HStack(spacing: 14) {
+                    if let window, window.isMetered, style == .orbit {
+                        ring(window, side: 60, dimmed: true)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        providerName(size: 14, icon: 20)
+                        if let window {
+                            Text("\(window.displayTitle) · last reading")
+                                .font(.system(size: 12)).foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Text(hint).font(.system(size: 12)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let statusNote {
+                            Text(statusNote).font(.system(size: 11)).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                    // Orbit's ring carries a percent; a balance has no ring, so its amount shows here.
+                    if let window, style != .orbit || !window.isMetered {
+                        PopoverValue(text: ReadingText.headline(window, now: card.date), size: window.isMetered ? 24 : 18, monospaced: style == .instrument)
+                            .foregroundStyle(.secondary)
+                            .opacity(TokenroomTokens.staleOpacity)
+                    }
+                    chevron
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Shows the last reading and every limit")
+            card.signInControls
+                .padding(.leading, reading.primaryWindow?.isMetered == true && style == .orbit ? 74 : 0)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
     }
 
     /// Cached values do not imply a working session. Expired sessions must keep their recovery
@@ -72,41 +125,45 @@ struct PopoverProviderView: View {
 
     @ViewBuilder private func summary(_ window: RelayWindow) -> some View {
         if style == .orbit, window.isMetered {
-            HStack(spacing: 20) {
-                ring(window, side: 96)
-                VStack(alignment: .leading, spacing: 7) {
-                    providerName(size: 16, icon: 28)
-                    Text(ReadingText.reset(window, now: card.date)?.capitalizedFirst ?? window.displayTitle)
-                        .font(.system(size: 13)).foregroundStyle(.secondary)
-                    Text(window.displayTitle).font(.system(size: 12)).foregroundStyle(.secondary)
+            HStack(spacing: 14) {
+                ring(window, side: 60, paceMark: listPace(window))
+                VStack(alignment: .leading, spacing: 3) {
+                    providerName(size: 14, icon: 20)
+                    Text(ReadingText.caption(window, now: card.date))
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                        .lineLimit(1)
                     summaryNote(window)
                 }
                 Spacer(minLength: 0)
                 chevron
             }
-            .padding(.vertical, 16)
+            .padding(.vertical, 8)
             .padding(.horizontal, 20)
         } else {
-            VStack(alignment: .leading, spacing: 9) {
-                HStack(spacing: 12) {
-                    providerName(size: 16, icon: 32)
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 10) {
+                    providerName(size: 14, icon: 22)
                     Spacer(minLength: 4)
-                    headline(window, size: window.isMetered ? 36 : 25)
+                    headline(window, size: window.isMetered ? 24 : 18)
                         .fixedSize(horizontal: window.isMetered, vertical: false)
                         .layoutPriority(1)
                     chevron
                 }
                 if window.isMetered {
-                    PopoverMeter(style: style, used: window.used, isStale: isDimmed(window), height: style == .strata ? 18 : 11)
+                    PopoverMeter(style: style, used: window.used, isStale: isDimmed(window), paceMark: listPace(window), height: style == .strata ? 10 : 7)
                 }
                 Text(ReadingText.caption(window, now: card.date))
                     .font(.system(size: 12)).foregroundStyle(.secondary)
                 summaryNote(window)
             }
             .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-            .background(style == .strata ? Color.primary.opacity(0.025) : .clear)
+            .padding(.vertical, 10)
         }
+    }
+
+    /// The even pace on a list row's ring or meter, as Classic's cards show it.
+    private func listPace(_ window: RelayWindow) -> Double? {
+        isDimmed(window) ? nil : card.pace?.elapsedFraction
     }
 
     @ViewBuilder private func summaryNote(_ window: RelayWindow) -> some View {
@@ -143,21 +200,23 @@ struct PopoverProviderView: View {
             .foregroundStyle(tint(window)).lineLimit(1).minimumScaleFactor(0.65)
     }
 
-    private func ring(_ window: RelayWindow, side: CGFloat) -> some View {
-        UsageRing(used: window.used, isStale: isDimmed(window), label: "", lineWidth: side * 0.085)
-            // UsageRing's stroke straddles its frame; leave room for its cap on every side.
-            .frame(width: side - 10, height: side - 10).padding(5)
+    private func ring(_ window: RelayWindow, side: CGFloat, dimmed: Bool = false, paceMark: Double? = nil) -> some View {
+        let dimmed = dimmed || isDimmed(window)
+        // UsageRing's stroke straddles its frame; leave room for its cap on every side.
+        let inset = max(3, side * 0.05)
+        return UsageRing(used: window.used, isStale: dimmed, label: "", lineWidth: side * 0.095, paceMark: paceMark)
+            .frame(width: side - inset * 2, height: side - inset * 2).padding(inset)
             .overlay {
-                PopoverValue(text: ReadingText.headline(window, now: card.date), size: side * 0.34)
-                    .foregroundStyle(isDimmed(window) ? Color.secondary : Color.primary)
+                PopoverValue(text: ReadingText.headline(window, now: card.date), size: side * 0.3)
+                    .foregroundStyle(dimmed ? Color.secondary : TokenroomTokens.ink(remaining: 100 - window.used, isStale: false))
             }
-            .opacity(isDimmed(window) ? TokenroomTokens.staleOpacity : 1)
+            .opacity(dimmed ? TokenroomTokens.staleOpacity : 1)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(ReadingText.headline(window, now: card.date)) used")
     }
 
     private func detail(_ snapshot: QuotaSnapshot, window: RelayWindow) -> some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 14) {
             hero(window)
             if let attention {
                 Text(attention).font(.system(size: 13, weight: .medium))
@@ -171,11 +230,12 @@ struct PopoverProviderView: View {
             }
             let facts = PopoverInsights.facts(window: window, isStale: card.status.isStale, now: card.date)
             if !facts.isEmpty {
-                UsageFactsGrid(facts: facts, labelFont: .system(size: 10, weight: .medium),
-                               valueFont: .system(size: 23, weight: .semibold), detailFont: .system(size: 11))
+                UsageFactsGrid(facts: facts, labelFont: .system(size: 11),
+                               valueFont: .system(size: 20, weight: .medium), detailFont: .system(size: 11),
+                               isStale: isDimmed(window))
             }
             if window.isMetered, let history = card.weeks[window.id], !history.isEmpty {
-                historyChart(history)
+                historyChart(history, window: window)
             }
             if !card.status.isStale, let forecast = Forecast.text(for: window, history: card.weeks[window.id], checkedAt: card.checkedAt ?? snapshot.fetchedAt, now: card.date) {
                 Label(forecast, systemImage: "chart.line.uptrend.xyaxis")
@@ -206,37 +266,32 @@ struct PopoverProviderView: View {
             }
             metadata(snapshot)
         }
-        .padding(20)
+        .padding(.horizontal, 20)
+        .padding(.top, 14)
+        // Past the footer's fade, so the last line can be read at the end of the scroll.
+        .padding(.bottom, 24)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// The header above names the provider, so the hero is only the reading.
     @ViewBuilder private func hero(_ window: RelayWindow) -> some View {
-        if style == .orbit, window.isMetered {
-            VStack(spacing: 12) {
-                providerName(size: 19, icon: 34)
-                ring(window, side: 128)
-                Text("\(window.displayTitle) used").font(.system(size: 13)).foregroundStyle(.secondary)
-                if let reset = ReadingText.reset(window, now: card.date) {
-                    Text(reset.capitalizedFirst).font(.system(size: 15, weight: .medium))
-                }
-            }.frame(maxWidth: .infinity)
-        } else if style == .aurora, window.isMetered {
-            VStack(alignment: .leading, spacing: 16) {
-                providerName(size: 19, icon: 36)
-                HStack(spacing: 22) {
-                    ring(window, side: 138)
-                    Text(ReadingText.caption(window, now: card.date)).font(.system(size: 14))
-                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        if style == .orbit || style == .aurora, window.isMetered {
+            HStack(spacing: 18) {
+                ring(window, side: 96, paceMark: listPace(window))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("\(window.displayTitle) used").font(.system(size: 13)).foregroundStyle(.secondary)
+                    if let reset = ReadingText.reset(window, now: card.date) {
+                        Text(reset.capitalizedFirst).font(.system(size: 15, weight: .medium))
+                    }
                 }
             }
         } else {
-            VStack(alignment: .leading, spacing: 16) {
-                providerName(size: 19, icon: 36)
-                headline(window, size: window.isMetered ? 58 : 34)
+            VStack(alignment: .leading, spacing: 10) {
+                headline(window, size: window.isMetered ? 44 : 30)
                 if window.isMetered {
-                    PopoverMeter(style: style, used: window.used, isStale: isDimmed(window), height: style == .strata ? 28 : 13)
+                    PopoverMeter(style: style, used: window.used, isStale: isDimmed(window), paceMark: listPace(window), height: style == .strata ? 14 : 9)
                 }
-                Text(ReadingText.caption(window, now: card.date)).font(.system(size: 14)).foregroundStyle(.secondary)
+                Text(ReadingText.caption(window, now: card.date)).font(.system(size: 13)).foregroundStyle(.secondary)
             }
         }
     }
@@ -253,14 +308,17 @@ struct PopoverProviderView: View {
                     Text(pace.caption(now: card.date)).font(.system(size: 12))
                         .foregroundStyle(pace.needsAttention ? TokenroomTokens.accentText : Color.secondary)
                 }
-                PopoverMeter(style: style, used: window.used, isStale: false, paceMark: pace.elapsedFraction, height: 9)
-                Text(PopoverInsights.paceDetail(pace)).font(.system(size: 12)).foregroundStyle(.secondary)
-                Text("The marker shows \(TokenroomFormat.percentText(pace.elapsedFraction * 100))% of the period elapsed.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                PopoverMeter(style: style, used: window.used, isStale: false, paceMark: pace.elapsedFraction, height: 7)
+                Text(PopoverInsights.paceSummary(pace))
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                    .help(PopoverInsights.paceDetail(pace))
                 if let runOut = pace.runsOutAt {
-                    Label("Projected limit: \(Pace.shortMoment(runOut, now: card.date, timeZone: .current))", systemImage: "hourglass")
-                        .font(.system(size: 12, weight: .medium)).foregroundStyle(TokenroomTokens.accentText)
-                    Text("Estimate at the observed pace; future usage can change it.")
+                    // Ahead of pace says when in the caption above; on pace it doesn't.
+                    if !pace.needsAttention {
+                        Text("Projected limit: \(Pace.shortMoment(runOut, now: card.date, timeZone: .current))")
+                            .font(.system(size: 12, weight: .medium)).foregroundStyle(TokenroomTokens.accentText)
+                    }
+                    Text("Estimated at this pace; usage may change.")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
             }
@@ -268,7 +326,13 @@ struct PopoverProviderView: View {
         }
     }
 
-    private func historyChart(_ history: UsageHistory) -> some View {
+    /// The chart's one colour: its latest reading's level, on a current reading only.
+    private func level(for history: UsageHistory, window: RelayWindow) -> Color? {
+        guard !isDimmed(window), let latest = history.points.last?.used else { return nil }
+        return TokenroomTokens.usageColor(usedPercent: latest, isStale: false)
+    }
+
+    private func historyChart(_ history: UsageHistory, window: RelayWindow) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Last 7 days").font(.system(size: 13, weight: .semibold))
@@ -281,8 +345,8 @@ struct PopoverProviderView: View {
                     Spacer()
                     Text("0%")
                 }.font(.system(size: 9)).foregroundStyle(.secondary)
-                Sparkline(history: history, tint: style == .instrument ? TokenroomTokens.usageHealthy : Color(hex: card.provider.tintHex), lineWidth: 2)
-            }.frame(height: 68)
+                Sparkline(history: history, level: level(for: history, window: window))
+            }.frame(height: 54)
             Text(Sparkline.summary(history)).font(.system(size: 11)).foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .ignore)
@@ -293,13 +357,13 @@ struct PopoverProviderView: View {
     private func secondaryWindow(_ window: RelayWindow) -> some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack {
-                Text(window.displayTitle).font(.system(size: 14, weight: .medium))
+                Text(window.displayTitle).font(.system(size: 13, weight: .medium))
                 Spacer()
-                headline(window, size: 25)
+                headline(window, size: 18)
             }
             if window.isMetered {
                 PopoverMeter(style: style, used: window.used, isStale: isDimmed(window),
-                             paceMark: isDimmed(window) ? nil : card.windowPaces[window.id]?.elapsedFraction, height: style == .strata ? 15 : 9)
+                             paceMark: isDimmed(window) ? nil : card.windowPaces[window.id]?.elapsedFraction, height: style == .strata ? 10 : 7)
             }
             if let reset = ReadingText.reset(window, now: card.date) {
                 Text(reset.capitalizedFirst).font(.system(size: 12)).foregroundStyle(.secondary)
@@ -311,10 +375,10 @@ struct PopoverProviderView: View {
     }
 
     private func metadata(_ snapshot: QuotaSnapshot) -> some View {
+        // When it was checked is in the header, for this provider.
         VStack(alignment: .leading, spacing: 6) {
-            Divider()
+            if snapshot.planLabel != nil || ProviderCard.sourceCaption(snapshot) != nil || ProviderCard.readsUnofficially(card.provider, snapshot: snapshot) { Divider() }
             if let plan = snapshot.planLabel { Text("Plan · \(plan)") }
-            Text("Checked \(RelativeTime.ago(card.checkedAt ?? snapshot.fetchedAt, now: card.date))")
             if let source = ProviderCard.sourceCaption(snapshot) { Text(source) }
             if ProviderCard.readsUnofficially(card.provider, snapshot: snapshot) {
                 Text("Unofficial: read from the same endpoint \(card.provider.toolName) uses. It can change without notice.")

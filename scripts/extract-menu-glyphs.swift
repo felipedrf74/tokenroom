@@ -7,6 +7,8 @@ import UniformTypeIdentifiers
 enum Kind {
     case lightOnDark
     case darkOnLight
+    /// A mark drawn in several greys, such as a cube's faces: each keeps its weight as opacity.
+    case shadedOnDark
 }
 
 struct Job {
@@ -28,6 +30,11 @@ let jobs = [
         name: "GlyphBot",
         source: URL(fileURLWithPath: "/Applications/Grok Bot.app/Contents/Resources/icon.icns"),
         kind: .lightOnDark
+    ),
+    Job(
+        name: "GlyphCursor",
+        source: URL(fileURLWithPath: "/Applications/Cursor.app/Contents/Resources/Cursor.icns"),
+        kind: .shadedOnDark
     ),
     Job(
         name: "GlyphGPT",
@@ -83,6 +90,8 @@ func markAlpha(luminance l: Double, alpha a: Double, kind: Kind) -> Double {
         return smoothstep(0.46, 0.78, l)
     case .darkOnLight:
         return smoothstep(0.42, 0.16, l)
+    case .shadedOnDark:
+        return 0.5 * smoothstep(0.09, 0.16, l) + 0.5 * smoothstep(0.3, 0.8, l)
     }
 }
 
@@ -154,7 +163,8 @@ func extract(_ image: CGImage, kind: Kind) -> CGImage? {
     var coreMinX = width, coreMinY = height, coreMaxX = 0, coreMaxY = 0
     for y in 0..<height {
         for x in 0..<width {
-            if alphaMap[y * width + x] > 0.7 {
+            // A shaded mark's dim faces are part of it, so they set the bounds too.
+            if alphaMap[y * width + x] > (kind == .shadedOnDark ? 0.3 : 0.7) {
                 coreMinX = min(coreMinX, x)
                 coreMinY = min(coreMinY, y)
                 coreMaxX = max(coreMaxX, x)
@@ -214,7 +224,8 @@ func extract(_ image: CGImage, kind: Kind) -> CGImage? {
 
     let bw = maxX - minX + 1
     let bh = maxY - minY + 1
-    let pad = Int((Double(max(bw, bh)) * (kind == .darkOnLight ? 0.20 : 0.12)).rounded(.up))
+    let padding = switch kind { case .darkOnLight: 0.20; case .lightOnDark: 0.12; case .shadedOnDark: 0.04 }
+    let pad = Int((Double(max(bw, bh)) * padding).rounded(.up))
     let side = max(bw, bh) + pad * 2
     let ox = (side - bw) / 2
     let oy = (side - bh) / 2

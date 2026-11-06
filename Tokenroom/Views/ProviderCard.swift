@@ -20,6 +20,9 @@ struct ProviderCard: View {
     var onCancelSignIn: () -> Void = {}
     var onInstall: () -> Void = {}
     var date: Date = .now
+    /// In a popover style's own list, which has its rows and edges: no surface of its own, and its
+    /// content lines up with the rows around it.
+    var isPlain = false
     /// The pointer over a card or row: it lifts a little, as a list row does on macOS.
     @State private var isHovered = false
 
@@ -41,7 +44,7 @@ struct ProviderCard: View {
     }
 
     private var fullCard: some View {
-        VStack(alignment: .leading, spacing: TokenroomTokens.rhythm) {
+        VStack(alignment: .leading, spacing: 5) {
             switch status {
             case .loading:
                 header(percent: nil, remaining: 100, stale: false)
@@ -80,19 +83,18 @@ struct ProviderCard: View {
                 }
             }
         }
-        .padding(TokenroomTokens.cardPadding)
+        .padding(.horizontal, isPlain ? 20 : TokenroomTokens.cardPadding)
+        .padding(.vertical, isPlain ? 10 : TokenroomTokens.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(cardSurface(cornerRadius: 10))
+        .background { if !isPlain { cardSurface(cornerRadius: 10) } }
         .onHover { isHovered = onToggleExpanded != nil && $0 }
     }
 
-    /// The card's surface: a light fill on the popover's material with a hairline edge, a
-    /// little brighter under the pointer.
+    /// The card's surface: a light fill on the popover's material, a little brighter under the
+    /// pointer. No edge: the fill already says where the card is.
     private func cardSurface(cornerRadius: CGFloat) -> some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        return shape
-            .fill(Color.primary.opacity(isHovered ? 0.075 : 0.045))
-            .overlay(shape.strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(Color.primary.opacity(isHovered ? 0.07 : 0.04))
     }
 
     /// Readings that can collapse to one line: nothing to sign in to.
@@ -121,7 +123,7 @@ struct ProviderCard: View {
                     Text(provider.displayName).font(.system(size: 12, weight: .semibold))
                     if let attention {
                         Text(attention).font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(limitWarning == nil ? Color.secondary : TokenroomTokens.usageCritical)
+                            .foregroundStyle(limitWarning == nil ? Color.secondary : TokenroomTokens.criticalText)
                             .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     } else if let reset = compactReset(snapshot) {
                         // The window's name too when it fits; "resets in" always, so the time
@@ -137,7 +139,7 @@ struct ProviderCard: View {
                 }
                     .foregroundStyle(stale ? Color.secondary : Color.primary)
                     .lineLimit(1)
-                    .frame(width: 118, alignment: .leading)
+                    .frame(width: 166, alignment: .leading)
                 if metered {
                     MeterTrack(
                         usedPercent: snapshot.usedPercent,
@@ -149,12 +151,17 @@ struct ProviderCard: View {
                 } else {
                     Spacer(minLength: 0)
                 }
-                if !meterStale, let pace, pace.verdict == .ahead || pace.verdict == .limitReached {
-                    Image(systemName: "arrow.up.right")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(paceColor(pace))
-                        .help(pace.caption())
-                }
+                // Held open in every row, so all the meters end at one edge.
+                Color.clear
+                    .frame(width: 10, height: 10)
+                    .overlay {
+                        if !meterStale, let pace, pace.verdict == .ahead || pace.verdict == .limitReached {
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(paceColor(pace))
+                                .help(pace.caption())
+                        }
+                    }
                 if let note {
                     Image(systemName: note.symbol)
                         .font(.system(size: 9, weight: .semibold))
@@ -183,7 +190,7 @@ struct ProviderCard: View {
     private func compactReset(_ snapshot: QuotaSnapshot) -> (full: String, short: String)? {
         guard let primary = snapshot.windows.first, let resetsAt = primary.resetsAt, resetsAt > date else { return nil }
         let short = "resets in \(UsageFacts.countdown(to: resetsAt, now: date))"
-        return ("\(primary.displayTitle) · \(short)", short)
+        return (ReadingText.caption(RelayWindow(primary), now: date), short)
     }
 
     /// What a one-line row says about a reading that isn't current, besides graying it: a symbol
@@ -207,8 +214,9 @@ struct ProviderCard: View {
         "Last good reading, \(RelativeTime.ago(checkedAt, now: now))."
     }
 
+    /// Sign In, or what's in the way of it. A popover style's expired row shows these too.
     @ViewBuilder
-    private var signInControls: some View {
+    var signInControls: some View {
         if isWorking {
             HStack(spacing: 8) {
                 ProgressView()
@@ -271,7 +279,7 @@ struct ProviderCard: View {
             }
         } else {
             toggleable {
-                VStack(alignment: .leading, spacing: TokenroomTokens.rhythm) {
+                VStack(alignment: .leading, spacing: 7) {
                     header(value: headlineValue(snapshot), remaining: snapshot.remainingPercent, stale: stale || awaiting)
                     MeterTrack(
                         usedPercent: snapshot.usedPercent,
@@ -281,7 +289,8 @@ struct ProviderCard: View {
                     )
                 }
             }
-            caption(primaryCaption(snapshot))
+            // Expanded, the Resets fact below says when, to the minute.
+            caption(isExpanded && !awaiting ? snapshot.primaryTitle : primaryCaption(snapshot))
             if !stale, let primary = snapshot.windows.first, let forecast = Forecast.text(for: primary, history: weeks[primary.id], checkedAt: checkedAt ?? snapshot.fetchedAt, now: date) {
                 caption(forecast)
             }
@@ -294,7 +303,7 @@ struct ProviderCard: View {
         }
         if !stale, let warning = limitWarning {
             Text(warning).font(.system(size: TokenroomTokens.captionSize, weight: .semibold))
-                .foregroundStyle(TokenroomTokens.usageCritical)
+                .foregroundStyle(TokenroomTokens.criticalText)
         }
         if isExpanded {
             expandedDetails(snapshot, stale: stale)
@@ -306,15 +315,15 @@ struct ProviderCard: View {
             if let banked = snapshot.banked, banked.available > 0 {
                 caption(Self.bankedText(banked, now: date))
             }
-            if let extra = snapshot.extra, let text = Self.extraText(extra) {
-                caption(text)
+            // One line for what's left beyond the plan and the plan itself, neither worth two.
+            let plan = snapshot.planLabel.flatMap { $0 == snapshot.primaryTitle ? nil : $0 }
+            let beyond = snapshot.extra.flatMap { Self.extraText($0) }
+            if plan != nil || beyond != nil {
+                caption([beyond, plan].compactMap(\.self).joined(separator: " · "))
             }
         }
         if let source = Self.sourceCaption(snapshot) {
             caption(source)
-        }
-        if !isExpanded, let plan = snapshot.planLabel, plan != snapshot.primaryTitle {
-            caption(plan)
         }
         if stale {
             caption(Self.lastGoodText(checkedAt ?? snapshot.fetchedAt, now: date))
@@ -345,18 +354,18 @@ struct ProviderCard: View {
                     now: date
                 ),
                 columns: 2,
-                labelFont: .system(size: 9, weight: .medium),
-                valueFont: .system(size: 12, weight: .semibold),
-                detailFont: .system(size: 10),
-                spacing: 6,
-                cornerRadius: 7
+                labelFont: .system(size: 11),
+                valueFont: .system(size: 13, weight: .medium),
+                detailFont: .system(size: 11),
+                spacing: 8,
+                isStale: stale
             )
             if let primary = snapshot.windows.first, primary.isMetered, let week = weeks[primary.id], !week.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Last 7 days")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
-                    Sparkline(history: week, tint: Color(hex: provider.tintHex))
+                    Sparkline(history: week, level: stale || RelayWindow(primary).isAwaitingReading(at: date) ? nil : TokenroomTokens.usageColor(usedPercent: primary.usedPercent, isStale: false))
                         .frame(height: 36)
                 }
                 // The line itself is hidden from VoiceOver; the group says what it shows.
@@ -372,20 +381,20 @@ struct ProviderCard: View {
                     isStale: stale || RelayWindow(window).isAwaitingReading(at: date),
                     paceMark: RelayWindow(window).isAwaitingReading(at: date) ? nil : windowPaces[window.id]?.elapsedFraction,
                     caption: windowDetail(window, stale: stale),
-                    titleFont: .system(size: 11),
-                    captionFont: .system(size: 10)
+                    titleFont: .system(size: 12),
+                    captionFont: .system(size: 11)
                 )
             }
             if let banked = snapshot.banked, banked.available > 0 {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(banked.available == 1 ? "1 banked reset" : "\(banked.available) banked resets")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 12, weight: .medium))
                     Text("Use one in \(provider.toolName) to reset a limit early.")
-                        .font(.system(size: 10))
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                     ForEach(banked.expiries.filter { $0 > date }.sorted(), id: \.self) { expiry in
                         Text("Expires \(expiry.formatted(date: .abbreviated, time: .shortened))")
-                            .font(.system(size: 10))
+                            .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
                 }

@@ -29,12 +29,15 @@ struct MobileSettingsView: View {
                     Toggle(isOn: $store.sampleMode) {
                         SettingsRowLabel("Sample Data", symbol: "sparkles", tint: .purple)
                     }
+                    SettingsDisclosure("How Readings Work", text: store.connectOnIPhone
+                        ? "Your devices share readings through your iCloud. Plans you sign in to and providers added with keys check on this iPhone; others check while Tokenroom runs on your Mac."
+                        : "Your devices share readings through your iCloud. Providers added with keys can check on this iPhone; other providers check while Tokenroom runs on your Mac.")
                 } header: {
                     Text("Readings")
                 } footer: {
                     Text(store.connectOnIPhone
-                        ? "Your devices share readings through your iCloud. Plans you sign in to and providers added with keys check on this iPhone; others check while Tokenroom runs on your Mac. Only usage, reset times, and plan names are sent, never sign-ins, logins, or keys."
-                        : "Your devices share readings through your iCloud. Providers added with keys can check on this iPhone; other providers check while Tokenroom runs on your Mac. Only usage, reset times, and plan names are sent, never logins or keys.")
+                        ? "Only usage, reset times, and plan names are sent, never sign-ins, logins, or keys."
+                        : "Only usage, reset times, and plan names are sent, never logins or keys.")
                 }
 
                 if !store.sampleMode, !store.readings.isEmpty {
@@ -78,7 +81,7 @@ struct MobileSettingsView: View {
                                 Text("\(store.keyedProviders.count)")
                             }
                         } label: {
-                            SettingsRowLabel("API Keys", symbol: "key.fill", tint: TokenroomTokens.tight)
+                            SettingsRowLabel("API Keys", symbol: "key.fill", tint: .gray)
                         }
                     }
                     NavigationLink(value: SettingsRoute.widgets) {
@@ -86,10 +89,24 @@ struct MobileSettingsView: View {
                     }
                 } footer: {
                     if store.connectOnIPhone {
-                        Text("Sign in to plans, or add API keys, to read providers right from this iPhone. Sign-ins and keys stay in its Keychain; they're never synced or sent to your other devices.")
+                        Text("Sign-ins and keys stay in this iPhone's Keychain; they're never synced or sent to your other devices.")
                     } else {
-                        Text("Read providers right from this iPhone with API keys. Keys stay in its Keychain; they're never synced or sent to your other devices.")
+                        Text("Keys stay in this iPhone's Keychain; they're never synced or sent to your other devices.")
                     }
+                }
+
+                Section {
+                    LabeledContent("Version", value: TokenroomIdentity.version)
+                    // WidgetKit's budget is per widget, so the busiest one is what counts.
+                    LabeledContent("Widget Updates", value: "\(store.widgetReloadCount) in 24 hours")
+                        .accessibilityLabel("Busiest widget's updates, last 24 hours")
+                        .accessibilityValue("\(store.widgetReloadCount)")
+                    OutboundRow("Privacy", destination: TokenroomIdentity.privacyURL)
+                    OutboundRow("Source Code", destination: TokenroomIdentity.repositoryURL)
+                } header: {
+                    Text("About")
+                } footer: {
+                    Text("Tokenroom isn't affiliated with any of the providers it shows.")
                 }
 
                 Section {
@@ -97,27 +114,12 @@ struct MobileSettingsView: View {
                         confirmsDelete = true
                     }
                     .disabled(deleting || store.relayPhase == .unavailable || store.relayPhase == .noAccount)
+                } header: {
+                    Text("iCloud Data")
                 } footer: {
                     Text(deleteError ?? (store.connectOnIPhone
                         ? "Removes every Tokenroom reading and history from your iCloud, for all your devices. Keys and sign-ins on this iPhone stay."
                         : "Removes every Tokenroom reading and history from your iCloud, for all your devices. Keys on this iPhone stay."))
-                }
-
-                Section("About") {
-                    LabeledContent("Version", value: TokenroomIdentity.version)
-                    // WidgetKit's budget is per widget, so the busiest one is what counts.
-                    LabeledContent("Busiest widget's updates, last 24 hours", value: "\(store.widgetReloadCount)")
-                    Link(destination: TokenroomIdentity.privacyURL) {
-                        SettingsRowLabel("Privacy", symbol: "hand.raised.fill", tint: .blue)
-                    }
-                    .foregroundStyle(.primary)
-                    Link(destination: TokenroomIdentity.repositoryURL) {
-                        SettingsRowLabel("Source Code", symbol: "chevron.left.forwardslash.chevron.right", tint: .gray)
-                    }
-                    .foregroundStyle(.primary)
-                    Text("Tokenroom isn't affiliated with any of the providers it shows.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("Settings")
@@ -146,6 +148,77 @@ struct MobileSettingsView: View {
                 }
             } message: {
                 Text("Devices that collect usage send fresh readings on their next check.")
+            }
+        }
+    }
+}
+
+/// A plain row that opens the browser, with the arrow that says so.
+private struct OutboundRow: View {
+    var title: String
+    var destination: URL
+
+    init(_ title: String, destination: URL) {
+        self.title = title
+        self.destination = destination
+    }
+
+    var body: some View {
+        Link(destination: destination) {
+            LabeledContent(title) {
+                Image(systemName: "arrow.up.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
+        }
+        .foregroundStyle(.primary)
+    }
+}
+
+/// The rest of an explanation, a tap away, so a group's footer can stay one concise line.
+struct SettingsDisclosure: View {
+    var title: String
+    var text: String
+
+    init(_ title: String, text: String) {
+        self.title = title
+        self.text = text
+    }
+
+    var body: some View {
+        DisclosureGroup(title) {
+            Text(text)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .disclosureGroupStyle(QuietDisclosure())
+    }
+}
+
+/// A disclosure whose chevron matches the navigation rows around it.
+private struct QuietDisclosure: DisclosureGroupStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { configuration.isExpanded.toggle() }
+            } label: {
+                HStack {
+                    configuration.label.foregroundStyle(.primary)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
+                        .accessibilityHidden(true)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(configuration.isExpanded ? "Expanded" : "Collapsed")
+            if configuration.isExpanded {
+                configuration.content
             }
         }
     }
@@ -319,7 +392,7 @@ struct KeyEditorView: View {
                     if let warning = metadata.warning {
                         Label(warning, systemImage: "exclamationmark.triangle")
                             .font(.footnote)
-                            .foregroundStyle(TokenroomTokens.accentText)
+                            .foregroundStyle(.primary)
                     }
                     Button("Replace Key") {
                         invalidateValidation()
@@ -355,7 +428,7 @@ struct KeyEditorView: View {
                     Section {
                         Label(warning, systemImage: "exclamationmark.triangle")
                             .font(.footnote)
-                            .foregroundStyle(TokenroomTokens.accentText)
+                            .foregroundStyle(.primary)
                     }
                 }
                 if spec?.isAdmin == true {
@@ -560,7 +633,7 @@ private struct HelpRow: View {
         HStack(alignment: .top, spacing: 14) {
             Image(systemName: symbol)
                 .font(.title3)
-                .foregroundStyle(.tint)
+                .foregroundStyle(.secondary)
                 .frame(width: 30)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)

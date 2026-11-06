@@ -8,6 +8,18 @@ struct WatchRootView: View {
     private var items: [ReadingCache.Item] { store.items(at: date) }
 
     var body: some View {
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "TokenroomGallery") {
+            WatchComplicationGallery(date: date)
+        } else {
+            list
+        }
+        #else
+        list
+        #endif
+    }
+
+    private var list: some View {
         NavigationStack(path: $path) {
             Group {
                 if items.isEmpty {
@@ -85,7 +97,7 @@ private struct WatchEmptyView: View {
                 VStack(spacing: 8) {
                     Image(systemName: symbol)
                         .font(.title2)
-                        .foregroundStyle(.tint)
+                        .foregroundStyle(.secondary)
                     Text(title)
                         .font(.headline)
                         .multilineTextAlignment(.center)
@@ -93,6 +105,7 @@ private struct WatchEmptyView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
+                        .padding(.horizontal, 8)
                     if offersConnect {
                         Button("Set up on iPhone", systemImage: "iphone") { store.openConnectOnPhone() }
                     }
@@ -128,7 +141,7 @@ private struct WatchEmptyView: View {
         case .noAccount: "Use the same Apple Account on this Watch as on your iPhone and Mac."
         case .unreachable: "The Watch shows what your iPhone and Mac send through iCloud. It tries again soon."
         case nil where offersConnect: "Open Tokenroom on your iPhone."
-        case nil: "Open Tokenroom on your iPhone or Mac. The Watch shows what they send through your iCloud."
+        case nil: "Open Tokenroom on your iPhone or Mac."
         }
     }
 }
@@ -143,29 +156,36 @@ private struct WatchRow: View {
         HStack(spacing: 10) {
             if let window, window.isMetered {
                 // The provider's icon in the ring; the row reads its name, so the ring has no label.
-                UsageRing(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(at: date), label: "")
+                UsageRing(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(at: date), label: "",
+                          paceMark: UsageRanking.pace(for: window, isStale: !provider.isLive, history: item.history[window.id], now: date)?.elapsedFraction)
                     .frame(width: 40, height: 40)
                     .overlay { ProviderMark(provider: provider, size: 22) }
             } else {
                 ProviderMark(provider: provider, size: 36)
             }
             VStack(alignment: .leading, spacing: 1) {
-                HStack {
+                // A balance's amount is too wide to share the name's line: it takes its own.
+                let names = window?.isMetered == false
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0))
+                    : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 6))
+                names {
                     Text(provider.shortName)
-                        .font(.headline)
+                        .font(.system(.body, weight: .semibold))
                         .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                    Spacer(minLength: 2)
+                        .minimumScaleFactor(0.8)
+                        .allowsTightening(true)
+                    if window?.isMetered != false { Spacer(minLength: 0) }
                     Text(ReadingText.headline(window, now: date))
-                        .font(.headline.monospacedDigit())
+                        .font(.system(.body, weight: .medium).monospacedDigit())
                         .foregroundStyle(headlineColor(window, isLive: provider.isLive, now: date))
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
+                        .layoutPriority(1)
                 }
                 if let note = ReadingText.attention(provider, now: date, lead: window),
                    UsageRanking.limitWarning(for: provider, now: date) != nil || window?.isAwaitingReading(at: date) != true {
                     Text(note).font(.caption2.weight(.semibold))
-                        .foregroundStyle(UsageRanking.limitWarning(for: provider, now: date) == nil ? Color.secondary : TokenroomTokens.usageCritical)
+                        .foregroundStyle(UsageRanking.limitWarning(for: provider, now: date) == nil ? Color.secondary : TokenroomTokens.criticalText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if !provider.isLive, let checked = provider.checkedAt ?? provider.fetchedAt {
@@ -191,35 +211,59 @@ struct WatchDetailView: View {
     var body: some View {
         let provider = item.provider
         List {
-            if let plan = provider.plan {
-                Text(plan)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
             let shown = provider.leadWindow(now: date, history: item.history)
             if let lead = shown, lead.isMetered {
                 let pace = UsageRanking.pace(for: lead, isStale: !provider.isLive, history: item.history[lead.id], now: date)
-                HStack(spacing: 10) {
-                    UsageRing(used: lead.used, isStale: !provider.isLive || lead.isAwaitingReading(at: date),
-                              label: ReadingText.headline(lead, now: date), lineWidth: 6, paceMark: pace?.elapsedFraction)
-                        .frame(width: 58, height: 58)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(lead.displayTitle)
-                            .font(.footnote.weight(.semibold))
-                        if let detail = detail(lead, pace: pace) {
-                            Text(detail)
-                                .font(.caption2)
-                                .foregroundStyle(pace?.needsAttention == true ? TokenroomTokens.accentText : .secondary)
-                                .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 10) {
+                        UsageRing(used: lead.used, isStale: !provider.isLive || lead.isAwaitingReading(at: date),
+                                  label: ReadingText.headline(lead, now: date), lineWidth: 6, paceMark: pace?.elapsedFraction)
+                            .frame(width: 58, height: 58)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(lead.displayTitle)
+                                .font(.footnote.weight(.semibold))
+                            if let reset = ReadingText.reset(lead, now: date) {
+                                Text(reset)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
                         }
+                    }
+                    // The whole row's width, so what matters stays on two lines at most.
+                    if let pace, pace.needsAttention || pace.isProjected {
+                        Text(pace.caption(now: date))
+                            .font(.caption2)
+                            .foregroundStyle(pace.needsAttention ? TokenroomTokens.accentText : .secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(.vertical, 4)
                 .accessibilityElement(children: .combine)
             }
+            if let lead = shown, !lead.isMetered {
+                // The amount leads, as a ring's figure does.
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(ReadingText.headline(lead, now: date))
+                        .font(.system(.title3, design: .rounded, weight: .semibold))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    Text(lead.displayTitle)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    if let caption = detail(lead, pace: nil) {
+                        Text(caption)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.vertical, 2)
+                .accessibilityElement(children: .combine)
+            }
             ForEach(provider.windows.filter { window in
-                if let shown, shown.isMetered, window.id == shown.id { return false }
-                return true
+                window.id != shown?.id
             }) { window in
                 let pace = window.isMetered ? UsageRanking.pace(for: window, isStale: !provider.isLive, history: item.history[window.id], now: date) : nil
                 WindowRow(
@@ -240,6 +284,10 @@ struct WatchDetailView: View {
             }
             if let extra = provider.extra, let text = ReadingText.extra(extra) {
                 Text(text)
+                    .font(.footnote)
+            }
+            if let plan = provider.plan {
+                LabeledContent("Plan", value: plan)
                     .font(.footnote)
             }
             if let checked = provider.checkedAt ?? provider.fetchedAt {
@@ -269,3 +317,29 @@ private func headlineColor(_ window: RelayWindow?, isLive: Bool, now: Date = .no
     guard let window, window.isMetered else { return .primary }
     return TokenroomTokens.ink(remaining: 100 - window.used, isStale: !isLive || window.isAwaitingReading(at: now))
 }
+
+#if DEBUG
+/// Every complication and the Smart Stack card, drawn in the app for screenshots:
+/// `-TokenroomGallery YES`.
+private struct WatchComplicationGallery: View {
+    var date: Date
+    private var items: [ReadingCache.Item] { SampleData.cache(now: date).items }
+    private var entry: ComplicationEntry { ComplicationEntry(date: date, items: items) }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 14) {
+                    ComplicationView(entry: entry, preview: .accessoryCircular).frame(width: 52, height: 52)
+                    ComplicationView(entry: ComplicationEntry(date: date, items: items.filter { !($0.provider.primaryWindow?.isMetered ?? true) }), preview: .accessoryCircular).frame(width: 52, height: 52)
+                    ComplicationView(entry: entry, preview: .accessoryCorner).frame(width: 52, height: 52)
+                }
+                ComplicationView(entry: entry, preview: .accessoryRectangular).frame(height: 72)
+                ComplicationView(entry: entry, preview: .accessoryInline).lineLimit(1)
+                ResetSoonView(item: items.first, windowID: items.first?.provider.primaryWindow?.id)
+            }
+            .padding(.horizontal, 6)
+        }
+    }
+}
+#endif

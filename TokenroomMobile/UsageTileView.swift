@@ -6,6 +6,11 @@ import SwiftUI
 struct UsageTileView: View {
     var reading: MobileStore.Reading
     var date: Date = .now
+    /// Where the reading came from and its age, when the header above doesn't cover it.
+    var showsOrigin = true
+    /// Windows the Close to a limit card already speaks for: the tile says when they reset,
+    /// rather than repeating the same warning a few lines down.
+    var warnedWindows: Set<String> = []
 
     private var provider: RelayProvider { reading.provider }
     private var isStale: Bool { !provider.isLive }
@@ -18,7 +23,7 @@ struct UsageTileView: View {
         let tile = UsageTiles.tile(for: provider)
         let isClose = [tile.ring, tile.bar].compactMap { $0 }.contains { !$0.isAwaitingReading(at: date) && UsageTiles.isClose($0, pace: pace($0)) }
         VStack(alignment: .leading, spacing: 10) {
-            header(isClose: isClose)
+            header
             if let ring = tile.ring {
                 ringRow(ring)
             } else if let balance = tile.balance {
@@ -33,7 +38,7 @@ struct UsageTileView: View {
                     .lineLimit(2)
             }
             if let warning = UsageRanking.limitWarning(for: provider, now: date) {
-                Text(warning).font(.caption.weight(.semibold)).foregroundStyle(TokenroomTokens.usageCritical)
+                Text(warning).font(.caption.weight(.medium)).foregroundStyle(TokenroomTokens.criticalText)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if isStale {
@@ -43,18 +48,18 @@ struct UsageTileView: View {
                     .lineLimit(2)
             }
             Spacer(minLength: 0)
-            origin
+            if showsOrigin || isStale {
+                origin
+            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color(.secondarySystemGroupedBackground)))
-        .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(isClose ? TokenroomTokens.usageTight : Color.primary.opacity(0.06), lineWidth: isClose ? 1.5 : 0.5)
-        }
         .opacity(isStale ? 0.7 : 1)
         .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .accessibilityElement(children: .combine)
+        // Being close already shows at the top of the tab, in the meter, and in the status line.
+        .accessibilityValue(isClose ? "Close to a limit" : "")
     }
 
     /// Where the reading came from and how long ago, on one line at the foot of the tile:
@@ -79,38 +84,30 @@ struct UsageTileView: View {
         .foregroundStyle(.secondary)
     }
 
-    private func header(isClose: Bool) -> some View {
+    private var header: some View {
         HStack(spacing: 8) {
-            ProviderMark(provider: provider, size: 26)
-            ViewThatFits(in: .horizontal) {
-                Text(provider.name).fixedSize(horizontal: true, vertical: false)
-                Text(provider.shortName).lineLimit(1)
-            }
-            .font(.subheadline.weight(.semibold))
-            .accessibilityLabel(provider.name)
-            Spacer(minLength: 0)
-            if isClose {
-                Image(systemName: "bell.fill")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(TokenroomTokens.tight)
-                    .frame(width: 22, height: 22)
-                    .background(Circle().fill(TokenroomTokens.tight.opacity(0.15)))
-                    .accessibilityLabel("Close to a limit")
-            }
+            ProviderMark(provider: provider, size: 22)
+            Text(provider.name)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private func ringRow(_ ring: RelayWindow) -> some View {
-        HStack(spacing: 10) {
-            UsageRing(used: ring.used, isStale: isStale || ring.isAwaitingReading(at: date), label: ReadingText.headline(ring, now: date), lineWidth: 7, paceMark: pace(ring)?.elapsedFraction)
-                .frame(width: 60, height: 60)
-            VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 7) {
+                // The stroke straddles the frame: this keeps it on the tile's text edge.
+                UsageRing(used: ring.used, isStale: isStale || ring.isAwaitingReading(at: date), label: ReadingText.headline(ring, now: date), lineWidth: 5.5, paceMark: pace(ring)?.elapsedFraction)
+                    .frame(width: 52, height: 52)
+                    .padding(.leading, 2.75)
                 Text(ring.displayTitle)
-                    .font(.footnote.weight(.semibold))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                WindowStatus(window: ring, pace: pace(ring), isStale: isStale, date: date)
             }
+            WindowStatus(window: ring, pace: warnedWindows.contains(ring.id) ? nil : pace(ring), isStale: isStale, date: date)
         }
     }
 
@@ -121,11 +118,11 @@ struct UsageTileView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 4)
-                HeadlineValue(ReadingText.headline(bar, now: date), style: .body, signStyle: .caption)
+                HeadlineValue(ReadingText.headline(bar, now: date), style: .subheadline, signStyle: .caption2)
                     .foregroundStyle(TokenroomTokens.ink(remaining: 100 - bar.used, isStale: isStale))
             }
-            MeterTrack(usedPercent: bar.used, remaining: 100 - bar.used, isStale: isStale || bar.isAwaitingReading(at: date), paceMark: pace(bar)?.elapsedFraction, height: 6)
-            WindowStatus(window: bar, pace: pace(bar), isStale: isStale, date: date)
+            MeterTrack(usedPercent: bar.used, remaining: 100 - bar.used, isStale: isStale || bar.isAwaitingReading(at: date), paceMark: pace(bar)?.elapsedFraction, height: 5)
+            WindowStatus(window: bar, pace: warnedWindows.contains(bar.id) ? nil : pace(bar), isStale: isStale, date: date)
         }
     }
 
@@ -168,19 +165,19 @@ struct WindowStatus: View {
     var body: some View {
         if let pace, pace.isProjected {
             Text(pace.caption(now: date))
-                .font(.caption.weight(.semibold))
+                .font(.caption.weight(.medium))
                 .foregroundStyle(PaceStyle.color(pace.severity))
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
         } else if !isStale, let pace, pace.verdict == .limitReached {
             Text(pace.caption(now: date))
-                .font(.caption.weight(.semibold))
+                .font(.caption.weight(.medium))
                 .foregroundStyle(PaceStyle.color(pace.severity))
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
         } else if !isStale, let pace, pace.verdict == .ahead, let runsOut = pace.runsOutAt {
             Text("Runs out \(Pace.shortMoment(runsOut, now: date, timeZone: .current))")
-                .font(.caption.weight(.semibold))
+                .font(.caption.weight(.medium))
                 .foregroundStyle(PaceStyle.color(pace.severity))
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -201,33 +198,32 @@ struct CloseToLimitCard: View {
     var windows: [CloseWindow]
     var date: Date = .now
     var open: (String) -> Void
+    /// The rows it shows. Tiles keep their own warning for any window past these.
+    static let rowLimit = 4
     @State private var followError: String?
     @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
-                Image(systemName: "bell.fill")
                 Text("Close to a limit")
+                    .foregroundStyle(.primary)
                 Text("\(windows.count)")
-                    .font(.caption.weight(.semibold))
+                    .fontWeight(.regular)
                     .monospacedDigit()
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(TokenroomTokens.tight.opacity(0.15)))
+                    .foregroundStyle(.secondary)
             }
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(TokenroomTokens.accentText)
             .padding(.horizontal, 16)
             .padding(.top, 12)
-            .padding(.bottom, 4)
+            .padding(.bottom, 2)
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isHeader)
 
-            ForEach(Array(windows.prefix(4).enumerated()), id: \.element.id) { index, item in
+            ForEach(Array(windows.prefix(Self.rowLimit).enumerated()), id: \.element.id) { index, item in
                 if index > 0 {
                     Divider()
-                        .padding(.leading, 54)
+                        .padding(.leading, 52)
                 }
                 row(item, isFirst: index == 0)
             }
@@ -239,9 +235,8 @@ struct CloseToLimitCard: View {
                     .padding(.bottom, 4)
             }
         }
-        .padding(.bottom, 6)
+        .padding(.bottom, 4)
         .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color(.secondarySystemGroupedBackground)))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(TokenroomTokens.tight.opacity(0.35), lineWidth: 0.5))
     }
 
     private func row(_ item: CloseWindow, isFirst: Bool) -> some View {
@@ -252,7 +247,7 @@ struct CloseToLimitCard: View {
                 open(item.provider.id)
             } label: {
                 HStack(spacing: 12) {
-                    ProviderMark(provider: item.provider, size: 28)
+                    ProviderMark(provider: item.provider, size: 24)
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             // At the accessibility sizes the limit goes under the name, so neither is cut short.
@@ -269,10 +264,10 @@ struct CloseToLimitCard: View {
                                     .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
                             }
                             Spacer(minLength: 4)
-                            HeadlineValue(ReadingText.headline(window, now: date), style: .title3, signStyle: .footnote)
+                            HeadlineValue(ReadingText.headline(window, now: date), style: .body, signStyle: .caption)
                                 .foregroundStyle(TokenroomTokens.ink(remaining: 100 - window.used, isStale: false))
                         }
-                        MeterTrack(usedPercent: window.used, remaining: 100 - window.used, isStale: false, paceMark: item.pace?.elapsedFraction, height: 6)
+                        MeterTrack(usedPercent: window.used, remaining: 100 - window.used, isStale: false, paceMark: item.pace?.elapsedFraction, height: 5)
                         caption(item)
                             .font(.caption)
                             .lineLimit(typeSize.isAccessibilitySize ? 4 : 2)
@@ -289,7 +284,7 @@ struct CloseToLimitCard: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.vertical, 8)
     }
 
     /// "Runs out 10:18 AM · 35 min before it resets", "Limit reached · resets in 2h 10m",
@@ -297,17 +292,17 @@ struct CloseToLimitCard: View {
     private func caption(_ item: CloseWindow) -> Text {
         if let pace = item.pace, pace.isProjected {
             return Text(pace.caption(now: date))
-                .fontWeight(.semibold)
+                .fontWeight(.medium)
                 .foregroundStyle(PaceStyle.color(pace.severity))
         }
         if let pace = item.pace, pace.verdict == .limitReached {
             return Text(pace.caption(now: date))
-                .fontWeight(.semibold)
+                .fontWeight(.medium)
                 .foregroundStyle(PaceStyle.color(pace.severity))
         }
         if let pace = item.pace, pace.verdict == .ahead, let runsOut = pace.runsOutAt {
             let moment = Text("Runs out \(Pace.shortMoment(runsOut, now: date, timeZone: .current))")
-                .fontWeight(.semibold)
+                .fontWeight(.medium)
                 .foregroundStyle(PaceStyle.color(pace.severity))
             return Text("\(moment) · \(UsageTiles.lead(runsOut: runsOut, resetsAt: pace.resetsAt))").foregroundStyle(.secondary)
         }

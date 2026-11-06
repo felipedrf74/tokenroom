@@ -18,6 +18,14 @@ enum PopoverInsights {
         return result
     }
 
+    /// One line for the detail page: "22 points ahead · 56% of the period elapsed".
+    static func paceSummary(_ pace: Pace) -> String {
+        let elapsed = "\(TokenroomFormat.percentText(pace.elapsedFraction * 100))% of the period elapsed"
+        guard abs(pace.delta) >= 0.05 else { return "On an even pace · \(elapsed)" }
+        let points = abs(pace.delta).formatted(.number.precision(.fractionLength(0...1)))
+        return "\(points) points \(pace.delta > 0 ? "ahead" : "below") · \(elapsed)"
+    }
+
     static func paceDetail(_ pace: Pace) -> String {
         let points = abs(pace.delta).formatted(.number.precision(.fractionLength(0...1)))
         if abs(pace.delta) < 0.05 { return "Matches an even pace" }

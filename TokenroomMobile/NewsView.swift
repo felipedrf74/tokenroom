@@ -10,24 +10,27 @@ struct NewsView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var search = ""
     @State private var showsSearch = false
-    @State private var contentWidth: CGFloat = 350
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if !showsSearch { masthead }
+                VStack(alignment: .leading, spacing: 8) {
                     selector
                     NewsReaderContent(news: news, library: library, skills: skills, destination: destination, query: search,
                                       suggestedProviders: Set(store.readings.map { $0.provider.id }))
-                }.padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 32)
-                    .environment(\.mobileNewsAvailableWidth, contentWidth)
+                }.padding(.horizontal, 20).padding(.top, 4).padding(.bottom, 24)
             }
-            .onGeometryChange(for: CGFloat.self) { max(0, $0.size.width - 40) } action: { contentWidth = $0 }
             .background(MobileNewsPalette.canvas)
+            // A real title bar, as Usage has: content scrolls under the system's edge effect
+            // rather than into the status bar.
             .navigationTitle("News")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar(showsSearch ? .visible : .hidden, for: .navigationBar)
+            .navigationSubtitle(Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day().year()))
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button("Search News", systemImage: "magnifyingglass") { showsSearch = true }
+                    NavigationLink { NewsSettingsView(news: news, store: store) } label: { Label("News settings", systemImage: "gearshape") }
+                }
+            }
             .searchable(text: $search, isPresented: $showsSearch, placement: .navigationBarDrawer(displayMode: .automatic), prompt: destination == .skills ? "Search these skills" : "Search titles and sources")
             .refreshable {
                 if destination == .skills { await skills.refresh(sort: skills.sort, force: true) }
@@ -39,32 +42,29 @@ struct NewsView: View {
                 guard scenePhase == .active else { return }
                 await news.keepCurrent(preferences: { store.alertPreferences })
             }
-            .onChange(of: destination) { _, _ in search = "" }
         }
-    }
-    private var masthead: some View {
-        let layout = typeSize >= .xxLarge ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
-        return layout {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("News").font(.largeTitle.weight(.bold)).accessibilityAddTraits(.isHeader)
-                Text(Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day().year()))
-                    .font(.subheadline).foregroundStyle(MobileNewsPalette.secondary)
-            }.frame(maxWidth: .infinity, alignment: .leading)
-            HStack(spacing: 10) {
-                Button { showsSearch = true } label: { mastheadIcon("magnifyingglass") }.accessibilityLabel("Search News")
-                NavigationLink { NewsSettingsView(news: news, store: store) } label: { mastheadIcon("gearshape") }.accessibilityLabel("News settings")
-            }.buttonStyle(.plain)
-        }
-    }
-    private func mastheadIcon(_ symbol: String) -> some View {
-        Image(systemName: symbol).font(.system(size: 20)).foregroundStyle(.primary).frame(width: 44, height: 44)
-            .background(.thinMaterial, in: Circle())
+        // A new page, not a scrolled one, so search stays behind its button on every destination
+        // and the selector doesn't move between them.
+        .id(destination)
+        // Outside the `id`: a page it replaces can't see the change. Search belongs to one page.
+        .onChange(of: destination) { _, _ in search = "" }
+        // News reads in ink: its one coloured control is Read article. Pushed pages inherit this.
+        .tint(.primary)
+        // Except a switch, whose ink track hides its knob in dark mode.
+        .toggleStyle(ControlSwitchStyle())
     }
     @ViewBuilder private var selector: some View {
         if typeSize.isAccessibilitySize {
             Menu {
                 ForEach(NewsDestination.allCases) { item in Button(item.rawValue, systemImage: item.symbol) { destination = item } }
-            } label: { Label(destination.rawValue, systemImage: destination.symbol).frame(minHeight: 44) }
+            } label: {
+                // The only way to the other destinations at these sizes, so it has to look like one.
+                HStack(spacing: 6) {
+                    Label(destination.rawValue, systemImage: destination.symbol)
+                    Image(systemName: "chevron.up.chevron.down").font(.footnote.weight(.semibold)).foregroundStyle(MobileNewsPalette.secondary).accessibilityHidden(true)
+                }
+                .frame(minHeight: 44)
+            }
         } else {
             Picker("News destination", selection: $destination) {
                 ForEach(NewsDestination.allCases) { Text($0.rawValue).tag($0) }
@@ -121,5 +121,13 @@ struct NewsSettingsView: View {
         .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search labs and sources")
         .navigationTitle("Follow")
         .navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
+        .tint(TokenroomTokens.control)
+    }
+}
+
+/// A system switch in the controls' colour, wherever the page's tint is ink.
+private struct ControlSwitchStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Toggle(configuration).toggleStyle(.switch).tint(TokenroomTokens.control)
     }
 }

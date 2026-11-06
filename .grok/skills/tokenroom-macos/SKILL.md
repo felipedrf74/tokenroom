@@ -31,9 +31,9 @@ Community menu-bar extra. Glance first. Apple-native, not a web page. Bundle ID 
 | Token | Value | Role |
 |---|---|---|
 | Material | `.menu` / `.popover` | Popover chrome |
-| Ink | `Color.primary` | Names, healthy numbers |
+| Ink | `Color.primary` | Names and figures, until a limit is critical |
 | Mute | `Color.secondary` | Captions, timestamps |
-| Track | `Color.primary.opacity(0.12)` | Empty meter |
+| Track | `Color.primary.opacity(0.08)` | Empty meter |
 | Fill | level colour, tinted start (`usageTones`) | Used-bar and ring |
 | Healthy | `#6EC4F5` | 0% used (light blue) |
 | Watch | `#F2C416` | ~50% used |
@@ -42,14 +42,16 @@ Community menu-bar extra. Glance first. Apple-native, not a web page. Bundle ID 
 | Stale | secondary at 0.55 opacity | Last-good after a failed refresh |
 | Menu type | 12pt semibold tabular % | Menu-bar extra |
 | Popover name | system 13 semibold | `Grok` |
-| Popover % | system 22 medium, tabular | `42%` |
+| Popover % | system 22 medium, tabular (Classic); see Popover for the other styles | `42%` |
 | Caption | system 11 regular, secondary | `Weekly · resets in 3d 4h` |
 | Meter | height 8, corner radius 6 | Used fill only |
 | Rhythm | 8 pt | Card padding 12, gap 10 |
 
 Memorable element: compact extra — brand glyph + tabular %, or iStat-style vertical used-bars. Names live in the popover. No status dot. Keep it narrow so macOS 27 does not park it behind the overflow chevron.
 
-`TokenroomTokens.ink(remaining:isStale:)` owns popover percent color. Menu-bar type uses `Color.primary` only. Menu-bar meters use one solid color from `usageColor(usedPercent:)` (light blue < 50%, yellow < 75%, orange < 90%, red at 90%+). Popover, iPhone, widget and Watch meters and rings fill in the same level colour, from a lighter tint where they start to the full colour at the tip (`TokenroomTokens.usageTones`), with a top sheen; rings add a shadowed cap at the tip. Headline figures set the percent sign smaller (`HeadlineValue`). Provider icons and monograms carry a 0.5 pt edge and, from 20 pt, a soft shadow (`IconLift`). Do not duplicate thresholds.
+Colour is data: only a reading carries a usage colour, on its meter or ring and in a short caption about it. Tabs, links, switches, titles, and icons never do; controls use the system accent (blue, not the brand orange, which was also the tight level) and the selected iPhone tab and Watch titles are ink. The design is recorded in `docs/superpowers/specs/2026-11-06-ui-overhaul-design.md`.
+
+`TokenroomTokens.ink(remaining:isStale:)` owns popover percent color: ink until a limit is critical. Menu-bar type uses `Color.primary` only. Menu-bar meters use one solid color from `usageColor(usedPercent:)` (light blue < 50%, yellow < 75%, orange < 90%, red at 90%+). Popover, iPhone, widget and Watch meters and rings fill in the same level colour, flat apart from a slightly lighter tint where they start (`TokenroomTokens.usageTones`); no sheen, tip bead, or shadow. The pace mark is 1.5 pt `paceMark` (primary 0.5) in a 3 pt notch; the stretch of a fill past the pace is a step lighter, without stripes. Charts are neutral (`chartLine`, `chartArea`), with the latest reading as a dot in its level's colour (`Sparkline.level`), and no dot on a stale reading. Headline figures set the percent sign smaller (`HeadlineValue`). Provider icons and monograms carry a 0.5 pt edge and, from 20 pt, a faint shadow (`IconLift`); a mark's white tile is a step down in dark. Do not duplicate thresholds.
 
 ## Menu bar
 
@@ -60,7 +62,7 @@ Enabled + connected providers only:
   Meters:    [glyph]|     [glyph]|     [glyph]|
 ```
 
-`AppSettings.menuStyle` is Percents or Meters. The percent or meter is the open window that needs attention soonest (a reached limit, then the tightest run-out, then the most used), not always the weekly headline. When that window is not the primary one, the tooltip and accessibility label name it ("5-hour 55%") and name the primary window beside it ("Weekly 10%"). The drawn extra stays one figure wide. Meters are vertical rounded rectangles: 8.05×18pt, 1.6pt corners (soft, not a pill), 1pt primary outline. Used fill sits in an inner well 1.2pt off the stroke so it does not touch the outline. Fill height is `wellHeight × usedPercent / 100` from the bottom of that well. Glyphs are 17.22pt. Grok and GPT marks are vector templates (full even-odd Grok slash, not a cropped PNG). Menu-bar fill is one color by used % (light blue / yellow / orange / red). Popover meters use the level colour with its tinted start (`usageTones`). No leading health dot. Provider icons show in the popover and Settings via `ProviderIcon`, which is the shared `ProviderMark`. Short names: Build, Bot, Claude, GPT, Cursor. Loading, and rate limited before a first reading, use `–%`. Percents are whole numbers (`55%`, not `55.2%`). Signed-out / expired providers are omitted. Never hide an enabled connected provider. Opening the popover refreshes if the last attempt is older than 45s. Unchanged usage does not rewrite status or the menu extra. Highest keeps the provider whose shown window is most urgent, then the most used.
+`AppSettings.menuStyle` is Percents or Meters. The percent or meter is the open window that needs attention soonest (a reached limit, then the tightest run-out, then the most used), not always the weekly headline. When that window is not the primary one, the tooltip and accessibility label name it ("5-hour 55%") and name the primary window beside it ("Weekly 10%"). The drawn extra stays one figure wide. Meters are vertical rounded rectangles: 8.05×18pt, 1.6pt corners (soft, not a pill), 1pt primary outline at 0.65 opacity. Used fill sits in an inner well 1.2pt off the stroke so it does not touch the outline. Fill height is `wellHeight × usedPercent / 100` from the bottom of that well. Glyphs are 17.22pt. Grok and GPT marks are vector templates (full even-odd Grok slash, not a cropped PNG). Menu-bar fill is one color by used % (light blue / yellow / orange / red). Popover meters use the level colour with its tinted start (`usageTones`). No leading health dot. Provider icons show in the popover and Settings via `ProviderIcon`, which is the shared `ProviderMark`. Short names: Build, Bot, Claude, GPT, Cursor. Loading, and rate limited before a first reading, use `–%`. Percents are whole numbers (`55%`, not `55.2%`). Signed-out / expired providers are omitted. Never hide an enabled connected provider. Opening the popover refreshes if the last attempt is older than 45s. Unchanged usage does not rewrite status or the menu extra. Highest keeps the provider whose shown window is most urgent, then the most used.
 
 The extra is an **AppKit `NSStatusItem`** hosting `MenuBarLabel` in a passthrough `NSHostingView`. Click opens an `NSPopover`. Settings is `AppDelegate.openSettings`. `LSUIElement`. Install to `/Applications/Tokenroom.app`.
 
@@ -98,7 +100,7 @@ Settings v2: the saved enabled list is authoritative for every provider in `know
 
 ## Popover
 
-`AppSettings.popoverStyle` is a local, persisted choice: Orbit (default), Instrument, Strata, Aurora, or Classic. Choose it with the header palette menu or Settings > Menu Bar > Usage popover. Classic retains the original 360 pt cards below. The other styles use a 420 pt surface with large figures, a provider detail route, and a pinned header/footer around a bounded scrolling content area. Orbit uses rings; Instrument is dark with exact partial-segment meters; Strata uses wide bands; Aurora uses a softly tinted native material. All consume the same presentation clock, status and provider ranking. Menu-bar appearance and iCloud data are independent of this preference.
+`AppSettings.popoverStyle` is a local, persisted choice: Orbit (default), Instrument, Strata, Aurora, or Classic. Choose it with the header palette menu or Settings > Menu Bar > Usage popover. Classic retains the original 360 pt cards below. The other styles use a 420 pt surface, a provider detail route, and a pinned header/footer around a bounded scrolling content area, with header, rows, and footer on one 20 pt inset. Orbit uses 60 pt rings in rows of about 76 pt, so seven providers fit; the others show a 24 pt figure and a thin meter. Instrument is dark with exact partial-segment meters; Strata uses pale bands; Aurora uses a softly tinted native material. A detail's header names the provider, and its hero is the reading alone (a 96 pt ring beside the reset in Orbit and Aurora). An expired session stays a row of the style's list, grey, with its recovery controls (`signInControls`); other statuses without a reading show `ProviderCard` with `isPlain`, without its box. All consume the same presentation clock, status and provider ranking. Menu-bar appearance and iCloud data are independent of this preference.
 
 `PopoverProviderView` shows the primary quota in the overview and keeps secondary limit warnings visible. Details show remaining quota, a daily allowance only for current readings with at least a day until reset (remaining percentage points divided by days left, not a forecast), the existing seven-day history, usage versus elapsed time, existing run-out projections, other windows, banked resets, plan and source. Expired windows never create remaining-quota or allowance KPIs; stale values are labeled and never generate new pace advice. Balances keep monetary headlines without artificial rings or percentage KPIs. Original sign-in/error actions stay in `ProviderCard`. Debug snapshots cover every style, light/dark, details, many providers, balances, stale reads and resets; `-TokenroomSnapshots <folder> -TokenroomPopoverPreview YES` additionally opens an interactive sample-only NSPopover.
 
@@ -108,7 +110,7 @@ A debug build renders the popover, Settings tabs, the News window, and the menu 
 
 ## Settings window
 
-Settings is a `NavigationSplitView`: a sidebar with "Search settings" (matches page titles, descriptions, and provider names, and jumps to the first match), sections Essentials (General, Menu Bar), Usage (Providers, API Keys, Alerts), and More (News, iPhone & Watch), each page a System Settings tile (`SettingsIcon`). Each page's form starts with `SettingsHeaderSection` (tile, title, one line, a `SettingsTag` count such as "11 of 16 on"). Provider rows carry tags: Unofficial, Key, Admin key, Login or token, Detected. The window opens at 820 × 620 with a unified toolbar; snapshots render it in a titled window (`renderWindow`).
+Settings is a `NavigationSplitView`: a sidebar with "Search settings" (matches page titles, descriptions, and provider names, and jumps to the first match), sections Essentials (General, Menu Bar), Usage (Providers, API Keys, Alerts), and More (News, iPhone & Watch), each page a System Settings tile (`SettingsIcon`). Each page's form starts with `SettingsHeaderSection` (tile, title, one line, a `SettingsTag` count such as "11 of 16 on"). Provider rows carry no tags: the first section with an unofficial source says so in its footnote (and each such row in its tooltip and VoiceOver label), and only exceptions name their connection in the caption (Key, Admin key, Login or token). Add Key and Sign In sit on the row's trailing edge. The window opens at 820 × 620 with a unified toolbar; snapshots render it in a titled window (`renderWindow`).
 
 ## Test host
 

@@ -5,6 +5,9 @@ import SwiftUI
 /// sign-in); the rest need Tokenroom on a Mac, or a Mac already sends them. Providers read with a key (Copilot's fine-grained token included) aren't
 /// listed: they're on the key card and in API Keys.
 struct ConnectView: View {
+    /// What every plan says in a build that can't keep a sign-in; once is enough.
+    private static let commonReason = "Needs Tokenroom on a Mac. This build of Tokenroom can't keep a sign-in on this iPhone."
+
     var store: MobileStore
     var date: Date = .now
     @State private var signingIn: Provider?
@@ -14,7 +17,7 @@ struct ConnectView: View {
         // A build that can't keep a sign-in (no app-id Keychain group) offers none.
         let list = store.connectList(now: date).map { entry in
             guard entry.action == .signIn, store.sessions == nil else { return entry }
-            return (entry.provider, PhoneConnect.Action.needsMac(reason: "Needs Tokenroom on a Mac. This build of Tokenroom can't keep a sign-in on this iPhone."))
+            return (entry.provider, PhoneConnect.Action.needsMac(reason: Self.commonReason))
         }
         let signedIn = PhoneSignIn.providers.filter { store.sessionProviders.contains($0) }
         // Plans whose sign-in exists but that aren't on its plan (Grok Bot without it on Cursor).
@@ -67,10 +70,11 @@ struct ConnectView: View {
                         }
                         .foregroundStyle(.primary)
                     }
+                    SettingsDisclosure("How These Sign-Ins Work", text: "Tokenroom reads these plans the way their own apps and command-line tools do, which those companies don't document for other apps. Tokenroom isn't affiliated with Anthropic, OpenAI, xAI, or Cursor.")
                 } header: {
                     Text("Sign in on this iPhone")
                 } footer: {
-                    Text("You sign in on each company's own page; Tokenroom never sees your password. It reads these plans the way their own apps and command-line tools do, which those companies don't document for other apps, so a sign-in can stop working without notice. Tokenroom isn't affiliated with Anthropic, OpenAI, xAI, or Cursor.")
+                    Text("You sign in on each company's own page; Tokenroom never sees your password. This reading is unofficial, so a sign-in can stop working without notice.")
                 }
             }
             if !fromMac.isEmpty {
@@ -88,13 +92,16 @@ struct ConnectView: View {
                 Section {
                     ForEach(needsMac, id: \.provider) { entry in
                         if case .needsMac(let reason) = entry.action {
-                            ConnectRow(provider: entry.provider, detail: reason)
+                            // The header and footer cover what most have in common.
+                            ConnectRow(provider: entry.provider, detail: reason == Self.commonReason ? nil : reason.replacingOccurrences(of: "Needs Tokenroom on a Mac. ", with: ""))
                         }
                     }
                 } header: {
                     Text("Needs Tokenroom on a Mac")
                 } footer: {
-                    Text("These plans keep their login inside a tool on a Mac, and don't offer a usage API to other apps. Install Tokenroom on a Mac with the same Apple Account, and their usage shows here.")
+                    Text(needsMac.contains { if case .needsMac(Self.commonReason) = $0.action { true } else { false } }
+                        ? "This build of Tokenroom can't keep a sign-in on this iPhone. Install Tokenroom on a Mac with the same Apple Account, and usage shows here."
+                        : "These plans keep their login inside a tool on a Mac, and don't offer a usage API to other apps. Install Tokenroom on a Mac with the same Apple Account, and their usage shows here.")
                 }
             }
             Section {
@@ -209,17 +216,19 @@ extension PlanSessionView {
 
 private struct ConnectRow: View {
     var provider: Provider
-    var detail: String
+    var detail: String?
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: detail == nil ? .center : .top, spacing: 12) {
             ProviderMark(provider: provider, size: 30)
             VStack(alignment: .leading, spacing: 2) {
                 Text(provider.displayName)
-                Text(detail)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let detail {
+                    Text(detail)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .padding(.vertical, 2)

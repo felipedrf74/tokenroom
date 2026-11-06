@@ -36,16 +36,20 @@ struct RootView: View {
                     tab = .settings
                     settingsPath = [.alerts]
                 })
+                .tint(TokenroomTokens.control)
             }
             Tab("News", systemImage: "newspaper", value: .news) {
                 NewsView(news: news, store: store, library: library, skills: skills)
+                    .tint(TokenroomTokens.control)
             }
             .badge(tab == .news ? 0 : news.unseenCount)
             Tab("Settings", systemImage: "gearshape", value: .settings) {
                 MobileSettingsView(store: store, path: $settingsPath)
+                    .tint(TokenroomTokens.control)
             }
         }
-        .tint(tab == .news ? TokenroomTokens.accentText : Color.accentColor)
+        // The selected tab in ink: usage colours are for readings, and the bar is always on screen.
+        .tint(.primary)
         .sheet(isPresented: $showsOnboarding, onDismiss: { store.hasOnboarded = true }) {
             OnboardingView(store: store)
         }

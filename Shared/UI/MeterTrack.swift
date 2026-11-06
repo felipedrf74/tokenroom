@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// A usage meter: a rounded track, the used fill in its level's colour (a lighter tint where it
-/// starts, the full colour at its tip), and the even pace as a notch cut through the bar with a
-/// slim marker. When use runs ahead of that pace, the stretch past the notch is lightly striped,
-/// so "ahead" reads without a caption.
+/// A usage meter: a rounded track, the used fill in its level's colour (a slightly lighter tint
+/// where it starts, the full colour at its tip), and the even pace as a notch with a slim marker.
+/// When use runs ahead of that pace, the stretch past the notch is a little lighter, so "ahead"
+/// reads without a caption and without pattern.
 struct MeterTrack: View {
     var usedPercent: Double
     var remaining: Double
@@ -13,7 +13,7 @@ struct MeterTrack: View {
     var height: CGFloat = TokenroomTokens.meterHeight
 
     /// How far the pace marker reaches past the track, above and below.
-    private var overhang: CGFloat { max(2, height * 0.35) }
+    private var overhang: CGFloat { max(1, height * 0.2) }
 
     var body: some View {
         let used = MeterLayout.usedFraction(usedPercent)
@@ -23,8 +23,6 @@ struct MeterTrack: View {
             let radius = height / 2
             let track = Path(roundedRect: trackRect, cornerRadius: radius, style: .continuous)
             context.fill(track, with: .color(TokenroomTokens.track))
-            // A hairline edge keeps an empty track crisp on the popover's material.
-            context.stroke(track, with: .color(Color.primary.opacity(0.05)), lineWidth: 0.5)
 
             let width = MeterLayout.drawnFillEnd(usedPercent: usedPercent, total: size.width, height: height)
             if width > 0 {
@@ -35,28 +33,13 @@ struct MeterTrack: View {
                 let fillRect = CGRect(x: -radius, y: overhang, width: width + radius, height: height)
                 let fill = Path(roundedRect: fillRect, cornerRadius: min(radius, (width + radius) / 2), style: .continuous)
                 bar.fill(fill, with: shading(fillEnd: width))
-                // Light falls from above: a soft sheen on the top half, fading out.
-                var shine = bar
-                shine.clip(to: fill)
-                shine.fill(Path(CGRect(x: 0, y: overhang, width: width, height: height * 0.55)),
-                           with: .linearGradient(Gradient(colors: [.white.opacity(isStale ? 0 : 0.26), .white.opacity(0)]),
-                                                 startPoint: CGPoint(x: 0, y: overhang),
-                                                 endPoint: CGPoint(x: 0, y: overhang + height * 0.55)))
 
                 if let pace, used > pace + 0.015 {
-                    // Past the even pace: stripes over that stretch of the fill.
+                    // Past the even pace: the same colour, a step lighter.
                     var ahead = bar
                     ahead.clip(to: fill)
-                    ahead.clip(to: Path(CGRect(x: size.width * pace, y: overhang, width: width - size.width * pace, height: height)))
-                    var stripes = Path()
-                    let step = max(4, height * 0.9)
-                    var x = size.width * pace - height
-                    while x < width + height {
-                        stripes.move(to: CGPoint(x: x, y: overhang + height))
-                        stripes.addLine(to: CGPoint(x: x + height, y: overhang))
-                        x += step
-                    }
-                    ahead.stroke(stripes, with: .color(.white.opacity(0.24)), lineWidth: max(1, height * 0.18))
+                    ahead.fill(Path(CGRect(x: size.width * pace, y: overhang, width: width - size.width * pace, height: height)),
+                               with: .color(.white.opacity(0.28)))
                 }
             }
 
@@ -65,9 +48,9 @@ struct MeterTrack: View {
                 // The notch: a gap through track and fill, so the marker never sits on colour.
                 var notch = context
                 notch.blendMode = .destinationOut
-                notch.fill(Path(CGRect(x: x - 2, y: overhang - 1, width: 4, height: height + 2)), with: .color(.black))
-                let marker = CGRect(x: x - 1, y: 0.5, width: 2, height: size.height - 1)
-                context.fill(Path(roundedRect: marker, cornerRadius: 1), with: .color(.primary.opacity(0.8)))
+                notch.fill(Path(CGRect(x: x - 1.5, y: overhang - 1, width: 3, height: height + 2)), with: .color(.black))
+                let marker = CGRect(x: x - 0.75, y: 0, width: 1.5, height: size.height)
+                context.fill(Path(roundedRect: marker, cornerRadius: 0.75), with: .color(TokenroomTokens.paceMark))
             }
         }
         .frame(height: height + overhang * 2)
@@ -90,5 +73,57 @@ struct MeterTrack: View {
         return .linearGradient(Gradient(colors: [tones.start, tones.end]),
                                startPoint: CGPoint(x: 0, y: 0),
                                endPoint: CGPoint(x: max(fillEnd, 1), y: 0))
+    }
+}
+
+/// A meter of plain shapes, for surfaces the system tints or that can't blend: a watch face, the
+/// Lock Screen, a tinted widget. The same reading as `MeterTrack`: one capsule, the fill, and past
+/// the even pace the same fill a step lighter, with a slim mark on the join.
+struct FlatMeter: View {
+    var used: Double
+    var pace: Double? = nil
+    var tint: Color
+    var height: CGFloat = 4
+
+    /// Where the fill runs, in points of `width`: up to the even pace, and on from it when use has
+    /// passed the pace. Exactly the reading, so a meter at 0% draws nothing, as `MeterLayout` says.
+    static func runs(used: Double, pace: Double?, width: CGFloat) -> (fill: ClosedRange<CGFloat>?, ahead: ClosedRange<CGFloat>?) {
+        let end = MeterLayout.fillLength(usedPercent: used, total: width)
+        guard end > 0 else { return (nil, nil) }
+        guard let pace else { return (0...end, nil) }
+        let mark = width * CGFloat(min(max(pace, 0), 1))
+        return (mark > 0 ? 0...min(end, mark) : nil, end > mark ? mark...end : nil)
+    }
+
+    /// A stretch of the bar, square at both ends: the capsule around them rounds the bar's own.
+    private struct Run: Shape {
+        var span: ClosedRange<CGFloat>?
+
+        func path(in rect: CGRect) -> Path {
+            guard let span, span.upperBound > span.lowerBound else { return Path() }
+            return Path(CGRect(x: span.lowerBound, y: 0, width: span.upperBound - span.lowerBound, height: rect.height))
+        }
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let runs = Self.runs(used: used, pace: pace, width: width)
+            ZStack(alignment: .leading) {
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.primary.opacity(0.18))
+                    Run(span: runs.fill).fill(tint).widgetAccentable()
+                    Run(span: runs.ahead).fill(tint.mix(with: .white, by: 0.3)).widgetAccentable()
+                }
+                .clipShape(Capsule())
+                if let pace {
+                    Rectangle().fill(.primary.opacity(0.5))
+                        .frame(width: 1.5, height: height + 2)
+                        .offset(x: width * CGFloat(min(max(pace, 0), 1)) - 0.75, y: -1)
+                }
+            }
+        }
+        .frame(height: height)
+        .accessibilityHidden(true)
     }
 }

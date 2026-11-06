@@ -1,6 +1,33 @@
 import SwiftUI
 
 #if os(iOS) || os(macOS)
+extension EnvironmentValues {
+    /// False where a row keeps its actions out of sight until the pointer reaches it. A saved
+    /// bookmark, Undo, and an error always show: they say something about the item.
+    @Entry var newsActionsRevealed = true
+}
+
+/// A source's follow state as a small mark, so a list of thirty sources isn't thirty switches.
+/// Still a toggle to VoiceOver and the keyboard.
+struct NewsFollowToggleStyle: ToggleStyle {
+    /// Off where the row's name beside the mark is a separate link.
+    var showsLabel = true
+    func makeBody(configuration: Configuration) -> some View {
+        Button { configuration.isOn.toggle() } label: {
+            HStack(spacing: 10) {
+                if showsLabel { configuration.label.frame(maxWidth: .infinity, alignment: .leading) }
+                Image(systemName: configuration.isOn ? "checkmark" : "plus")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(configuration.isOn ? AnyShapeStyle(.primary) : AnyShapeStyle(NewsControlMetrics.secondaryText))
+                    .frame(width: NewsControlMetrics.minimumHeight == 44 ? 44 : 24, height: NewsControlMetrics.minimumHeight)
+            }.contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(configuration.isOn ? "On" : "Off")
+        .accessibilityAddTraits(.isToggle)
+    }
+}
+
 enum NewsControlMetrics {
     static var secondaryText: Color {
         #if os(macOS)
@@ -28,10 +55,7 @@ extension View {
     }
     @ViewBuilder func newsDetailLayout() -> some View {
         #if os(macOS)
-        self.padding(24)
-            .background(TokenroomTokens.cardFill, in: RoundedRectangle(cornerRadius: 12))
-            .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1) }
-            .frame(maxWidth: 820, alignment: .leading).padding(24).frame(maxWidth: .infinity)
+        self.frame(maxWidth: 720, alignment: .leading).padding(32).frame(maxWidth: .infinity)
         #else
         self.padding(20).frame(maxWidth: 720, alignment: .leading).frame(maxWidth: .infinity)
             .navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
@@ -48,7 +72,9 @@ struct NewsShelf<Content: View>: View {
         layout {
             Text(title).font(.title3.weight(.semibold)).accessibilityAddTraits(.isHeader)
             if !typeSize.isAccessibilitySize { Spacer() }
-            NewsNavigationLink(destination: destination) { Text("See All").font(.subheadline).frame(minHeight: NewsControlMetrics.minimumHeight) }
+            NewsNavigationLink(destination: destination) {
+                Text("See All").font(.subheadline).foregroundStyle(NewsControlMetrics.secondaryText).frame(minHeight: NewsControlMetrics.minimumHeight)
+            }
                 .accessibilityLabel("See all \(title)")
         }
     }
@@ -61,15 +87,29 @@ struct NewsSaveButton: View {
     @State private var undo = NewsRemovalUndo()
     @State private var actionProblem: String?
     @State private var showsProblem = false
+    @Environment(\.newsActionsRevealed) private var revealed
+    @FocusState private var isFocused: Bool
     private var saved: Bool { library.isSaved(id: item.id, aliases: item.aliases) }
+    /// Beside each other, as an iPhone row has room for them only on its last line.
+    private var layout: AnyLayout {
+        #if os(iOS)
+        compact ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(alignment: .leading))
+        #else
+        AnyLayout(VStackLayout(alignment: .leading))
+        #endif
+    }
     var body: some View {
-        VStack(alignment: .leading) {
+        layout {
             Button {
                 let succeeded = saved ? undo.remove(id: item.id, aliases: item.aliases, from: library) : undo.save(item, in: library)
                 actionProblem = succeeded ? nil : library.problem
             } label: {
-                saveLabel.frame(minHeight: NewsControlMetrics.minimumHeight)
-            }.accessibilityLabel(!saved ? "Save \(item.title)" : "Remove \(item.title) from saved")
+                // A bordered Mac button brings its own height, level with the buttons beside it.
+                saveLabel.frame(minHeight: compact || NewsControlMetrics.minimumHeight == 44 ? NewsControlMetrics.minimumHeight : nil)
+                    // Only the glyph hides: the button stays in the key loop and with VoiceOver.
+                    .opacity(!compact || saved || revealed || isFocused ? 1 : 0)
+            }.focused($isFocused)
+                .accessibilityLabel(!saved ? "Save \(item.title)" : "Remove \(item.title) from saved")
                 .help(!saved ? "Save \(item.title)" : "Remove \(item.title) from saved")
             if let removed = undo.item {
                 Button {
@@ -105,12 +145,14 @@ struct NewsSaveButton: View {
         if compact {
             Image(systemName: !saved ? "bookmark" : "bookmark.fill")
                 .font(.system(size: 14)).frame(width: 22)
+                .foregroundStyle(saved ? AnyShapeStyle(.primary) : AnyShapeStyle(NewsControlMetrics.secondaryText))
         } else {
             Label(!saved ? "Save" : "Saved", systemImage: !saved ? "bookmark" : "bookmark.fill")
         }
         #else
         if compact {
-            Image(systemName: !saved ? "bookmark" : "bookmark.fill").font(.system(size: 18)).frame(width: 44, height: 44)
+            Image(systemName: !saved ? "bookmark" : "bookmark.fill").font(.system(size: 16)).frame(width: 44, height: 44)
+                .foregroundStyle(saved ? AnyShapeStyle(.primary) : AnyShapeStyle(NewsControlMetrics.secondaryText))
         } else {
             Label(!saved ? "Save" : "Saved", systemImage: !saved ? "bookmark" : "bookmark.fill")
         }
@@ -124,21 +166,24 @@ struct NewsStoryDetail: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                #if os(macOS)
                 HStack(spacing: 10) {
+                    #if os(macOS)
                     MacNewsSourceMark(sourceID: item.sourceID, name: item.source, size: 36)
-                    Text(item.source).font(.headline)
-                }
-                #else
-                HStack(spacing: 10) {
+                    #else
                     MobileNewsSourceMark(sourceID: item.sourceID, name: item.source, size: 36)
-                    Text(item.source).font(.headline)
+                    #endif
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.source).font(.subheadline.weight(.semibold))
+                        Text([(item.kind ?? .officialAnnouncement).label, item.link?.host()].compactMap(\.self).joined(separator: " · "))
+                            .font(.caption).foregroundStyle(NewsControlMetrics.secondaryText)
+                    }
                 }
-                #endif
-                Text((item.kind ?? .officialAnnouncement).label).font(.subheadline).foregroundStyle(NewsControlMetrics.secondaryText)
                 Text(item.displayTitle).font(.system(.largeTitle, design: .serif, weight: .bold)).fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
                 NewsDates(published: item.publisherPublishedAt, updated: item.updatedAt)
-                if let excerpt = item.displayExcerpt { Text(excerpt).font(.body).textSelection(.enabled) }
+                if let excerpt = item.displayExcerpt {
+                    // About 70 characters a line, however wide the window.
+                    Text(excerpt).font(.body).textSelection(.enabled).frame(maxWidth: 540, alignment: .leading)
+                }
                 if item.kind == .officialStatus {
                     Text("Provider report. Your experience may differ. Only updates observed by this device are shown.").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
                     ForEach(Array((item.observedUpdates ?? []).enumerated()), id: \.offset) { _, update in
@@ -148,7 +193,7 @@ struct NewsStoryDetail: View {
                         }
                     }
                 }
-                NewsDetailActions(library: library, item: item.bookmark())
+                NewsDetailActions(library: library, item: item.bookmark(), showsHost: item.link?.host() == nil)
                 if let other = item.alsoIn { Text("Also reported in \(other)").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText) }
             }.newsDetailLayout()
         }.newsReaderCanvas().navigationTitle("Story")
@@ -173,6 +218,8 @@ struct NewsDetailActions: View {
     @Bindable var library: NewsLibrary
     var item: NewsBookmark
     var openLabel = "Open Original"
+    /// Off where the page already names where the link goes.
+    var showsHost = true
     var body: some View {
         #if os(macOS)
         VStack(alignment: .leading, spacing: 12) {
@@ -188,7 +235,7 @@ struct NewsDetailActions: View {
                 }
                 NewsSaveButton(library: library, item: item)
             }
-            if let url = item.url { Text(url.host ?? url.absoluteString).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText) }
+            if showsHost, let url = item.url { Text(url.host ?? url.absoluteString).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText) }
         }.controlSize(.regular)
         #else
         VStack(alignment: .leading, spacing: 12) {
@@ -198,7 +245,7 @@ struct NewsDetailActions: View {
                         .frame(minHeight: 44).padding(.horizontal, 14)
                         .foregroundStyle(.white).background(MobileNewsPalette.actionFill, in: RoundedRectangle(cornerRadius: 12))
                 }.buttonStyle(.plain)
-                Text(url.host ?? url.absoluteString).font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
+                if showsHost { Text(url.host ?? url.absoluteString).font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText) }
             }
             let layout = typeSize >= .xxLarge ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12)) : AnyLayout(HStackLayout(alignment: .top, spacing: 16))
             layout { saveAndShare }
@@ -250,7 +297,7 @@ struct NewsSavedDetail: View {
                 MacNewsSourceMark(name: item.publisher, size: 36)
                 #else
                 if item.kind == .skill {
-                    Image(systemName: "puzzlepiece.extension.fill").font(.largeTitle).foregroundStyle(TokenroomTokens.accentText).accessibilityHidden(true)
+                    Image(systemName: "puzzlepiece.extension").font(.largeTitle).foregroundStyle(NewsControlMetrics.secondaryText).accessibilityHidden(true)
                 } else { MobileNewsSourceMark(name: item.publisher, size: 36) }
                 #endif
                 Text(item.publisher).font(.headline).foregroundStyle(NewsControlMetrics.secondaryText)
@@ -290,7 +337,7 @@ struct NewsSourceDetail: View {
                 Text(source.name).font(.system(.largeTitle, design: .serif, weight: .bold)).fixedSize(horizontal: false, vertical: true)
                 #endif
                 Text(source.kind.label).foregroundStyle(NewsControlMetrics.secondaryText)
-                Toggle("Follow in Tokenroom", isOn: followBinding).frame(minHeight: NewsControlMetrics.minimumHeight)
+                Toggle("Follow in Tokenroom", isOn: followBinding).frame(minHeight: NewsControlMetrics.minimumHeight).tint(TokenroomTokens.control)
                 NewsSourceHealth(news: news, source: source)
                 Link("Open source feed", destination: source.url).frame(minHeight: NewsControlMetrics.minimumHeight)
                 Text(source.kind == .commentary ? "Articles from this publisher's public feed. These are not X posts." : "Updates supplied by this official source.").font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
@@ -300,7 +347,7 @@ struct NewsSourceDetail: View {
                 #if os(iOS)
                 if !items.isEmpty { MobileNewsStoryList(items: items, news: news, library: library) }
                 #else
-                ForEach(items, id: \.stableID) { NewsStoryLink(item: $0, news: news, library: library) }
+                if !items.isEmpty { MacNewsStoryList(items: items, news: news, library: library) }
                 #endif
             }.newsDetailLayout()
         }.newsReaderCanvas().navigationTitle(source.name)
@@ -328,37 +375,25 @@ struct NewsSourceDetail: View {
 struct NewsSourceHealth: View {
     @Bindable var news: NewsStore
     var source: FeedSource
+    /// Off where the row's subtitle already carries the caption; the problem still shows here.
+    var showsCaption = true
     var body: some View {
         let health = news.sourceHealth(for: source)
-        VStack(alignment: .leading, spacing: 6) {
-            Text(health.caption)
-            if let problem = health.problem {
-                let hasPreviousArticles = health.sourceIDs.contains { !(news.cache.items[$0] ?? []).isEmpty }
-                Text(problem + (hasPreviousArticles ? " Previous articles remain available." : ""))
-                Button(health.retryIDs.count > 1 ? "Retry failed sources" : "Retry source") {
-                    Task { await news.retrySources(health.retryIDs) }
-                }.frame(minHeight: NewsControlMetrics.minimumHeight)
-            } else if health.sourceCount > 0, health.uncheckedCount == 0,
-                      health.sourceIDs.allSatisfy({ news.cache.items[$0]?.isEmpty == true }) {
-                Text("No articles in the latest feeds.")
-            }
-        }.font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
-    }
-}
-
-struct NewsStoryLink: View {
-    var item: FeedItem
-    @Bindable var news: NewsStore
-    @Bindable var library: NewsLibrary
-    var prominent = false
-    var body: some View {
-        #if os(macOS)
-        if prominent { MacNewsHero(item: item, news: news, library: library) }
-        else { MacNewsStoryRow(item: item, news: news, library: library) }
-        #else
-        if prominent { MobileNewsHero(item: item, news: news, library: library) }
-        else { MobileNewsStoryRow(item: item, news: news, library: library) }
-        #endif
+        let isEmpty = health.sourceCount > 0 && health.uncheckedCount == 0 && health.sourceIDs.allSatisfy { news.cache.items[$0]?.isEmpty == true }
+        if showsCaption || health.problem != nil || isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                if showsCaption { Text(health.caption) }
+                if let problem = health.problem {
+                    let hasPreviousArticles = health.sourceIDs.contains { !(news.cache.items[$0] ?? []).isEmpty }
+                    Text(problem + (hasPreviousArticles ? " Previous articles remain available." : ""))
+                    Button(health.retryIDs.count > 1 ? "Retry failed sources" : "Retry source") {
+                        Task { await news.retrySources(health.retryIDs) }
+                    }.frame(minHeight: NewsControlMetrics.minimumHeight)
+                } else if isEmpty {
+                    Text("No articles in the latest feeds.")
+                }
+            }.font(.footnote).foregroundStyle(NewsControlMetrics.secondaryText)
+        }
     }
 }
 #endif

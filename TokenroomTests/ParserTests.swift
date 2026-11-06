@@ -69,6 +69,23 @@ final class ParserTests: XCTestCase {
         }
     }
 
+    func testFlatMeterDrawsExactlyTheReading() {
+        // No minimum: 0% draws nothing, and 1% is a point of a hundred, with or without a pace.
+        XCTAssertNil(FlatMeter.runs(used: 0, pace: nil, width: 100).fill)
+        XCTAssertNil(FlatMeter.runs(used: 0, pace: 0.5, width: 100).fill)
+        XCTAssertNil(FlatMeter.runs(used: 0, pace: 0.5, width: 100).ahead)
+        XCTAssertEqual(FlatMeter.runs(used: 1, pace: nil, width: 100).fill?.upperBound, 1)
+        XCTAssertEqual(FlatMeter.runs(used: 1, pace: 0.5, width: 100).fill?.upperBound, 1)
+        // Past the pace, the fill stops there and the lighter stretch carries on to the reading.
+        let ahead = FlatMeter.runs(used: 78, pace: 0.5, width: 100)
+        XCTAssertEqual(ahead.fill?.upperBound, 50)
+        XCTAssertEqual(ahead.ahead?.lowerBound, 50)
+        XCTAssertEqual(ahead.ahead?.upperBound, 78)
+        // Behind the pace, no stretch; a pace at the very start leaves only the stretch.
+        XCTAssertNil(FlatMeter.runs(used: 40, pace: 0.5, width: 100).ahead)
+        XCTAssertNil(FlatMeter.runs(used: 40, pace: 0, width: 100).fill)
+    }
+
     func testMeterFillLengthClipsAndDropsEmpty() {
         XCTAssertEqual(MeterLayout.fillLength(usedPercent: 0, total: 200), 0)
         XCTAssertEqual(MeterLayout.fillLength(usedPercent: 50, total: 200), 100)

@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-enum SettingsTab: String {
+enum SettingsTab: String, CaseIterable {
     case general
     case providers
     case keys
@@ -22,6 +22,7 @@ struct SettingsView: View {
     @Bindable var store: QuotaStore
     @Bindable var request: SettingsTabRequest
     @State private var search = ""
+    @FocusState private var sidebarFocused: Bool
 
     var body: some View {
         NavigationSplitView {
@@ -43,6 +44,10 @@ struct SettingsView: View {
                 }
             }
             .listStyle(.sidebar)
+            // The keyboard starts here, as in System Settings: left alone, the window gives it to
+            // the page's first text field, which then opens with a caret or its text selected.
+            .focused($sidebarFocused)
+            .defaultFocus($sidebarFocused, true)
             .searchable(text: $search, placement: .sidebar, prompt: "Search settings")
             .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
         } detail: {
@@ -75,13 +80,15 @@ struct SettingsView: View {
         case .news: NewsSettings(store: store)
         case .menuBar: MenuBarSettings(store: store)
         case .iPhone:
-            if let relay = store.relay {
-                Form {
-                    SettingsHeaderSection()
+            // The app always has a relay; only tests and captures run without one, and the sidebar
+            // hides the page then. The form stays, so the pane is never bare.
+            Form {
+                SettingsHeaderSection()
+                if let relay = store.relay {
                     RelaySettingsSection(relay: relay)
                 }
-                .formStyle(.grouped)
             }
+            .formStyle(.grouped)
         }
     }
 
@@ -91,10 +98,9 @@ struct SettingsView: View {
         case .providers:
             let personal = Provider.allCases.filter { $0.category != .orgSpend }
             return "\(personal.filter { store.settings.isEnabled($0) }.count) of \(personal.count) on"
-        case .news:
-            return store.settings.newsEnabled ? "On" : "Off"
-        case .menuBar:
-            return store.settings.menuStyle.title
+        case .news, .menuBar:
+            // Their first control already says so.
+            return nil
         case .iPhone:
             guard let relay = store.relay else { return nil }
             switch relay.state {
@@ -102,7 +108,7 @@ struct SettingsView: View {
             case .off: return "Off"
             case .waiting: return "Waiting for readings"
             case .noAccount: return "Sign in to iCloud"
-            case .sent: return "Sent"
+            case .sent: return nil
             case .failed: return "Couldn't sync"
             case .paused: return "Paused"
             }
@@ -148,7 +154,7 @@ struct SettingsPage: Identifiable {
             SettingsPage(tab: .providers, title: "Providers", symbol: "square.stack.3d.up.fill", tint: .indigo,
                          text: "The plans and tools Tokenroom reads, with the logins already on this Mac.",
                          keywords: Provider.allCases.map(\.displayName) + ["sign in", "enable"]),
-            SettingsPage(tab: .keys, title: "API Keys", symbol: "key.fill", tint: TokenroomTokens.tight,
+            SettingsPage(tab: .keys, title: "API Keys", symbol: "key.fill", tint: .gray,
                          text: "Coding plans, balances, and organization spend, read with keys that stay in this Mac's Keychain.",
                          keywords: Provider.allCases.filter(\.readsWithKey).map(\.displayName) + ["token", "budget", "reference"]),
             SettingsPage(tab: .alerts, title: "Alerts", symbol: "bell.badge.fill", tint: .red,
@@ -183,7 +189,9 @@ struct SettingsIcon: View {
     }
 }
 
-/// The card at the top of a Settings page: its tile, title, what it's for, and a short count.
+/// The top of a Settings page: its tile, title, what it's for, and a short count. No card of its
+/// own: the window's title and the sidebar already name the page, and the groups below are the
+/// boxes. Its edge is theirs.
 private struct SettingsPageHeader: View {
     var page: SettingsPage
     var summary: String?
@@ -204,9 +212,6 @@ private struct SettingsPageHeader: View {
                 SettingsTag(text: summary)
             }
         }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.04)))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.primary.opacity(0.06)))
     }
 }
 
@@ -227,35 +232,136 @@ extension EnvironmentValues {
     }
 }
 
-/// The first section of every Settings page: its header card, scrolling with the page.
-struct SettingsHeaderSection: View {
+/// The first section of every Settings page: its header, scrolling with the page, and anything
+/// that belongs to the whole page, such as its search field.
+struct SettingsHeaderSection<Accessory: View>: View {
     @Environment(\.settingsHeader) private var header
+    private var accessory: Accessory
+
+    init(@ViewBuilder accessory: () -> Accessory) {
+        self.accessory = accessory()
+    }
 
     var body: some View {
         if let header {
             Section {
                 EmptyView()
             } header: {
-                SettingsPageHeader(page: header.page, summary: header.summary)
-                    .padding(.bottom, 4)
+                VStack(alignment: .leading, spacing: 12) {
+                    SettingsPageHeader(page: header.page, summary: header.summary)
+                    accessory
+                }
+                // A section header sits on the rows' inset; this one takes the group's edge.
+                .padding(.horizontal, -10)
+                .padding(.bottom, 4)
             }
         }
     }
 }
 
-/// A small capsule beside a name: "Unofficial", "Detected", "Key".
+extension SettingsHeaderSection where Accessory == EmptyView {
+    init() {
+        accessory = EmptyView()
+    }
+}
+
+/// A section's title. Under `SettingsHeaderSection`, a group draws its header small and tight
+/// against the page's: these match the titles further down, with their air.
+struct SettingsSectionTitle: View {
+    var text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.headline)
+            .foregroundStyle(.primary)
+            .padding(.top, 10)
+    }
+}
+
+/// The small capsule on a page's header: "11 of 16 on".
 struct SettingsTag: View {
     var text: String
-    var tint: Color? = nil
 
     var body: some View {
         Text(text)
             .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(tint ?? .secondary)
+            .foregroundStyle(.secondary)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(Capsule().fill((tint ?? .primary).opacity(0.1)))
+            .background(Capsule().fill(Color.primary.opacity(0.08)))
             .fixedSize()
+    }
+}
+
+/// AppKit's search field: the leading magnifier, the clear button, and Escape to clear. A
+/// `TextField` in a grouped form reads as a row label with a stray caret.
+private struct SettingsSearchField: NSViewRepresentable {
+    var prompt: String
+    @Binding var text: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> NSSearchField {
+        let field = Field()
+        field.placeholderString = prompt
+        field.setAccessibilityLabel(prompt)
+        // Every keystroke, and the clear button, arrive as this one action.
+        field.sendsSearchStringImmediately = true
+        field.target = context.coordinator
+        field.action = #selector(Coordinator.changed(_:))
+        return field
+    }
+
+    func updateNSView(_ field: NSSearchField, context: Context) {
+        context.coordinator.text = $text
+        if field.stringValue != text {
+            field.stringValue = text
+        }
+    }
+
+    /// An opening window offers its first text field the keyboard, which would start the page with
+    /// a caret here. A click, Tab, or VoiceOver takes it.
+    private final class Field: NSSearchField {
+        override func becomeFirstResponder() -> Bool {
+            let asked = NSWorkspace.shared.isVoiceOverEnabled
+                || NSApp.currentEvent.map { [.leftMouseDown, .keyDown].contains($0.type) } == true
+            return asked && super.becomeFirstResponder()
+        }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        var text: Binding<String>
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        @objc func changed(_ sender: NSSearchField) {
+            text.wrappedValue = sender.stringValue
+        }
+    }
+}
+
+/// The rest of an explanation, one click away, so a page's scanning path keeps one concise line.
+private struct SettingsDetails: View {
+    var title: String
+    var text: String
+
+    var body: some View {
+        DisclosureGroup(title) {
+            Text(text)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 
@@ -311,37 +417,50 @@ private struct ProvidersSettings: View {
     @State private var detected: Set<Provider> = []
     @State private var search = ""
 
+    /// Said once on the page rather than as a tag on nearly every row, under the first section
+    /// that has such a provider; each row's tooltip and VoiceOver label say it too.
+    private static let unofficialNote = "Tools you sign in to are read from the same endpoints their own apps use: unofficial, and they can change without notice."
+
     var body: some View {
         Form {
-            SettingsHeaderSection()
-            TextField("Search providers", text: $search)
+            SettingsHeaderSection {
+                SettingsSearchField(prompt: "Search providers", text: $search)
+            }
             let personal = Provider.allCases.filter { $0.category != .orgSpend && matches($0.displayName) }
             let connected = personal.filter { store.settings.isEnabled($0) }
             let detectedOff = personal.filter { !store.settings.isEnabled($0) && detected.contains($0) }
             let available = personal.filter { !store.settings.isEnabled($0) && !detected.contains($0) }
             let orgSpend = Provider.allCases.filter { $0.category == .orgSpend && matches($0.displayName) }
+            let unofficialSection = [connected, detectedOff, available].first { $0.contains(where: \.isUnofficial) }
 
             if !connected.isEmpty {
                 Section {
                     ForEach(connected) { providerRow($0) }
+                    SettingsDetails(title: "How sign-ins work", text: "Claude, Grok Build, and Codex access tokens expire after a few hours; Tokenroom renews them in that tool's own login, so you stay signed in. It doesn't keep a copy of the token. Names and emails are never stored or sent anywhere.")
                 } header: {
-                    Text("Enabled")
+                    SettingsSectionTitle("Enabled")
                 } footer: {
-                    Text("Tokenroom uses the login you already have. Claude, Grok Build, and Codex access tokens expire after a few hours; Tokenroom renews them in that tool's own login, so you stay signed in. It doesn't keep a copy of the token. Names and emails are never stored or sent anywhere. Tools you sign in to are read from the same endpoints their own apps use: unofficial, and they can change without notice.")
+                    Text(footnote("Tokenroom uses the login you already have.", unofficial: connected == unofficialSection))
                 }
             }
             if !detectedOff.isEmpty {
                 Section {
                     ForEach(detectedOff) { providerRow($0) }
                 } header: {
-                    Text("Detected on this Mac")
+                    SettingsSectionTitle("Detected on this Mac")
                 } footer: {
-                    Text("Signed in or set up on this Mac. Turn one on to see its usage.")
+                    Text(footnote("Signed in or set up on this Mac. Turn one on to see its usage.", unofficial: detectedOff == unofficialSection))
                 }
             }
             if !available.isEmpty {
-                Section("Available") {
+                Section {
                     ForEach(available) { providerRow($0) }
+                } header: {
+                    SettingsSectionTitle("Available")
+                } footer: {
+                    if available == unofficialSection {
+                        Text(Self.unofficialNote)
+                    }
                 }
             }
             // A grouped form draws a section's header and footer even with no rows left.
@@ -349,7 +468,7 @@ private struct ProvidersSettings: View {
                 Section {
                     ForEach(orgSpend) { providerRow($0) }
                 } header: {
-                    Text("Organization billing")
+                    SettingsSectionTitle("Organization billing")
                 } footer: {
                     Text("Month-to-date spend with an admin or management key. These never turn on by themselves; add a dedicated key you can revoke in API Keys.")
                 }
@@ -366,18 +485,17 @@ private struct ProvidersSettings: View {
         }
     }
 
+    private func footnote(_ text: String, unofficial: Bool) -> String {
+        unofficial ? "\(text) \(Self.unofficialNote)" : text
+    }
+
     private func providerRow(_ provider: Provider) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            providerToggle(provider)
-            if provider.usesAPIKey {
-                if needsKey(provider) {
-                    Button("Add a key in API Keys", action: onManageKeys)
-                        .buttonStyle(.link)
-                        .font(.system(size: 11))
-                        .padding(.leading, 28)
-                }
-            } else {
-                signInActions(provider)
+            HStack(spacing: 10) {
+                providerLabel(provider)
+                Spacer(minLength: 8)
+                rowActions(provider)
+                providerToggle(provider)
             }
             if provider == .claude {
                 DisclosureGroup("Advanced") {
@@ -402,49 +520,74 @@ private struct ProvidersSettings: View {
         return false
     }
 
+    private func providerLabel(_ provider: Provider) -> some View {
+        HStack(spacing: 8) {
+            ProviderIcon(provider: provider, size: 20)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(provider.displayName)
+                Text(caption(provider))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .help(provider.isUnofficial ? "Unofficial: read from the same endpoint \(provider.toolName) uses. It can change without notice." : "")
+        // The switch speaks for the whole row.
+        .accessibilityHidden(true)
+    }
+
     private func providerToggle(_ provider: Provider) -> some View {
         Toggle(isOn: Binding(
             get: { store.settings.isEnabled(provider) },
             // Through the store: one turned on is checked now, and iCloud hears of either.
             set: { store.setEnabled(provider, $0) }
         )) {
-            HStack(spacing: 8) {
-                ProviderIcon(provider: provider, size: 20)
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 6) {
-                        Text(provider.displayName)
-                        ForEach(tags(provider), id: \.self) { SettingsTag(text: $0) }
-                    }
-                    Text(caption(provider))
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-            }
+            Text(provider.displayName)
         }
+        .labelsHidden()
+        .toggleStyle(.switch)
         // The caption goes in the label: as the value it would replace the switch's on or off.
-        .accessibilityLabel("\(provider.displayName), \(caption(provider))")
+        .accessibilityLabel("\(provider.displayName), \(caption(provider))\(provider.isUnofficial ? ", unofficial source" : "")")
     }
 
-    /// What kind of connection it is, at a glance.
-    private func tags(_ provider: Provider) -> [String] {
-        var tags: [String] = []
-        if detected.contains(provider), !store.settings.isEnabled(provider) { tags.append("Detected") }
+    /// How a row connects, when that isn't what the section's note says: nearly every provider
+    /// is a login read unofficially, so only the others say anything.
+    private func connection(_ provider: Provider) -> String? {
         switch provider.access {
-        case .localLogin: tags.append(provider.descriptor.fallbackKey == nil ? "Unofficial" : "Login or token")
-        case .codingPlanKey: tags.append("Key")
-        case .pastedKey: tags.append(provider.category == .orgSpend ? "Admin key" : "Key")
+        case .localLogin: provider.descriptor.fallbackKey == nil ? nil : "Login or token"
+        case .codingPlanKey: "Key"
+        case .pastedKey: provider.category == .orgSpend ? "Admin key" : "Key"
         }
-        return tags
     }
 
     private func caption(_ provider: Provider) -> String {
+        let connection = connection(provider)
         if store.settings.isEnabled(provider) {
-            return store.accountCaption(provider)
+            return [store.accountCaption(provider), connection].compactMap(\.self).joined(separator: " · ")
         }
         if detected.contains(provider) {
             return provider.usesAPIKey ? "Key found on this Mac" : "Signed in on this Mac"
         }
-        return provider.usesAPIKey ? "Needs an API key" : "Sign in with \(provider.installToolName)"
+        if provider.usesAPIKey {
+            return provider.category == .orgSpend ? "Needs an admin key" : "Needs an API key"
+        }
+        return ["Sign in with \(provider.installToolName)", connection].compactMap(\.self).joined(separator: " · ")
+    }
+
+    /// What a row needs next, beside its switch rather than under it, so it stays one row tall.
+    @ViewBuilder
+    private func rowActions(_ provider: Provider) -> some View {
+        if provider.usesAPIKey {
+            if needsKey(provider) {
+                Button("Add Key…", action: onManageKeys)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Add a key in API Keys")
+                    .accessibilityLabel("Add a \(provider.displayName) key in API Keys")
+            }
+        } else {
+            signInActions(provider)
+        }
     }
 
     @ViewBuilder
@@ -471,7 +614,6 @@ private struct ProvidersSettings: View {
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.leading, 28)
         } else if case .needsInstall(let active, let tool, _) = store.signIn.phase, active == provider {
             HStack(spacing: 8) {
                 Button("Install \(tool)") {
@@ -484,7 +626,6 @@ private struct ProvidersSettings: View {
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.leading, 28)
         } else if needsSignIn {
             Button(provider.signInTitle) {
                 store.signIn.signIn(provider)
@@ -492,7 +633,7 @@ private struct ProvidersSettings: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
             .help(provider.signInHint)
-            .padding(.leading, 28)
+            .accessibilityLabel("\(provider.signInTitle), \(provider.displayName)")
         }
     }
 }
@@ -512,34 +653,30 @@ private struct KeysSettings: View {
             SettingsHeaderSection()
             Section {
                 ForEach(Provider.allCases.filter { $0.access == .codingPlanKey }) { provider in
-                    VStack(alignment: .leading, spacing: 8) {
+                    KeyRow(provider: provider, keys: CredentialReaders.apiKeys, reload: closedSheets, isEnabled: store.settings.isEnabled(provider)) {
                         keyHeader(provider)
-                        KeyRow(provider: provider, keys: CredentialReaders.apiKeys, reload: closedSheets) {
-                            keySheet = provider
-                        } onRemoved: {
-                            // A key the coding tool keeps may still be there.
-                            Task { await store.credentialsChanged(for: provider) }
-                        }
-                        .padding(.leading, 28)
+                    } onAdd: {
+                        keySheet = provider
+                    } onRemoved: {
+                        // A key the coding tool keeps may still be there.
+                        Task { await store.credentialsChanged(for: provider) }
                     }
                     .padding(.vertical, 2)
                 }
             } header: {
-                Text("Coding plans")
+                SettingsSectionTitle("Coding plans")
             } footer: {
                 Text("Tokenroom uses the key your coding tool already has on this Mac (Claude Code settings, the kimi CLI, or OpenCode), or one you add here. Added keys stay in this Mac's Keychain.")
             }
 
             Section {
                 ForEach(Provider.allCases.filter { $0.descriptor.fallbackKey != nil }) { provider in
-                    VStack(alignment: .leading, spacing: 8) {
+                    KeyRow(provider: provider, keys: CredentialReaders.apiKeys, reload: closedSheets, isEnabled: store.settings.isEnabled(provider)) {
                         keyHeader(provider)
-                        KeyRow(provider: provider, keys: CredentialReaders.apiKeys, reload: closedSheets) {
-                            keySheet = provider
-                        } onRemoved: {
-                            Task { await store.credentialsChanged(for: provider) }
-                        }
-                        .padding(.leading, 28)
+                    } onAdd: {
+                        keySheet = provider
+                    } onRemoved: {
+                        Task { await store.credentialsChanged(for: provider) }
                     }
                     .padding(.vertical, 2)
                 }
@@ -600,16 +737,16 @@ private struct KeysSettings: View {
         let unit = store.budgetUnit(for: provider, region: budgetRegions[provider])
         let reference = store.settings.budgetReference(for: provider)
         return VStack(alignment: .leading, spacing: 8) {
-            keyHeader(provider)
-            KeyRow(provider: provider, keys: CredentialReaders.apiKeys, reload: closedSheets,
+            KeyRow(provider: provider, keys: CredentialReaders.apiKeys, reload: closedSheets, isEnabled: store.settings.isEnabled(provider),
                    onMetadata: { metadata in
                        budgetRegions[provider] = metadata.map { provider.keySpec?.initialChoice(saved: $0) ?? "" }
                    }) {
+                keyHeader(provider)
+            } onAdd: {
                 keySheet = provider
             } onRemoved: {
                 store.setEnabled(provider, false)
             }
-            .padding(.leading, 28)
             BudgetField(label: budgetLabel, currency: unit.uppercased(), resetRevision: budgetClears[provider, default: 0], value: Binding(
                 get: { store.settings.budgetReference(for: provider).flatMap { $0.unit == unit ? $0.amount : nil } },
                 set: { value in
@@ -637,13 +774,17 @@ private struct KeysSettings: View {
     }
 }
 
-/// A pasted key: `•••• a1b2` with Replace and Remove, or Add Key.
-private struct KeyRow: View {
+/// A provider's row of keys: its name, then `•••• a1b2` with Replace and Remove, or Add Key, on the
+/// trailing edge. Warnings and messages stay under it.
+private struct KeyRow<RowLabel: View>: View {
     var provider: Provider
     var keys: APIKeyStore
     /// Changes when a key sheet closes, so a key saved there shows.
     var reload = 0
+    /// Only sample captures read this: they show a key on what's turned on, and touch no Keychain.
+    var isEnabled = false
     var onMetadata: ((APIKeyStore.Metadata?) -> Void)? = nil
+    @ViewBuilder var label: () -> RowLabel
     var onAdd: () -> Void
     var onRemoved: () -> Void
     @State private var metadata: APIKeyStore.Metadata?
@@ -653,47 +794,51 @@ private struct KeyRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if metadata == nil, let localKey {
-                Text(localKey)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
             HStack(spacing: 8) {
+                label()
+                Spacer(minLength: 8)
                 if let metadata {
                     Text("•••• \(metadata.last4)\(metadata.region.map { " · \($0)" } ?? "")")
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(.secondary)
                     Button("Replace…", action: onAdd)
-                        .buttonStyle(.plain)
-                        .font(.system(size: 11, weight: .medium))
                         .disabled(removing)
+                        .accessibilityLabel("Replace \(provider.displayName) key")
                     Button(removing ? "Removing…" : "Remove", role: .destructive) {
                         remove()
                     }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 11, weight: .medium))
                     .disabled(removing)
+                    .accessibilityLabel(removing ? "Removing \(provider.displayName) key" : "Remove \(provider.displayName) key")
                 } else {
                     Button("Add Key…", action: onAdd)
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                        .accessibilityLabel("Add \(provider.displayName) key")
                 }
             }
-            if let warning = metadata?.warning {
-                Label(warning, systemImage: "exclamationmark.triangle")
-                    .font(.system(size: 11))
-                    .foregroundStyle(TokenroomTokens.accentText)
-                    .fixedSize(horizontal: false, vertical: true)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            Group {
+                if metadata == nil, let localKey {
+                    Text(localKey)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                if let warning = metadata?.warning {
+                    SettingsWarning(warning)
+                }
+                if let message {
+                    Text(message)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
             }
-            if let message {
-                Text(message)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
+            .padding(.leading, 28)
         }
         .task(id: reload) {
             #if DEBUG
-            if UserDefaults.standard.string(forKey: "TokenroomSnapshots") != nil { return }
+            if UserDefaults.standard.string(forKey: "TokenroomSnapshots") != nil {
+                metadata = isEnabled ? .init(last4: "a1b2", addedAt: .now) : nil
+                return
+            }
             #endif
             let keys = self.keys
             let provider = self.provider
@@ -725,6 +870,22 @@ private struct KeyRow: View {
     }
 }
 
+/// A warning in a row: colour belongs to readings, so it's ink, stronger than the captions around it.
+private struct SettingsWarning: View {
+    var text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Label(text, systemImage: "exclamationmark.triangle")
+            .font(.system(size: 11))
+            .foregroundStyle(.primary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
 /// An amount in the key's currency; empty means no reference or budget.
 private struct BudgetField: View {
     var label: String
@@ -740,6 +901,7 @@ private struct BudgetField: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Text("\(label) (\(currency))").font(.system(size: 11)).foregroundStyle(.secondary)
+                Spacer(minLength: 8)
                 TextField("None", text: Binding(get: { text }, set: { text = $0; edited = true }))
                     .textFieldStyle(.roundedBorder).font(.system(size: 11)).frame(width: 110)
                     .focused($focused).onSubmit(save)
@@ -837,13 +999,10 @@ private struct AddKeySheet: View {
                         .font(.system(size: 11))
                 }
                 .padding(10)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.orange.opacity(0.12)))
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.06)))
             }
             if let warning {
-                Label(warning, systemImage: "exclamationmark.triangle")
-                    .font(.system(size: 11))
-                    .foregroundStyle(TokenroomTokens.accentText)
-                    .fixedSize(horizontal: false, vertical: true)
+                SettingsWarning(warning)
             }
             Text(message ?? "Tokenroom only reads your balance and usage with this key. It stays in this Mac's Keychain.")
                 .font(.system(size: 11))
@@ -994,7 +1153,7 @@ private struct AlertsSettings: View {
                     }
                 ))
             } header: {
-                Text("This Mac")
+                SettingsSectionTitle("This Mac")
             } footer: {
                 Text(denied
                     ? "Notifications are off for Tokenroom. Turn them on in System Settings › Notifications."
@@ -1103,15 +1262,21 @@ private struct NewsSettings: View {
                         }
                     }
                 ))
+                SettingsDetails(title: "How often it checks", text: "Reads OpenRouter's public model list every hour, and official changelogs and blogs every hour, or every 5 minutes while the News window is on screen. A feed that can't be read is tried again after 5 minutes, then less often, and never sooner than its server asks.")
             } footer: {
-                Text("Reads OpenRouter's public model list every hour, and official changelogs and blogs every hour, or every 5 minutes while the News window is on screen. A feed that can't be read is tried again after 5 minutes, then less often, and never sooner than its server asks. No account, key, or usage is sent. Open News from the popover.")
+                Text("No account, key, or usage is sent. Open News from the popover.")
             }
             if store.settings.newsEnabled, let news = store.news {
-                TextField("Search labs and sources", text: $search)
+                Section {
+                    EmptyView()
+                } header: {
+                    SettingsSearchField(prompt: "Search labs and sources", text: $search)
+                        .padding(.horizontal, -10)
+                }
                 let vendors = news.vendorChoices.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }
                 let sources = FeedSource.toggles.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }
                 if !vendors.isEmpty {
-                    Section("Labs") {
+                    Section {
                         ForEach(vendors, id: \.id) { vendor in
                             Toggle(vendor.name, isOn: Binding(
                                 get: { news.followedVendors.contains(vendor.id) },
@@ -1120,6 +1285,8 @@ private struct NewsSettings: View {
                                 }
                             ))
                         }
+                    } header: {
+                        SettingsSectionTitle("Labs")
                     }
                 }
                 if !sources.isEmpty {
@@ -1158,12 +1325,10 @@ private struct MenuBarSettings: View {
                         Text(style.title).tag(style)
                     }
                 }
-                Text(store.settings.popoverStyle.summary)
-                    .font(.callout).foregroundStyle(.secondary)
             } header: {
-                Text("Usage popover")
+                SettingsSectionTitle("Usage popover")
             } footer: {
-                Text("Orbit is the default. You can also switch styles with the palette button in the popover.")
+                Text("\(store.settings.popoverStyle.summary) You can also switch styles with the palette button in the popover.")
             }
             Section {
                 Picker("Style", selection: $store.settings.menuStyle) {
@@ -1181,6 +1346,8 @@ private struct MenuBarSettings: View {
                     Text("15 minutes").tag(15)
                     Text("30 minutes").tag(30)
                 }
+            } header: {
+                SettingsSectionTitle("Menu bar")
             } footer: {
                 if store.menuMeters.count > 6, store.settings.menuStyle != .highest {
                     Text("Many providers are showing. Highest only keeps the menu bar narrow so macOS doesn't hide it.")
@@ -1217,22 +1384,28 @@ private struct RelaySettingsSection: View {
     var body: some View {
         Section {
             if relay.isAvailable {
-                Toggle("Send readings to iCloud", isOn: $relay.isEnabled)
-                TextField("Name on iPhone", text: $relay.label)
-                Button("Send Test Alert") {
-                    sendingTest = true
-                    Task {
-                        await relay.sendTestAlert()
-                        sendingTest = false
-                    }
+                Toggle(isOn: $relay.isEnabled) {
+                    Text("Send readings to iCloud")
+                    Text(relay.statusText)
                 }
-                .disabled(!relay.isEnabled || sendingTest)
+                TextField("Name on iPhone", text: $relay.label)
+                LabeledContent("Test alert") {
+                    Button("Send Test Alert") {
+                        sendingTest = true
+                        Task {
+                            await relay.sendTestAlert()
+                            sendingTest = false
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(!relay.isEnabled || sendingTest)
+                }
+            } else {
+                Text(relay.statusText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
             }
-            Text(relay.statusText)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-        } header: {
-            Text("iPhone & Apple Watch")
         } footer: {
             Text("Only percentages, reset times, window labels, plan names, and balances go to your private iCloud. Tokens and keys never leave this Mac.")
         }
@@ -1264,14 +1437,14 @@ private struct ClaudeBridgeRow: View {
             if isOn == true, !overrides.isEmpty {
                 Text("\(overrides.count == 1 ? "A project sets" : "\(overrides.count) projects set") its own status line, which replaces the bridge there: \(overrides.joined(separator: ", ")). Tokenroom never edits project settings.")
                     .font(.system(size: 11))
-                    .foregroundStyle(TokenroomTokens.accentText)
+                    .foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let replacedLink {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text("Tokenroom 2.0.0 replaced ~/.claude/settings.json, a link to \(replacedLink), with a file. If you keep it with your dotfiles, link it again; Tokenroom 2.0.1 leaves links alone.")
                         .font(.system(size: 11))
-                        .foregroundStyle(TokenroomTokens.accentText)
+                        .foregroundStyle(.primary)
                         .fixedSize(horizontal: false, vertical: true)
                     Button("Dismiss") {
                         self.replacedLink = nil
