@@ -91,7 +91,7 @@ func markAlpha(luminance l: Double, alpha a: Double, kind: Kind) -> Double {
     case .darkOnLight:
         return smoothstep(0.42, 0.16, l)
     case .shadedOnDark:
-        return 0.72 * smoothstep(0.09, 0.16, l) + 0.28 * smoothstep(0.3, 0.8, l)
+        return 0.5 * smoothstep(0.09, 0.16, l) + 0.5 * smoothstep(0.3, 0.8, l)
     }
 }
 
