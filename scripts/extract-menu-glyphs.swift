@@ -224,7 +224,8 @@ func extract(_ image: CGImage, kind: Kind) -> CGImage? {
 
     let bw = maxX - minX + 1
     let bh = maxY - minY + 1
-    let pad = Int((Double(max(bw, bh)) * (kind == .darkOnLight ? 0.20 : 0.12)).rounded(.up))
+    let padding = switch kind { case .darkOnLight: 0.20; case .lightOnDark: 0.12; case .shadedOnDark: 0.04 }
+    let pad = Int((Double(max(bw, bh)) * padding).rounded(.up))
     let side = max(bw, bh) + pad * 2
     let ox = (side - bw) / 2
     let oy = (side - bh) / 2

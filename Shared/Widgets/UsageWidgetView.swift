@@ -390,16 +390,7 @@ private struct WidgetMeter: View {
         if (preview?.renderingMode ?? systemRenderingMode) == .fullColor {
             MeterTrack(usedPercent: used, remaining: 100 - used, isStale: isStale, paceMark: pace, height: height)
         } else {
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.primary.opacity(0.2))
-                    Capsule()
-                        .fill(.primary)
-                        .frame(width: geometry.size.width * min(max(used, 0), 100) / 100)
-                        .widgetAccentable()
-                }
-            }
-            .frame(height: height)
+            FlatMeter(used: used, pace: isStale ? nil : pace, tint: .primary, height: height)
         }
     }
 }

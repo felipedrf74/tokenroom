@@ -85,7 +85,7 @@ struct NewsCollectionHealthView: View {
             // A caption with a link beside it, as Today's checks read: the page's heading leads.
             HStack(spacing: 12) {
                 Text(health.caption).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText)
-                checkButton.buttonStyle(.plain).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText)
+                checkButton.buttonStyle(.plain).font(.caption).foregroundStyle(TokenroomTokens.control)
                     .underline(health.problem != nil)
             }
             #else

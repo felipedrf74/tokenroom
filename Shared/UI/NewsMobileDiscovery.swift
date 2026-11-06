@@ -34,7 +34,7 @@ struct MobileNewsFollowing: View {
                         if !suggestedProviders.isEmpty, query.isEmpty {
                             Button("Add the tools I use") {
                                 news.followedSources.formUnion(FeedSource.toggles.filter { $0.provider.map { suggestedProviders.contains($0.rawValue) } ?? false }.map(\.id))
-                            }.buttonStyle(.plain).font(.subheadline).foregroundStyle(MobileNewsPalette.secondary).frame(minHeight: 44)
+                            }.buttonStyle(.plain).font(.subheadline).foregroundStyle(TokenroomTokens.control).frame(minHeight: 44)
                         }
                     }.padding(.bottom, -8)
                     rows(tools) { sourceRow($0) }

@@ -151,7 +151,7 @@ struct MacNewsFreshnessView: View {
             let summary = NewsSourceFreshness(cache: news.cache, sources: news.sources, now: context.date)
             VStack(alignment: .leading, spacing: 8) {
                 if availableWidth >= 760 {
-                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 2) {
                         Text(context.date.formatted(.dateTime.weekday(.wide).day().month(.wide)) + " ·")
                         checks(summary, now: context.date)
                     }.font(.caption).foregroundStyle(TokenroomTokens.newsSecondaryText)
@@ -223,7 +223,7 @@ struct MacNewsCollectionContent: View {
                     HStack {
                         Text("\(items.count) \(items.count == 1 ? "story" : "stories")").font(.caption).foregroundStyle(TokenroomTokens.newsSecondaryText)
                         Spacer()
-                        Button("Mark these stories read") { library.markAllRead(items) }.buttonStyle(.plain).font(.caption).foregroundStyle(TokenroomTokens.newsSecondaryText)
+                        Button("Mark these stories read") { library.markAllRead(items) }.buttonStyle(.plain).font(.caption).foregroundStyle(TokenroomTokens.control)
                     }
                     MacNewsStoryList(items: items, news: news, library: library)
                 }

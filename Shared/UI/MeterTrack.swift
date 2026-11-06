@@ -85,28 +85,45 @@ struct FlatMeter: View {
     var tint: Color
     var height: CGFloat = 4
 
+    /// Where the fill runs, in points of `width`: up to the pace's gap, and on from it when use has
+    /// passed the pace. Exactly the reading, so a meter at 0% draws nothing, as `MeterLayout` says.
+    static func runs(used: Double, pace: Double?, width: CGFloat) -> (fill: ClosedRange<CGFloat>?, ahead: ClosedRange<CGFloat>?) {
+        let end = MeterLayout.fillLength(usedPercent: used, total: width)
+        guard end > 0 else { return (nil, nil) }
+        guard let pace else { return (0...end, nil) }
+        let mark = width * CGFloat(min(max(pace, 0), 1))
+        let fill = min(end, mark - gap / 2)
+        let ahead = mark + gap / 2
+        return (fill > 0 ? 0...fill : nil, end > ahead ? ahead...end : nil)
+    }
+
+    private static let gap: CGFloat = 3
+
     private struct Run: Shape {
-        var from: CGFloat
-        var to: CGFloat
+        var span: ClosedRange<CGFloat>?
 
         func path(in rect: CGRect) -> Path {
-            guard to > from else { return Path() }
-            return Path(roundedRect: CGRect(x: from, y: 0, width: to - from, height: rect.height), cornerRadius: rect.height / 2, style: .continuous)
+            guard let span, span.upperBound > span.lowerBound else { return Path() }
+            let length = span.upperBound - span.lowerBound
+            return Path(roundedRect: CGRect(x: span.lowerBound, y: 0, width: length, height: rect.height),
+                        cornerRadius: min(rect.height, length) / 2, style: .continuous)
         }
     }
 
     var body: some View {
         GeometryReader { geometry in
             let width = geometry.size.width
-            let end = width * CGFloat(MeterLayout.usedFraction(used))
             let mark = pace.map { width * CGFloat(min(max($0, 0), 1)) }
-            let gapStart = mark.map { $0 - 1.5 } ?? width
-            let gapEnd = mark.map { $0 + 1.5 } ?? width
+            let runs = Self.runs(used: used, pace: pace, width: width)
             ZStack(alignment: .leading) {
-                Run(from: 0, to: gapStart).fill(.primary.opacity(0.18))
-                Run(from: gapEnd, to: width).fill(.primary.opacity(0.18))
-                Run(from: 0, to: min(max(end, height), gapStart)).fill(tint).widgetAccentable()
-                Run(from: gapEnd, to: end).fill(tint.mix(with: .white, by: 0.3)).widgetAccentable()
+                if let mark {
+                    Run(span: 0...max(mark - Self.gap / 2, 0)).fill(.primary.opacity(0.18))
+                    Run(span: min(mark + Self.gap / 2, width)...width).fill(.primary.opacity(0.18))
+                } else {
+                    Run(span: 0...width).fill(.primary.opacity(0.18))
+                }
+                Run(span: runs.fill).fill(tint).widgetAccentable()
+                Run(span: runs.ahead).fill(tint.mix(with: .white, by: 0.3)).widgetAccentable()
                 if let mark {
                     Rectangle().fill(.primary.opacity(0.5))
                         .frame(width: 1.5, height: height + 2)
