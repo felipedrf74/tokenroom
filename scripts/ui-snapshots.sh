@@ -6,6 +6,8 @@
 #
 # Screens go to <folder>/{mac,iphone,watch}. With no platform named, all three run. The iPhone and
 # Watch screens are XCUITest screenshots on a Simulator, so their Liquid Glass is the real thing.
+# TOKENROOM_SNAPSHOT_ONLY=testNews runs one iPhone capture test; DERIVED_DATA_PATH keeps two
+# checkouts apart; TOKENROOM_SNAPSHOT_IPHONE and TOKENROOM_SNAPSHOT_WATCH pick the Simulators.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -33,8 +35,10 @@ for platform in "${PLATFORMS[@]}"; do
       ;;
     iphone)
       rm -rf "$OUT/iphone.xcresult"
+      only=()
+      [[ -n "${TOKENROOM_SNAPSHOT_ONLY:-}" ]] && only=("-only-testing:TokenroomUISnapshots/UISnapshotTests/$TOKENROOM_SNAPSHOT_ONLY")
       TEST_RUNNER_TOKENROOM_SNAPSHOT_DIR="$OUT/iphone" TEST_RUNNER_TOKENROOM_SNAPSHOT_FIXTURE="$FIXTURE/news.json" \
-        xcodebuild test -project "$ROOT/Tokenroom.xcodeproj" -scheme TokenroomUISnapshots \
+        xcodebuild test -project "$ROOT/Tokenroom.xcodeproj" -scheme TokenroomUISnapshots "${only[@]}" \
         -destination "platform=iOS Simulator,name=$IPHONE" -derivedDataPath "$DERIVED" \
         -resultBundlePath "$OUT/iphone.xcresult" CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO TOKENROOM_CK_CONTAINER= -quiet
       ;;
