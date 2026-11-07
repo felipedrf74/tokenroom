@@ -728,15 +728,17 @@ final class MobileStore {
         }
         let wasPaused = Set((defaults.array(forKey: MacCoveragePause.defaultsKey) as? [String] ?? []).compactMap(Provider.init(rawValue:)))
         let coverage = coverage
-        let paused = Set(signedIn.filter { provider in
-            MacCoveragePause.isPaused(macAge: PhoneConnect.macReadingAge(provider, sources: coverage, now: now),
-                                      wasPaused: wasPaused.contains(provider), manual: manual)
+        let decided = Set(signedIn.filter { provider in
+            MacCoveragePause.remembered(macAge: PhoneConnect.macReadingAge(provider, sources: coverage, now: now),
+                                        wasPaused: wasPaused.contains(provider))
         })
-        if paused != wasPaused {
-            logger.notice("session reads paused for a Mac: \(paused.count, privacy: .public)")
+        // A pull to refresh reads every plan this pass but keeps the decision for the next one.
+        let paused = manual ? [] : decided
+        if decided != wasPaused {
+            logger.notice("session reads paused for a Mac: \(decided.count, privacy: .public)")
         }
         pausedSessions = paused
-        defaults.set(paused.isEmpty ? nil : paused.map(\.rawValue).sorted(), forKey: MacCoveragePause.defaultsKey)
+        defaults.set(decided.isEmpty ? nil : decided.map(\.rawValue).sorted(), forKey: MacCoveragePause.defaultsKey)
         let plan = PhoneSignIn.plansToRead(signedIn: signedIn, notOnPlan: skipped, now: now, paused: paused, isHeldOff: heldOff)
         let providers = plan.listed
         let recheck = plan.rechecks

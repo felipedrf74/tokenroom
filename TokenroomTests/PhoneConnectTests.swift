@@ -242,6 +242,18 @@ final class PhoneConnectTests: XCTestCase {
         XCTAssertEqual(MacCoveragePause.detail(planName: "Codex"), "Paused: your Mac reads Codex")
     }
 
+    /// A pull to refresh reads a paused plan but doesn't forget the pause: the next ordinary pass
+    /// in the 15–25 minute band stays paused instead of resolving to "read".
+    func testAPullToRefreshReadsButKeepsThePauseForTheNextPass() {
+        let pulled = MacCoveragePause.isPaused(macAge: 20 * 60, wasPaused: true, manual: true)
+        let kept = MacCoveragePause.remembered(macAge: 20 * 60, wasPaused: true)
+        XCTAssertFalse(pulled, "The pull reads")
+        XCTAssertTrue(kept, "…and saves the pause")
+        XCTAssertTrue(MacCoveragePause.isPaused(macAge: 21 * 60, wasPaused: kept, manual: false), "The next pass stays paused")
+        XCTAssertFalse(MacCoveragePause.remembered(macAge: 26 * 60, wasPaused: true), "Past 25 minutes the pause ends")
+        XCTAssertFalse(MacCoveragePause.remembered(macAge: nil, wasPaused: true), "No live Mac reading ends it")
+    }
+
     func testTheMacsReadingAgeComesFromItsLiveReadingOnly() {
         func source(_ kind: CollectorKind, checked: Date, state: String = "live") -> PhoneConnect.CoveringSource {
             var claude = reading(.claude, checkedAt: checked)

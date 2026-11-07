@@ -166,7 +166,14 @@ enum MacCoveragePause {
     ///   - wasPaused: what the last pass decided.
     ///   - manual: a pull to refresh.
     static func isPaused(macAge: TimeInterval?, wasPaused: Bool, manual: Bool) -> Bool {
-        guard !manual, let macAge else { return false }
+        guard !manual else { return false }
+        return remembered(macAge: macAge, wasPaused: wasPaused)
+    }
+
+    /// What a pass saves as its decision for the next one. A pull to refresh reads anyway but
+    /// doesn't forget the pause, so the next ordinary pass in the 15–25 minute band stays paused.
+    static func remembered(macAge: TimeInterval?, wasPaused: Bool) -> Bool {
+        guard let macAge else { return false }
         if macAge <= pauseWithin { return true }
         if macAge > resumeAfter { return false }
         return wasPaused
