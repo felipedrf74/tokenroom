@@ -520,6 +520,10 @@ final class NewsStore {
                 let next = Task { await performRefresh(survivor) }
                 successor = (cancelled, next)
                 work = next
+            } else {
+                // This pass (or a successor that ran in its place) is done: nothing is running.
+                // A newer pass can't have started yet, since `isRefreshing` was set until now.
+                work = nil
             }
         }
         // The first check (turning News on) marks nothing new, even with News open, as the Mac's

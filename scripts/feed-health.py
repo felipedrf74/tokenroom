@@ -56,7 +56,7 @@ class Result:
 def code(text, limit=200):
     """Server-supplied text (a Link header, an error's reason) as inline code in the issue:
     no Markdown, mentions or links of its own, and no `|` to break the table."""
-    text = " ".join(str(text).split())[:limit].replace("`", "'").replace("|", "\\|")
+    text = " ".join(str(text).split())[:limit].replace("`", "'").replace("\\", "/").replace("|", "\\|")
     return f"`{text}`"
 
 
@@ -79,7 +79,8 @@ def catalog(root=ROOT):
             else:
                 kind = "official"
             sources.append(Source(identifier, name, url, kind, _limit(rest)))
-    voice = re.compile(r'voice\("([^"]+)", "([^"]+)", "[^"]+", "([^"]+)", "[^"]+"([^\n]*)\)')
+    # The third argument is an X handle, or `site: "…"` for a publication without its own account.
+    voice = re.compile(r'voice\("([^"]+)", "([^"]+)", (?:site: )?"[^"]+", "([^"]+)", "[^"]+"([^\n]*)\)')
     for match in voice.finditer((root / "Shared/Core/NewsSources.swift").read_text()):
         identifier, name, url, rest = match.groups()
         prefix = "discussion-" if ".discussion" in rest else "voice-"

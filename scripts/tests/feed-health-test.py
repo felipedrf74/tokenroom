@@ -21,7 +21,8 @@ class CatalogTests(unittest.TestCase):
     def test_reads_every_kind_from_the_swift_catalog(self):
         sources = {source.id: source for source in health.catalog()}
         for identifier, kind in [("claude-code", "official"), ("mistral-news", "official"), ("status-github", "status"),
-                                 ("status-spacexai", "status"), ("voice-importai", "voice"), ("discussion-techmeme", "voice"),
+                                 ("status-spacexai", "status"), ("voice-importai", "voice"), ("voice-interconnects", "voice"),
+                                 ("voice-latentspace", "voice"), ("discussion-techmeme", "voice"),
                                  ("openrouter-models", "models"), ("clawhub-trending", "skills")]:
             with self.subTest(identifier=identifier):
                 self.assertEqual(sources[identifier].kind, kind)
@@ -30,6 +31,10 @@ class CatalogTests(unittest.TestCase):
         self.assertNotIn("voice-embirico", sources, "A voice without a feed has nothing to check")
         self.assertTrue(all(source.url.startswith("https://") for source in sources.values()))
         self.assertEqual(len(sources), len(health.catalog()), "IDs are unique")
+        swift = (health.ROOT / "Shared/Core/NewsSources.swift").read_text()
+        with_feed = [line for line in swift.splitlines() if line.strip().startswith("voice(") and ", nil," not in line]
+        self.assertEqual(sum(source.kind == "voice" for source in sources.values()), len(with_feed),
+                         "Every voice with a feed in the Swift catalog is probed")
 
 
 class AssessTests(unittest.TestCase):
@@ -86,6 +91,8 @@ class AssessTests(unittest.TestCase):
         self.assertNotIn(" | ", inner.replace("\\|", ""), "Pipes are escaped so the table holds")
         row = [line for line in health.report([result], now=NOW).splitlines() if line.startswith("| Downloads | `clawhub-downloads`")][0]
         self.assertEqual(row.replace("\\|", "").count("|"), 4, "One row, three cells")
+        self.assertEqual(health.code("ends with a backslash\\"), "`ends with a backslash/`",
+                         "A trailing backslash can't escape the closing backtick")
 
     def test_report_lists_what_needs_attention_first(self):
         results = [health.assess(self.official, 200, rss(), now=NOW), health.assess(self.voice, 410, b"", now=NOW)]
