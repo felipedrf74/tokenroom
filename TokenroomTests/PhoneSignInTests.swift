@@ -49,83 +49,50 @@ final class PhoneSignInTests: XCTestCase {
         XCTAssertTrue(a.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" })
     }
 
-    // MARK: Claude
+    // MARK: What a sign-in keeps
 
-    func testClaudesSignInPageAsksOnlyToReadTheProfile() throws {
-        let pkce = PhoneSignIn.PKCE(verifier: "verifier", state: "state-1")
-        let url = PhoneSignIn.claudeAuthorizeURL(pkce)
-        let items = Dictionary(uniqueKeysWithValues: try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems).map { ($0.name, $0.value ?? "") })
-        XCTAssertEqual(url.host, "claude.com")
-        XCTAssertEqual(items["scope"], "user:profile")
-        XCTAssertEqual(items["response_type"], "code")
-        XCTAssertEqual(items["code"], "true")
-        XCTAssertEqual(items["redirect_uri"], "https://platform.claude.com/oauth/code/callback")
-        XCTAssertEqual(items["code_challenge"], pkce.challenge)
-        XCTAssertEqual(items["code_challenge_method"], "S256")
-        XCTAssertEqual(items["state"], "state-1")
-        XCTAssertNil(items["code_verifier"], "The verifier never leaves the iPhone before the exchange")
-    }
-
-    func testAPastedClaudeCodeIsReadInEveryShapeThePageGives() {
-        XCTAssertEqual(PhoneSignIn.claudeCode(fromPasted: "  abc123#state-1\n", state: "state-1"), .code("abc123"))
-        XCTAssertEqual(PhoneSignIn.claudeCode(fromPasted: "abc123", state: "state-1"), .code("abc123"))
-        XCTAssertEqual(PhoneSignIn.claudeCode(fromPasted: "abc123#state-2", state: "state-1"), .otherSignIn)
-        XCTAssertEqual(PhoneSignIn.claudeCode(fromPasted: "https://platform.claude.com/oauth/code/callback?code=abc123&state=state-1", state: "state-1"), .code("abc123"))
-        XCTAssertEqual(PhoneSignIn.claudeCode(fromPasted: "https://platform.claude.com/oauth/code/callback?code=abc123&state=nope", state: "state-1"), .otherSignIn)
-        XCTAssertEqual(PhoneSignIn.claudeCode(fromPasted: "   ", state: "state-1"), .empty)
-        XCTAssertEqual(PhoneSignIn.claudeCode(fromPasted: "#state-1", state: "state-1"), .empty)
-        XCTAssertEqual(PhoneSignIn.claudeCode(fromPasted: "two words", state: "state-1"), .empty)
-    }
-
-    func testClaudesExchangeSendsTheVerifierAndState() {
-        let pkce = PhoneSignIn.PKCE(verifier: "verifier", state: "state-1")
-        let request = PhoneSignIn.claudeExchangeRequest(code: "abc123", pkce: pkce)
-        XCTAssertEqual(request.url?.absoluteString, "https://platform.claude.com/v1/oauth/token")
-        XCTAssertEqual(request.httpMethod, "POST")
-        let fields = Self.body(request)
-        XCTAssertEqual(fields["grant_type"] as? String, "authorization_code")
-        XCTAssertEqual(fields["code"] as? String, "abc123")
-        XCTAssertEqual(fields["code_verifier"] as? String, "verifier")
-        XCTAssertEqual(fields["state"] as? String, "state-1")
-        XCTAssertEqual(fields["redirect_uri"] as? String, PhoneSignIn.Claude.redirectURL.absoluteString)
-        XCTAssertNil(fields["client_secret"], "A public client: no secret")
-    }
-
-    func testClaudeFinishesWithASessionThatHoldsNoIdentity() async throws {
+    func testASignInsSessionHoldsNoIdentity() async throws {
         let sent = LockedBox<[URLRequest]>([])
         let client = PhoneSignInClient(send: { request in
             sent.value.append(request)
             let answer: [String: Any] = [
-                "access_token": "sk-ant-oat-TRACCESS", "refresh_token": "sk-ant-ort-TRREFRESH", "expires_in": 28_800,
-                "account": ["uuid": "acct-uuid-TR", "email_address": "person@example.com"],
+                "access_token": "xai-TRACCESS", "refresh_token": "xai-TRREFRESH", "expires_in": 28_800,
+                "id_token": "idt-TR", "account": ["uuid": "acct-uuid-TR", "email_address": "person@example.com"],
                 "organization": ["uuid": "org-uuid-TR", "name": "Person's Org"],
             ]
             return (Self.json(answer), Self.http(200))
         }, sleep: { _ in })
-        let pkce = PhoneSignIn.PKCE(verifier: "verifier", state: "state-1")
-        let session = try await client.finishClaude(pasted: "abc123#state-1", pkce: pkce, now: now)
-        XCTAssertEqual(session.accessToken, "sk-ant-oat-TRACCESS")
-        XCTAssertEqual(session.refreshToken, "sk-ant-ort-TRREFRESH")
+        let code = PhoneSignIn.DeviceCode(provider: .grok, userCode: "WXYZ-9876", verificationURL: URL(string: "https://accounts.x.ai/oauth2/device")!,
+                                          interval: 5, expiresAt: now.addingTimeInterval(600), handle: "dc-1")
+        let session = try await client.waitForApproval(code, clock: { Self.now })
+        XCTAssertEqual(session.accessToken, "xai-TRACCESS")
+        XCTAssertEqual(session.refreshToken, "xai-TRREFRESH")
         XCTAssertEqual(session.expiresAt, now.addingTimeInterval(28_800))
-        XCTAssertEqual(session.clientID, PhoneSignIn.Claude.clientID)
+        XCTAssertEqual(session.clientID, PhoneSignIn.Grok.clientID)
         let stored = String(decoding: try JSONEncoder().encode(session), as: UTF8.self)
-        for identity in ["person@example.com", "acct-uuid-TR", "org-uuid-TR", "Person's Org"] {
+        for identity in ["person@example.com", "acct-uuid-TR", "org-uuid-TR", "Person's Org", "idt-TR"] {
             XCTAssertFalse(stored.contains(identity), identity)
         }
-        XCTAssertEqual(sent.value.count, 1)
-        // A code from another sign-in is refused before anything is sent.
-        await XCTAssertThrowsFailure(.otherSignIn) { _ = try await client.finishClaude(pasted: "abc#other", pkce: pkce, now: Self.now) }
         XCTAssertEqual(sent.value.count, 1)
     }
 
     func testASignInWithoutARefreshTokenIsntKept() async {
+        let grok = PhoneSignIn.DeviceCode(provider: .grok, userCode: "WXYZ-9876", verificationURL: URL(string: "https://accounts.x.ai/oauth2/device")!,
+                                          interval: 5, expiresAt: now.addingTimeInterval(600), handle: "dc-1")
         let client = PhoneSignInClient(send: { _ in (Self.json(["access_token": "only-access"]), Self.http(200)) }, sleep: { _ in })
         await XCTAssertThrowsFailure(.noRenewal) {
-            _ = try await client.finishClaude(pasted: "abc", pkce: .random(), now: Self.now)
+            _ = try await client.waitForApproval(grok, clock: { Self.now })
         }
-        let refused = PhoneSignInClient(send: { _ in (Self.json(["error": "invalid_grant"]), Self.http(400)) }, sleep: { _ in })
+        let codex = PhoneSignIn.DeviceCode(provider: .openai, userCode: "ABCD-1234", verificationURL: PhoneSignIn.Codex.verificationURL,
+                                           interval: 5, expiresAt: now.addingTimeInterval(900), handle: "dev-1")
+        let refused = PhoneSignInClient(send: { request in
+            if request.url == PhoneSignIn.Codex.pollURL {
+                return (Self.json(["authorization_code": "ac", "code_verifier": "cv"]), Self.http(200))
+            }
+            return (Self.json(["error": "invalid_grant"]), Self.http(400))
+        }, sleep: { _ in })
         await XCTAssertThrowsFailure(.refused) {
-            _ = try await refused.finishClaude(pasted: "abc", pkce: .random(), now: Self.now)
+            _ = try await refused.waitForApproval(codex, clock: { Self.now })
         }
     }
 
@@ -166,7 +133,7 @@ final class PhoneSignInTests: XCTestCase {
         XCTAssertEqual(fields["client_id"], PhoneSignIn.Grok.clientID)
         XCTAssertEqual(fields["scope"], "openid offline_access grok-cli:access")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/x-www-form-urlencoded")
-        XCTAssertNil(PhoneSignIn.deviceCodeRequest(for: .claude), "Claude pastes a code instead")
+        XCTAssertNil(PhoneSignIn.deviceCodeRequest(for: .claude), "Claude has no sign-in on the iPhone")
         XCTAssertNil(PhoneSignIn.deviceCodeRequest(for: .cursor), "Cursor's sign-in is made on the iPhone")
     }
 
@@ -278,16 +245,18 @@ final class PhoneSignInTests: XCTestCase {
         }
     }
 
-    func testClaudeTriesItsSecondHostOnlyWhenTheFirstNeverGotTheRequest() async {
+    func testARenewalTriesTheNextHostOnlyWhenTheFirstNeverGotTheRequest() async {
         let hosts = LockedBox<[String]>([])
         let client = PhoneSignInClient(send: { request in
             hosts.value.append(request.url?.host ?? "")
-            if request.url?.host == "platform.claude.com" { throw URLError(.cannotConnectToHost) }
+            if request.url?.host == "issuing-host.example.com" { throw URLError(.cannotConnectToHost) }
             return (Self.json(["access_token": "new", "refresh_token": "rotated"]), Self.http(200))
         }, sleep: { _ in })
-        let session = PhoneSession(accessToken: "old", refreshToken: "rt", expiresAt: now, tokenURL: PhoneSignIn.Claude.tokenURLs[0], clientID: PhoneSignIn.Claude.clientID)
-        let grant = await client.renew(.claude, session, now: now)
-        XCTAssertEqual(hosts.value, ["platform.claude.com", "console.anthropic.com"])
+        // The host that issued the session goes first, then the vendor's own.
+        let session = PhoneSession(accessToken: "old", refreshToken: "rt", expiresAt: now, tokenURL: URL(string: "https://issuing-host.example.com/oauth/token")!,
+                                   clientID: PhoneSignIn.Codex.clientID)
+        let grant = await client.renew(.openai, session, now: now)
+        XCTAssertEqual(hosts.value, ["issuing-host.example.com", "auth.openai.com"])
         guard case .granted(let renewed) = grant else { return XCTFail("\(grant)") }
         XCTAssertEqual(renewed.refreshToken, "rotated")
         // A host that may have got the request (it answered 500, or timed out) isn't followed by
@@ -299,9 +268,9 @@ final class PhoneSignInTests: XCTestCase {
                 if timesOut { throw URLError(.timedOut) }
                 return (Data(), Self.http(500))
             }, sleep: { _ in })
-            let outcome = await unclear.renew(.claude, session, now: now)
+            let outcome = await unclear.renew(.openai, session, now: now)
             XCTAssertEqual(outcome, .unavailable)
-            XCTAssertEqual(hosts.value, ["platform.claude.com"])
+            XCTAssertEqual(hosts.value, ["issuing-host.example.com"])
         }
         // One that said it's busy (503) took nothing, and isn't followed by another either: the
         // session waits, ready, for a later renewal.
@@ -310,13 +279,13 @@ final class PhoneSignInTests: XCTestCase {
             hosts.value.append(request.url?.host ?? "")
             return (Data(), Self.http(503))
         }, sleep: { _ in })
-        let busyOutcome = await busy.renew(.claude, session, now: now)
+        let busyOutcome = await busy.renew(.openai, session, now: now)
         XCTAssertEqual(busyOutcome, .notDispatched)
-        XCTAssertEqual(hosts.value, ["platform.claude.com"])
+        XCTAssertEqual(hosts.value, ["issuing-host.example.com"])
         let offline = PhoneSignInClient(send: { _ in throw URLError(.notConnectedToInternet) }, sleep: { _ in })
-        let notSent = await offline.renew(.claude, session, now: now)
+        let notSent = await offline.renew(.openai, session, now: now)
         XCTAssertEqual(notSent, .notDispatched)
-        let requests = PhoneSignIn.refreshRequests(for: session, provider: .claude)
+        let requests = PhoneSignIn.refreshRequests(for: session, provider: .openai)
         XCTAssertEqual(Self.body(requests[0])["grant_type"] as? String, "refresh_token")
         let grok = PhoneSignIn.refreshRequests(for: PhoneSession(accessToken: "a", refreshToken: "r", expiresAt: nil, tokenURL: PhoneSignIn.Grok.tokenURL, clientID: "c"), provider: .grok)
         XCTAssertEqual(Self.form(grok[0]), ["grant_type": "refresh_token", "refresh_token": "r", "client_id": "c"])
@@ -350,7 +319,7 @@ final class PhoneSignInTests: XCTestCase {
         XCTAssertEqual(PhoneSignIn.pollAnswer(provider: .grokBot, status: 400, data: Data()), .failed)
         XCTAssertEqual(PhoneSignInClient.Failure.blockedByPolicy.message(for: .grokBot), "Couldn't sign in: your organization doesn't allow signing in to Cursor here.")
         XCTAssertTrue(PhoneSignInClient.Failure.denied.message(for: .grok).contains("xAI's page"), "The page the sheet sent the person to")
-        XCTAssertEqual(PhoneSignInClient.Failure.expired.message(for: .claude), "Couldn't sign in before the code expired. Start again.")
+        XCTAssertEqual(PhoneSignInClient.Failure.expired.message(for: .openai), "Couldn't sign in before the code expired. Start again.")
         XCTAssertEqual(PhoneSignInClient.Failure.expired.message(for: .cursor), "Couldn't sign in before the sign-in page expired. Start again.", "Cursor shows no code")
         XCTAssertEqual(PhoneSignInClient.Failure.expired.message(for: .grokBot), "Couldn't sign in before the sign-in page expired. Start again.")
         let tokens = Self.json(["accessToken": "a", "refreshToken": "r", "authId": "auth0|person"])
@@ -361,7 +330,8 @@ final class PhoneSignInTests: XCTestCase {
         XCTAssertEqual(PhoneSignIn.sessionOwner(for: .grokBot), .cursor)
         XCTAssertEqual(PhoneSignIn.sessionOwner(for: .cursor), .cursor)
         XCTAssertEqual(PhoneSignIn.sharingSession(with: .grokBot), [.cursor, .grokBot])
-        XCTAssertEqual(PhoneSignIn.sharingSession(with: .claude), [.claude])
+        XCTAssertEqual(PhoneSignIn.sharingSession(with: .openai), [.openai])
+        XCTAssertEqual(PhoneSignIn.sharingSession(with: .claude), [], "Claude has no sign-in on the iPhone")
         let access = Self.jwt(["exp": 1_805_000_000, "sub": "auth0|person"])
         let client = PhoneSignInClient(send: { _ in (Self.json(["accessToken": access, "refreshToken": "r", "authId": "auth0|person"]), Self.http(200)) }, sleep: { _ in })
         let code = try await client.startDeviceCode(for: .grokBot, now: now)
@@ -512,33 +482,33 @@ final class PhoneSignInTests: XCTestCase {
         let store = PhoneSessionStore(accessGroup: "ABCDE12345.app.tokenroom.ios", servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).",
                                       recoveryService: "app.tokenroom.tests.\(UUID().uuidString).recovery", keychain: keychain.operations)
         let old = PhoneSession(accessToken: "old-account", refreshToken: "old-refresh", expiresAt: now.addingTimeInterval(3600),
-                               tokenURL: PhoneSignIn.Claude.tokenURLs[0], clientID: PhoneSignIn.Claude.clientID)
-        try store.save(old, for: .claude, now: now)
+                               tokenURL: PhoneSignIn.Codex.tokenURL, clientID: PhoneSignIn.Codex.clientID)
+        try store.save(old, for: .openai, now: now)
         // A renewal's grant reached the recovery item, but the session item never took it.
-        XCTAssertTrue(store.saveRecovery(old, for: .claude))
+        XCTAssertTrue(store.saveRecovery(old, for: .openai))
         let refresher = PhoneSessionRefresher(store: store) { _, _ in .unavailable }
         let fresh = PhoneSession(accessToken: "new-account", refreshToken: "new-refresh", expiresAt: now.addingTimeInterval(3600),
-                                 tokenURL: PhoneSignIn.Claude.tokenURLs[0], clientID: PhoneSignIn.Claude.clientID)
-        try await refresher.replace(.claude, with: fresh, now: now)
-        XCTAssertNil(store.takeRecovery(for: .claude))
+                                 tokenURL: PhoneSignIn.Codex.tokenURL, clientID: PhoneSignIn.Codex.clientID)
+        try await refresher.replace(.openai, with: fresh, now: now)
+        XCTAssertNil(store.takeRecovery(for: .openai))
         // Even if a later renewal of the new session stalls, nothing brings the old one back.
-        XCTAssertTrue(store.setState(.exchanging, for: .claude))
-        let outcome = await refresher.recover(.claude, now: now)
+        XCTAssertTrue(store.setState(.exchanging, for: .openai))
+        let outcome = await refresher.recover(.openai, now: now)
         XCTAssertEqual(outcome, .rejected)
-        XCTAssertNotEqual(store.session(for: .claude)?.accessToken, "old-account")
+        XCTAssertNotEqual(store.session(for: .openai)?.accessToken, "old-account")
     }
 
     func testAnOAuthErrorAnswerLeavesTheSessionReady() async throws {
         let keychain = FakeKeychain()
         let store = makeStore(keychain)
         try store.save(PhoneSession(accessToken: "a", refreshToken: "still-good", expiresAt: now.addingTimeInterval(30),
-                                    tokenURL: PhoneSignIn.Claude.tokenURLs[0], clientID: PhoneSignIn.Claude.clientID), for: .claude, now: now)
+                                    tokenURL: PhoneSignIn.Codex.tokenURL, clientID: PhoneSignIn.Codex.clientID), for: .openai, now: now)
         let client = PhoneSignInClient(send: { _ in (Self.json(["error": "invalid_request"]), Self.http(400)) }, sleep: { _ in })
         let refresher = PhoneSessionRefresher(store: store) { provider, session in await client.renew(provider, session) }
-        let outcome = await refresher.renewIfNeeded(.claude, now: now)
+        let outcome = await refresher.renewIfNeeded(.openai, now: now)
         XCTAssertEqual(outcome, .unavailable)
-        XCTAssertEqual(store.metadata(for: .claude)?.state, .ready, "No token was issued, so nothing to recover from")
-        XCTAssertEqual(store.session(for: .claude)?.refreshToken, "still-good")
+        XCTAssertEqual(store.metadata(for: .openai)?.state, .ready, "No token was issued, so nothing to recover from")
+        XCTAssertEqual(store.session(for: .openai)?.refreshToken, "still-good")
     }
 
     // MARK: Offline and early renewals
@@ -547,16 +517,16 @@ final class PhoneSignInTests: XCTestCase {
         let keychain = FakeKeychain()
         let store = makeStore(keychain)
         try store.save(PhoneSession(accessToken: "ended", refreshToken: "rt", expiresAt: now.addingTimeInterval(-60),
-                                    tokenURL: PhoneSignIn.Claude.tokenURLs[0], clientID: PhoneSignIn.Claude.clientID), for: .claude, now: now)
+                                    tokenURL: PhoneSignIn.Codex.tokenURL, clientID: PhoneSignIn.Codex.clientID), for: .openai, now: now)
         let offline = PhoneSignInClient(send: { _ in throw URLError(.notConnectedToInternet) }, sleep: { _ in })
         let refresher = PhoneSessionRefresher(store: store) { provider, session in await offline.renew(provider, session) }
-        let usage = PhoneSessionClient(provider: .claude, store: store) { _ in
+        let usage = PhoneSessionClient(provider: .openai, store: store) { _ in
             XCTFail("An expired access token isn't sent")
             return .failure(.parse)
         }
         let result = await PhoneSessionReader(client: usage, refresher: refresher).read(now: now)
         XCTAssertEqual(result, .failure(.unreachable))
-        XCTAssertEqual(store.metadata(for: .claude)?.state, .ready, "The session is fine; the network wasn't")
+        XCTAssertEqual(store.metadata(for: .openai)?.state, .ready, "The session is fine; the network wasn't")
         // Still offline later that hour, when the early renewal is spaced out: the same.
         for minutes in [5, 30] {
             let later = await PhoneSessionReader(client: usage, refresher: refresher).read(now: now.addingTimeInterval(Double(minutes) * 60))
@@ -568,7 +538,7 @@ final class PhoneSignInTests: XCTestCase {
         let keychain = FakeKeychain()
         let store = makeStore(keychain)
         try store.save(PhoneSession(accessToken: "a", refreshToken: "rt", expiresAt: now.addingTimeInterval(8 * 3600),
-                                    tokenURL: PhoneSignIn.Claude.tokenURLs[0], clientID: PhoneSignIn.Claude.clientID), for: .claude, now: now)
+                                    tokenURL: PhoneSignIn.Codex.tokenURL, clientID: PhoneSignIn.Codex.clientID), for: .openai, now: now)
         let posts = Counter()
         let refresher = PhoneSessionRefresher(store: store) { _, old in
             posts.increment()
@@ -576,7 +546,7 @@ final class PhoneSignInTests: XCTestCase {
             renewed.accessToken = "renewed-\(posts.count)"
             return .granted(renewed)
         }
-        let usage = PhoneSessionClient(provider: .claude, store: store) { _ in .failure(.expired("401")) }
+        let usage = PhoneSessionClient(provider: .openai, store: store) { _ in .failure(.expired("401")) }
         for minutes in [0, 5, 10, 55] {
             let result = await PhoneSessionReader(client: usage, refresher: refresher).read(now: now.addingTimeInterval(Double(minutes) * 60))
             XCTAssertEqual(result, .failure(.expired(PhoneSessionClient.needsSignIn)))
@@ -590,10 +560,10 @@ final class PhoneSignInTests: XCTestCase {
         let keychain = FakeKeychain()
         let store = makeStore(keychain)
         let old = PhoneSession(accessToken: "old", refreshToken: "old-rt", expiresAt: now.addingTimeInterval(3600),
-                               tokenURL: PhoneSignIn.Claude.tokenURLs[0], clientID: PhoneSignIn.Claude.clientID)
-        try store.save(old, for: .claude, now: now)
-        XCTAssertTrue(store.saveRecovery(old, for: .claude))
-        let recovery = store.recoveryQuery(for: .claude)[kSecAttrService as String] as? String
+                               tokenURL: PhoneSignIn.Codex.tokenURL, clientID: PhoneSignIn.Codex.clientID)
+        try store.save(old, for: .openai, now: now)
+        XCTAssertTrue(store.saveRecovery(old, for: .openai))
+        let recovery = store.recoveryQuery(for: .openai)[kSecAttrService as String] as? String
         keychain.failure = { operation, query in
             operation == .delete && (query[kSecAttrService as String] as? String) == recovery ? errSecInteractionNotAllowed : nil
         }
@@ -602,10 +572,10 @@ final class PhoneSignInTests: XCTestCase {
         fresh.accessToken = "new"
         fresh.refreshToken = "new-rt"
         do {
-            try await refresher.replace(.claude, with: fresh, now: now)
+            try await refresher.replace(.openai, with: fresh, now: now)
             XCTFail("A new sign-in must not go in beside a grant that could be recovered over it")
         } catch {}
-        XCTAssertEqual(store.session(for: .claude)?.refreshToken, "old-rt")
+        XCTAssertEqual(store.session(for: .openai)?.refreshToken, "old-rt")
     }
 
     private func makeStore(_ keychain: FakeKeychain) -> PhoneSessionStore {
@@ -641,13 +611,13 @@ final class PhoneSignInTests: XCTestCase {
 
     /// While a Mac reads it (`MacCoveragePause`), 7 November 2026 sync decision.
     func testAPausedPlanStaysListedAndIsntRead() {
-        let plan = PhoneSignIn.plansToRead(signedIn: [.claude, .openai, .cursor, .grokBot], notOnPlan: [.grokBot: now.addingTimeInterval(-2 * 86_400)],
-                                           now: now, paused: [.claude, .grokBot], isHeldOff: { _ in false })
-        XCTAssertEqual(plan.listed, [.claude, .openai, .cursor])
+        let plan = PhoneSignIn.plansToRead(signedIn: [.grok, .openai, .cursor, .grokBot], notOnPlan: [.grokBot: now.addingTimeInterval(-2 * 86_400)],
+                                           now: now, paused: [.grok, .grokBot], isHeldOff: { _ in false })
+        XCTAssertEqual(plan.listed, [.grok, .openai, .cursor])
         XCTAssertEqual(plan.due, [.openai, .cursor])
         XCTAssertTrue(plan.rechecks.isEmpty, "Nor rechecked while a Mac reads it")
-        let unpaused = PhoneSignIn.plansToRead(signedIn: [.claude, .openai], notOnPlan: [:], now: now, isHeldOff: { _ in false })
-        XCTAssertEqual(unpaused.due, [.claude, .openai])
+        let unpaused = PhoneSignIn.plansToRead(signedIn: [.grok, .openai], notOnPlan: [:], now: now, isHeldOff: { _ in false })
+        XCTAssertEqual(unpaused.due, [.grok, .openai])
     }
 
     // MARK: Signing out during a renewal
@@ -657,7 +627,7 @@ final class PhoneSignInTests: XCTestCase {
         let store = PhoneSessionStore(accessGroup: "ABCDE12345.app.tokenroom.ios", servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).",
                                       recoveryService: "app.tokenroom.tests.\(UUID().uuidString).recovery", keychain: keychain.operations)
         try store.save(PhoneSession(accessToken: "a", refreshToken: "r", expiresAt: now.addingTimeInterval(30),
-                                    tokenURL: PhoneSignIn.Claude.tokenURLs[0], clientID: PhoneSignIn.Claude.clientID), for: .claude, now: now)
+                                    tokenURL: PhoneSignIn.Codex.tokenURL, clientID: PhoneSignIn.Codex.clientID), for: .openai, now: now)
         let posted = AsyncStream<Void>.makeStream()
         let release = AsyncStream<Void>.makeStream()
         let refresher = PhoneSessionRefresher(store: store) { _, old in
@@ -669,15 +639,15 @@ final class PhoneSignInTests: XCTestCase {
         }
         // A local date, not `Self.now`: Xcode 26's region checker can't follow `Self` into a Task.
         let at = Self.now
-        let renewal = Task { await refresher.renewIfNeeded(.claude, now: at) }
+        let renewal = Task { await refresher.renewIfNeeded(.openai, now: at) }
         for await _ in posted.stream { break }
         // Sign out while the token host is still answering.
-        let signOut = Task { try await refresher.replace(.claude, with: nil, now: at) }
+        let signOut = Task { try await refresher.replace(.openai, with: nil, now: at) }
         release.continuation.yield()
         _ = await renewal.value
         try await signOut.value
-        XCTAssertNil(store.metadata(for: .claude), "The renewal landed first; signing out removed it")
-        let after = await refresher.renewIfNeeded(.claude, now: Self.now)
+        XCTAssertNil(store.metadata(for: .openai), "The renewal landed first; signing out removed it")
+        let after = await refresher.renewIfNeeded(.openai, now: Self.now)
         XCTAssertEqual(after, .noSession)
     }
 
@@ -709,13 +679,12 @@ final class PhoneSignInTests: XCTestCase {
     // MARK: Usage
 
     func testUsageRequestsCarryWhatEachVendorNeedsAndNothingStored() throws {
-        let claude = try XCTUnwrap(PhoneSignIn.usageRequest(provider: .claude, accessToken: "tok"))
-        XCTAssertEqual(claude.url, PhoneSignIn.Claude.usageURL)
-        XCTAssertEqual(claude.value(forHTTPHeaderField: "anthropic-beta"), "oauth-2025-04-20")
-        XCTAssertEqual(claude.value(forHTTPHeaderField: "Authorization"), "Bearer tok")
+        XCTAssertNil(PhoneSignIn.usageRequest(provider: .claude, accessToken: "tok"), "No Claude request from a phone session")
 
         let codexToken = Self.jwt(["https://api.openai.com/auth": ["chatgpt_account_id": "ws-TR"]])
         let codex = try XCTUnwrap(PhoneSignIn.usageRequest(provider: .openai, accessToken: codexToken))
+        XCTAssertEqual(codex.url, PhoneSignIn.Codex.usageURL)
+        XCTAssertEqual(codex.value(forHTTPHeaderField: "Authorization"), "Bearer \(codexToken)")
         XCTAssertEqual(codex.value(forHTTPHeaderField: "ChatGPT-Account-ID"), "ws-TR", "Read from the token as it's sent")
         XCTAssertNil(try XCTUnwrap(PhoneSignIn.usageRequest(provider: .openai, accessToken: "opaque")).value(forHTTPHeaderField: "ChatGPT-Account-ID"))
 
@@ -730,7 +699,7 @@ final class PhoneSignInTests: XCTestCase {
         let store = PhoneSessionStore(accessGroup: "ABCDE12345.app.tokenroom.ios", servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).",
                                       recoveryService: "app.tokenroom.tests.\(UUID().uuidString).recovery", keychain: keychain.operations)
         try store.save(PhoneSession(accessToken: "ended-early", refreshToken: "rt", expiresAt: now.addingTimeInterval(8 * 3600),
-                                    tokenURL: PhoneSignIn.Claude.tokenURLs[0], clientID: PhoneSignIn.Claude.clientID), for: .claude, now: now)
+                                    tokenURL: PhoneSignIn.Codex.tokenURL, clientID: PhoneSignIn.Codex.clientID), for: .openai, now: now)
         let posts = Counter()
         let refresher = PhoneSessionRefresher(store: store) { _, old in
             posts.increment()
@@ -739,12 +708,12 @@ final class PhoneSignInTests: XCTestCase {
             return .granted(renewed)
         }
         let tokens = LockedBox<[String]>([])
-        let client = PhoneSessionClient(provider: .claude, store: store) { request in
+        let client = PhoneSessionClient(provider: .openai, store: store) { request in
             let token = request.value(forHTTPHeaderField: "Authorization") ?? ""
             tokens.value.append(token)
-            guard token == "Bearer fresh" else { return .failure(.expired("Session expired. Sign in with claude login again.")) }
+            guard token == "Bearer fresh" else { return .failure(.expired("Session expired. Sign in with codex login again.")) }
             let window = QuotaWindow(id: "weekly", kind: .weekly, title: "Weekly", usedPercent: 30, resetsAt: Self.now.addingTimeInterval(86_400))
-            return Result { try QuotaSnapshot.headlined(by: [window], provider: .claude, fetchedAt: Self.now) }.mapError { _ in .parse }
+            return Result { try QuotaSnapshot.headlined(by: [window], provider: .openai, fetchedAt: Self.now) }.mapError { _ in .parse }
         }
         let result = await PhoneSessionReader(client: client, refresher: refresher).read(now: now)
         XCTAssertNoThrow(try result.get())
@@ -752,7 +721,7 @@ final class PhoneSignInTests: XCTestCase {
         XCTAssertEqual(posts.count, 1)
 
         // Still turned down after a renewal: the phone's own words, not the CLI's.
-        let stubborn = PhoneSessionClient(provider: .claude, store: store) { _ in .failure(.expired("Session expired. Sign in with claude login again.")) }
+        let stubborn = PhoneSessionClient(provider: .openai, store: store) { _ in .failure(.expired("Session expired. Sign in with codex login again.")) }
         let refused = await PhoneSessionReader(client: stubborn, refresher: refresher).read(now: now)
         XCTAssertEqual(refused, .failure(.expired(PhoneSessionClient.needsSignIn)))
     }

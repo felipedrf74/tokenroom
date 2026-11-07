@@ -6,8 +6,8 @@ final class PhoneConnectTests: XCTestCase {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
     /// Providers whose only login is on a Mac, plus Copilot, whose phone path is a token.
     let neverSignIn: [Provider] = [.antigravity, .devin, .copilot]
-    /// The plans the iPhone signs in to itself.
-    let signsIn: [Provider] = [.claude, .openai, .grok, .cursor, .grokBot]
+    /// The plans the iPhone signs in to itself. Not Claude: Anthropic's terms don't allow it.
+    let signsIn: [Provider] = [.openai, .grok, .cursor, .grokBot]
 
     private func reading(_ provider: Provider, checkedAt: Date, used: Double = 40) -> RelayProvider {
         let window = QuotaWindow(id: "weekly", kind: .weekly, title: "Weekly", usedPercent: used, resetsAt: checkedAt.addingTimeInterval(3 * 86_400))
@@ -66,15 +66,42 @@ final class PhoneConnectTests: XCTestCase {
         let mac = source(.mac, [.claude], checkedAt: checked)
         XCTAssertEqual(PhoneConnect.action(for: .claude, sources: [mac], now: now), .fromMac)
         let later = checked.addingTimeInterval(ReadingFreshness.staleAfter + 1)
-        XCTAssertEqual(PhoneConnect.action(for: .claude, sources: [mac], now: later), .signIn)
+        XCTAssertEqual(PhoneConnect.action(for: .claude, sources: [mac], now: later), .needsMac(reason: PhoneConnect.reason(for: .claude)))
         XCTAssertEqual(PhoneConnect.action(for: .claude, sources: [mac], now: later, allowlist: []), .needsMac(reason: PhoneConnect.reason(for: .claude)))
         let gone = checked.addingTimeInterval(RelayMerge.maxSourceAge + 1)
-        XCTAssertEqual(PhoneConnect.action(for: .claude, sources: [mac], now: gone), .signIn)
+        XCTAssertEqual(PhoneConnect.action(for: .claude, sources: [mac], now: gone), .needsMac(reason: PhoneConnect.reason(for: .claude)))
+        // A plan the iPhone signs in to follows the same Mac coverage.
+        let codex = source(.mac, [.openai], checkedAt: checked)
+        XCTAssertEqual(PhoneConnect.action(for: .openai, sources: [codex], now: now), .fromMac)
+        XCTAssertEqual(PhoneConnect.action(for: .openai, sources: [codex], now: later), .signIn)
+        XCTAssertEqual(PhoneConnect.action(for: .openai, sources: [codex], now: gone), .signIn)
+    }
+
+    func testClaudeWithoutALiveMacReadingNeedsAMacAndNeverSignsIn() {
+        let needsMac = PhoneConnect.Action.needsMac(reason: PhoneConnect.reason(for: .claude))
+        let staleMac = source(.mac, [.claude], checkedAt: now.addingTimeInterval(-(ReadingFreshness.staleAfter + 60)))
+        let goneMac = source(.mac, [.claude], checkedAt: now.addingTimeInterval(-(RelayMerge.maxSourceAge + 60)))
+        let otherPhone = source(.otherPhone, [.claude], checkedAt: now.addingTimeInterval(-60))
+        let macWithoutClaude = source(.mac, [.openai, .cursor], checkedAt: now.addingTimeInterval(-60))
+        let signedOut = PhoneConnect.CoveringSource(kind: .mac, envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: now, providers: [
+            RelayProvider(provider: .claude, status: .signedOut("Sign in with claude login to see usage."), checkedAt: now.addingTimeInterval(-60)),
+        ]))
+        for sources in [[], [staleMac], [goneMac], [otherPhone], [macWithoutClaude], [signedOut], [staleMac, otherPhone, signedOut]] {
+            let action = PhoneConnect.action(for: .claude, sources: sources, now: now)
+            XCTAssertEqual(action, needsMac)
+            XCTAssertNotEqual(action, .signIn)
+        }
+        XCTAssertEqual(PhoneConnect.connectList(sources: [], now: now).first { $0.provider == .claude }?.action, needsMac)
+        let reason = PhoneConnect.reason(for: .claude)
+        XCTAssertTrue(reason.hasPrefix("Needs Tokenroom on a Mac. "), reason)
+        XCTAssertTrue(reason.contains("Anthropic"), reason)
+        XCTAssertNil(PhoneSignIn.method(for: .claude), "No sign-in sheet for Claude")
+        XCTAssertFalse(PhoneSignIn.providers.contains(.claude))
     }
 
     func testAnotherIPhoneIsNotAMac() {
-        let phone = source(.otherPhone, [.claude], checkedAt: now.addingTimeInterval(-60))
-        XCTAssertEqual(PhoneConnect.action(for: .claude, sources: [phone], now: now), .signIn)
+        let phone = source(.otherPhone, [.openai], checkedAt: now.addingTimeInterval(-60))
+        XCTAssertEqual(PhoneConnect.action(for: .openai, sources: [phone], now: now), .signIn)
         XCTAssertEqual(PhoneConnect.action(for: .devin, sources: [source(.otherPhone, [.devin], checkedAt: now.addingTimeInterval(-60))], now: now), .needsMac(reason: PhoneConnect.reason(for: .devin)))
     }
 
@@ -95,14 +122,14 @@ final class PhoneConnectTests: XCTestCase {
     }
 
     func testAnOldCacheLabelledIPhoneDoesNotCover() {
-        let item = ReadingCache.Item(provider: reading(.claude, checkedAt: now.addingTimeInterval(-600)), source: "iPhone")
+        let item = ReadingCache.Item(provider: reading(.openai, checkedAt: now.addingTimeInterval(-600)), source: "iPhone")
         let cache = ReadingCache(savedAt: now, isSample: false, items: [item])
         let carried = cache.carriedSources(excluding: "This iPhone").map(\.source)
         XCTAssertEqual(carried.first?.kind, .otherPhone)
-        XCTAssertEqual(PhoneConnect.action(for: .claude, sources: carried.covering, now: now), .signIn)
+        XCTAssertEqual(PhoneConnect.action(for: .openai, sources: carried.covering, now: now), .signIn)
         // An old cache's Mac label still reads as a Mac.
         let mac = ReadingCache(savedAt: now, isSample: false, items: [ReadingCache.Item(provider: item.provider, source: "Mac")])
-        XCTAssertEqual(PhoneConnect.action(for: .claude, sources: mac.carriedSources(excluding: "This iPhone").map(\.source).covering, now: now), .fromMac)
+        XCTAssertEqual(PhoneConnect.action(for: .openai, sources: mac.carriedSources(excluding: "This iPhone").map(\.source).covering, now: now), .fromMac)
     }
 
     // MARK: The connect screen

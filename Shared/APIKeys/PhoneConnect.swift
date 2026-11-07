@@ -7,9 +7,11 @@ import Foundation
 ///    `.addKey`, whatever a Mac shows: a pasted key for that provider stays available.
 /// 2. A Mac reading for it that is still live is `.fromMac`. That blocks a second phone login
 ///    only. Another iPhone isn't a Mac; a stale, expired, or signed-out Mac card doesn't count.
-/// 3. A provider on the allowlist is `.signIn`: Claude, Codex, Grok Build, Cursor, and Grok Bot
-///    sign in on the iPhone itself (`PhoneSignIn`).
-/// 4. Everything else is `.needsMac`, with the reason as the row's copy and no button.
+/// 3. A provider on the allowlist is `.signIn`: Codex, Grok Build, Cursor, and Grok Bot sign in
+///    on the iPhone itself (`PhoneSignIn`).
+/// 4. Everything else is `.needsMac`, with the reason as the row's copy and no button. Claude is
+///    one: Anthropic's terms don't allow other apps to offer a Claude.ai login, so its reading
+///    comes only from a Mac.
 ///
 /// It never reads `isUnofficial`: that ignores Copilot's documented token and calls the pasted
 /// coding-plan keys official.
@@ -34,8 +36,9 @@ enum PhoneConnect: Sendable {
 
     /// The only allowlist: the plans `PhoneSignIn` signs in to (widgets compile this file, not
     /// that one; a test keeps the two equal). Taking one out stops its sign-in, renewals, and
-    /// reads on the next launch; its session stays in the Keychain until removed.
-    static let productionAllowlist: Set<Provider> = [.claude, .openai, .grok, .cursor, .grokBot]
+    /// reads on the next launch; list it in `PhoneSessionStore.retiredProviders` too, so its
+    /// session is deleted from the Keychain on launch. Claude came out on 2026-11-07.
+    static let productionAllowlist: Set<Provider> = [.openai, .grok, .cursor, .grokBot]
 
     static func action(
         for provider: Provider,
@@ -92,7 +95,7 @@ enum PhoneConnect: Sendable {
         switch provider {
         case .grok: "Needs Tokenroom on a Mac. Grok Build doesn't offer a usage API for other apps."
         case .grokBot: "Needs Tokenroom on a Mac. Grok Bot keeps its login in the Mac app."
-        case .claude: "Needs Tokenroom on a Mac. Claude's plan login isn't available to other apps."
+        case .claude: "Needs Tokenroom on a Mac. Anthropic doesn't allow Claude logins in other apps."
         case .openai: "Needs Tokenroom on a Mac. ChatGPT plan limits aren't available to other apps."
         case .cursor: "Needs Tokenroom on a Mac. Cursor doesn't offer a usage API for other apps."
         case .antigravity: "Needs Tokenroom on a Mac. Antigravity usage is read through the agy tool."

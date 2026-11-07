@@ -26,8 +26,6 @@ struct PhoneSignInClient: Sendable {
         /// Cursor: the person's organization doesn't allow this sign-in.
         case blockedByPolicy
         case expired
-        case emptyCode
-        case otherSignIn
         /// The vendor refused the code or the exchange.
         case refused
         /// The answer had no refresh token, so the session couldn't be renewed.
@@ -44,8 +42,6 @@ struct PhoneSignInClient: Sendable {
             case .expired: PhoneSignIn.sessionOwner(for: provider) == .cursor
                 ? "Couldn't sign in before the sign-in page expired. Start again."
                 : "Couldn't sign in before the code expired. Start again."
-            case .emptyCode: "Couldn't find a code there. Copy the whole code \(vendor) shows, then paste it."
-            case .otherSignIn: "Couldn't use that code: it's from another sign-in. Start again, then paste the new one."
             case .refused: "Couldn't finish signing in to \(PhoneSignIn.planName(for: provider)). Start again."
             case .noRenewal: "Couldn't keep this sign-in: \(vendor) didn't send a way to renew it."
             }
@@ -114,18 +110,6 @@ struct PhoneSignInClient: Sendable {
     }
 
     static let exchangeAttempts = 3
-
-    // MARK: Claude
-
-    /// The session for what was pasted after Claude's sign-in.
-    func finishClaude(pasted: String, pkce: PhoneSignIn.PKCE, now: Date = .now) async throws -> PhoneSession {
-        switch PhoneSignIn.claudeCode(fromPasted: pasted, state: pkce.state) {
-        case .empty: throw Failure.emptyCode
-        case .otherSignIn: throw Failure.otherSignIn
-        case .code(let code):
-            return try await exchange(PhoneSignIn.claudeExchangeRequest(code: code, pkce: pkce), provider: .claude, now: now)
-        }
-    }
 
     // MARK: Renewal
 

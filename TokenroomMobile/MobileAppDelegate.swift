@@ -8,6 +8,7 @@ import UserNotifications
 @MainActor
 final class MobileAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     private var accountObserver: RelayAccountObserver?
+    private var retiredSessions: RetiredSessionPurge?
     let store = MobileRuntime.store()
     let news = NewsRuntime.newsStore()
 
@@ -16,6 +17,9 @@ final class MobileAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificati
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         guard store.allowsExternalEffects else { return true }
+        // A Claude session an earlier version kept goes, with no request (`RetiredSessionPurge`).
+        retiredSessions = RetiredSessionPurge.system()
+        retiredSessions?.start(protectedDataAvailable: application.isProtectedDataAvailable)
         accountObserver = RelayAccountObserver(name: .CKAccountChanged) { [weak store] in
             PhoneCacheAccess.invalidate(in: AppGroup.defaults)
             Task { @MainActor in

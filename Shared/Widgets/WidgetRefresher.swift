@@ -86,7 +86,12 @@ enum WidgetRefresher {
         // As in the app: only providers that still have a key or a plan session, and readings
         // up to a week old. Widgets don't read sessions; the app's readings of them stand in.
         // One dated ahead of the clock (saved before it was set back) is never the newer one.
-        let listed = ["keyedProviders", "sessionProviders"].compactMap { defaults.array(forKey: $0) as? [String] }
+        // A plan the iPhone no longer signs in to (Claude) isn't its own, whatever an older app
+        // version saved.
+        let listed = [
+            defaults.array(forKey: "keyedProviders") as? [String],
+            (defaults.array(forKey: "sessionProviders") as? [String])?.filter { Provider(rawValue: $0).map(PhoneConnect.productionAllowlist.contains) ?? false },
+        ].compactMap(\.self)
         let keyed = listed.isEmpty ? nil : Set(listed.joined())
         var own = fresh
         let order = { (provider: RelayProvider) in Self.readingTime(provider).map { ReadingFreshness.ownOrdering($0, now: now) } ?? .distantPast }
