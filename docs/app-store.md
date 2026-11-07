@@ -4,7 +4,13 @@ A draft for App Store Connect. Provider names appear only in the description, as
 
 ## What's New — 1.3.0
 
-A lighter, calmer Tokenroom on iPhone, widgets and Apple Watch. Colour now means something: percentages stay in ink until a limit is critical, charts are neutral with a dot at your current level, and controls are blue. Provider pages have one title and plain facts. News has fewer boxes, with actions under each title. Welcome starts with one clear step. Claude can no longer be signed in to on iPhone, because Anthropic doesn't allow other apps to offer a Claude login; Claude readings come from Tokenroom for Mac, and a Claude sign-in an earlier version kept is deleted from your iPhone.
+A lighter, calmer Tokenroom on iPhone, widgets and Apple Watch. Colour now means something: percentages stay in ink until a limit is critical, charts are neutral with a dot at your current level, and controls are blue. Provider pages have one title and plain facts. Welcome starts with one clear step.
+
+News checks release and status feeds every few minutes while it's open, adds more AI newsletters, discussion and status pages, and stops showing errors when you're simply offline. Skills keeps its last list when ClawHub can't be reached.
+
+Apple Watch gets readings from your iPhone even when its app isn't open, widgets refresh before a reading goes stale, and the Live Activity says how old a reading is. Plan sign-ins ride out a busy server instead of asking you to sign in again.
+
+Claude can no longer be signed in to on iPhone, because Anthropic doesn't allow other apps to offer a Claude login. Claude readings come from Tokenroom for Mac, and a Claude sign-in an earlier version kept is deleted from your iPhone.
 
 ## What's New — 1.2.2
 
@@ -64,7 +70,7 @@ Usage readings now show when each provider was last checked and flag stale data.
 | Content rights | Yes: shows third-party content (provider names, model and feed titles) it has the right to use |
 | EU trader status (DSA) | Non-trader |
 | Tracking | None |
-| Release | 1.2.2 submitted 31 October 2026 (Waiting for Review, automatic release); 1.2.1 publicly released 30 October 2026; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
+| Release | 1.3.0 (2) uploaded 7 November 2026; 1.2.2 publicly released 31 October 2026; 1.2.1 publicly released 30 October 2026; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
 
 ## App privacy
 
