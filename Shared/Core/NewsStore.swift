@@ -51,7 +51,14 @@ final class NewsStore {
     private var visitIsOpen = false
     /// Per-call permission is an additional veto at pass/GET dispatch and follows queued work.
     private typealias RefreshRequest = (maxAge: TimeInterval?, preferences: AlertPreferences, notifies: Bool, now: Date, forcedSources: Set<String>, isAllowed: (@MainActor @Sendable () -> Bool)?)
+    /// The follow-up asked for during a pass, by callers that don't own it (a pull, Retry, Check
+    /// Now, coming forward): it survives the pass being cancelled, and runs after it.
     private var queuedRefresh: RefreshRequest?
+    /// What cancellable owners (the Mac's loop, the background refresh) asked for during a pass:
+    /// dropped with the pass when it's cancelled, since its owner is going away.
+    private var ownedRefresh: RefreshRequest?
+    /// A cancelled pass's surviving follow-up runs in work of its own: waiters follow it there.
+    @ObservationIgnored private var successor: (from: Task<Void, Never>, to: Task<Void, Never>)?
     /// The maxAge of the pass under way, so a request for fresher feeds is queued behind it.
     private var runningMaxAge: TimeInterval??
     private var runningIsAllowed: (@MainActor @Sendable () -> Bool)?
@@ -346,8 +353,9 @@ final class NewsStore {
         await refresh(preferences: lastPreferences, notifies: false, forcedSources: ids, waitsForFollowUp: waitsForFollowUp)
     }
 
-    /// Cancels the pass under way and the follow-ups queued behind it, for the store's owner: the
-    /// Mac going to sleep. What the pass had read stays; the checks it cut short count no failure.
+    /// Cancels the pass under way and what cancellable owners queued behind it, for the store's
+    /// owner: the Mac going to sleep. What the pass had read stays; the checks it cut short count
+    /// no failure. A follow-up another caller asked for (a pull, Check Now) still runs after it.
     /// Views never call this: a page going away leaves its pass running.
     func cancelPass() {
         work?.cancel()
@@ -375,21 +383,30 @@ final class NewsStore {
             // Every accepted request updates preferences on an existing follow-up, even a
             // cached/slower visit that would not independently justify another fetch. Keep
             // that pass's permission, freshest age, forced feeds and notification intent.
-            if var queued = queuedRefresh {
+            for keyPath in [\NewsStore.queuedRefresh, \NewsStore.ownedRefresh] {
+                guard var queued = self[keyPath: keyPath] else { continue }
                 queued.preferences = preferences
                 queued.notifies = queued.notifies || notifies
-                queuedRefresh = queued
+                self[keyPath: keyPath] = queued
             }
             if waitsForFollowUp || maxAge == 0 || !forcedSources.isEmpty || fresher || sources.contains(where: { cache.items[$0.id] == nil && cache.sourceChecks?[$0.id] == nil }) {
-                let queued = queuedRefresh
-                queuedRefresh = (queued.map { Self.shorter($0.maxAge, maxAge) } ?? maxAge, preferences,
-                                 (queued?.notifies ?? false) || notifies, now,
-                                 (queued?.forcedSources ?? []).union(forcedSources), isAllowed ?? queued?.isAllowed ?? runningIsAllowed)
+                let keyPath = cancellable ? \NewsStore.ownedRefresh : \NewsStore.queuedRefresh
+                let queued = self[keyPath: keyPath]
+                self[keyPath: keyPath] = (queued.map { Self.shorter($0.maxAge, maxAge) } ?? maxAge, preferences,
+                                          (queued?.notifies ?? false) || notifies, now,
+                                          (queued?.forcedSources ?? []).union(forcedSources), isAllowed ?? queued?.isAllowed ?? runningIsAllowed)
             }
             if notifies { notifyAsked = true }
             // The running work takes the queued follow-up before it ends, so its end is the
-            // follow-up's. Waiting doesn't own the pass: the waiter going away leaves it running.
-            if waitsForFollowUp, let work { await work.value }
+            // follow-up's; a cancelled pass hands a surviving follow-up to work of its own, which
+            // the waiter follows. Waiting doesn't own the pass: the waiter going away leaves it.
+            if waitsForFollowUp {
+                var current = work
+                while let running = current {
+                    await running.value
+                    current = successor?.from == running ? successor?.to : nil
+                }
+            }
             return
         }
         isRefreshing = true
@@ -417,6 +434,16 @@ final class NewsStore {
 
     private static func shorter(_ a: TimeInterval?, _ b: TimeInterval?) -> TimeInterval? {
         isShorter(b, than: a) ? b : a
+    }
+
+    /// One follow-up for what other callers and owners queued: the freshest age, every forced
+    /// feed, either's notification intent, the latest preferences and time, and the other
+    /// callers' permission before the owners'.
+    private static func merged(_ queued: RefreshRequest?, _ owned: RefreshRequest?) -> RefreshRequest? {
+        guard let queued, let owned else { return queued ?? owned }
+        let latest = owned.now > queued.now ? owned : queued
+        return (shorter(queued.maxAge, owned.maxAge), latest.preferences, queued.notifies || owned.notifies, latest.now,
+                queued.forcedSources.union(owned.forcedSources), queued.isAllowed ?? owned.isAllowed)
     }
 
     /// When the newest item that arrived in this pass was dated, no later than the check.
@@ -479,11 +506,21 @@ final class NewsStore {
 
     private func performRefresh(_ initial: RefreshRequest) async {
         defer {
+            // Cancelled by its owner: what owners queued goes with it; what another caller asked
+            // for (a pull, Check Now, coming forward) runs next, in work of its own.
+            let survivor = Task.isCancelled ? queuedRefresh : nil
             isRefreshing = false
             notifyAsked = false
             runningMaxAge = nil
             runningIsAllowed = nil
             queuedRefresh = nil
+            ownedRefresh = nil
+            if let survivor, let cancelled = work {
+                isRefreshing = true
+                let next = Task { await performRefresh(survivor) }
+                successor = (cancelled, next)
+                work = next
+            }
         }
         // The first check (turning News on) marks nothing new, even with News open, as the Mac's
         // window is when News is turned on from it: what it finds was there before.
@@ -535,9 +572,10 @@ final class NewsStore {
                 notify(result.newModels, preferences, request.now)
             }
             // Cancelled by its owner (sleep, the end of background time): what it read is kept,
-            // and nothing queued goes out now. The owner's next pass checks what's due.
-            guard !Task.isCancelled, let next = queuedRefresh else { break }
+            // and the owners' queued checks wait for their next pass (see `defer`).
+            guard !Task.isCancelled, let next = Self.merged(queuedRefresh, ownedRefresh) else { break }
             queuedRefresh = nil
+            ownedRefresh = nil
             request = next
         }
     }
