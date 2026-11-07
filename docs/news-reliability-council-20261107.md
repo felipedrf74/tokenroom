@@ -29,7 +29,7 @@ Four independent reviewers proposed designs from different angles: reliability, 
 | Server or aggregator | No. Everything stays on the device. | 4/4 |
 | Catalog format | Compiled Swift with contract tests. No remote override for now. | 4/4 |
 | Cadence tiers | Adopt `FeedSource.interval` (numbers below). | 4/4 |
-| Default follows | New installs: Simon Willison, Interconnects, Import AI, Latent Space. Upgraders: nothing turns on silently; a dismissible "New sources" suggestion instead. | 4/4 |
+| Default follows | New installs: one existing voice plus Interconnects, Import AI, Latent Space. Upgraders: nothing turns on silently; a dismissible "New sources" suggestion instead. | 4/4 |
 | Story clustering and scored Today | Later. Fold by `linkKey` only. | 4/4 |
 | Skills | Keep the last good list; GitHub skills-repo shelf next; ClawHub labelled community and unreviewed. | 4/4 |
 | Mac scheduler | A News loop owned by `QuotaStore`, outside `shareReadings`, with intervals from a pure `NewsCadence`. The vote tied 2–2. This option won because the platform reviewer who first proposed `NSBackgroundActivityScheduler` switched to it, and it is simpler to test. | 2/2 |
@@ -65,7 +65,7 @@ When the iPhone comes forward on any tab, it checks feeds older than 15 minutes;
     - Trending uses the successor endpoint;
     - a note says community uploads aren't reviewed.
 11. Sources:
-    - New voices: Import AI, Interconnects, Latent Space, Armin Ronacher, Mitchell Hashimoto.
+    - New voices, by publication only (no personal names or handles): Import AI, Interconnects, Latent Space.
     - New discussion and industry sources: Techmeme, Hugging Face.
     - New lab news: Mistral.
     - New status feeds: GitHub, OpenRouter, and xAI (which Cursor's status page redirects to).

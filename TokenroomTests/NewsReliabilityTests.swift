@@ -482,7 +482,7 @@ final class NewsReliabilityTests: XCTestCase {
 
     func testTheNewSourcesAreInTheCatalogAndTheProfileOnlyVoiceIsGone() throws {
         let voices = Set(NewsVoice.catalog.map(\.id))
-        XCTAssertTrue(voices.isSuperset(of: ["voice-importai", "voice-interconnects", "voice-latentspace", "voice-mitsuhiko", "voice-mitchellh"]))
+        XCTAssertTrue(voices.isSuperset(of: ["voice-importai", "voice-interconnects", "voice-latentspace"]))
         XCTAssertEqual(Set(NewsVoice.catalog.filter { $0.role == .discussion }.map(\.id)), ["discussion-techmeme", "discussion-huggingface"])
         XCTAssertFalse(voices.contains("voice-embirico"))
         XCTAssertTrue(NewsVoice.catalog.allSatisfy { $0.feed != nil }, "Every voice has a feed")
@@ -501,7 +501,16 @@ final class NewsReliabilityTests: XCTestCase {
         let all = FeedSource.catalog + NewsVoice.catalog.compactMap(\.feed) + NewsStatusSource.catalog
         XCTAssertEqual(Set(all.map(\.id)).count, all.count, "IDs are unique")
         XCTAssertTrue(all.allSatisfy { $0.url.scheme == "https" })
-        XCTAssertTrue(NewsVoice.catalog.allSatisfy { $0.profileURL.host == "x.com" && $0.evidenceURL.scheme == "https" })
+        XCTAssertTrue(NewsVoice.catalog.allSatisfy { $0.profileURL.scheme == "https" && $0.evidenceURL.scheme == "https" })
+        // Sources added in November 2026 are publications: no personal name, and no personal X
+        // handle — a newsletter without its own account opens its website.
+        let added = NewsVoice.catalog.filter { $0.verifiedAt == "2026-11-07" }
+        XCTAssertEqual(Set(added.map(\.name)), ["Import AI", "Interconnects", "Latent Space", "Techmeme", "Hugging Face"])
+        for id in ["voice-importai", "voice-interconnects"] {
+            let voice = try XCTUnwrap(NewsVoice.catalog.first { $0.id == id })
+            XCTAssertNotEqual(voice.profileURL.host(), "x.com", id)
+            XCTAssertEqual(voice.profileURL.host(), voice.feed?.url.host(), id)
+        }
     }
 
     /// PRIVACY.md lists every host News and Skills read.
@@ -545,12 +554,12 @@ final class NewsReliabilityTests: XCTestCase {
                 XCTAssertEqual(news.followedSources, Set(FeedSource.catalog.map(\.id)).subtracting(["mistral-news"]))
             }
             XCTAssertEqual(Set(news.newSources.map(\.id)), [
-                "mistral-news", "voice-importai", "voice-interconnects", "voice-latentspace", "voice-mitsuhiko", "voice-mitchellh",
+                "mistral-news", "voice-importai", "voice-interconnects", "voice-latentspace",
                 "discussion-techmeme", "discussion-huggingface", "status-github", "status-openrouter", "status-spacexai",
             ])
             news.setFollowing(try XCTUnwrap(news.newSources.first { $0.id == "voice-importai" }), true)
             XCTAssertEqual(news.followedVoices, ["voice-importai"])
-            XCTAssertEqual(news.newSources.count, 11, "Shown until dismissed")
+            XCTAssertEqual(news.newSources.count, 9, "Shown until dismissed")
             news.dismissNewSources()
             XCTAssertTrue(news.newSources.isEmpty)
             let relaunched = NewsRuntime.liveNewsStore(defaults: prefs, directory: nil)
