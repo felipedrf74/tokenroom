@@ -2,6 +2,9 @@ import Foundation
 
 enum ReadingFreshness {
     static let staleAfter: TimeInterval = 3600
+    /// Widgets and complications reload this long before a live reading would go stale, and read
+    /// iCloud then, so a reading checked again meanwhile never shows faded first.
+    static let staleLead: TimeInterval = 5 * 60
     static let expiresAfter: TimeInterval = 7 * 86_400
     /// What every message `present` writes starts with, so a saved one is written again as the
     /// reading ages rather than keeping the age it had when it was saved.
@@ -88,6 +91,15 @@ extension ReadingCache {
         return result
     }
 
+    /// Whether a reading shown live at `date` is within `ReadingFreshness.staleLead` of going
+    /// stale: a cache saved minutes ago can still hold one, and is then read again.
+    func nearsStale(at date: Date) -> Bool {
+        presented(at: date).items.contains { item in
+            guard item.provider.isLive, let checked = item.provider.checkedAt ?? item.provider.fetchedAt else { return false }
+            return date.timeIntervalSince(checked) >= ReadingFreshness.staleAfter - ReadingFreshness.staleLead
+        }
+    }
+
     func staleCount(at date: Date) -> Int {
         presented(at: date).items.filter { !$0.provider.isLive }.count
     }
@@ -127,10 +139,43 @@ extension ReadingCache.Item {
 enum WatchCacheAccess {
     static let cutoffKey = "watchSignedOutAt"
     static let validationKey = "watchAccountNeedsValidation"
+    /// Set when a sign-out this device recorded was a confirmed `.noAccount`, and cleared once an
+    /// account is seen again or it changes. While it stands, another `.noAccount` isn't a new
+    /// sign-out: the iPhone's handovers saved since the cutoff (`WatchHandoffAcceptance`) stay.
+    static let signedOutKey = "watchConfirmedNoAccount"
 
     static func invalidate(in defaults: UserDefaults, at date: Date) {
         defaults.set(true, forKey: validationKey)
         defaults.set(date, forKey: cutoffKey)
+        defaults.removeObject(forKey: signedOutKey)
+    }
+
+    /// A confirmed `.noAccount`. Returns false, changing nothing, when this device is still
+    /// signed out since the last sign-out it recorded: no account came in between, so what was
+    /// saved since that cutoff belongs to no other account. Otherwise it's a sign-out: the gate
+    /// closes at `date`.
+    @discardableResult
+    static func confirmNoAccount(in defaults: UserDefaults, at date: Date) -> Bool {
+        if isStillSignedOut(in: defaults) { return false }
+        invalidate(in: defaults, at: date)
+        defaults.set(true, forKey: signedOutKey)
+        return true
+    }
+
+    static func isStillSignedOut(in defaults: UserDefaults) -> Bool {
+        defaults.bool(forKey: signedOutKey) && defaults.object(forKey: cutoffKey) is Date
+    }
+
+    /// An account answered (an iCloud read went through): the next `.noAccount` is a sign-out.
+    static func noteAccountAvailable(in defaults: UserDefaults) {
+        defaults.removeObject(forKey: signedOutKey)
+    }
+
+    /// What `accountStatus()` alone found (a cold launch to take a handover). An account that
+    /// answered ends "still signed out" just as a read does, so a later no-account is a sign-out
+    /// that hides what was taken meanwhile.
+    static func note(_ check: RelayAccountCheck, in defaults: UserDefaults) {
+        if check == .available { noteAccountAvailable(in: defaults) }
     }
 
     /// Whether something read later (iCloud, the iPhone, the saved cache) may replace `current`.
@@ -165,16 +210,29 @@ enum WatchCacheRecovery {
     }
 }
 
-/// A phone handover cannot restore readings after sign-out until iCloud is validated again.
+/// A phone handover can never restore readings saved before the last sign-out. Past that,
+/// `WatchHandoffAcceptance` decides from what this process knows of its account: an iCloud
+/// read (`validated`), or `account`.
 struct WatchAccountGate {
     private(set) var validated = false
     private(set) var signedOutAt: Date?
+    private(set) var account: WatchAccountKnowledge = .unknown
 
     init(signedOutAt: Date? = nil) { self.signedOutAt = signedOutAt }
-    mutating func invalidate() { validated = false }
-    mutating func confirmAvailable() { validated = true }
-    mutating func signOut(at date: Date) { validated = false; signedOutAt = date }
+    mutating func invalidate() { validated = false; account = .unknown }
+    mutating func confirmAvailable() { validated = true; account = .available }
+    mutating func signOut(at date: Date) { validated = false; account = .unknown; signedOutAt = date }
+    /// What an account check or a failed read found. Never undoes an iCloud read's validation.
+    mutating func note(_ knowledge: WatchAccountKnowledge) {
+        guard !validated || knowledge == .noAccount else { return }
+        account = knowledge
+    }
+
+    func decision(for cache: ReadingCache) -> WatchHandoffAcceptance.Decision {
+        WatchHandoffAcceptance.decide(cache, validated: validated, account: account, signedOutAt: signedOutAt)
+    }
+
     func accepts(_ cache: ReadingCache) -> Bool {
-        validated && signedOutAt.map { cache.savedAt > $0 } != false
+        decision(for: cache) == .apply
     }
 }

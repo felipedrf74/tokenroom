@@ -446,6 +446,97 @@ final class PhoneSessionTests: XCTestCase {
         XCTAssertEqual(store.metadata(for: fixture)?.state, .rejected)
     }
 
+    /// A recovery item the Keychain couldn't read just now (locked, busy) isn't a missing one:
+    /// the session isn't rejected, and the next pass finishes from it. Only
+    /// `errSecItemNotFound` is missing.
+    func testARecoveryItemThatCantBeReadNowIsntTakenForAMissingOne() async throws {
+        let keychain = FakeKeychain()
+        let store = makeStore(keychain)
+        try store.save(session("old", expiresIn: 60), for: fixture, now: now)
+        XCTAssertTrue(store.setState(.exchanging, for: fixture))
+        XCTAssertTrue(store.saveRecovery(session("new", expiresIn: 3600), for: fixture))
+        let locked = LockedBox(true)
+        keychain.failure = { operation, query in
+            guard locked.value, operation == .copy, query[kSecAttrService as String] as? String == store.recoveryService else { return nil }
+            return errSecInteractionNotAllowed
+        }
+        let posts = Counter()
+        let refresher = PhoneSessionRefresher(store: store, allowlist: [fixture]) { _, _ in
+            posts.increment()
+            return .granted(Self.session("other", expiresIn: 3600))
+        }
+        XCTAssertEqual(store.recoveryLookup(for: fixture), .unreadable)
+        let outcome = await refresher.renewIfNeeded(fixture, now: now)
+        XCTAssertEqual(outcome, .unreadable)
+        XCTAssertEqual(store.metadata(for: fixture)?.state, .exchanging, "Not rejected")
+        XCTAssertEqual(posts.count, 0, "And the old refresh token isn't sent")
+        let client = PhoneSessionClient(provider: fixture, store: store, allowlist: [fixture], request: Self.testRequest) { _ in
+            XCTFail("No usage call mid-renewal")
+            return .failure(.parse)
+        }
+        let reading = await PhoneSessionReader(client: client, refresher: refresher).read(now: now)
+        XCTAssertEqual(reading, .failure(.unreachable), "Try later, not sign in again")
+        locked.value = false
+        let next = await refresher.renewIfNeeded(fixture, now: now)
+        XCTAssertEqual(next, .recovered)
+        XCTAssertEqual(store.session(for: fixture)?.refreshToken, "refresh-new")
+        XCTAssertEqual(store.metadata(for: fixture)?.state, .ready)
+        XCTAssertEqual(store.recoveryLookup(for: fixture), .none)
+        XCTAssertEqual(posts.count, 0)
+    }
+
+    /// Review fix: only a locked or busy Keychain is "couldn't read now". Any other failure is
+    /// taken for a missing item, as before, so the plan asks for a sign-in rather than staying
+    /// unreachable for good.
+    func testAnyOtherKeychainFailureOnTheRecoveryItemStillRejects() async throws {
+        let keychain = FakeKeychain()
+        let store = makeStore(keychain)
+        try store.save(session("old", expiresIn: 60), for: fixture, now: now)
+        XCTAssertTrue(store.setState(.exchanging, for: fixture))
+        XCTAssertTrue(store.saveRecovery(session("new", expiresIn: 3600), for: fixture))
+        keychain.failure = { operation, query in
+            guard operation == .copy, query[kSecAttrService as String] as? String == store.recoveryService else { return nil }
+            return errSecDecode
+        }
+        XCTAssertEqual(store.recoveryLookup(for: fixture), .none)
+        let posts = Counter()
+        let refresher = PhoneSessionRefresher(store: store, allowlist: [fixture]) { _, _ in
+            posts.increment()
+            return .unavailable
+        }
+        let outcome = await refresher.renewIfNeeded(fixture, now: now)
+        XCTAssertEqual(outcome, .rejected)
+        XCTAssertEqual(store.metadata(for: fixture)?.state, .rejected)
+        XCTAssertEqual(posts.count, 0)
+        keychain.failure = { operation, query in
+            guard operation == .copy, query[kSecAttrService as String] as? String == store.recoveryService else { return nil }
+            return errSecInteractionNotAllowed
+        }
+        XCTAssertEqual(store.recoveryLookup(for: fixture), .unreadable, "Locked: asked again later")
+    }
+
+    /// Review fix: a forced renewal held back by the minute after a busy host isn't sent, so it
+    /// doesn't spend the hour's early renewal.
+    func testAForcedRenewalHeldBackByABusyHostIsAllowedAMinuteLater() async throws {
+        let keychain = FakeKeychain()
+        let store = makeStore(keychain)
+        try store.save(session("old", expiresIn: 90), for: fixture, now: now)
+        let posts = Counter()
+        let refresher = PhoneSessionRefresher(store: store, allowlist: [fixture]) { _, _ in
+            posts.increment()
+            return posts.count == 1 ? .notDispatched : .granted(Self.session("new", expiresIn: 3600))
+        }
+        // A 429 on the due renewal, then an early 401 in the same pass.
+        let busy = await refresher.renewIfNeeded(fixture, now: now)
+        XCTAssertEqual(busy, .unavailable)
+        let held = await refresher.renewIfNeeded(fixture, now: now.addingTimeInterval(10), force: true)
+        XCTAssertEqual(held, .unavailable)
+        XCTAssertEqual(posts.count, 1, "Held back by the minute")
+        let later = await refresher.renewIfNeeded(fixture, now: now.addingTimeInterval(PhoneSessionRefresher.retrySpacing + 10), force: true)
+        XCTAssertEqual(later, .refreshed, "After the minute, not after an hour")
+        XCTAssertEqual(posts.count, 2)
+    }
+
     func testARelaunchMidExchangeFinishesFromTheRecoveryItem() async throws {
         let keychain = FakeKeychain()
         let store = makeStore(keychain)

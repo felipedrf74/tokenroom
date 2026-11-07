@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import WatchConnectivity
 
 /// Hands the latest readings to the Watch app while it's near, sooner than iCloud. The Watch
@@ -47,14 +48,35 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
 
     private func flush() {
         let session = WCSession.default
-        guard session.activationState == .activated, session.isPaired, session.isWatchAppInstalled,
-              let context = currentContext()
-        else { return }
+        let defaults = AppGroup.defaults
+        guard session.activationState == .activated else {
+            SyncHealthLog.record(.handoffSend, .inactive, in: defaults)
+            return
+        }
+        guard session.isPaired else {
+            SyncHealthLog.record(.handoffSend, .notPaired, in: defaults)
+            return
+        }
+        guard session.isWatchAppInstalled else {
+            SyncHealthLog.record(.handoffSend, .notInstalled, in: defaults)
+            return
+        }
+        guard let (context, size) = currentContext() else { return }
         // One dictionary: the context is replaced whole, so the flag never goes without readings.
-        try? session.updateApplicationContext(context)
+        do {
+            try session.updateApplicationContext(context)
+            SyncHealthLog.record(.handoffSend, size, in: defaults)
+        } catch {
+            let code = (error as NSError).code
+            Self.logger.error("handover not sent: WCError \(code, privacy: .public)")
+            SyncHealthLog.record(.handoffSend, code == WCError.payloadTooLarge.rawValue ? .tooLarge : .failed, in: defaults)
+        }
     }
 
-    private func currentContext(checked: ReadingCache? = nil) -> [String: Any]? {
+    /// The context to send, and how its size went (`WatchHandoff.encodedReadings`): within
+    /// `WatchHandoff.payloadLimit`, with history cut to fit if need be. Sizes and codes are
+    /// logged; nothing else about the readings is.
+    private func currentContext(checked: ReadingCache? = nil) -> (context: [String: Any], size: SyncHealth.Code)? {
         let defaults = AppGroup.defaults
         let retained = lock.withLock { () -> ReadingCache? in
             if let latest, !PhoneCacheAccess.accepts(latest, defaults: defaults) { self.latest = nil }
@@ -62,10 +84,18 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
         }
         let cache = WatchHandoff.cacheToSend(retained: checked ?? retained, saved: Self.savedReadings(),
                                              accountGeneration: PhoneCacheAccess.generation(in: defaults))
-        guard let cache, let data = try? RelayEnvelope.encoder.encode(cache),
-              PhoneCacheAccess.accepts(cache, defaults: defaults) else { return nil }
-        return WatchHandoff.context(readings: data, connectAvailable: connectAvailable)
+        guard let cache, PhoneCacheAccess.accepts(cache, defaults: defaults),
+              let encoded = WatchHandoff.encodedReadings(cache) else { return nil }
+        let size: SyncHealth.Code = encoded.isOverLimit ? .tooLarge : encoded.historyHours == nil ? .ok : .trimmed
+        if size != .ok {
+            Self.logger.notice("handover \(encoded.data.count, privacy: .public) bytes, history \(encoded.historyHours ?? -1, privacy: .public) h")
+        } else {
+            Self.logger.debug("handover \(encoded.data.count, privacy: .public) bytes")
+        }
+        return (WatchHandoff.context(readings: encoded.data, connectAvailable: connectAvailable), size)
     }
+
+    private static let logger = Logger(subsystem: "app.tokenroom.ios", category: "watch-link")
 
     /// Refresh requests use the app's normal collector. Replies contain only the same readings
     /// as the context, and stay bounded when a provider or iCloud doesn't answer.
@@ -77,7 +107,7 @@ final class WatchLink: NSObject, WCSessionDelegate, @unchecked Sendable {
                 let checked = await WatchHandoff.collectForReply(budget: Self.refreshBudget) {
                     await refresh?()
                 }
-                reply.send(self?.currentContext(checked: checked) ?? [:])
+                reply.send(self?.currentContext(checked: checked)?.context ?? [:])
             }
             return
         }

@@ -223,4 +223,50 @@ final class PhoneConnectTests: XCTestCase {
         XCTAssertNil(DeepLink(URL(string: "tokenroom://oauth/claude?code=abc")!), "Reserved for a future sign-in")
         XCTAssertNil(DeepLink(URL(string: "tokenroom://unknown")!))
     }
+
+    // MARK: Mac coverage (7 November 2026 sync decision)
+
+    func testTheIPhonePausesItsSessionReadWhileAMacReadingIsFreshWithHysteresis() {
+        func paused(_ minutes: Double, was: Bool, manual: Bool = false) -> Bool {
+            MacCoveragePause.isPaused(macAge: minutes * 60, wasPaused: was, manual: manual)
+        }
+        XCTAssertTrue(paused(14, was: false), "14 minutes: paused")
+        XCTAssertTrue(paused(16, was: true), "16 minutes: stays paused")
+        XCTAssertFalse(paused(16, was: false), "16 minutes: stays reading")
+        XCTAssertTrue(paused(24, was: true), "24 minutes: stays paused")
+        XCTAssertFalse(paused(24, was: false))
+        XCTAssertFalse(paused(26, was: true), "26 minutes: reads again")
+        XCTAssertFalse(paused(26, was: false))
+        XCTAssertFalse(paused(14, was: true, manual: true), "Pulling to refresh reads anyway")
+        XCTAssertFalse(MacCoveragePause.isPaused(macAge: nil, wasPaused: true, manual: false), "No live Mac reading")
+        XCTAssertEqual(MacCoveragePause.detail(planName: "Codex"), "Paused: your Mac reads Codex")
+    }
+
+    /// A pull to refresh reads a paused plan but doesn't forget the pause: the next ordinary pass
+    /// in the 15–25 minute band stays paused instead of resolving to "read".
+    func testAPullToRefreshReadsButKeepsThePauseForTheNextPass() {
+        let pulled = MacCoveragePause.isPaused(macAge: 20 * 60, wasPaused: true, manual: true)
+        let kept = MacCoveragePause.remembered(macAge: 20 * 60, wasPaused: true)
+        XCTAssertFalse(pulled, "The pull reads")
+        XCTAssertTrue(kept, "…and saves the pause")
+        XCTAssertTrue(MacCoveragePause.isPaused(macAge: 21 * 60, wasPaused: kept, manual: false), "The next pass stays paused")
+        XCTAssertFalse(MacCoveragePause.remembered(macAge: 26 * 60, wasPaused: true), "Past 25 minutes the pause ends")
+        XCTAssertFalse(MacCoveragePause.remembered(macAge: nil, wasPaused: true), "No live Mac reading ends it")
+    }
+
+    func testTheMacsReadingAgeComesFromItsLiveReadingOnly() {
+        func source(_ kind: CollectorKind, checked: Date, state: String = "live") -> PhoneConnect.CoveringSource {
+            var claude = reading(.claude, checkedAt: checked)
+            claude.state = state
+            return PhoneConnect.CoveringSource(kind: kind, envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: checked, providers: [claude]))
+        }
+        XCTAssertEqual(PhoneConnect.macReadingAge(.claude, sources: [source(.mac, checked: now.addingTimeInterval(-14 * 60))], now: now), 14 * 60)
+        XCTAssertEqual(PhoneConnect.macReadingAge(.claude, sources: [source(.mac, checked: now.addingTimeInterval(-26 * 60)),
+                                                                     source(.mac, checked: now.addingTimeInterval(-16 * 60))], now: now), 16 * 60, "The newest Mac")
+        XCTAssertNil(PhoneConnect.macReadingAge(.claude, sources: [source(.otherPhone, checked: now)], now: now), "Another iPhone isn't a Mac")
+        XCTAssertNil(PhoneConnect.macReadingAge(.claude, sources: [source(.mac, checked: now.addingTimeInterval(-2 * 3600))], now: now), "Stale")
+        XCTAssertNil(PhoneConnect.macReadingAge(.claude, sources: [source(.mac, checked: now, state: "signedOut")], now: now))
+        XCTAssertNil(PhoneConnect.macReadingAge(.openai, sources: [source(.mac, checked: now)], now: now))
+        XCTAssertEqual(PhoneConnect.macReadingAge(.claude, sources: [source(.mac, checked: now.addingTimeInterval(120))], now: now), 0, "A fast clock is just checked")
+    }
 }

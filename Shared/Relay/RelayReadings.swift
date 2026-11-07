@@ -23,6 +23,17 @@ enum RelayReadings {
         case failed
     }
 
+    /// The account alone, for a Watch launched only to take a handover: no zone read.
+    static func accountCheck() async -> RelayAccountCheck {
+        guard let container = RelayAvailability.containerIdentifier else { return .unavailable }
+        guard let status = try? await CloudRelay.shared(containerIdentifier: container).accountStatus() else { return .failed }
+        switch status {
+        case .available: return .available
+        case .noAccount: return .noAccount
+        default: return .failed
+        }
+    }
+
     static func read(now: Date = .now) async -> Outcome {
         guard let container = RelayAvailability.containerIdentifier else { return .unavailable }
         let relay = CloudRelay.shared(containerIdentifier: container)
@@ -70,12 +81,18 @@ enum RelayReadings {
         switch outcome {
         case .readings(let fresh):
             guard cutoff.map({ fresh.savedAt > $0 }) != false else { return nil }
+            if let defaults { WatchCacheAccess.noteAccountAvailable(in: defaults) }
             let merged = cached?.mergingUpdate(fresh, now: now) ?? fresh
             if let defaults { try? WatchCacheAccess.saveValidated(merged, at: url, defaults: defaults, cutoff: cutoff) }
             else if let url { try? merged.save(to: url) }
             return merged.presented(at: now)
         case .noAccount:
-            if let defaults { WatchCacheAccess.invalidate(in: defaults, at: now) }
+            if let defaults, !WatchCacheAccess.confirmNoAccount(in: defaults, at: now) {
+                // Still signed out since the sign-out recorded: the iPhone's handovers the Watch
+                // took since then stay (`WatchHandoffAcceptance`).
+                return WatchCacheAccess.load(at: url, defaults: defaults)?.presented(at: now)
+                    ?? ReadingCache(savedAt: now, isSample: false, items: [])
+            }
             let empty = ReadingCache(savedAt: now, isSample: false, items: [])
             if let url { try? empty.save(to: url) }
             return empty
@@ -104,7 +121,10 @@ enum RelayReadings {
 
     /// Whether `cached` can be shown without reading iCloud first. Outside debug builds a sample
     /// cache ages like any other, so it doesn't outlive sample mode.
+    /// One saved recently that holds a live reading about to go stale isn't recent: it's read
+    /// again (`ReadingCache.nearsStale`).
     static func isRecent(_ cached: ReadingCache, maxAge: TimeInterval, now: Date, keepsSamples: Bool = RelayReadings.keepsSamples) -> Bool {
-        (keepsSamples && cached.isSample) || (0..<maxAge).contains(now.timeIntervalSince(cached.savedAt))
+        (keepsSamples && cached.isSample)
+            || ((0..<maxAge).contains(now.timeIntervalSince(cached.savedAt)) && !cached.nearsStale(at: now))
     }
 }

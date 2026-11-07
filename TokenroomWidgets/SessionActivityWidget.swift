@@ -6,7 +6,8 @@ import WidgetKit
 struct SessionActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: SessionActivityAttributes.self) { context in
-            // Stale means its reset has passed: shown as reset, not at the last percentage.
+            // Stale at its reset: shown as reset, not at the last percentage. Stale before it
+            // (the reading is over an hour old): faded at that percentage, "as of" its check.
             SessionLockScreenView(attributes: context.attributes, state: context.state.shown(isStale: context.isStale))
                 .widgetURL(DeepLink.provider(context.attributes.providerID).url)
         } dynamicIsland: { context in

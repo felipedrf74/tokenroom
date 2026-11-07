@@ -272,9 +272,15 @@ enum WidgetSchedule {
             }
         }
         let scheduled = now.addingTimeInterval(busy ? busyInterval : calmInterval)
+        // Before a reading goes stale rather than after, so the reload can bring it back live
+        // (`ReadingCache.nearsStale`) before a faded entry is drawn; the timeline's own entry at
+        // the stale moment (`presentationDates`) still fades one nobody checked again. Only a
+        // live reading goes stale.
         let boundaries = items.flatMap { item -> [Date] in
             guard let checked = item.provider.checkedAt ?? item.provider.fetchedAt else { return [] }
-            return [checked.addingTimeInterval(ReadingFreshness.staleAfter + 1), checked.addingTimeInterval(ReadingFreshness.expiresAfter + 1)]
+            let expiry = checked.addingTimeInterval(ReadingFreshness.expiresAfter + 1)
+            guard item.provider.isLive else { return [expiry] }
+            return [checked.addingTimeInterval(ReadingFreshness.staleAfter - ReadingFreshness.staleLead), expiry]
         }.filter { $0 > now }
         return min(scheduled, boundaries.min() ?? scheduled)
     }

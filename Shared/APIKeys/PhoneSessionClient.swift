@@ -13,6 +13,8 @@ struct PhoneSessionClient: Sendable {
 
     static let notAllowed = "Couldn't start a session for this provider."
     static let needsSignIn = "Couldn't refresh this session. Sign in again."
+    /// The token host turned down the sign-in's client (`invalid_client`, `unauthorized_client`).
+    static let clientRefused = "Couldn't refresh this session: the provider turned down this sign-in. Sign in again, or read this plan on a Mac."
     static let cantRead = "Couldn't read this plan's usage with this sign-in."
 
     var provider: Provider
@@ -85,9 +87,12 @@ struct PhoneSessionReader: Sendable {
         switch renewal {
         case .rejected, .noSession:
             return .failure(.signedOut(PhoneSessionClient.needsSignIn))
-        case .pendingWrite:
+        case .clientRefused:
+            return .failure(.signedOut(PhoneSessionClient.clientRefused))
+        case .pendingWrite, .unreadable:
             // Renewed, but not stored yet: the session waits mid-renewal and the next read writes
-            // the new tokens. Nothing to sign in again for.
+            // the new tokens. Or the Keychain couldn't be read just now (locked, busy). Nothing
+            // to sign in again for.
             return .failure(.unreachable)
         default:
             break
@@ -100,6 +105,8 @@ struct PhoneSessionReader: Sendable {
                 result = await client.fetch(now: now)
             case .rejected, .noSession:
                 return .failure(.signedOut(PhoneSessionClient.needsSignIn))
+            case .clientRefused:
+                return .failure(.signedOut(PhoneSessionClient.clientRefused))
             default:
                 break
             }
@@ -109,7 +116,7 @@ struct PhoneSessionReader: Sendable {
         }
         if case .failure(.expired) = result {
             // The token host couldn't be reached, or the write is still pending: try later.
-            if [.unavailable, .preflightFailed, .pendingWrite].contains(renewal) { return .failure(.unreachable) }
+            if [.unavailable, .preflightFailed, .pendingWrite, .unreadable].contains(renewal) { return .failure(.unreachable) }
             return .failure(.expired(PhoneSessionClient.needsSignIn))
         }
         return result
@@ -130,9 +137,12 @@ actor PhoneSessionRefresher {
         case granted(PhoneSession)
         /// `invalid_grant`: the refresh token is no good.
         case rejected
-        /// No token was issued: the sender can prove no request was dispatched, or the host
-        /// answered with an OAuth error other than `invalid_grant` (RFC 6749 §5.2). Safe to
-        /// retry the old token.
+        /// `invalid_client` or `unauthorized_client`: the host no longer takes the sign-in's
+        /// client. Refused like `rejected`, said in words of its own.
+        case clientRefused
+        /// No token was issued: the sender can prove no request was dispatched, the host said
+        /// it was busy (429, 503), or it answered with another OAuth error (RFC 6749 §5.2). Safe
+        /// to retry the old token, after `retrySpacing`.
         case notDispatched
         /// An unreachable/invalid answer after a request may have rotated the token. Never
         /// implies the old refresh token is safe to send again.
@@ -146,7 +156,11 @@ actor PhoneSessionRefresher {
         case preflightFailed = "preflight-failed"
         case refreshed
         case rejected
+        case clientRefused = "client-refused"
         case unavailable
+        /// The Keychain couldn't read the recovery item just now (locked, busy): not taken for
+        /// a missing one, and tried again on the next pass.
+        case unreadable
         /// The grant came back but isn't stored yet; it stays in memory and the next call
         /// retries the write.
         case pendingWrite
@@ -174,6 +188,11 @@ actor PhoneSessionRefresher {
     /// down. An endpoint that keeps doing so gets one early renewal an hour, not one a read.
     private var forcedAt: [Provider: Date] = [:]
     static let forcedRenewalSpacing: TimeInterval = 3600
+    /// After an answer that issued no token (a busy host, offline), the old refresh token isn't
+    /// sent again this soon: two readers renewing one session in the same pass (Cursor's and
+    /// Grok Bot's) send it once.
+    static let retrySpacing: TimeInterval = 60
+    private var notDispatchedAt: [Provider: Date] = [:]
     private let logger = Logger(subsystem: "app.tokenroom.ios", category: "session")
 
     init(store: PhoneSessionStore, allowlist: Set<Provider> = PhoneConnect.productionAllowlist, post: @escaping Post) {
@@ -194,6 +213,9 @@ actor PhoneSessionRefresher {
         }
         if force {
             if let last = forcedAt[provider], (0..<Self.forcedRenewalSpacing).contains(now.timeIntervalSince(last)) { return .notDue }
+            // Held back by a busy host a moment ago: not sent, so the hour's early renewal isn't
+            // spent and can go once `retrySpacing` has passed.
+            if isWaitingToRetry(provider, now: now) { return .unavailable }
             forcedAt[provider] = now
         }
         let flight = Task { await self.renew(provider, now: now, force: force) }
@@ -204,6 +226,10 @@ actor PhoneSessionRefresher {
             logger.notice("\(provider.rawValue, privacy: .public) \(outcome.rawValue, privacy: .public)")
         }
         return outcome
+    }
+
+    private func isWaitingToRetry(_ provider: Provider, now: Date) -> Bool {
+        notDispatchedAt[provider].map { (0..<Self.retrySpacing).contains(now.timeIntervalSince($0)) } ?? false
     }
 
     private func renew(_ provider: Provider, now: Date, force: Bool) async -> Outcome {
@@ -219,14 +245,21 @@ actor PhoneSessionRefresher {
         if !force {
             guard let expiresAt = session.expiresAt, expiresAt.timeIntervalSince(now) <= Self.lead else { return .notDue }
         }
+        if isWaitingToRetry(provider, now: now) {
+            return .unavailable
+        }
         let ready = await BlockingIO.run { store.canReplace(provider) && store.setState(.exchanging, for: provider) }
         guard ready else { return .preflightFailed }
         switch await post(provider, session) {
         case .rejected:
             await BlockingIO.run { store.markRejected(for: provider, now: now) }
             return .rejected
+        case .clientRefused:
+            await BlockingIO.run { store.markRejected(for: provider, now: now, clientRefused: true) }
+            return .clientRefused
         case .notDispatched:
             await BlockingIO.run { _ = store.setState(.ready, for: provider) }
+            notDispatchedAt[provider] = now
             return .unavailable
         case .unavailable:
             // Preserve exchanging: a later call recovers a durable grant, or rejects this
@@ -266,6 +299,7 @@ actor PhoneSessionRefresher {
         }
         pending[provider] = nil
         forcedAt[provider] = nil
+        notDispatchedAt[provider] = nil
         let store = store
         if let session {
             // An old renewal's grant must never be recovered over the new sign-in: if it can't be
@@ -285,10 +319,17 @@ actor PhoneSessionRefresher {
         let store = store
         if pending[provider] != nil { return .pendingWrite }
         guard await BlockingIO.run({ store.metadata(for: provider)?.state == .exchanging }) else { return .noSession }
-        guard await BlockingIO.run({ store.takeRecovery(for: provider) != nil }) else {
+        switch await BlockingIO.run({ store.recoveryLookup(for: provider) }) {
+        case .found:
+            break
+        case .none:
             // The server may have rotated the refresh token, and the new one never landed.
             await BlockingIO.run { store.markRejected(for: provider, now: now) }
             return .rejected
+        case .unreadable:
+            // Locked or busy: the grant may be there. Asked again on the next pass; the old
+            // refresh token still isn't sent.
+            return .unreadable
         }
         // The new grant is safe in the recovery item; a failed replace is tried again later.
         return await BlockingIO.run({ store.finishFromRecovery(for: provider) }) ? .recovered : .pendingWrite

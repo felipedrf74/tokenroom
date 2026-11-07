@@ -25,7 +25,9 @@ enum WidgetRefresher {
         }
         let cached = PhoneCacheAccess.load(at: ReadingCache.defaultURL, defaults: AppGroup.defaults)?
             .applyingLocalBudgetReferences(in: AppGroup.defaults)
-        if !force, let cached, (0..<maxAge).contains(now.timeIntervalSince(cached.savedAt)) {
+        // A cache saved minutes ago still waits for a read when a live reading in it is about to
+        // go stale: the reload asked for then (`WidgetSchedule`) is for that.
+        if !force, let cached, (0..<maxAge).contains(now.timeIntervalSince(cached.savedAt)), !cached.nearsStale(at: now) {
             return cached
         }
         // Widgets whose timelines are due together share one refresh, rather than each reading

@@ -143,8 +143,30 @@ struct UsageHistory: Codable, Equatable, Sendable {
         return [own, earlier].compactMap { $0 }.max().map { Double($0) }
     }
 
-    /// The bucket for `date`, moving the week forward first when needed.
+    /// The last `hours` buckets only, ending where this one ends: what the iPhone hands the
+    /// Watch when the whole week doesn't fit (`WatchHandoff.payloadLimit`). Nil when no hours are
+    /// kept. Resets before the shorter span are left out too.
+    func trimmed(toLast hours: Int) -> UsageHistory? {
+        guard hours > 0 else { return nil }
+        guard used.count > hours else { return self }
+        var copy = self
+        let dropped = used.count - hours
+        copy.start = start.addingTimeInterval(Double(dropped) * Self.step)
+        copy.used = Array(used.suffix(hours))
+        copy.amounts = amounts.map { Array($0.suffix(max(0, $0.count - dropped))) }
+        copy.resets = resets?.filter { $0 >= copy.start }
+        return copy
+    }
+
+    /// The bucket for `date`, moving the week forward first when needed. A shorter span (one
+    /// handed to the Watch) is filled out to the week first.
     private mutating func bucket(for date: Date) -> Int? {
+        if used.count < Self.capacity {
+            let missing = Self.capacity - used.count
+            start = start.addingTimeInterval(-Double(missing) * Self.step)
+            used = Array(repeating: nil, count: missing) + used
+            amounts = amounts.map { Array(repeating: nil, count: max(0, Self.capacity - $0.count)) + $0 }
+        }
         var index = Int((Self.hourStart(date).timeIntervalSince(start) / Self.step).rounded())
         guard index >= 0 else { return nil }
         if index >= Self.capacity {

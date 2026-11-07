@@ -107,7 +107,8 @@ struct UsageView: View {
                 }
             }
             .refreshable {
-                await store.refresh(force: true)
+                // Pulled: plans a Mac reads are read here too (`MacCoveragePause`).
+                await store.refresh(force: true, manual: true)
                 rank()
             }
             .task {

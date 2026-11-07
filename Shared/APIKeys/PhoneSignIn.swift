@@ -65,14 +65,16 @@ enum PhoneSignIn {
     /// Which signed-in plans to list, and which to read now. One left out as not on its
     /// sign-in's plan stays out until `notOnPlanRecheck` has passed, and is then read again only
     /// when its own spacing and waits allow (`isHeldOff`), like any other: a recheck that keeps
-    /// failing never turns into a call on every refresh.
-    static func plansToRead(signedIn: [Provider], notOnPlan: [Provider: Date], now: Date, isHeldOff: (Provider) -> Bool) -> (listed: [Provider], due: [Provider], rechecks: Set<Provider>) {
+    /// failing never turns into a call on every refresh. One `paused` while a Mac reads it
+    /// (`MacCoveragePause`) stays listed and isn't read, nor rechecked.
+    static func plansToRead(signedIn: [Provider], notOnPlan: [Provider: Date], now: Date, paused: Set<Provider> = [],
+                            isHeldOff: (Provider) -> Bool) -> (listed: [Provider], due: [Provider], rechecks: Set<Provider>) {
         let rechecks = Set(signedIn.filter { provider in
-            guard let since = notOnPlan[provider] else { return false }
+            guard let since = notOnPlan[provider], !paused.contains(provider) else { return false }
             return !(0..<notOnPlanRecheck).contains(now.timeIntervalSince(since)) && !isHeldOff(provider)
         })
         let listed = signedIn.filter { notOnPlan[$0] == nil || rechecks.contains($0) }
-        let due = listed.filter { rechecks.contains($0) || !isHeldOff($0) }
+        let due = listed.filter { !paused.contains($0) && (rechecks.contains($0) || !isHeldOff($0)) }
         return (listed, due, rechecks)
     }
 
@@ -468,9 +470,12 @@ enum PhoneSignIn {
     /// What a token host said to a renewal. A grant without a refresh token keeps the one sent:
     /// hosts that don't rotate it may leave it out. Cursor renews with its access token, so a new
     /// one becomes the refresh token too, as Cursor's own app keeps it; its `shouldLogout` is a
-    /// refusal. Any other OAuth error answer (a 4xx whose body names an `error`, RFC 6749 §5.2)
-    /// issued no token, so nothing was rotated and the refresh token is still good
-    /// (`notDispatched`). Anything else after the request reached the host (a 429, a 5xx, a 4xx
+    /// refusal, as `invalid_grant` is. `invalid_client` and `unauthorized_client` say the host no
+    /// longer takes the sign-in's client: refused too, with words of their own
+    /// (`clientRefused`). A 429 or a 503 is the host saying it's busy, not that it took the
+    /// request: no token was issued, so the session stays ready and is renewed later
+    /// (`notDispatched`). So is any other OAuth error answer (a 4xx whose body names an `error`,
+    /// RFC 6749 §5.2). Anything else after the request reached the host (another 5xx, a 4xx
     /// without an OAuth error, a success without tokens) is unclear (`unavailable`): the session
     /// then waits for a new sign-in rather than send the old refresh token again. A request that
     /// never left the phone is `notDispatched` too (`PhoneSignInClient.renew`).
@@ -487,7 +492,9 @@ enum PhoneSignIn {
         }
         let error = object.flatMap { JSONFlex.string($0["error"]) }
         if error == "invalid_grant" { return .rejected }
-        if let error, !error.isEmpty, (400..<500).contains(status), status != 429 { return .notDispatched }
+        if error == "invalid_client" || error == "unauthorized_client" { return .clientRefused }
+        if status == 429 || status == 503 { return .notDispatched }
+        if let error, !error.isEmpty, (400..<500).contains(status) { return .notDispatched }
         return .unavailable
     }
 
