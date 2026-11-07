@@ -30,6 +30,9 @@ struct PhoneSessionMetadata: Codable, Equatable, Sendable {
 
     var addedAt: Date
     var state: State
+    /// Rejected because the token host turned down the sign-in's client (`invalid_client`,
+    /// `unauthorized_client`), not the refresh token. Nil otherwise, and in older items.
+    var clientRefused: Bool? = nil
 }
 
 /// Phone sessions, one Keychain item per provider, in the iPhone app's own access group.
@@ -192,6 +195,30 @@ struct PhoneSessionStore: Sendable {
         decodeSession(readData(recoveryQuery(for: provider)))
     }
 
+    /// The recovery item: there, not there, or couldn't be read now. Only `errSecItemNotFound` is
+    /// "not there"; a Keychain that's locked or busy (`errSecInteractionNotAllowed`) isn't. An
+    /// item read that holds no usable session is "not there" too: it can't become one later.
+    enum RecoveryLookup: Equatable, Sendable {
+        case found(PhoneSession)
+        case none
+        case unreadable
+    }
+
+    func recoveryLookup(for provider: Provider) -> RecoveryLookup {
+        var query = recoveryQuery(for: provider)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        let (status, item) = keychain.copy(query)
+        switch status {
+        case errSecSuccess:
+            return decodeSession(item as? Data).map(RecoveryLookup.found) ?? .none
+        case errSecItemNotFound:
+            return .none
+        default:
+            return .unreadable
+        }
+    }
+
     func deleteRecovery(for provider: Provider) {
         _ = keychain.delete(recoveryQuery(for: provider))
     }
@@ -220,10 +247,11 @@ struct PhoneSessionStore: Sendable {
     /// The server refused the refresh token: the token bytes become the word `rejected`, and the
     /// item stays with its date, so the row can ask to sign in again. Only this provider's
     /// session item changes; no key and no other session is touched.
-    func markRejected(for provider: Provider, now: Date) {
+    func markRejected(for provider: Provider, now: Date, clientRefused: Bool = false) {
         let query = query(for: provider)
         let addedAt = metadata(for: provider)?.addedAt ?? now
-        guard let generic = try? JSONEncoder().encode(PhoneSessionMetadata(addedAt: addedAt, state: .rejected)) else { return }
+        let metadata = PhoneSessionMetadata(addedAt: addedAt, state: .rejected, clientRefused: clientRefused ? true : nil)
+        guard let generic = try? JSONEncoder().encode(metadata) else { return }
         let attributes: [String: Any] = [kSecValueData as String: Self.rejectedMarker, kSecAttrGeneric as String: generic]
         if keychain.update(query, attributes) == errSecItemNotFound {
             var item = query

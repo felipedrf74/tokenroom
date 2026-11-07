@@ -446,6 +446,45 @@ final class PhoneSessionTests: XCTestCase {
         XCTAssertEqual(store.metadata(for: fixture)?.state, .rejected)
     }
 
+    /// A recovery item the Keychain couldn't read just now (locked, busy) isn't a missing one:
+    /// the session isn't rejected, and the next pass finishes from it. Only
+    /// `errSecItemNotFound` is missing.
+    func testARecoveryItemThatCantBeReadNowIsntTakenForAMissingOne() async throws {
+        let keychain = FakeKeychain()
+        let store = makeStore(keychain)
+        try store.save(session("old", expiresIn: 60), for: fixture, now: now)
+        XCTAssertTrue(store.setState(.exchanging, for: fixture))
+        XCTAssertTrue(store.saveRecovery(session("new", expiresIn: 3600), for: fixture))
+        let locked = LockedBox(true)
+        keychain.failure = { operation, query in
+            guard locked.value, operation == .copy, query[kSecAttrService as String] as? String == store.recoveryService else { return nil }
+            return errSecInteractionNotAllowed
+        }
+        let posts = Counter()
+        let refresher = PhoneSessionRefresher(store: store, allowlist: [fixture]) { _, _ in
+            posts.increment()
+            return .granted(Self.session("other", expiresIn: 3600))
+        }
+        XCTAssertEqual(store.recoveryLookup(for: fixture), .unreadable)
+        let outcome = await refresher.renewIfNeeded(fixture, now: now)
+        XCTAssertEqual(outcome, .unreadable)
+        XCTAssertEqual(store.metadata(for: fixture)?.state, .exchanging, "Not rejected")
+        XCTAssertEqual(posts.count, 0, "And the old refresh token isn't sent")
+        let client = PhoneSessionClient(provider: fixture, store: store, allowlist: [fixture], request: Self.testRequest) { _ in
+            XCTFail("No usage call mid-renewal")
+            return .failure(.parse)
+        }
+        let reading = await PhoneSessionReader(client: client, refresher: refresher).read(now: now)
+        XCTAssertEqual(reading, .failure(.unreachable), "Try later, not sign in again")
+        locked.value = false
+        let next = await refresher.renewIfNeeded(fixture, now: now)
+        XCTAssertEqual(next, .recovered)
+        XCTAssertEqual(store.session(for: fixture)?.refreshToken, "refresh-new")
+        XCTAssertEqual(store.metadata(for: fixture)?.state, .ready)
+        XCTAssertEqual(store.recoveryLookup(for: fixture), .none)
+        XCTAssertEqual(posts.count, 0)
+    }
+
     func testARelaunchMidExchangeFinishesFromTheRecoveryItem() async throws {
         let keychain = FakeKeychain()
         let store = makeStore(keychain)

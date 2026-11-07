@@ -69,6 +69,23 @@ enum PhoneConnect: Sendable {
         }
     }
 
+    /// How old the newest live Mac reading for this provider is, or nil when no Mac has one live
+    /// (the same sources and rules as `isCoveredByMac`). One dated ahead of the clock counts as
+    /// just checked.
+    static func macReadingAge(_ provider: Provider, sources: [CoveringSource], now: Date = .now) -> TimeInterval? {
+        sources.compactMap { source -> TimeInterval? in
+            guard source.kind == .mac, now.timeIntervalSince(source.envelope.checkedAt) <= RelayMerge.maxSourceAge else { return nil }
+            return source.envelope.providers.compactMap { saved -> TimeInterval? in
+                guard saved.id == provider.rawValue,
+                      let shown = ReadingFreshness.present(saved, fallback: source.envelope.checkedAt, now: now),
+                      shown.state == "live"
+                else { return nil }
+                let checked = saved.checkedAt ?? saved.fetchedAt ?? source.envelope.checkedAt
+                return now.timeIntervalSince(ReadingFreshness.ordering(checked, now: now))
+            }.min()
+        }.min()
+    }
+
     /// Why a provider can't be connected on the iPhone (one off the allowlist). Each line names the
     /// Mac, and none promises a sign-in.
     static func reason(for provider: Provider) -> String {
@@ -129,6 +146,35 @@ enum PhoneConnect: Sendable {
             return (argument as? String).map { ["YES", "1", "true"].contains($0) } ?? (argument as? Bool ?? defaultValue)
         }
         return defaults.object(forKey: flagKey) as? Bool ?? defaultValue
+    }
+}
+
+/// While a Mac reads a plan this iPhone is signed in to, the iPhone leaves its own session read
+/// alone, so the two don't both call the vendor and the tile doesn't switch between them. It
+/// pauses while the Mac's live reading is at most `pauseWithin` old and reads again once it's
+/// more than `resumeAfter` old; in between it keeps what the last pass decided, so a Mac checking
+/// every ten minutes doesn't flip it on every pass. Pulling to refresh reads anyway.
+enum MacCoveragePause {
+    static let pauseWithin: TimeInterval = 15 * 60
+    static let resumeAfter: TimeInterval = 25 * 60
+    /// App Group defaults: the plans the last pass paused, as provider raw values. Not a secret.
+    static let defaultsKey = "sessionsPausedByMac"
+
+    /// Whether this pass leaves the plan's session read out.
+    /// - Parameters:
+    ///   - macAge: `PhoneConnect.macReadingAge`, nil when no Mac reading is live.
+    ///   - wasPaused: what the last pass decided.
+    ///   - manual: a pull to refresh.
+    static func isPaused(macAge: TimeInterval?, wasPaused: Bool, manual: Bool) -> Bool {
+        guard !manual, let macAge else { return false }
+        if macAge <= pauseWithin { return true }
+        if macAge > resumeAfter { return false }
+        return wasPaused
+    }
+
+    /// The Plans row for a paused plan, named as the plan is (`PhoneSignIn.planName`).
+    static func detail(planName: String) -> String {
+        "Paused: your Mac reads \(planName)"
     }
 }
 

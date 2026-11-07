@@ -138,9 +138,13 @@ struct ConnectView: View {
     }
 
     private func sessionDetail(for provider: Provider) -> String {
+        let message = store.reading(id: provider.rawValue)?.provider.message
         if store.refusedSessions.contains(PhoneSignIn.sessionOwner(for: provider))
-            || store.reading(id: provider.rawValue)?.provider.message == PhoneSessionClient.needsSignIn {
+            || message == PhoneSessionClient.needsSignIn || message == PhoneSessionClient.clientRefused {
             return "Sign in again"
+        }
+        if store.pausedSessions.contains(provider) {
+            return MacCoveragePause.detail(planName: PhoneSignIn.planName(for: provider))
         }
         let sharing = PhoneSignIn.sharingSession(with: provider).filter { $0 != provider }
         guard let other = sharing.first, store.sessionProviders.contains(other) else { return CollectorKind.thisPhone.phrase }
