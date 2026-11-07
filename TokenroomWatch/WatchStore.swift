@@ -163,8 +163,10 @@ final class WatchStore {
             applyPendingPhone()
         case .noAccount:
             SyncHealthLog.record(.cloudRead, .noAccount, in: AppGroup.defaults)
-            // Confirmed sign-out closes the cache gate now, before the iPhone's reply.
-            confirmNoAccount(at: now)
+            // Confirmed sign-out closes the cache gate now, before the iPhone's reply. The first
+            // no-account this Watch records closes just before a handover it holds instead, as on
+            // a cold launch (`WatchHandoffAcceptance.signOutCutoff`).
+            confirmNoAccount(at: WatchHandoffAcceptance.signOutCutoff(now: now, recordedCutoff: currentCutoff, held: pendingPhone))
             applyPendingPhone()
         case .failed:
             SyncHealthLog.record(.cloudRead, .failed, in: AppGroup.defaults)
