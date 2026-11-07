@@ -19,6 +19,14 @@ struct NewsCache: Codable, Equatable, Sendable {
         /// When the feed's server asked to be asked again (Retry-After), as allowed: no
         /// automatic check goes out before it. Nil after a success.
         var retryAt: Date?
+        /// The first failure of the run `failures` counts, so the banner can tell a feed that's
+        /// been failing for over an hour from one blip. Nil after a success, and in older caches.
+        var firstFailedAt: Date? = nil
+        /// The last failure can't fix itself: a 404 or 410, or an answer that isn't a feed.
+        var isPermanent: Bool? = nil
+        /// When the last successful read stopped at the feed's size limit: whole entries before
+        /// the limit were taken, the rest wasn't read. For source health; nil after a full read.
+        var truncatedAt: Date? = nil
     }
     /// Optional for caches written by earlier releases.
     var sourceChecks: [String: SourceCheck]?
@@ -50,6 +58,23 @@ struct NewsCache: Codable, Equatable, Sendable {
         guard items[source.id] != nil else { return SourceCheck() }
         return SourceCheck(succeededAt: announcementsFetchedAt,
                            failedAt: unreadable?.contains(source.id) == true ? (announcementsFailedAt ?? announcementsFetchedAt) : nil)
+    }
+
+    /// The longest a feed may keep failing for passing reasons before News names it: three
+    /// failures in a row, spanning more than this.
+    static let persistentFailureSpan: TimeInterval = 3600
+    static let persistentFailureCount = 3
+
+    /// Whether News names this source in its banner: its last answer was a permanent error (404,
+    /// 410, or not a feed), or it has failed `persistentFailureCount` times in a row over more
+    /// than `persistentFailureSpan`. A blip (a timeout, one 503) shows in source health, with
+    /// Retry, but doesn't put a banner over the news.
+    func isPersistentlyFailing(_ source: FeedSource) -> Bool {
+        let check = check(for: source)
+        guard let failedAt = check.failedAt, check.succeededAt.map({ failedAt >= $0 }) ?? true else { return false }
+        if check.isPermanent == true { return true }
+        guard let failures = check.failures, failures >= Self.persistentFailureCount, let first = check.firstFailedAt else { return false }
+        return failedAt.timeIntervalSince(first) > Self.persistentFailureSpan
     }
 
     /// Announcements from the given feeds, newest first. An entry two feeds share shows once: the
@@ -238,10 +263,11 @@ struct NewsCache: Codable, Equatable, Sendable {
 }
 
 enum NewsFetcher {
-    /// How often the model list and each feed are checked in the background (the iPhone's
-    /// background refresh, the Mac's sharing loop). Conditional GETs keep an unchanged feed to a 304.
-    static let modelInterval: TimeInterval = 3600
-    static let announcementInterval: TimeInterval = 3600
+    /// How often the model list and an official feed are checked in the background (the iPhone's
+    /// background refresh, the Mac's News loop). Each kind has its own (`NewsCadence`); status
+    /// feeds are checked sooner, voices later. Conditional GETs keep an unchanged feed to a 304.
+    static var modelInterval: TimeInterval { NewsCadence.intervals(for: .models).background }
+    static var announcementInterval: TimeInterval { NewsCadence.intervals(for: .official).background }
     /// Opening News (the iPhone tab or the app coming forward, the Mac window) refreshes
     /// anything older than this.
     static let openInterval: TimeInterval = 5 * 60
@@ -323,6 +349,14 @@ enum NewsFetcher {
         case status(Int, retryAfter: String?)
         /// No answer.
         case unreachable
+        /// No network to ask on (`TokenroomHTTP.meansOffline`): not the source's failure, so it
+        /// counts no failure, starts no backoff, and says nothing couldn't be read.
+        case offline
+    }
+
+    /// An error status that won't fix itself: the feed is gone.
+    static func isPermanent(status: Int) -> Bool {
+        status == 404 || status == 410
     }
 
     /// What a pass's feed checks hand back: a feed's answer, or word that `publish` is done.
@@ -345,9 +379,9 @@ enum NewsFetcher {
         var newModels: [ModelRelease] = []
         var unreadable = cache.unreadable ?? []
 
-        // The model list has no validators, so every check downloads all of it: it keeps to its
-        // hourly interval while News is open or on screen; only a pull or Check Now asks sooner.
-        let modelAge = maxAge == 0 ? 0 : modelInterval
+        // The model list has no validators, so every check downloads all of it (about 81 KB on the
+        // wire): every 30 minutes in the background and 15 on screen; a pull or Check Now asks now.
+        let modelAge = NewsCadence.interval(for: .models, maxAge: maxAge)
         if forcedSources.contains(ModelFeed.id) || isDue(cache.modelsFetchedAt, failedAt: cache.modelsFailedAt, failures: cache.modelsFailures, retryAt: cache.modelsRetryAt, interval: modelAge, now: now) {
             let key = ModelFeed.url.absoluteString
             guard let answer = await permittedGet(ModelFeed.url, validator: cache.validators[key], isAllowed: isAllowed) else {
@@ -386,6 +420,9 @@ enum NewsFetcher {
                     cache.modelsFailed(at: now)
                     unreadable.insert(ModelFeed.id)
                 }
+            case .offline:
+                // No network: OpenRouter didn't fail, and the next pass asks as if nothing happened.
+                break
             }
             // A list that changed shows before the feeds are in; the same list again waits for
             // the pass, so it isn't folded and shown for nothing.
@@ -398,7 +435,7 @@ enum NewsFetcher {
 
         let due = sources.filter { source in
             let check = cache.check(for: source)
-            return forcedSources.contains(source.id) || isDue(check.succeededAt, failedAt: check.failedAt, failures: check.failures, retryAt: check.retryAt, interval: maxAge ?? announcementInterval, now: now)
+            return forcedSources.contains(source.id) || isDue(check.succeededAt, failedAt: check.failedAt, failures: check.failures, retryAt: check.retryAt, interval: NewsCadence.interval(for: source, maxAge: maxAge), now: now)
         }
         if !due.isEmpty {
             let previous = cache.validators
@@ -437,12 +474,18 @@ enum NewsFetcher {
                     let listed = cache.items[source.id] ?? []
                     var check = cache.check(for: source)
                     var success = false
+                    var truncated = false
+                    var permanent = false
                     var retryAfter: Date?
                     switch answer {
                     case let .body(data, validator, isTruncated):
                         let read = FeedParser.read(data, source: source)
                         let previousItems = cache.items[source.id] ?? []
                         let items = firstSeen(read.items, previous: previousItems, now: now, quiet: quietSources.contains(source.id), previousRead: check.succeededAt)
+                        // Stopped at its size limit with whole entries before the cut: the feed is
+                        // fine, only longer than Tokenroom reads, and a feed lists its newest first.
+                        // Cut off partway (the network dropped, the time ran out) isn't this.
+                        let pastLimit = isTruncated && data.count >= source.sizeLimit && read.isFeed && read.entries > 0
                         // A feed with no entries at all where some were cached isn't taken at its
                         // word: a server's placeholder would clear the list.
                         if read.isComplete, !isTruncated, read.entries > 0 || previousItems.isEmpty {
@@ -459,26 +502,49 @@ enum NewsFetcher {
                                     .sorted { ($0.published ?? .distantPast) > ($1.published ?? .distantPast) }
                                     .prefix(FeedParser.itemLimit))
                             }
-                            cache.validators[key] = nil
+                            if pastLimit {
+                                // A read like any other: its validator keeps the next one to a 304,
+                                // which needs the feed's bucket even when every entry was left out.
+                                if cache.items[source.id] == nil { cache.items[source.id] = [] }
+                                cache.validators[key] = validator
+                                success = true
+                                truncated = true
+                            } else {
+                                cache.validators[key] = nil
+                                permanent = !read.isFeed
+                            }
                         }
                     case .notModified:
                         success = cache.items[source.id] != nil
                         if !success { cache.validators[key] = nil }
-                    case let .status(_, asked): retryAfter = TokenroomHTTP.retryDate(asked, now: now)
+                        // Unchanged since a read that stopped at the limit: still that read.
+                        truncated = success && check.truncatedAt != nil
+                    case let .status(code, asked):
+                        retryAfter = TokenroomHTTP.retryDate(asked, now: now)
+                        permanent = isPermanent(status: code)
                     case .unreachable:
                         if Task.isCancelled { continue }
+                    case .offline:
+                        // No network: neither a failure nor a fresh reading.
+                        continue
                     }
                     if success {
                         check.succeededAt = now
                         check.failedAt = nil
                         check.failures = nil
                         check.retryAt = nil
+                        check.firstFailedAt = nil
+                        check.isPermanent = nil
+                        check.truncatedAt = truncated ? (check.truncatedAt ?? now) : nil
                         unreadable.remove(source.id)
                         anySucceeded = true
                     } else {
+                        let running = (check.failures ?? 0) > 0
+                        check.firstFailedAt = running ? (check.firstFailedAt ?? check.failedAt ?? now) : now
                         check.failedAt = now
                         check.failures = (check.failures ?? 0) + 1
                         check.retryAt = allowedRetry(retryAfter, now: now)
+                        check.isPermanent = permanent ? true : nil
                         unreadable.insert(source.id)
                         anyFailed = true
                     }
@@ -642,7 +708,10 @@ enum NewsFetcher {
             } catch {
                 data.append(contentsOf: buffer)
                 // A cancelled check isn't a failure, and nothing at all is no answer.
-                guard !Task.isCancelled, !data.isEmpty else { return .unreachable }
+                guard !Task.isCancelled else { return .unreachable }
+                // The network went away partway: what arrived isn't the feed's fault either.
+                if let error = error as? URLError, TokenroomHTTP.meansOffline(error) { return .offline }
+                guard !data.isEmpty else { return .unreachable }
                 isTruncated = true
             }
             if isTruncated {
@@ -654,6 +723,9 @@ enum NewsFetcher {
                 lastModified: http.value(forHTTPHeaderField: "Last-Modified")
             )
             return .body(data, fresh, isTruncated: isTruncated)
+        } catch let error as URLError where !Task.isCancelled && TokenroomHTTP.meansOffline(error) {
+            // Not connected, no route or DNS: offline, not this source's failure.
+            return .offline
         } catch {
             return .unreachable
         }
