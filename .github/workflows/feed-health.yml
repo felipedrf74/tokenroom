@@ -1,0 +1,55 @@
+# Weekly, advisory check of every public source News and Skills read, from the reliability
+# decision of 7 November 2026 (docs/news-reliability-council-20261107.md). It never gates a merge:
+# it isn't part of CI and doesn't run on pull requests. It reads the catalog from the Swift
+# sources (scripts/feed-health.py), then opens or updates one issue labelled `feed-health` while
+# a source needs attention, and closes it once all are healthy.
+name: Feed health
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: feed-health
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Probe public sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Test the probe
+        run: python3 -B scripts/tests/feed-health-test.py
+
+      - name: Probe every source
+        run: python3 -B scripts/feed-health.py --output "$RUNNER_TEMP/feed-health.md" --status-file "$RUNNER_TEMP/feed-health.status"
+
+      - name: Open, update, or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/feed-health.md"
+          cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          gh label create feed-health --repo "$REPO" --color c5def5 \
+            --description "Weekly advisory probe of News and Skills sources" 2>/dev/null || true
+          number=$(gh issue list --repo "$REPO" --label feed-health --state open --json number --jq '.[0].number // empty')
+          if [ "$(cat "$RUNNER_TEMP/feed-health.status")" = "attention" ]; then
+            if [ -n "$number" ]; then
+              gh issue edit "$number" --repo "$REPO" --body-file "$report"
+            else
+              gh issue create --repo "$REPO" --title "Feed health" --label feed-health --body-file "$report"
+            fi
+          elif [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$REPO" --body-file "$report"
+            gh issue close "$number" --repo "$REPO" --reason completed
+          fi
