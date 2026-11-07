@@ -1,8 +1,24 @@
 # Changelog
 
-## 2.6.0 for Mac and 1.3.0 for iPhone — not yet released
+## 1.3.0 for iPhone — 7 November 2026
 
-Mac 2.6.0(1) and iPhone, widgets and Apple Watch 1.3.0(1) carry the UI overhaul from #58. Neither is uploaded or published yet.
+iPhone, widgets and Apple Watch 1.3.0(2) carry the UI overhaul from #58 (as in Mac 2.6.0, below), with News (#60), Watch and widget delivery (#61) and the end of Claude sign-in on the iPhone (#62). Build 1.3.0(1) was uploaded before #60–#62 merged and is never submitted.
+
+- The UI overhaul: the iPhone, widgets and Apple Watch items under 2.6.0 below.
+- News checks release and status feeds every 5 to 15 minutes, voices and discussion every 30 minutes to 3 hours, and anything older than 15 minutes when the app comes forward. Background refresh checks News alongside usage.
+- News adds Import AI, Interconnects and Latent Space, Techmeme and Hugging Face discussion, Mistral's news, and GitHub, OpenRouter and xAI status. Updates turn nothing on silently: a dismissible card offers the new sources.
+- Being offline isn't a feed failure, and the banner names a feed only when it's gone or has failed for over an hour. The ChatGPT & Codex changelog reads again (it had outgrown its size limit).
+- Skills keeps its last good list for each sort, backs off after a server error, and says community uploads aren't reviewed.
+- Apple Watch keeps and applies a reading the iPhone hands over while its app is closed, or while its iCloud is off or failing. A provider re-checked with unchanged numbers still reaches the Watch.
+- Widgets and complications reload 5 minutes before a reading turns stale. The Live Activity reads "As of …" once its reading is an hour old.
+- A plan sign-in rides out a busy token server (429 or 503) instead of asking to sign in again. The iPhone pauses reading a plan while your Mac reads it, and pull to refresh still reads it.
+- Claude can't be signed in to on the iPhone any more (see below).
+
+The Mac side of #60 (News on its own refresh loop, the size limit, the new sources) is on `main` for the next Mac version; Mac 2.6.0 doesn't have it.
+
+## 2.6.0 for Mac — released 6 November 2026
+
+Mac 2.6.0(1) is [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.6.0) and carries the UI overhaul from #58. The iPhone, widgets and Apple Watch items below shipped in 1.3.0, above.
 
 On every device
 
