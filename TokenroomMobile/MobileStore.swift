@@ -296,9 +296,14 @@ final class MobileStore {
         // Which providers have keys, as the last launch found; read again, off the main thread,
         // on the first refresh that includes keys.
         keyedProviders = (defaults.array(forKey: Keys.keyedProviders) as? [String] ?? []).compactMap(Provider.init(rawValue:))
-        sessionProviders = sessions == nil ? [] : (defaults.array(forKey: Keys.sessionProviders) as? [String] ?? []).compactMap(Provider.init(rawValue:))
+        // A plan taken off the allowlist since the last launch (Claude) isn't one of this iPhone's
+        // from the first pass: widgets, alerts, and iCloud drop it with the next save.
+        let savedSessions = (defaults.array(forKey: Keys.sessionProviders) as? [String] ?? []).compactMap(Provider.init(rawValue:))
+        sessionProviders = sessions == nil ? [] : savedSessions.filter { PhoneConnect.productionAllowlist.contains($0) }
         if sessions == nil {
             defaults.removeObject(forKey: Keys.sessionProviders)
+        } else if sessionProviders != savedSessions {
+            defaults.set(sessionProviders.map(\.rawValue), forKey: Keys.sessionProviders)
         }
         showCachedReadings()
     }

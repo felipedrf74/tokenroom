@@ -4,7 +4,7 @@ A draft for App Store Connect. Provider names appear only in the description, as
 
 ## What's New — 1.3.0
 
-A lighter, calmer Tokenroom on iPhone, widgets and Apple Watch. Colour now means something: percentages stay in ink until a limit is critical, charts are neutral with a dot at your current level, and controls are blue. Provider pages have one title and plain facts. News has fewer boxes, with actions under each title. Welcome starts with one clear step.
+A lighter, calmer Tokenroom on iPhone, widgets and Apple Watch. Colour now means something: percentages stay in ink until a limit is critical, charts are neutral with a dot at your current level, and controls are blue. Provider pages have one title and plain facts. News has fewer boxes, with actions under each title. Welcome starts with one clear step. Claude can no longer be signed in to on iPhone, because Anthropic doesn't allow other apps to offer a Claude login; Claude readings come from Tokenroom for Mac, and a Claude sign-in an earlier version kept is deleted from your iPhone.
 
 ## What's New — 1.2.2
 
@@ -143,7 +143,7 @@ Tokenroom works without an account. To look around quickly: Settings › Sample 
 Real readings come from three places:
 
 1. **Tokenroom for Mac** (free, open source; https://github.com/felipedrf74/tokenroom). It reads usage from the AI tools on the Mac and syncs the readings through the user's own iCloud private database.
-2. **Plan sign-ins on the iPhone** (Settings › Plans): Claude, Codex, Grok Build, Cursor, and Grok Bot. The user signs in on each company's own page (Safari for Claude and Cursor, a short code for Codex and Grok Build; Grok Bot uses the Cursor sign-in). The app only reads usage with the sign-in, from the same endpoints each company's own command-line tool or app uses; the sign-in stays in the iPhone's Keychain and is never synced.
+2. **Plan sign-ins on the iPhone** (Settings › Plans): Codex, Grok Build, Cursor, and Grok Bot. The user signs in on each company's own page (Safari for Cursor, a short code for Codex and Grok Build; Grok Bot uses the Cursor sign-in). Claude has no sign-in on the iPhone; its readings come only from Tokenroom for Mac. The app only reads usage with the sign-in, from the same endpoints each company's own command-line tool or app uses; the sign-in stays in the iPhone's Keychain and is never synced.
 3. **API keys** the user pastes on the iPhone (for example an OpenRouter key, or a GitHub fine-grained token with the Plan permission for Copilot). The app only reads usage and balances with them. Most are read through the provider's documented API; Z.ai, Kimi Code, OpenCode Go, and MiniMax's older Coding Plan are read from the usage endpoints their own tools call, which those providers haven't documented.
 
 The Watch app reads the same iCloud records. Notifications are optional and come from the user's own devices through iCloud. The News tab reads public feeds only. There are no in-app purchases.

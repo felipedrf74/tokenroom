@@ -4,9 +4,24 @@
 |---|---|
 | Author | (owner) |
 | Date | 2026-10-01 |
-| Status | Implemented, then changed by the owner on 2026-10-21 (see below) |
+| Status | Implemented, then changed by the owner on 2026-10-21 and again on 2026-11-07 (see below) |
 | Repo | `felipedrf74/tokenroom` |
 | Scope | Design only. Not an implementation. Not a Mac 2.2.4 change. Not an App Store submission. |
+
+## Decision change, 2026-11-07
+
+The owner reversed the 2026-10-21 decision for Claude. The iPhone no longer offers a Claude sign-in, and no longer keeps or renews a Claude session. Codex, Grok Build, Cursor, and Grok Bot still sign in on the iPhone as described in the 2026-10-21 section. The Mac is unchanged: it still reads and renews Claude in Claude Code's own login, and a Claude reading a Mac relays still shows on the iPhone, widgets, and Watch.
+
+**Why.** Anthropic's legal and compliance page for Claude Code (code.claude.com/docs/en/legal-and-compliance) says Anthropic "does not permit third-party developers to offer Claude.ai login into their own applications", that "developers may not collect, store, or intermediate Claude.ai credentials or session tokens", and that it may enforce this "without prior notice". The iPhone's Claude sign-in did both: it offered a Claude.ai login with Claude Code's own public client id, and it stored the tokens that came back in the iPhone's Keychain. The 2026-10-21 section already called Claude the riskiest of the five; the terms page settles it.
+
+**What changed.**
+
+- `PhoneConnect.productionAllowlist` and `PhoneSignIn.providers` are `[.openai, .grok, .cursor, .grokBot]`. With no live Mac reading, `PhoneConnect.action(for: .claude, …)` is `.needsMac`, and Settings › Plans lists Claude under Needs Tokenroom on a Mac: "Anthropic doesn't allow Claude logins in other apps." A live Mac reading still makes it `.fromMac`.
+- On launch, `RetiredSessionPurge` (TokenroomMobile) runs `PhoneSessionStore.purgeRetired`, which deletes the Claude session item, its recovery item, and any write probe from the iPhone app's Keychain group. Deletes only: no token is read, revoked, or renewed, and no request goes to Anthropic. It never touches a provider still on the allowlist, or any other provider's item. It waits for protected data (the first unlock after a restart) rather than fail before it, runs once a launch, and a second run changes nothing. `MobileStore` drops Claude from the saved `sessionProviders` at launch (and `WidgetRefresher` ignores it there, in case a widget refreshes first), so the iPhone stops publishing its own Claude reading to iCloud, widgets, and alerts on the next pass.
+- Removed as dead code: the Claude paste-the-code flow (`PhoneSignIn.Claude`, `claudeAuthorizeURL`, `claudeCode(fromPasted:)`, `claudeExchangeRequest`, `PhoneSignInClient.finishClaude`, the `emptyCode` and `otherSignIn` failures, `Method.pasteCode`, and `PlanSignInView`'s paste steps), and Claude's cases in the phone's token, renewal, and usage requests. `ClaudeParser`, `ClaudeClient`, and the Mac's renewal stay. `PKCE` stays for Cursor.
+- `PRIVACY.md`, `README.md`, `AGENTS.md`, `docs/app-store.md` (review notes and 1.3.0's What's New), `CHANGELOG.md`, and the `tokenroom-apple` skill say the same.
+
+Where the 2026-10-21 section or the original design below says the iPhone signs in to Claude, this section replaces it.
 
 ## Decision change, 2026-10-21
 

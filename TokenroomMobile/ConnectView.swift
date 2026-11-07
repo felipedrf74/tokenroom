@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// The plans this iPhone reads by itself or can't: Claude, Codex, Grok Build, Cursor, and Grok Bot
-/// sign in here, with each one's own sign-in page (`PhoneSignIn`; Grok Bot rides on the Cursor
-/// sign-in); the rest need Tokenroom on a Mac, or a Mac already sends them. Providers read with a key (Copilot's fine-grained token included) aren't
-/// listed: they're on the key card and in API Keys.
+/// The plans this iPhone reads by itself or can't: Codex, Grok Build, Cursor, and Grok Bot sign in
+/// here, with each one's own sign-in page (`PhoneSignIn`; Grok Bot rides on the Cursor sign-in);
+/// the rest, Claude included, need Tokenroom on a Mac, or a Mac already sends them. Providers read
+/// with a key (Copilot's fine-grained token included) aren't listed: they're on the key card and
+/// in API Keys.
 struct ConnectView: View {
     /// What every plan says in a build that can't keep a sign-in; once is enough.
     private static let commonReason = "Needs Tokenroom on a Mac. This build of Tokenroom can't keep a sign-in on this iPhone."
@@ -70,7 +71,7 @@ struct ConnectView: View {
                         }
                         .foregroundStyle(.primary)
                     }
-                    SettingsDisclosure("How These Sign-Ins Work", text: "Tokenroom reads these plans the way their own apps and command-line tools do, which those companies don't document for other apps. Tokenroom isn't affiliated with Anthropic, OpenAI, xAI, or Cursor.")
+                    SettingsDisclosure("How These Sign-Ins Work", text: "Tokenroom reads these plans the way their own apps and command-line tools do, which those companies don't document for other apps. Tokenroom isn't affiliated with OpenAI, xAI, or Cursor.")
                 } header: {
                     Text("Sign in on this iPhone")
                 } footer: {
@@ -101,7 +102,7 @@ struct ConnectView: View {
                 } footer: {
                     Text(needsMac.contains { if case .needsMac(Self.commonReason) = $0.action { true } else { false } }
                         ? "This build of Tokenroom can't keep a sign-in on this iPhone. Install Tokenroom on a Mac with the same Apple Account, and usage shows here."
-                        : "These plans keep their login inside a tool on a Mac, and don't offer a usage API to other apps. Install Tokenroom on a Mac with the same Apple Account, and their usage shows here.")
+                        : "These plans keep their login inside a tool on a Mac, and can't be read by another app on this iPhone. Install Tokenroom on a Mac with the same Apple Account, and their usage shows here.")
                 }
             }
             Section {
@@ -128,7 +129,6 @@ struct ConnectView: View {
     /// What a plan's sign-in row says before signing in.
     static func pitch(for provider: Provider) -> String {
         switch provider {
-        case .claude: "Pro or Max limits. Sign in on Claude's page, then paste the code it shows."
         case .openai: "ChatGPT plan limits for Codex. Approve a code on OpenAI's page."
         case .grok: "SuperGrok limits for Grok Build. Approve a code on xAI's page."
         case .cursor: "Cursor plan usage. Sign in on Cursor's page, with Grok or X if that's your account. Reads Grok Bot too."

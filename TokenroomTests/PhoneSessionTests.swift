@@ -130,8 +130,105 @@ final class PhoneSessionTests: XCTestCase {
     // MARK: Allowlist
 
     func testProductionAllowlistIsThePlansThatSignIn() {
-        XCTAssertEqual(PhoneConnect.productionAllowlist, [.claude, .openai, .grok, .cursor, .grokBot])
+        XCTAssertEqual(PhoneConnect.productionAllowlist, [.openai, .grok, .cursor, .grokBot])
         XCTAssertEqual(PhoneConnect.productionAllowlist, Set(PhoneSignIn.providers), "Widgets compile the literal; keep it equal")
+        XCTAssertFalse(PhoneConnect.productionAllowlist.contains(.claude), "Anthropic's terms don't allow other apps to offer a Claude.ai login")
+        XCTAssertTrue(PhoneConnect.productionAllowlist.isDisjoint(with: PhoneSessionStore.retiredProviders), "A retired plan is never signed in to")
+    }
+
+    // MARK: Retired plans
+
+    func testAClaudeSessionAnEarlierVersionKeptIsDeletedWithNoRequestAndNothingElseTouched() throws {
+        let keychain = FakeKeychain()
+        let store = makeStore(keychain)
+        // What an earlier version could leave: Claude's session, a renewal's recovery item, and a
+        // write probe that couldn't be deleted.
+        try store.save(session("claude", expiresIn: 3600), for: .claude, now: now)
+        XCTAssertTrue(store.saveRecovery(session("claude-renewed", expiresIn: 3600), for: .claude))
+        var probe = store.query(for: .claude)
+        probe[kSecAttrAccount as String] = PhoneSessionStore.probeAccount
+        probe[kSecValueData as String] = Data("ok".utf8)
+        keychain.put(probe)
+        // Every plan still signed in to here, each mid-renewal with a recovery item, and a pasted key.
+        let kept = PhoneConnect.productionAllowlist.sorted { $0.rawValue < $1.rawValue }
+        for provider in kept {
+            try store.save(session(provider.rawValue, expiresIn: 3600), for: provider, now: now)
+            XCTAssertTrue(store.saveRecovery(session("\(provider.rawValue)-renewed", expiresIn: 3600), for: provider))
+        }
+        keychain.put([
+            kSecAttrService as String: "app.tokenroom.key.openrouter",
+            kSecAttrAccount as String: "default",
+            kSecAttrAccessGroup as String: sharedGroup,
+            kSecValueData as String: Data("tr-key".utf8),
+        ])
+        let before = keychain.count
+        // Anything sent through Tokenroom's HTTP session is caught here.
+        StubURLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubURLProtocol.self]
+        TokenroomHTTP.overrideSession(URLSession(configuration: configuration))
+        defer {
+            TokenroomHTTP.overrideSession(nil)
+            StubURLProtocol.reset()
+        }
+        let claudeRequests = {
+            StubURLProtocol.requests.filter { request in
+                let text = [request.url?.absoluteString ?? "", request.value(forHTTPHeaderField: "Authorization") ?? "",
+                            String(decoding: request.httpBody ?? Data(), as: UTF8.self)].joined(separator: " ")
+                return ["anthropic", "claude"].contains { text.localizedCaseInsensitiveContains($0) }
+            }
+        }
+        let recoveryService = store.recoveryQuery(for: .claude)[kSecAttrService as String] as? String
+
+        for run in 1...2 {
+            keychain.forgetCalls()
+            XCTAssertTrue(store.purgeRetired(), "Run \(run)")
+            // Only deletes, only Claude's own items: no token is read, so none can be sent.
+            XCTAssertFalse(keychain.calls.isEmpty)
+            for call in keychain.calls {
+                XCTAssertEqual(call.operation, .delete, "Run \(run)")
+                let service = call.query[kSecAttrService as String] as? String
+                let account = call.query[kSecAttrAccount as String] as? String
+                XCTAssertTrue(service == store.service(for: .claude) || (service == recoveryService && account == Provider.claude.rawValue),
+                              "Run \(run): \(service ?? "") \(account ?? "")")
+                XCTAssertEqual(call.query[kSecAttrAccessGroup as String] as? String, group)
+            }
+            XCTAssertEqual(keychain.count, before - 3, "Run \(run): the session, its recovery item, and the probe; nothing more")
+            XCTAssertNil(keychain.item(service: store.service(for: .claude), account: PhoneSessionStore.account, group: group))
+            XCTAssertNil(keychain.item(service: store.service(for: .claude), account: PhoneSessionStore.probeAccount, group: group))
+            XCTAssertNil(keychain.item(service: recoveryService ?? "", account: Provider.claude.rawValue, group: group))
+            for provider in kept {
+                XCTAssertEqual(store.session(for: provider)?.refreshToken, "refresh-\(provider.rawValue)", "Run \(run): \(provider.rawValue)")
+                XCTAssertEqual(store.takeRecovery(for: provider)?.refreshToken, "refresh-\(provider.rawValue)-renewed", "Run \(run): \(provider.rawValue)")
+            }
+            XCTAssertNotNil(keychain.item(service: "app.tokenroom.key.openrouter", account: "default", group: sharedGroup))
+            XCTAssertEqual(claudeRequests().count, 0, "Run \(run): no revoke, no renewal, no request")
+        }
+        XCTAssertNil(store.session(for: .claude))
+        XCTAssertNil(store.takeRecovery(for: .claude))
+    }
+
+    func testAPurgeNeverTouchesAPlanStillSignedInToAndSaysWhenAnItemStays() throws {
+        let keychain = FakeKeychain()
+        let store = makeStore(keychain)
+        for provider in PhoneConnect.productionAllowlist {
+            try store.save(session(provider.rawValue, expiresIn: 3600), for: provider, now: now)
+        }
+        keychain.forgetCalls()
+        // Even when asked to, by mistake.
+        XCTAssertTrue(store.purgeRetired(Array(PhoneConnect.productionAllowlist)))
+        XCTAssertTrue(keychain.calls.isEmpty)
+        for provider in PhoneConnect.productionAllowlist {
+            XCTAssertEqual(store.session(for: provider)?.refreshToken, "refresh-\(provider.rawValue)", provider.rawValue)
+        }
+        // A locked Keychain: reported, so a later launch tries again, and nothing else is changed.
+        try store.save(session("claude", expiresIn: 3600), for: .claude, now: now)
+        keychain.failure = { operation, _ in operation == .delete ? errSecInteractionNotAllowed : nil }
+        XCTAssertFalse(store.purgeRetired())
+        keychain.failure = { _, _ in nil }
+        XCTAssertNotNil(store.metadata(for: .claude))
+        XCTAssertTrue(store.purgeRetired())
+        XCTAssertNil(store.metadata(for: .claude))
     }
 
     func testTheClientRefusesEveryProviderOutsideTheAllowlistWithoutARequest() async {

@@ -1,11 +1,11 @@
 import SwiftUI
 import UIKit
 
-/// Signs this iPhone in to a plan on the vendor's own page. Claude: open its page in Safari, sign
-/// in, and paste back the code it shows. Codex and Grok Build: show a short code, open the
-/// vendor's page to approve it, and finish on their own once it's approved. Cursor and Grok Bot:
-/// open Cursor's page, sign in (Grok and X accounts work there), and finish on their own. The session is saved
-/// to this iPhone's Keychain; nothing typed here is a password.
+/// Signs this iPhone in to a plan on the vendor's own page. Codex and Grok Build: show a short
+/// code, open the vendor's page to approve it, and finish on their own once it's approved. Cursor
+/// and Grok Bot: open Cursor's page, sign in (Grok and X accounts work there), and finish on their
+/// own. The session is saved to this iPhone's Keychain; nothing typed here is a password. Claude
+/// has no sign-in here (`PhoneSignIn`).
 struct PlanSignInView: View {
     var store: MobileStore
     var provider: Provider
@@ -21,19 +21,14 @@ struct PlanSignInView: View {
     }
 
     @State private var phase: Phase = .idle
-    @State private var pkce = PhoneSignIn.PKCE.random()
-    @State private var pasted = ""
-    @State private var openedPage = false
     @State private var copied = false
     @State private var work: Task<Void, Never>?
-    @FocusState private var codeFocused: Bool
     private let client = PhoneSignInClient()
 
     var body: some View {
         NavigationStack {
             Form {
                 switch PhoneSignIn.method(for: provider) {
-                case .pasteCode: pasteCodeSteps
                 case .deviceCode: deviceCodeSteps
                 case nil: EmptyView()
                 }
@@ -48,7 +43,6 @@ struct PlanSignInView: View {
                 }
             }
             .navigationTitle("Sign In to \(PhoneSignIn.planName(for: provider))")
-            .scrollDismissesKeyboard(.interactively)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -65,67 +59,6 @@ struct PlanSignInView: View {
             }
             .onDisappear { work?.cancel() }
             .interactiveDismissDisabled(phase == .finishing)
-        }
-    }
-
-    // MARK: Claude
-
-    @ViewBuilder private var pasteCodeSteps: some View {
-        Section {
-            Button(openedPage ? "Open Claude's Page Again" : "Open Claude's Sign-In Page") {
-                openedPage = true
-                openURL(PhoneSignIn.claudeAuthorizeURL(pkce))
-            }
-        } header: {
-            Text("1. Sign in")
-        } footer: {
-            Text("Safari opens claude.com. Sign in with the account your plan is on, then tap Authorize. Claude shows a code.")
-        }
-        Section {
-            TextField("Paste the code", text: $pasted)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .font(.body.monospaced())
-                .focused($codeFocused)
-                .submitLabel(.go)
-                .onSubmit {
-                    if !pasted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { finishClaude() }
-                }
-                .disabled(phase == .finishing)
-            PasteButton(payloadType: String.self) { strings in
-                if let first = strings.first { pasted = first }
-            }
-            Button(phase == .finishing ? "Connecting…" : "Connect") { finishClaude() }
-                .disabled(pasted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || phase == .finishing)
-        } header: {
-            Text("2. Paste the code")
-        } footer: {
-            Text("Copy the code Claude shows, come back here, and paste it. Tokenroom uses it once, for a sign-in that only reads your plan's usage.")
-        }
-    }
-
-    private func finishClaude() {
-        // The keyboard goes, so an error below the field shows.
-        codeFocused = false
-        let text = pasted
-        let pkce = pkce
-        phase = .finishing
-        work = Task {
-            do {
-                let session = try await client.finishClaude(pasted: text, pkce: pkce)
-                try await save(session)
-            } catch let failure as PhoneSignInClient.Failure {
-                phase = .failed(failure.message(for: provider))
-                if failure == .otherSignIn || failure == .refused {
-                    // The code was used, or belonged to another page: the next one starts afresh.
-                    self.pkce = .random()
-                    openedPage = false
-                }
-            } catch is CancellationError {
-                phase = .idle
-            } catch {
-                phase = .failed("Couldn't save the session, so it wasn't started.")
-            }
         }
     }
 

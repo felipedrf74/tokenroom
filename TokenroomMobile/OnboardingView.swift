@@ -83,7 +83,7 @@ struct OnboardingView: View {
                         NavigationLink {
                             ConnectView(store: store)
                         } label: {
-                            OptionRow(symbol: "person.badge.key", title: "Sign in to a plan", text: "Claude, Codex, Cursor, and more.")
+                            OptionRow(symbol: "person.badge.key", title: "Sign in to a plan", text: "Codex, Grok Build, Cursor, and more.")
                         }
                         Divider().padding(.leading, 56)
                     }

@@ -1,31 +1,32 @@
 import CryptoKit
 import Foundation
 
-/// The plans this iPhone signs in to by itself, with the vendor's own sign-in page: Claude (sign
-/// in in Safari, then paste the code the page shows), Codex and Grok Build (approve a short code
-/// on the vendor's page while Tokenroom waits), and Cursor and Grok Bot (sign in on Cursor's page,
-/// which takes a Grok or X account too, while Tokenroom waits). Grok Bot runs on the Cursor
-/// account, so one Cursor sign-in reads both (`sessionOwner`). The session that comes back is
-/// Tokenroom's own, kept in `PhoneSessionStore`; it isn't a copy of a CLI's or an app's login,
-/// and nothing here reads one.
+/// The plans this iPhone signs in to by itself, with the vendor's own sign-in page: Codex and
+/// Grok Build (approve a short code on the vendor's page while Tokenroom waits), and Cursor and
+/// Grok Bot (sign in on Cursor's page, which takes a Grok or X account too, while Tokenroom
+/// waits). Grok Bot runs on the Cursor account, so one Cursor sign-in reads both
+/// (`sessionOwner`). The session that comes back is Tokenroom's own, kept in
+/// `PhoneSessionStore`; it isn't a copy of a CLI's or an app's login, and nothing here reads one.
+///
+/// Claude isn't here: Anthropic's terms don't allow other apps to offer a Claude.ai login or to
+/// keep its tokens, so a Claude reading comes only from a Mac, and a Claude session an earlier
+/// version kept is deleted on launch (`PhoneSessionStore.purgeRetired`).
 ///
 /// These are the same public clients, token hosts, and usage endpoints the Mac reads through each
-/// tool's login (`OAuthRefresh`, `ClaudeClient`, `OpenAIClient`, `GrokClient`, `CursorClient`,
-/// `GrokBotClient`). None of them is documented for other apps, so any of them can change or be
-/// refused without notice.
+/// tool's login (`OAuthRefresh`, `OpenAIClient`, `GrokClient`, `CursorClient`, `GrokBotClient`).
+/// None of them is documented for other apps, so any of them can change or be refused without
+/// notice.
 ///
 /// Pure: requests in, answers parsed. `PhoneSignInClient` sends them.
 enum PhoneSignIn {
     /// How a provider's sign-in goes.
     enum Method: Sendable, Equatable {
-        /// Sign in on the vendor's page in Safari, then paste the code it shows.
-        case pasteCode
         /// Approve a short code, or just sign in, on the vendor's page while Tokenroom waits.
         case deviceCode
     }
 
     /// The plans the iPhone signs in to, in the order the connect screen lists them.
-    static let providers: [Provider] = [.claude, .openai, .grok, .cursor, .grokBot]
+    static let providers: [Provider] = [.openai, .grok, .cursor, .grokBot]
 
     /// Whose session a plan reads with: Grok Bot runs on the Cursor account, so it uses Cursor's.
     /// A session is kept once, under its owner.
@@ -33,10 +34,9 @@ enum PhoneSignIn {
         provider == .grokBot ? .cursor : provider
     }
 
-    /// Whose page the person signs in on: "Claude", "OpenAI", "xAI", "Cursor".
+    /// Whose page the person signs in on: "OpenAI", "xAI", "Cursor".
     static func vendorName(for provider: Provider) -> String {
         switch sessionOwner(for: provider) {
-        case .claude: "Claude"
         case .openai: "OpenAI"
         case .grok: "xAI"
         case .cursor: "Cursor"
@@ -84,29 +84,12 @@ enum PhoneSignIn {
 
     static func method(for provider: Provider) -> Method? {
         switch provider {
-        case .claude: .pasteCode
         case .openai, .grok, .cursor, .grokBot: .deviceCode
         default: nil
         }
     }
 
     // MARK: Vendors
-
-    enum Claude {
-        static let clientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-        static let authorizeURL = URL(string: "https://claude.com/cai/oauth/authorize")!
-        /// The page that shows the code to paste. It has to match on the exchange.
-        static let redirectURL = URL(string: "https://platform.claude.com/oauth/code/callback")!
-        static let tokenURLs = [
-            URL(string: "https://platform.claude.com/v1/oauth/token")!,
-            URL(string: "https://console.anthropic.com/v1/oauth/token")!,
-        ]
-        /// Reading plan usage needs only the profile scope: no inference, no API keys.
-        static let scope = "user:profile"
-        static let usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
-        /// What the Mac sends when it can't tell Claude Code's version.
-        static let userAgent = "claude-cli (external, cli)"
-    }
 
     enum Codex {
         static let clientID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -181,60 +164,6 @@ enum PhoneSignIn {
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
     }
-
-    // MARK: Claude: paste the code
-
-    /// Claude's sign-in page, which ends on a page showing a code to paste back.
-    static func claudeAuthorizeURL(_ pkce: PKCE) -> URL {
-        var components = URLComponents(url: Claude.authorizeURL, resolvingAgainstBaseURL: false)!
-        components.queryItems = [
-            URLQueryItem(name: "code", value: "true"),
-            URLQueryItem(name: "client_id", value: Claude.clientID),
-            URLQueryItem(name: "response_type", value: "code"),
-            URLQueryItem(name: "redirect_uri", value: Claude.redirectURL.absoluteString),
-            URLQueryItem(name: "scope", value: Claude.scope),
-            URLQueryItem(name: "code_challenge", value: pkce.challenge),
-            URLQueryItem(name: "code_challenge_method", value: "S256"),
-            URLQueryItem(name: "state", value: pkce.state),
-        ]
-        return components.url!
-    }
-
-    enum PastedCode: Equatable, Sendable {
-        case code(String)
-        case empty
-        /// The state after `#` belongs to another sign-in (an older page, another device).
-        case otherSignIn
-    }
-
-    /// The code from what was pasted: `code#state` as the page shows it, the code alone, or the
-    /// page's own address with `code` and `state` in its query.
-    static func claudeCode(fromPasted text: String, state: String) -> PastedCode {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let components = URLComponents(string: trimmed), components.scheme == "https",
-           let code = components.queryItems?.first(where: { $0.name == "code" })?.value, !code.isEmpty {
-            let pastedState = components.queryItems?.first { $0.name == "state" }?.value
-            if let pastedState, !pastedState.isEmpty, pastedState != state { return .otherSignIn }
-            return .code(code)
-        }
-        let parts = trimmed.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
-        guard let code = parts.first?.trimmingCharacters(in: .whitespaces), !code.isEmpty, !code.contains(" ") else { return .empty }
-        if parts.count == 2, !parts[1].isEmpty, parts[1] != state { return .otherSignIn }
-        return .code(code)
-    }
-
-    static func claudeExchangeRequest(code: String, pkce: PKCE) -> URLRequest {
-        jsonRequest(Claude.tokenURLs[0], [
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": Claude.redirectURL.absoluteString,
-            "client_id": Claude.clientID,
-            "code_verifier": pkce.verifier,
-            "state": pkce.state,
-        ], headers: claudeHeaders)
-    }
-
-    private static let claudeHeaders = ["User-Agent": Claude.userAgent, "x-app": "cli"]
 
     // MARK: Codex and Grok Build: approve a code
 
@@ -333,7 +262,6 @@ enum PhoneSignIn {
         let domains: [String] = switch provider {
         case .openai: ["openai.com", "chatgpt.com"]
         case .grok: ["x.ai", "grok.com"]
-        case .claude: ["claude.ai", "claude.com", "anthropic.com"]
         case .cursor, .grokBot: ["cursor.com", "cursor.sh"]
         default: []
         }
@@ -420,7 +348,6 @@ enum PhoneSignIn {
 
     static func clientID(for provider: Provider) -> String? {
         switch sessionOwner(for: provider) {
-        case .claude: Claude.clientID
         case .openai: Codex.clientID
         case .grok: Grok.clientID
         case .cursor: Cursor.clientID
@@ -430,7 +357,6 @@ enum PhoneSignIn {
 
     static func tokenURLs(for provider: Provider) -> [URL] {
         switch sessionOwner(for: provider) {
-        case .claude: Claude.tokenURLs
         case .openai: [Codex.tokenURL]
         case .grok: [Grok.tokenURL]
         case .cursor: [Cursor.tokenURL]
@@ -457,8 +383,6 @@ enum PhoneSignIn {
             switch provider {
             case .grok:
                 formRequest(url, [("grant_type", "refresh_token"), ("refresh_token", session.refreshToken), ("client_id", session.clientID)])
-            case .claude:
-                jsonRequest(url, ["grant_type": "refresh_token", "refresh_token": session.refreshToken, "client_id": session.clientID], headers: claudeHeaders)
             case .cursor, .grokBot:
                 jsonRequest(url, ["grant_type": "refresh_token", "refresh_token": session.refreshToken, "client_id": session.clientID])
             default:
@@ -518,10 +442,6 @@ enum PhoneSignIn {
         var headers: [String: String]
         let url: URL
         switch provider {
-        case .claude:
-            url = Claude.usageURL
-            headers = claudeHeaders
-            headers["anthropic-beta"] = "oauth-2025-04-20"
         case .openai:
             url = Codex.usageURL
             headers = ["OpenAI-Beta": "codex-1", "originator": "Tokenroom"]
@@ -547,7 +467,6 @@ enum PhoneSignIn {
 
     static func snapshot(provider: Provider, from data: Data, fetchedAt: Date) throws -> QuotaSnapshot {
         switch provider {
-        case .claude: try ClaudeParser.snapshot(from: data, fetchedAt: fetchedAt)
         case .openai: try OpenAIParser.snapshot(from: data, fetchedAt: fetchedAt)
         case .grok: try GrokParser.snapshot(from: data, fetchedAt: fetchedAt)
         case .cursor: try CursorParser.snapshot(from: data, fetchedAt: fetchedAt)

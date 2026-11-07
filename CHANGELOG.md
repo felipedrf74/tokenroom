@@ -23,6 +23,7 @@ iPhone, widgets and Apple Watch
 - News drops the status card, keeps its main story to two lines, and puts actions under the title.
 - Widgets show the pace mark, and the large one uses its full height. On the Lock Screen and tinted watch faces, meters are ink, so a critical one stays bright.
 - Apple Watch shows the title in ink and leads a provider's page with its reading, then the plan.
+- Claude can't be signed in to on the iPhone any more: Anthropic's terms don't allow other apps to offer a Claude.ai login or keep its tokens. Settings › Plans lists Claude under Needs Tokenroom on a Mac, a Claude reading a Mac sends still shows, and a Claude sign-in an earlier version kept is deleted from the iPhone's Keychain on launch, with no request to Anthropic. Codex, Grok Build, Cursor and Grok Bot still sign in on the iPhone. The Mac is unchanged.
 
 ## 2.5.3 for Mac — released 2 November 2026
 

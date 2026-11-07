@@ -1,5 +1,6 @@
 import Security
 import Synchronization
+import UIKit
 import XCTest
 @testable import TokenroomMobile
 
@@ -238,6 +239,76 @@ final class MobileSessionTests: XCTestCase {
         await relaunched.refresh(force: true, now: now.addingTimeInterval(600))
         XCTAssertEqual(vendor.calls(.cursor), 1)
     }
+
+    // MARK: Claude, retired
+
+    func testAClaudeSessionAnEarlierVersionKeptIsNeverReadOrRenewed() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let keychain = MemoryKeychain()
+        try keychain.store.save(cursorSession(), for: .cursor, now: now)
+        // What 1.2's Claude sign-in left: its session, and Claude in the widgets' list.
+        try keychain.store.save(PhoneSession(accessToken: "claude-access", refreshToken: "claude-refresh", expiresAt: now.addingTimeInterval(60),
+                                             tokenURL: URL(string: "https://example.invalid/token")!, clientID: "retired-client"), for: .claude, now: now)
+        defaults.set(["claude", "cursor", "grokBot"], forKey: MobileStore.Keys.sessionProviders)
+        let vendor = Vendor(now: now)
+        // `makeStore` fails the test if anything is renewed.
+        let store = makeStore(defaults: defaults, folder: folder, keychain: keychain, vendor: vendor)
+        XCTAssertEqual(store.sessionProviders, [.cursor, .grokBot], "Not this iPhone's from the first pass")
+        XCTAssertEqual(defaults.stringArray(forKey: MobileStore.Keys.sessionProviders), ["cursor", "grokBot"], "Nor the widgets'")
+
+        await store.refresh(force: true, now: now)
+
+        XCTAssertEqual(vendor.calls(.claude), 0)
+        XCTAssertFalse(vendor.authorizations.contains("Bearer claude-access"))
+        XCTAssertEqual(store.sessionProviders, [.cursor, .grokBot])
+        XCTAssertEqual(defaults.stringArray(forKey: MobileStore.Keys.sessionProviders), ["cursor", "grokBot"])
+        XCTAssertFalse(store.readings.contains { $0.id == "claude" && $0.origin == .thisPhone })
+        XCTAssertEqual(store.connectList(now: now).first { $0.provider == .claude }?.action, .needsMac(reason: PhoneConnect.reason(for: .claude)))
+    }
+
+    func testTheRetiredSessionPurgeWaitsForProtectedDataAndRunsOnce() async throws {
+        let keychain = MemoryKeychain()
+        try keychain.store.save(cursorSession(), for: .cursor, now: now)
+        try keychain.store.save(PhoneSession(accessToken: "claude-access", refreshToken: "claude-refresh", expiresAt: now.addingTimeInterval(3600),
+                                             tokenURL: URL(string: "https://example.invalid/token")!, clientID: "retired-client"), for: .claude, now: now)
+        let center = NotificationCenter()
+        let runs = RunCount()
+        let store = keychain.store
+        let purge = RetiredSessionPurge(center: center) {
+            _ = store.purgeRetired()
+            runs.add()
+        }
+
+        // Before the first unlock: nothing yet.
+        purge.start(protectedDataAvailable: false)
+        purge.start(protectedDataAvailable: false)
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(runs.value, 0)
+        XCTAssertNotNil(keychain.store.metadata(for: .claude))
+
+        center.post(name: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil)
+        for _ in 0..<200 where runs.value == 0 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(runs.value, 1)
+        XCTAssertNil(keychain.store.metadata(for: .claude))
+        XCTAssertEqual(keychain.store.session(for: .cursor)?.refreshToken, "cursor-refresh", "Other plans keep their sign-ins")
+
+        // Once a launch: another unlock, or another start, doesn't run it again.
+        center.post(name: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil)
+        purge.start(protectedDataAvailable: true)
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(runs.value, 1)
+
+        // Unlocked at launch: at once.
+        let unlocked = RetiredSessionPurge(center: center) { runs.add() }
+        unlocked.start(protectedDataAvailable: true)
+        for _ in 0..<200 where runs.value == 1 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(runs.value, 2)
+    }
 }
 
 // MARK: Stand-ins
@@ -293,6 +364,13 @@ private final class Vendor: Sendable {
         let window = QuotaWindow(id: "cycle", kind: .billingCycle, title: "This cycle", usedPercent: 40, resetsAt: now.addingTimeInterval(10 * 86_400))
         return Result { try QuotaSnapshot.headlined(by: [window], provider: provider, fetchedAt: now) }.mapError { _ in .parse }
     }
+}
+
+/// How many times a closure ran, from any thread.
+private final class RunCount: Sendable {
+    private let count = Mutex(0)
+    func add() { count.withLock { $0 += 1 } }
+    var value: Int { count.withLock { $0 } }
 }
 
 /// Shut until opened, then open for good.

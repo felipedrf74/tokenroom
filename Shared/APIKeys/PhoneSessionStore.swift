@@ -37,7 +37,8 @@ struct PhoneSessionMetadata: Codable, Equatable, Sendable {
 
 /// Phone sessions, one Keychain item per provider, in the iPhone app's own access group.
 ///
-/// Written by a sign-in on this iPhone, for the plans in `PhoneConnect.productionAllowlist`. Same accessibility and
+/// Written by a sign-in on this iPhone, for the plans in `PhoneConnect.productionAllowlist`; a
+/// plan taken off it (`retiredProviders`) has its items deleted on launch. Same accessibility and
 /// not-synchronizable flags as `APIKeyStore` on the iPhone, so a session stays on this device
 /// and needs it unlocked once since starting. The Watch doesn't compile this file, and the
 /// widget extension doesn't either (a membership exception in the project), and isn't entitled
@@ -267,6 +268,38 @@ struct PhoneSessionStore: Sendable {
         let status = keychain.delete(query(for: provider))
         deleteRecovery(for: provider)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw SessionError.keychain(status) }
+    }
+
+    // MARK: Retired plans
+
+    /// Plans the iPhone signed in to once and no longer does. Their items are deleted on launch
+    /// (`purgeRetired`). Claude, since 2026-11-07: Anthropic's terms don't allow other apps to
+    /// offer a Claude.ai login or to keep its tokens (docs/iphone-login-without-a-mac.md).
+    static let retiredProviders: [Provider] = [.claude]
+
+    /// Deletes each retired plan's session item, its recovery item, and any probe `canReplace`
+    /// left behind. Only deletes, each by its exact query: no token is read, revoked, or renewed,
+    /// and nothing is sent. A plan still signed in to here (on the allowlist, or the owner of a
+    /// session one reads with) is never touched, and neither is any other provider's item.
+    /// Running it again finds nothing and changes nothing.
+    /// - Returns: false when an item was there and couldn't be deleted now (locked, busy); a
+    ///   later launch tries again.
+    @discardableResult
+    func purgeRetired(_ providers: [Provider] = Self.retiredProviders) -> Bool {
+        let inUse = Set(PhoneConnect.productionAllowlist.map(PhoneSignIn.sessionOwner)).union(PhoneConnect.productionAllowlist)
+        var cleared = true
+        for provider in providers where !inUse.contains(provider) {
+            let items = [
+                query(for: provider),
+                recoveryQuery(for: provider),
+                base(service: service(for: provider), account: Self.probeAccount),
+            ]
+            for item in items {
+                let status = keychain.delete(item)
+                if status != errSecSuccess && status != errSecItemNotFound { cleared = false }
+            }
+        }
+        return cleared
     }
 
     // MARK: Private
