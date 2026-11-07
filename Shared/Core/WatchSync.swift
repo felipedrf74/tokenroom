@@ -48,6 +48,15 @@ enum WatchHandoffAcceptance {
         case drop
     }
 
+    /// Where the gate closes when a cold launch's account check finds no account. The first
+    /// no-account this Watch ever records (no cutoff yet) closes just before the handover it holds:
+    /// that came from its paired iPhone, and with iCloud off it's what the Watch is meant to show.
+    /// Any other time it closes at `now`, so nothing saved before a sign-out survives it.
+    static func signOutCutoff(now: Date, recordedCutoff: Date?, held: ReadingCache?) -> Date {
+        guard recordedCutoff == nil, let held, !held.isSample, held.savedAt <= now else { return now }
+        return held.savedAt.addingTimeInterval(-1)
+    }
+
     static func decide(_ cache: ReadingCache, validated: Bool, account: WatchAccountKnowledge, signedOutAt: Date?) -> Decision {
         guard !cache.isSample, cache.v <= ReadingCache.version else { return .drop }
         if let signedOutAt, cache.savedAt <= signedOutAt { return .drop }

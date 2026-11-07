@@ -79,10 +79,16 @@ struct SyncHealth: Codable, Equatable, Sendable {
 enum SyncHealthLog {
     private static let logger = Logger(subsystem: "app.tokenroom", category: "sync")
 
+    /// The main actor and WatchConnectivity's queue both record: one load-change-save at a time,
+    /// so neither drops the other's entry.
+    private static let lock = NSLock()
+
     static func record(_ channel: SyncHealth.Channel, _ code: SyncHealth.Code, in defaults: UserDefaults, at date: Date = .now) {
+        lock.lock()
         var health = SyncHealth.load(from: defaults)
         health.record(channel, code, at: date)
         health.save(to: defaults)
+        lock.unlock()
         if code == .ok {
             logger.debug("\(channel.rawValue, privacy: .public) \(code.rawValue, privacy: .public)")
         } else {

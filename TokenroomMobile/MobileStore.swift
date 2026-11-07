@@ -1474,8 +1474,9 @@ final class MobileStore {
     /// if this one runs out of time, then the relay and this iPhone's keys.
     func backgroundRefresh() async {
         await scheduleBackgroundRefresh()
-        SyncHealthLog.record(.backgroundRefresh, .ok, in: defaults)
         await refresh(force: true)
+        // After it ran: a run the system cut short isn't recorded as one that went well.
+        SyncHealthLog.record(.backgroundRefresh, Task.isCancelled ? .timedOut : .ok, in: defaults)
     }
 
     /// A silent push: a Mac sent new readings. Returns whether what this iPhone shows changed.

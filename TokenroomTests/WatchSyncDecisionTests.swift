@@ -49,6 +49,37 @@ final class WatchSyncDecisionTests: XCTestCase {
         XCTAssertEqual(WatchHandoffAcceptance.decide(handover, validated: true, account: .unknown, signedOutAt: nil), .apply)
     }
 
+    /// A Watch with iCloud off from the start: its first no-account closes the gate just before
+    /// the iPhone handover it holds, so that handover is shown; a later sign-out closes at once.
+    func testTheFirstNoAccountKeepsTheIPhonesHeldHandover() {
+        let held = cache(savedAt: now.addingTimeInterval(-60), [provider("claude", checked: now)])
+        let first = WatchHandoffAcceptance.signOutCutoff(now: now, recordedCutoff: nil, held: held)
+        XCTAssertLessThan(first, held.savedAt)
+        XCTAssertEqual(WatchHandoffAcceptance.decide(held, validated: false, account: .noAccount, signedOutAt: first), .apply)
+        let earlier = now.addingTimeInterval(-3600)
+        XCTAssertEqual(WatchHandoffAcceptance.signOutCutoff(now: now, recordedCutoff: earlier, held: held), now,
+                       "A Watch that recorded a sign-out before closes at once")
+        XCTAssertEqual(WatchHandoffAcceptance.decide(held, validated: false, account: .noAccount,
+                                                     signedOutAt: WatchHandoffAcceptance.signOutCutoff(now: now, recordedCutoff: earlier, held: held)), .drop)
+        XCTAssertEqual(WatchHandoffAcceptance.signOutCutoff(now: now, recordedCutoff: nil, held: nil), now, "Nothing held: closes now")
+        var sample = held
+        sample.isSample = true
+        XCTAssertEqual(WatchHandoffAcceptance.signOutCutoff(now: now, recordedCutoff: nil, held: sample), now, "Sample readings never move it")
+    }
+
+    /// Records from two queues at once each keep their entry.
+    func testSyncHealthRecordsFromTwoQueuesKeepBoth() {
+        let suite = "tokenroom.tests.synchealth.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        DispatchQueue.concurrentPerform(iterations: 200) { index in
+            SyncHealthLog.record(index.isMultiple(of: 2) ? .handoffSend : .cloudRead, .ok, in: defaults, at: now)
+        }
+        let health = SyncHealth.load(from: defaults)
+        XCTAssertNotNil(health.entry(.handoffSend))
+        XCTAssertNotNil(health.entry(.cloudRead))
+    }
+
     func testWithoutAnAccountOrAfterAFailedReadOnlyHandoversSinceTheSignOutApply() {
         let cutoff = now
         let before = cache(savedAt: cutoff.addingTimeInterval(-1), [provider("claude", checked: now)])

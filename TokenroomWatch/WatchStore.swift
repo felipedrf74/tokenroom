@@ -198,7 +198,9 @@ final class WatchStore {
         accountGate.signOut(at: date)
         WatchCacheAccess.confirmNoAccount(in: AppGroup.defaults, at: date)
         accountGate.note(.noAccount)
-        clearPendingPhone()
+        // A held handover saved after the cutoff (the first sign-out a Watch records closes just
+        // before it, `WatchHandoffAcceptance.signOutCutoff`) is kept for `applyPendingPhone`.
+        if pendingPhone.map({ $0.savedAt <= date }) != false { clearPendingPhone() }
         problem = .noAccount
         cache = ReadingCache(savedAt: date, isSample: false, items: [])
         if let cacheURL, let cache { try? cache.save(to: cacheURL) }
@@ -330,7 +332,7 @@ final class WatchStore {
         guard revision == accountRevision, currentCutoff == cutoff else { return }
         switch check {
         case .noAccount:
-            confirmNoAccount(at: .now)
+            confirmNoAccount(at: WatchHandoffAcceptance.signOutCutoff(now: .now, recordedCutoff: cutoff, held: pendingPhone))
         case .available, .failed, .unavailable:
             WatchCacheAccess.note(check, in: AppGroup.defaults)
             accountGate.note(WatchAccountKnowledge(check))
@@ -345,8 +347,9 @@ final class WatchStore {
         link.requestOpenConnect()
     }
 
-    func noteBackgroundRefresh() {
-        SyncHealthLog.record(.backgroundRefresh, .ok, in: AppGroup.defaults)
+    /// Recorded after the refresh ran, so a run the system cut short isn't one that went well.
+    func noteBackgroundRefresh(cutShort: Bool) {
+        SyncHealthLog.record(.backgroundRefresh, cutShort ? .timedOut : .ok, in: AppGroup.defaults)
     }
 
     func scheduleBackgroundRefresh(now: Date = .now) {
