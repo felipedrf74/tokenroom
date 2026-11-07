@@ -49,6 +49,16 @@ final class MobileAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificati
         return changed ? .newData : .noData
     }
 
+    /// iOS's background refresh: usage and News at once, News within 20 seconds
+    /// (`NewsLifecycle.backgroundRefresh`). When iOS ends the task, its cancellation reaches the
+    /// News pass, and what that cut short isn't counted as failing.
+    func backgroundRefresh() async {
+        let store = self.store
+        await NewsLifecycle.backgroundRefresh(news: news, preferences: store.alertPreferences) {
+            await store.backgroundRefresh()
+        }
+    }
+
     /// Alerts show as banners while the app is open too.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,

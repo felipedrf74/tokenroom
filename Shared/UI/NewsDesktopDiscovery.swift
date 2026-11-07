@@ -9,13 +9,14 @@ struct MacNewsFollowing: View {
     var query = ""
     var suggestedProviders: Set<String> = []
     private var tools: [FeedSource] { FeedSource.toggles.filter { NewsSearch.matches(query, title: $0.name, source: "") } }
-    private var voices: [NewsVoice] { NewsVoice.catalog.filter { NewsSearch.matches(query, title: $0.name, source: "") } }
+    private var voices: [NewsVoice] { NewsVoice.catalog.filter { $0.role == .voice && NewsSearch.matches(query, title: $0.name, source: "") } }
+    private var discussion: [NewsVoice] { NewsVoice.catalog.filter { $0.role == .discussion && NewsSearch.matches(query, title: $0.name, source: "") } }
     private var statuses: [FeedSource] { NewsStatusSource.catalog.filter { NewsSearch.matches(query, title: $0.name, source: "") } }
     private var hasMatches: Bool {
         switch group {
-        case .all: return !tools.isEmpty || !voices.isEmpty || !statuses.isEmpty || matchingLabs
+        case .all: return !tools.isEmpty || !voices.isEmpty || !discussion.isEmpty || !statuses.isEmpty || matchingLabs
         case .tools: return !tools.isEmpty || matchingLabs
-        case .voices: return !voices.isEmpty
+        case .voices: return !voices.isEmpty || !discussion.isEmpty
         case .status: return !statuses.isEmpty
         }
     }
@@ -32,6 +33,11 @@ struct MacNewsFollowing: View {
                     Button("Add the tools I use") {
                         news.followedSources.formUnion(FeedSource.toggles.filter { $0.provider.map { suggestedProviders.contains($0.rawValue) } ?? false }.map(\.id))
                     }.help("Adds matching official feeds to your current choices")
+                }
+            }
+            if query.isEmpty, !news.newSources.isEmpty {
+                sourceSection("New sources", note: "Added in this update. None is followed until you turn it on.", dismiss: { news.dismissNewSources() }) {
+                    ForEach(news.newSources) { sourceRow($0) }
                 }
             }
             if group == .all || group == .tools {
@@ -58,25 +64,12 @@ struct MacNewsFollowing: View {
             }
             if group == .all || group == .voices, !voices.isEmpty {
                 sourceSection("Curated voices", note: "Public articles and X profile links. Following here doesn't follow an account on X.") {
-                    ForEach(voices) { voice in
-                        hairlineRow {
-                            HStack(alignment: .center, spacing: 12) {
-                                NewsNavigationLink { NewsVoiceDetail(voice: voice, news: news, library: library) } label: {
-                                    HStack(spacing: 12) {
-                                        MonogramMark(text: initials(voice.name), tint: TokenroomTokens.newsMonogramTint, size: 28)
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(voice.name).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
-                                            Text(voice.feed == nil ? "X profile only" : "Articles · Public feed").font(.caption).foregroundStyle(TokenroomTokens.newsSecondaryText)
-                                        }.frame(maxWidth: .infinity, alignment: .leading)
-                                    }.multilineTextAlignment(.leading).contentShape(Rectangle())
-                                }.buttonStyle(.plain)
-                                Toggle("Follow \(voice.name)", isOn: Binding(get: { news.followedVoices.contains(voice.id) }, set: { on in
-                                    if on { news.followedVoices.insert(voice.id) } else { news.followedVoices.remove(voice.id) }
-                                })).toggleStyle(NewsFollowToggleStyle(showsLabel: false)).accessibilityLabel("Follow \(voice.name)")
-                            }
-                            if let source = voice.feed, news.followedVoices.contains(voice.id) { NewsSourceHealth(news: news, source: source).padding(.leading, 40) }
-                        }
-                    }
+                    ForEach(voices) { voiceRow($0) }
+                }
+            }
+            if group == .all || group == .voices, !discussion.isEmpty {
+                sourceSection("Discussion & industry", note: "What the industry is reading and releasing. Public feeds, checked every few hours.") {
+                    ForEach(discussion) { voiceRow($0) }
                 }
             }
             if group == .all || group == .status, !statuses.isEmpty {
@@ -87,10 +80,37 @@ struct MacNewsFollowing: View {
             }
         }
     }
+    private func voiceRow(_ voice: NewsVoice) -> some View {
+        hairlineRow {
+            HStack(alignment: .center, spacing: 12) {
+                NewsNavigationLink { NewsVoiceDetail(voice: voice, news: news, library: library) } label: {
+                    HStack(spacing: 12) {
+                        MonogramMark(text: initials(voice.name), tint: TokenroomTokens.newsMonogramTint, size: 28)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(voice.name).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+                            Text(voice.feed == nil ? "X profile only" : "Articles · Public feed").font(.caption).foregroundStyle(TokenroomTokens.newsSecondaryText)
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                    }.multilineTextAlignment(.leading).contentShape(Rectangle())
+                }.buttonStyle(.plain)
+                Toggle("Follow \(voice.name)", isOn: Binding(get: { news.followedVoices.contains(voice.id) }, set: { on in
+                    if on { news.followedVoices.insert(voice.id) } else { news.followedVoices.remove(voice.id) }
+                })).toggleStyle(NewsFollowToggleStyle(showsLabel: false)).accessibilityLabel("Follow \(voice.name)")
+            }
+            if let source = voice.feed, news.followedVoices.contains(voice.id) { NewsSourceHealth(news: news, source: source).padding(.leading, 40) }
+        }
+    }
     /// A heading over two columns of rows: a long list reads across the window without a box.
-    private func sourceSection<Rows: View>(_ title: String, note: String? = nil, @ViewBuilder rows: () -> Rows) -> some View {
+    /// `dismiss` puts a Dismiss button beside the heading, for a suggestion.
+    private func sourceSection<Rows: View>(_ title: String, note: String? = nil, dismiss: (() -> Void)? = nil, @ViewBuilder rows: () -> Rows) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.title3.weight(.semibold)).accessibilityAddTraits(.isHeader)
+            HStack(alignment: .firstTextBaseline) {
+                Text(title).font(.title3.weight(.semibold)).accessibilityAddTraits(.isHeader)
+                if let dismiss {
+                    Spacer()
+                    Button("Dismiss", action: dismiss).help("Hide these suggestions. Each source stays in its list below.")
+                        .accessibilityLabel("Dismiss new sources")
+                }
+            }
             if let note { Text(note).font(.caption).foregroundStyle(TokenroomTokens.newsSecondaryText) }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 32, alignment: .top)], alignment: .leading, spacing: 0, content: rows)
                 .padding(.top, 4)
@@ -118,15 +138,8 @@ struct MacNewsFollowing: View {
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }.multilineTextAlignment(.leading).contentShape(Rectangle())
                 }.buttonStyle(.plain)
-                Toggle("Follow \(source.name)", isOn: Binding(get: {
-                    source.kind == .officialStatus ? news.followedStatusSources.contains(source.id) : news.followedSources.contains(source.id)
-                }, set: { on in
-                    if source.kind == .officialStatus {
-                        if on { news.followedStatusSources.insert(source.id) } else { news.followedStatusSources.remove(source.id) }
-                    } else {
-                        if on { news.followedSources.insert(source.id) } else { news.followedSources.remove(source.id) }
-                    }
-                })).toggleStyle(NewsFollowToggleStyle(showsLabel: false)).accessibilityLabel("Follow \(source.name)")
+                Toggle("Follow \(source.name)", isOn: Binding(get: { news.isFollowing(source) }, set: { on in news.setFollowing(source, on) }))
+                    .toggleStyle(NewsFollowToggleStyle(showsLabel: false)).accessibilityLabel("Follow \(source.name)")
             }
             if health != nil { NewsSourceHealth(news: news, source: source, showsCaption: false).padding(.leading, 40) }
         }
@@ -147,6 +160,7 @@ struct MacNewsSkillsShelf: View {
                     ForEach(SkillSort.allCases) { Text($0.label).tag($0) }
                 }.pickerStyle(.segmented).labelsHidden().fixedSize()
                 Text(skills.sort.explanation).font(.caption).foregroundStyle(TokenroomTokens.newsSecondaryText)
+                Text(SkillFeed.communityNote).font(.caption).foregroundStyle(TokenroomTokens.newsSecondaryText)
                 if let date = skills.checkedAt { Text("ClawHub · Checked \(RelativeTime.ago(date))").font(.caption).foregroundStyle(TokenroomTokens.newsSecondaryText) }
             }
             if skills.isRefreshing { ProgressView("Checking skills…").controlSize(.small) }
@@ -177,6 +191,7 @@ struct MacNewsSkillsShelf: View {
                                     if let summary = item.summary { Text(summary).font(.subheadline).foregroundStyle(TokenroomTokens.newsSecondaryText).lineLimit(3) }
                                     HStack(spacing: 12) {
                                         if let downloads = item.downloads { Label("\(downloads.formatted()) lifetime downloads", systemImage: "arrow.down.circle") }
+                                        if let installs = item.installs { Label("\(installs.formatted()) lifetime installs", systemImage: "arrow.down.circle") }
                                         if let stars = item.stars {
                                             Label(stars.formatted(), systemImage: "star")
                                                 .accessibilityLabel("\(stars.formatted()) stars")

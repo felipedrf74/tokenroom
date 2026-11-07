@@ -34,7 +34,7 @@ struct NewsView: View {
             .searchable(text: $search, isPresented: $showsSearch, placement: .navigationBarDrawer(displayMode: .automatic), prompt: destination == .skills ? "Search these skills" : "Search titles and sources")
             .refreshable {
                 if destination == .skills { await skills.refresh(sort: skills.sort, force: true) }
-                else if destination != .saved { await news.refresh(maxAge: 0, preferences: store.alertPreferences, notifies: false) }
+                else if destination != .saved { await news.refresh(maxAge: 0, preferences: store.alertPreferences, notifies: false, waitsForFollowUp: true) }
             }
             // Kept current while on screen with the app in front; leaving it stops the checks, so
             // the background keeps to its hourly ones, and coming back starts them again.

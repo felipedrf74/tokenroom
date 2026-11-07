@@ -70,7 +70,7 @@ struct NewsCollectionView: View {
         #else
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search this collection")
         #endif
-            .refreshable { await news.retrySources(health.sourceIDs) }
+            .refreshable { await news.retrySources(health.sourceIDs, waitsForFollowUp: true) }
     }
     private var followLink: some View {
         NewsNavigationLink {
@@ -123,7 +123,7 @@ struct NewsCollectionHealthView: View {
     @ViewBuilder private var checkButton: some View {
         if !health.sourceIDs.isEmpty {
             Button {
-                Task { await news.retrySources(health.problem == nil ? health.sourceIDs : health.retryIDs) }
+                Task { await news.retrySources(health.problem == nil ? health.sourceIDs : health.retryIDs, waitsForFollowUp: true) }
             } label: {
                 #if os(macOS)
                 Text(health.problem == nil ? "Check collection" : "Retry failed sources")
