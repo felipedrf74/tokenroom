@@ -171,6 +171,13 @@ enum WatchCacheAccess {
         defaults.removeObject(forKey: signedOutKey)
     }
 
+    /// What `accountStatus()` alone found (a cold launch to take a handover). An account that
+    /// answered ends "still signed out" just as a read does, so a later no-account is a sign-out
+    /// that hides what was taken meanwhile.
+    static func note(_ check: RelayAccountCheck, in defaults: UserDefaults) {
+        if check == .available { noteAccountAvailable(in: defaults) }
+    }
+
     /// Whether something read later (iCloud, the iPhone, the saved cache) may replace `current`.
     /// A launch showing sample readings (`-sampleMode YES`) keeps them for the whole launch, so a
     /// simulator without an iCloud account doesn't swap them for an empty account's.

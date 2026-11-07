@@ -213,6 +213,9 @@ actor PhoneSessionRefresher {
         }
         if force {
             if let last = forcedAt[provider], (0..<Self.forcedRenewalSpacing).contains(now.timeIntervalSince(last)) { return .notDue }
+            // Held back by a busy host a moment ago: not sent, so the hour's early renewal isn't
+            // spent and can go once `retrySpacing` has passed.
+            if isWaitingToRetry(provider, now: now) { return .unavailable }
             forcedAt[provider] = now
         }
         let flight = Task { await self.renew(provider, now: now, force: force) }
@@ -223,6 +226,10 @@ actor PhoneSessionRefresher {
             logger.notice("\(provider.rawValue, privacy: .public) \(outcome.rawValue, privacy: .public)")
         }
         return outcome
+    }
+
+    private func isWaitingToRetry(_ provider: Provider, now: Date) -> Bool {
+        notDispatchedAt[provider].map { (0..<Self.retrySpacing).contains(now.timeIntervalSince($0)) } ?? false
     }
 
     private func renew(_ provider: Provider, now: Date, force: Bool) async -> Outcome {
@@ -238,7 +245,7 @@ actor PhoneSessionRefresher {
         if !force {
             guard let expiresAt = session.expiresAt, expiresAt.timeIntervalSince(now) <= Self.lead else { return .notDue }
         }
-        if let last = notDispatchedAt[provider], (0..<Self.retrySpacing).contains(now.timeIntervalSince(last)) {
+        if isWaitingToRetry(provider, now: now) {
             return .unavailable
         }
         let ready = await BlockingIO.run { store.canReplace(provider) && store.setState(.exchanging, for: provider) }

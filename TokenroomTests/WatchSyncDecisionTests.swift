@@ -127,6 +127,34 @@ final class WatchSyncDecisionTests: XCTestCase {
         XCTAssertFalse(WatchCacheAccess.isStillSignedOut(in: defaults))
     }
 
+    /// Review fix: an account that only `accountStatus()` saw (a cold launch taking a handover)
+    /// ends "still signed out", so the next no-account is a sign-out that hides the handover.
+    func testAnAccountOnlyTheAccountCheckSawEndsStillSignedOut() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let url = folder.appendingPathComponent(ReadingCache.fileName)
+        let t1 = now
+        WatchCacheAccess.confirmNoAccount(in: defaults, at: t1)
+        XCTAssertTrue(WatchCacheAccess.isStillSignedOut(in: defaults))
+        // Signed in again; a cold background launch checks the account and takes a handover.
+        WatchCacheAccess.note(.available, in: defaults)
+        let t2 = t1.addingTimeInterval(600)
+        let handover = cache(savedAt: t2, [provider("claude", checked: t2)])
+        try WatchCacheAccess.saveValidated(handover, at: url, defaults: defaults, cutoff: t1)
+        XCTAssertEqual(WatchCacheAccess.load(at: url, defaults: defaults), handover)
+        // Complications skip iCloud while the cache is recent. Signed out at T3, once it isn't:
+        // a complication's read is a sign-out, not the same one as at T1.
+        let t3 = t2.addingTimeInterval(20 * 60)
+        let shown = await RelayReadings.cache(at: url, maxAge: 15 * 60, budget: 1, now: t3, defaults: defaults, readOutcome: { .noAccount })
+        XCTAssertEqual(shown?.items.isEmpty, true, "The handover from while signed in isn't shown")
+        XCTAssertEqual(defaults.object(forKey: WatchCacheAccess.cutoffKey) as? Date, t3, "A new cutoff")
+        XCTAssertNil(WatchCacheAccess.load(at: url, defaults: defaults))
+        // Checks that found nothing, or no account, leave the marker as it was.
+        WatchCacheAccess.note(.failed, in: defaults)
+        WatchCacheAccess.note(.noAccount, in: defaults)
+        XCTAssertTrue(WatchCacheAccess.isStillSignedOut(in: defaults))
+    }
+
     // MARK: 2. iCloud first
 
     @MainActor

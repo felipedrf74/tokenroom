@@ -195,9 +195,11 @@ struct PhoneSessionStore: Sendable {
         decodeSession(readData(recoveryQuery(for: provider)))
     }
 
-    /// The recovery item: there, not there, or couldn't be read now. Only `errSecItemNotFound` is
-    /// "not there"; a Keychain that's locked or busy (`errSecInteractionNotAllowed`) isn't. An
-    /// item read that holds no usable session is "not there" too: it can't become one later.
+    /// The recovery item: there, not there, or couldn't be read now. Only a Keychain that's
+    /// locked or busy (`errSecInteractionNotAllowed`) is "couldn't be read now", and asked again
+    /// later. Any other failure, an item read that holds no usable session, and
+    /// `errSecItemNotFound` are "not there", as before: waiting wouldn't change them, and the
+    /// plan would otherwise stay unreachable for good.
     enum RecoveryLookup: Equatable, Sendable {
         case found(PhoneSession)
         case none
@@ -212,10 +214,10 @@ struct PhoneSessionStore: Sendable {
         switch status {
         case errSecSuccess:
             return decodeSession(item as? Data).map(RecoveryLookup.found) ?? .none
-        case errSecItemNotFound:
-            return .none
-        default:
+        case errSecInteractionNotAllowed:
             return .unreadable
+        default:
+            return .none
         }
     }
 

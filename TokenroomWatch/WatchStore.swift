@@ -332,6 +332,7 @@ final class WatchStore {
         case .noAccount:
             confirmNoAccount(at: .now)
         case .available, .failed, .unavailable:
+            WatchCacheAccess.note(check, in: AppGroup.defaults)
             accountGate.note(WatchAccountKnowledge(check))
         }
         applyPendingPhone()
