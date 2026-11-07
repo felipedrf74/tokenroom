@@ -27,6 +27,13 @@ struct NewsVoice: Identifiable, Sendable {
     let feed: FeedSource?
     let role: Role
 
+    /// The caption under the voice in Following: what it publishes and where its profile link goes.
+    /// A voice added by publication links to its own website, not to X.
+    var listCaption: String {
+        guard feed != nil else { return "Profile only" }
+        return profileURL.host() == "x.com" ? "Public articles · X profile" : "Public articles · Website"
+    }
+
     /// `handle` is an X handle; `site` names a publication's own site instead, for a source added
     /// by publication with no personal account.
     private static func voice(_ id: String, _ name: String, _ handle: String? = nil, site: String? = nil, _ articles: String?, _ evidence: String,

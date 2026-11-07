@@ -63,7 +63,7 @@ struct MacNewsFollowing: View {
                 }
             }
             if group == .all || group == .voices, !voices.isEmpty {
-                sourceSection("Curated voices", note: "Public articles and X profile links. Following here doesn't follow an account on X.") {
+                sourceSection("Curated voices", note: "Public articles, with links to each X profile or website. Following here doesn't follow an account on X.") {
                     ForEach(voices) { voiceRow($0) }
                 }
             }

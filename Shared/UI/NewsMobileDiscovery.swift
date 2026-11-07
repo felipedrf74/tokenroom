@@ -71,7 +71,7 @@ struct MobileNewsFollowing: View {
                 VStack(alignment: .leading, spacing: 8) {
                     VStack(alignment: .leading, spacing: 2) {
                         heading("Curated voices")
-                        Text("Public articles and X profile links. A follow here stays in Tokenroom.").font(.footnote).foregroundStyle(MobileNewsPalette.secondary)
+                        Text("Public articles, with links to each X profile or website. A follow here stays in Tokenroom.").font(.footnote).foregroundStyle(MobileNewsPalette.secondary)
                     }
                     rows(voices) { voiceRow($0) }
                 }.padding(.top, 8)
@@ -149,7 +149,7 @@ struct MobileNewsFollowing: View {
                     MonogramMark(text: voice.name.split(separator: " ").prefix(2).compactMap(\.first).map(String.init).joined(), tint: TokenroomTokens.newsMonogramTint, size: 30).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         rowTitle(voice.name)
-                        Text(voice.feed == nil ? "Profile only" : "Public articles · X profile").font(.caption).foregroundStyle(MobileNewsPalette.secondary)
+                        Text(voice.listCaption).font(.caption).foregroundStyle(MobileNewsPalette.secondary)
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }.frame(minHeight: 44).contentShape(Rectangle())
             }.buttonStyle(.plain)
