@@ -227,6 +227,8 @@ final class MobileStore {
     @ObservationIgnored private var preferencesSharedAt: Date?
     /// The run-outs the Watch was last handed, which it shows though widgets don't.
     @ObservationIgnored private var lastHandoverRunOuts: [String: Date] = [:]
+    /// Each reading's check as the Watch was last handed it (`WatchHandoffSchedule`).
+    @ObservationIgnored private var lastHandoverChecks: [String: Date] = [:]
     /// A pull to refresh asked for meanwhile, carried to the pass that follows.
     @ObservationIgnored private var queuedManual = false
     /// When this launch's last check of each key provider failed.
@@ -454,11 +456,13 @@ final class MobileStore {
             case .available:
                 break
             case .noAccount:
+                SyncHealthLog.record(.cloudRead, .noAccount, in: defaults)
                 resetRelayAccount(phase: .noAccount)
                 return
             default:
                 // Signed in, but iCloud can't be used now (unsure, to be verified, restricted):
                 // that's said as it is, not as signed out, and what was read stays.
+                SyncHealthLog.record(.cloudRead, .unavailable, in: defaults)
                 relayPhase = .failed(RelayErrorPolicy.unusableAccount(account) ?? "Couldn't reach iCloud.")
                 return
             }
@@ -478,9 +482,11 @@ final class MobileStore {
                 return
             }
             relayPhase = .ready
+            SyncHealthLog.record(.cloudRead, .ok, in: defaults)
             adoptPreferences(contents.alertPreferences, readStartedAt: readStartedAt)
         } catch {
             guard relayGeneration == generation, !Task.isCancelled else { return }
+            SyncHealthLog.record(.cloudRead, error is ICloudTimeout ? .timedOut : .failed, in: defaults)
             logger.error("relay read failed: \(String(describing: error), privacy: .public)")
             handleRelayError(error)
         }
@@ -889,6 +895,7 @@ final class MobileStore {
         // removing an ambiguous legacy meter is propagated on the next successful cache save.
         lastSavedCache = saved
         lastHandoverRunOuts = saved.runOuts
+        lastHandoverChecks = WatchHandoffSchedule.checks(in: saved)
     }
 
     func ageReadings(at date: Date) { presentationNow = date }
@@ -992,15 +999,19 @@ final class MobileStore {
         lastSavedCache = cache
         let changed = cache.materialHash(at: cache.savedAt) != previous?.materialHash(at: cache.savedAt)
         let runOuts = cache.runOuts
+        let checks = WatchHandoffSchedule.checks(in: cache)
         // The Watch shows a Mac's measured run-out, which widgets don't: one that moved an
-        // hour goes to it too.
-        guard changed || RelayPublishPolicy.runOutsMoved(runOuts, since: lastHandoverRunOuts) else { return }
+        // hour goes to it too. So do checks that found the same numbers, once one has moved
+        // half an hour: the Watch fades a reading an hour after the check it holds.
+        guard changed || RelayPublishPolicy.runOutsMoved(runOuts, since: lastHandoverRunOuts)
+                || WatchHandoffSchedule.checksMoved(checks, since: lastHandoverChecks) else { return }
         // Sample readings stay on this iPhone; the Watch keeps showing real ones.
         if !cache.isSample {
             if let saved = PhoneCacheAccess.load(at: cacheURL, defaults: defaults) {
                 platformEffects.sendToWatch(saved.applyingLocalBudgetReferences(in: defaults))
             }
             lastHandoverRunOuts = runOuts
+            lastHandoverChecks = checks
         }
         guard changed else { return }
         changesGivenOut += 1
@@ -1461,6 +1472,7 @@ final class MobileStore {
     /// if this one runs out of time, then the relay and this iPhone's keys.
     func backgroundRefresh() async {
         await scheduleBackgroundRefresh()
+        SyncHealthLog.record(.backgroundRefresh, .ok, in: defaults)
         await refresh(force: true)
     }
 

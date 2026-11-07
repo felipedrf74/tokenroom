@@ -76,6 +76,79 @@ enum WatchHandoff {
     }
 }
 
+// MARK: Payload size
+
+extension WatchHandoff {
+    /// The most the encoded readings take in the application context or a reply. Well under
+    /// what WatchConnectivity takes, which it doesn't promise.
+    static let payloadLimit = 48 * 1024
+    /// The hours of history kept, in turn, when the week doesn't fit; 0 sends none.
+    static let historySteps = [48, 24, 0]
+
+    struct EncodedReadings: Sendable {
+        var data: Data
+        /// Nil with the whole week; otherwise the hours of history kept.
+        var historyHours: Int?
+        /// Still over `payloadLimit` without any history: sent anyway.
+        var isOverLimit: Bool
+    }
+
+    /// The readings, encoded within `limit` by cutting history (the oldest hours first). Which
+    /// providers there are (`items`), the paired phone's own membership (`localSource`), and
+    /// the iCloud read's (`relaySnapshot`) are never cut: the Watch reconciles membership with
+    /// them.
+    static func encodedReadings(_ cache: ReadingCache, limit: Int = payloadLimit) -> EncodedReadings? {
+        guard let whole = try? RelayEnvelope.encoder.encode(cache) else { return nil }
+        if whole.count <= limit { return EncodedReadings(data: whole, historyHours: nil, isOverLimit: false) }
+        var last = whole
+        for hours in historySteps {
+            guard let data = try? RelayEnvelope.encoder.encode(cache.trimmingHistory(toLast: hours)) else { return nil }
+            last = data
+            if data.count <= limit { return EncodedReadings(data: data, historyHours: hours, isOverLimit: false) }
+        }
+        return EncodedReadings(data: last, historyHours: 0, isOverLimit: true)
+    }
+}
+
+extension ReadingCache {
+    /// Every item's history cut to its last `hours`; with 0, none.
+    func trimmingHistory(toLast hours: Int) -> ReadingCache {
+        var copy = self
+        copy.items = items.map { item in
+            var item = item
+            item.history = item.history.compactMapValues { $0.trimmed(toLast: hours) }
+            return item
+        }
+        return copy
+    }
+}
+
+// MARK: When the iPhone hands over
+
+/// The iPhone hands its readings to the Watch when what they'd draw changes (`materialHash`), a
+/// measured run-out moves an hour, or a shown reading's check has moved forward `checkStep` since
+/// it was last handed over. The last, because the hash leaves check times out: a Mac's checks
+/// that find the same numbers would otherwise never reach the Watch, which fades a reading an
+/// hour after the check it holds.
+enum WatchHandoffSchedule {
+    static let checkStep: TimeInterval = 30 * 60
+
+    /// Each shown reading's last check, by provider.
+    static func checks(in cache: ReadingCache) -> [String: Date] {
+        Dictionary(cache.items.compactMap { item in
+            (item.provider.checkedAt ?? item.provider.fetchedAt).map { (item.id, $0) }
+        }, uniquingKeysWith: { first, second in max(first, second) })
+    }
+
+    /// Whether any provider handed over before has been checked `checkStep` or more since. One
+    /// handed over for the first time is a change of what's drawn, which goes anyway.
+    static func checksMoved(_ checks: [String: Date], since handedOver: [String: Date]) -> Bool {
+        checks.contains { id, checked in
+            handedOver[id].map { checked.timeIntervalSince($0) >= checkStep } ?? false
+        }
+    }
+}
+
 /// Coalesces Watch refresh requests and keeps the one-minute foreground spacing in one place.
 struct WatchRefreshGate {
     private(set) var isRefreshing = false

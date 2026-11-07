@@ -70,6 +70,10 @@ struct SessionResetCaption: View {
     var body: some View {
         if state.awaitingReading == true {
             Text("Reset · awaiting reading")
+        } else if state.isStaleBeforeReset, let checkedAt = state.checkedAt {
+            // Faded before the reset: the last reading is over an hour old, said with its time
+            // and the reset's, rather than as a reset.
+            Text("As of \(Text(checkedAt, style: .time)) · resets \(Text(state.resetsAt, style: .time))")
         } else {
             Countdown(resetsAt: state.resetsAt)
         }
@@ -94,7 +98,12 @@ struct Countdown: View {
 
 extension SessionActivityAttributes.ContentState {
     var accessibilityPercent: String {
-        awaitingReading == true ? "Reset, awaiting reading" : "\(TokenroomFormat.percentText(used)) percent used" + (isStale ? ", stale" : "")
+        if awaitingReading == true { return "Reset, awaiting reading" }
+        let used = "\(TokenroomFormat.percentText(used)) percent used"
+        if isStaleBeforeReset, let checkedAt {
+            return used + ", as of " + checkedAt.formatted(date: .omitted, time: .shortened)
+        }
+        return used + (isStale ? ", stale" : "")
     }
 
     var percentText: String {

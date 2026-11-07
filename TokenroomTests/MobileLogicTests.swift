@@ -459,10 +459,14 @@ final class MobileLogicTests: XCTestCase {
             return ReadingCache.Item(provider: RelayProvider(provider: .claude, status: live ? .live(snapshot) : .stale(snapshot), checkedAt: now), source: "Mac")
         }
         let hourly = now.addingTimeInterval(3600)
-        XCTAssertEqual(WidgetSchedule.nextReload(after: now, items: [item(used: 40, resetsIn: 3)]), hourly, "Calm readings reload hourly")
+        // Hourly, but a live reading checked just now would go stale on the hour, so the reload
+        // comes five minutes before that (`ReadingFreshness.staleLead`, the 7 November 2026
+        // sync decision; it came a second after the hour before).
+        let calm = now.addingTimeInterval(ReadingFreshness.staleAfter - ReadingFreshness.staleLead)
+        XCTAssertEqual(WidgetSchedule.nextReload(after: now, items: [item(used: 40, resetsIn: 3)]), calm, "Calm readings reload hourly, before a live one goes stale")
         XCTAssertEqual(WidgetSchedule.nextReload(after: now, items: [item(used: 85, resetsIn: 3)]), now.addingTimeInterval(1800), "At 80% or more and resetting within 12 hours, every half hour")
-        XCTAssertEqual(WidgetSchedule.nextReload(after: now, items: [item(used: 85, resetsIn: 20 * 24)]), hourly, "A month-long budget at 85% doesn't hurry")
-        XCTAssertEqual(WidgetSchedule.nextReload(after: now, items: [item(used: 85, resetsIn: -1)]), hourly, "Nor a window that has already reset")
+        XCTAssertEqual(WidgetSchedule.nextReload(after: now, items: [item(used: 85, resetsIn: 20 * 24)]), calm, "A month-long budget at 85% doesn't hurry")
+        XCTAssertEqual(WidgetSchedule.nextReload(after: now, items: [item(used: 85, resetsIn: -1)]), calm, "Nor a window that has already reset")
         XCTAssertEqual(WidgetSchedule.nextReload(after: now, items: [item(used: 85, resetsIn: 3, live: false)]), hourly, "Nor a reading that isn't live")
         XCTAssertEqual(WidgetSchedule.nextReload(after: now, items: []), hourly)
         XCTAssertLessThan(24 * 3600 / WidgetSchedule.calmInterval, 40, "A calm day stays under WidgetKit's budget")

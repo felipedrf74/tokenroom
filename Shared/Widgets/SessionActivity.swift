@@ -4,16 +4,9 @@ import Foundation
 
 /// A Live Activity that follows one window to its reset.
 struct SessionActivityAttributes: ActivityAttributes {
-    struct ContentState: Codable, Hashable {
-        var used: Double
-        var resetsAt: Date
-        var isStale: Bool
-        /// Whether this activity has alerted that the window runs out before its reset; once per
-        /// activity, which ends at the reset. Nil in activities started before 2.1.
-        var warnedRunsOut: Bool? = nil
-        /// Optional for activities created by earlier versions. Usage remains the last measurement.
-        var awaitingReading: Bool? = nil
-    }
+    /// In Shared/Core (`SessionActivityState`), so its stale rules are tested on the Mac. The
+    /// encoding is the same as when it was declared here.
+    typealias ContentState = SessionActivityState
 
     var providerID: String
     var providerName: String
@@ -40,8 +33,9 @@ enum LiveActivities {
         ActivityAuthorizationInfo().areActivitiesEnabled
     }
 
-    /// Activities still on screen. Past its stale date (the reset) ActivityKit marks one `stale`,
-    /// and it stays on the Lock Screen until it's ended.
+    /// Activities still on screen. Past its stale date (the reset, or an hour after its reading's
+    /// check, `LiveActivityFreshness.staleDate`) ActivityKit marks one `stale`, and it stays on
+    /// the Lock Screen until it's updated or ended.
     private static var shown: [Activity<SessionActivityAttributes>] {
         Activity<SessionActivityAttributes>.activities.filter { $0.activityState == .active || $0.activityState == .stale }
     }
@@ -73,8 +67,10 @@ enum LiveActivities {
             windowTitle: window.displayTitle,
             windowSeconds: window.periodSec ?? AlertRules.typicalLength(kind: window.kind)
         )
-        let state = SessionActivityAttributes.ContentState(used: window.used, resetsAt: resetsAt, isStale: !provider.isLive)
-        _ = try Activity.request(attributes: attributes, content: ActivityContent(state: state, staleDate: resetsAt, relevanceScore: window.used), pushType: nil)
+        let checkedAt = provider.checkedAt ?? provider.fetchedAt
+        let state = SessionActivityAttributes.ContentState(used: window.used, resetsAt: resetsAt, isStale: !provider.isLive, checkedAt: checkedAt)
+        let staleDate = LiveActivityFreshness.staleDate(resetsAt: resetsAt, checkedAt: checkedAt)
+        _ = try Activity.request(attributes: attributes, content: ActivityContent(state: state, staleDate: staleDate, relevanceScore: window.used), pushType: nil)
         return true
     }
 
@@ -112,8 +108,12 @@ enum LiveActivities {
                 }
                 continue
             }
-            var state = SessionActivityAttributes.ContentState(used: window.used, resetsAt: resetsAt, isStale: !provider.isLive, warnedRunsOut: old.warnedRunsOut)
-            guard state != old else { continue }
+            let checkedAt = provider.checkedAt ?? provider.fetchedAt
+            var state = SessionActivityAttributes.ContentState(used: window.used, resetsAt: resetsAt, isStale: !provider.isLive,
+                                                               warnedRunsOut: old.warnedRunsOut, checkedAt: checkedAt)
+            // A newer check alone moves the stale date forward, so it's an update too, once it
+            // has moved a few minutes.
+            guard LiveActivityFreshness.needsUpdate(from: old, to: state) else { continue }
             let crossed = (provider.isLive && old.awaitingReading != true ? [95, 80] : []).first { level in
                 preferences.thresholds(for: window).contains(level) && old.used < Double(level) && window.used >= Double(level)
                     && (level >= 95 || !preferences.isQuiet(at: now))
@@ -132,7 +132,8 @@ enum LiveActivities {
                 alert = AlertConfiguration(title: "\(runsOut.title)", body: "\(runsOut.body)", sound: .default)
                 state.warnedRunsOut = true
             }
-            await activity.update(ActivityContent(state: state, staleDate: resetsAt, relevanceScore: window.used), alertConfiguration: alert)
+            let staleDate = LiveActivityFreshness.staleDate(resetsAt: resetsAt, checkedAt: checkedAt)
+            await activity.update(ActivityContent(state: state, staleDate: staleDate, relevanceScore: window.used), alertConfiguration: alert)
         }
     }
 
@@ -149,17 +150,6 @@ enum LiveActivities {
         for activity in Activity<SessionActivityAttributes>.activities where activity.attributes.providerID == providerID && activity.activityState != .dismissed {
             await activity.end(nil, dismissalPolicy: .immediate)
         }
-    }
-}
-
-extension SessionActivityAttributes.ContentState {
-    /// A scheduled reset isn't a new measurement. Keep the recorded amount and mark it pending.
-    func shown(isStale activityIsStale: Bool, now: Date = .now) -> Self {
-        guard activityIsStale || resetsAt <= now else { return self }
-        var result = self
-        result.isStale = true
-        result.awaitingReading = true
-        return result
     }
 }
 

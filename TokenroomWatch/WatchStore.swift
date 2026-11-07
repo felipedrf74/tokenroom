@@ -20,10 +20,7 @@ final class WatchStore {
     static let readBudget: TimeInterval = 10
     static let phoneBudget: TimeInterval = 16
 
-    enum Problem: Equatable {
-        case noAccount
-        case unreachable
-    }
+    typealias Problem = WatchProblem
 
     private(set) var cache: ReadingCache?
     var isRefreshing: Bool { refreshGate.isRefreshing }
@@ -42,9 +39,12 @@ final class WatchStore {
     }
     private var refreshGate = WatchRefreshGate()
     private var accountGate = WatchAccountGate(signedOutAt: AppGroup.defaults.object(forKey: "watchSignedOutAt") as? Date)
+    /// A handover held until this process knows its account (`WatchHandoffAcceptance`), also
+    /// saved in the App Group (`WatchPendingHandoff`) so it outlives the process.
     private var pendingPhone: ReadingCache?
     private var accountRevision = 0
     private let cacheURL = ReadingCache.defaultURL
+    private let pendingURL = WatchPendingHandoff.defaultURL
     private let link = PhoneLink()
     /// Launched with `-sampleMode YES` (debug builds): the sample readings stay for the launch.
     private var showsSample = false
@@ -53,6 +53,7 @@ final class WatchStore {
 
     init() {
         cache = WatchCacheAccess.load(at: cacheURL, defaults: AppGroup.defaults)
+        pendingPhone = WatchPendingHandoff.load(at: pendingURL, signedOutAt: accountGate.signedOutAt)
         #if DEBUG
         // Screenshots and simulator checks: `-sampleMode YES` shows sample readings.
         if UserDefaults.standard.bool(forKey: "sampleMode") {
@@ -109,61 +110,95 @@ final class WatchStore {
             }
         }
         let revision = accountRevision
-        let cutoff = AppGroup.defaults.object(forKey: WatchCacheAccess.cutoffKey) as? Date
+        var cutoff = currentCutoff
         // A Watch refresh asks its reachable iPhone to collect too. The cloud read runs beside
-        // it and continues to work when the phone is away. Neither source can hold this pass.
+        // it and continues to work when the phone is away. Neither source can hold this pass,
+        // and iCloud's answer is applied as soon as it comes (`WatchRefreshOrder`).
         let link = self.link
-        async let phone = TimeLimit.run(Self.phoneBudget, otherwise: Optional<ReadingCache>.none) {
-            await link.refreshReadings()
+        await WatchRefreshOrder.run(
+            cloud: { await TimeLimit.run(Self.readBudget, otherwise: .failed) { await RelayReadings.read(now: now) } },
+            phone: { await TimeLimit.run(Self.phoneBudget, otherwise: Optional<ReadingCache>.none) { await link.refreshReadings() } },
+            applyCloud: { outcome in
+                guard revision == accountRevision, currentCutoff == cutoff else {
+                    // Coalesce with the account change's request; scheduling another task here
+                    // could start a second follow-up while the first is already running.
+                    _ = refreshGate.begin(force: true, now: .now)
+                    return false
+                }
+                applyCloudOutcome(outcome, now: now)
+                // A sign-out this read confirmed isn't an account change under the reply: its
+                // cutoff is the one the reply is measured against.
+                cutoff = currentCutoff
+                return true
+            },
+            applyPhone: { phoneCache in
+                guard revision == accountRevision, currentCutoff == cutoff else {
+                    _ = refreshGate.begin(force: true, now: .now)
+                    return
+                }
+                SyncHealthLog.record(.phoneReply, phoneCache == nil ? .unavailable : .ok, in: AppGroup.defaults)
+                if let phoneCache { receivePhone(phoneCache) }
+            }
+        )
+        if let previousRefresh, cache?.resetDates(after: previousRefresh, through: now).isEmpty == false {
+            WidgetCenter.shared.reloadTimelines(ofKind: Self.resetSoonKind)
         }
-        let outcome = await TimeLimit.run(Self.readBudget, otherwise: .failed) { await RelayReadings.read(now: now) }
-        if case .noAccount = outcome,
-           revision == accountRevision,
-           (AppGroup.defaults.object(forKey: WatchCacheAccess.cutoffKey) as? Date) == cutoff {
-            // Confirmed sign-out closes the cache gate now. An unrelated phone request may
-            // still be waiting for its reply and must not delay hiding the old account.
-            clearSignedOutAccount(at: now)
-            return
-        }
-        let phoneCache = await phone
-        guard revision == accountRevision,
-              (AppGroup.defaults.object(forKey: WatchCacheAccess.cutoffKey) as? Date) == cutoff else {
-            // Coalesce with the account change's request; scheduling another task here could
-            // start a second follow-up while the first is already running.
-            _ = refreshGate.begin(force: true, now: .now)
-            return
-        }
+    }
+
+    private var currentCutoff: Date? {
+        AppGroup.defaults.object(forKey: WatchCacheAccess.cutoffKey) as? Date
+    }
+
+    /// iCloud's answer, applied before the iPhone's reply. A failed read leaves the iPhone's
+    /// handovers since the last sign-out free to apply (`WatchHandoffAcceptance`).
+    private func applyCloudOutcome(_ outcome: RelayReadings.Outcome, now: Date) {
         switch outcome {
         case .readings(let fresh):
+            SyncHealthLog.record(.cloudRead, .ok, in: AppGroup.defaults)
+            WatchCacheAccess.noteAccountAvailable(in: AppGroup.defaults)
             adoptValidatedDiskCache()
             accountGate.confirmAvailable()
             problem = nil
             apply(fresh)
-            if let phoneCache { receivePhone(phoneCache) }
-            if let pendingPhone, accountGate.accepts(pendingPhone) { apply(pendingPhone) }
-            pendingPhone = nil
+            applyPendingPhone()
         case .noAccount:
-            clearSignedOutAccount(at: now)
+            SyncHealthLog.record(.cloudRead, .noAccount, in: AppGroup.defaults)
+            // Confirmed sign-out closes the cache gate now, before the iPhone's reply.
+            confirmNoAccount(at: now)
+            applyPendingPhone()
         case .failed:
+            SyncHealthLog.record(.cloudRead, .failed, in: AppGroup.defaults)
             adoptValidatedDiskCache()
+            accountGate.note(.readFailed)
             problem = .unreachable
-            if let phoneCache { receivePhone(phoneCache) }
+            applyPendingPhone()
         case .unavailable:
+            SyncHealthLog.record(.cloudRead, .unavailable, in: AppGroup.defaults)
             // A build without iCloud (no team): sample readings, clearly marked.
             if cache == nil {
                 cache = SampleData.cache(now: now)
             }
             problem = nil
         }
-        if let previousRefresh, cache?.resetDates(after: previousRefresh, through: now).isEmpty == false {
-            WidgetCenter.shared.reloadTimelines(ofKind: Self.resetSoonKind)
+    }
+
+    /// Signed out of iCloud. When this Watch has been signed out since the last sign-out it
+    /// recorded, nothing changes: the iPhone's handovers since then stay. Otherwise the gate
+    /// closes now.
+    private func confirmNoAccount(at date: Date) {
+        if WatchCacheAccess.isStillSignedOut(in: AppGroup.defaults), currentCutoff == accountGate.signedOutAt {
+            accountGate.note(.noAccount)
+            problem = .noAccount
+            return
         }
+        clearSignedOutAccount(at: date)
     }
 
     private func clearSignedOutAccount(at date: Date) {
         accountGate.signOut(at: date)
-        WatchCacheAccess.invalidate(in: AppGroup.defaults, at: date)
-        pendingPhone = nil
+        WatchCacheAccess.confirmNoAccount(in: AppGroup.defaults, at: date)
+        accountGate.note(.noAccount)
+        clearPendingPhone()
         problem = .noAccount
         cache = ReadingCache(savedAt: date, isSample: false, items: [])
         if let cacheURL, let cache { try? cache.save(to: cacheURL) }
@@ -188,7 +223,7 @@ final class WatchStore {
     /// changes show on their next timeline, which reads the saved readings. Both caches are
     /// measured as drawn now, so a reading that faded since and is live again with the same
     /// numbers is a change.
-    func apply(_ fresh: ReadingCache) {
+    func apply(_ fresh: ReadingCache, reloadWhenShown: Bool = false) {
         let now = Date.now
         let fresh = cache?.mergingUpdate(fresh, now: now) ?? fresh
         let change = fresh.changes(since: cache, at: now)
@@ -196,7 +231,7 @@ final class WatchStore {
         try? WatchCacheAccess.saveValidated(fresh, at: cacheURL, defaults: AppGroup.defaults,
                                            cutoff: accountGate.signedOutAt)
         guard change.shown else { return }
-        if change.worthReload || WKApplication.shared().applicationState == .active {
+        if change.worthReload || reloadWhenShown || WKApplication.shared().applicationState == .active {
             WidgetCenter.shared.reloadAllTimelines()
         }
         // The Smart Stack widget picks its moments from the readings; let it look again.
@@ -206,10 +241,45 @@ final class WatchStore {
     private func receivePhone(_ fresh: ReadingCache) {
         guard !fresh.isSample, fresh.v <= ReadingCache.version, WatchCacheAccess.mayReplace(cache, showsSample: showsSample) else { return }
         if synchronizeAccountCutoff() { Task { await refresh(force: true) } }
-        if accountGate.accepts(fresh) { apply(fresh) }
-        else if accountGate.signedOutAt.map({ fresh.savedAt > $0 }) != false {
-            pendingPhone = pendingPhone?.mergingUpdate(fresh) ?? fresh
+        switch accountGate.decision(for: fresh) {
+        case .apply:
+            SyncHealthLog.record(.handoffReceive, .ok, in: AppGroup.defaults)
+            apply(fresh)
+            problem = problem?.afterPhoneData()
+            // Anything held from before is older than this, and merged in by `apply` if not.
+            if let held = pendingPhone, accountGate.accepts(held) { apply(held) }
+            clearPendingPhone()
+        case .hold:
+            SyncHealthLog.record(.handoffReceive, .held, in: AppGroup.defaults)
+            let held = pendingPhone?.mergingUpdate(fresh) ?? fresh
+            pendingPhone = held
+            WatchPendingHandoff.save(held, at: pendingURL)
+        case .drop:
+            SyncHealthLog.record(.handoffReceive, .dropped, in: AppGroup.defaults)
         }
+    }
+
+    /// A held handover, once this process knows enough to take it. Complications reload for
+    /// whatever it changes they'd draw: it may have waited out a process.
+    private func applyPendingPhone() {
+        guard let held = pendingPhone else { return }
+        switch accountGate.decision(for: held) {
+        case .apply:
+            SyncHealthLog.record(.handoffReceive, .ok, in: AppGroup.defaults)
+            apply(held, reloadWhenShown: true)
+            problem = problem?.afterPhoneData()
+            clearPendingPhone()
+        case .drop:
+            SyncHealthLog.record(.handoffReceive, .dropped, in: AppGroup.defaults)
+            clearPendingPhone()
+        case .hold:
+            break
+        }
+    }
+
+    private func clearPendingPhone() {
+        pendingPhone = nil
+        WatchPendingHandoff.clear(at: pendingURL)
     }
 
     /// A complication can confirm sign-out while the app is suspended. Observe its durable fence
@@ -220,7 +290,7 @@ final class WatchStore {
               cutoff != accountGate.signedOutAt else { return false }
         accountGate.signOut(at: cutoff)
         cache = nil
-        pendingPhone = nil
+        clearPendingPhone()
         return true
     }
 
@@ -233,7 +303,7 @@ final class WatchStore {
         problem = nil
         WidgetCenter.shared.reloadAllTimelines()
         WidgetCenter.shared.invalidateRelevance(ofKind: Self.resetSoonKind)
-        pendingPhone = nil
+        clearPendingPhone()
         refreshGate.accountChanged()
         Task { await refresh(force: true) }
     }
@@ -242,7 +312,29 @@ final class WatchStore {
     /// reached the store, then keep normal cloud refreshes scheduled.
     func receiveBackgroundHandoff() async {
         await link.receiveApplicationContext()
+        await settlePendingPhone()
         scheduleBackgroundRefresh()
+    }
+
+    /// A cold launch to take a handover doesn't read iCloud. It asks only for the account,
+    /// within `WatchHandoffAcceptance.accountCheckBudget`, so a held handover can be applied,
+    /// saved for complications, and shown there now rather than at the next launch.
+    private func settlePendingPhone() async {
+        guard pendingPhone != nil, !accountGate.validated, accountGate.account == .unknown,
+              WatchCacheAccess.mayReplace(cache, showsSample: showsSample) else { return }
+        let revision = accountRevision
+        let cutoff = currentCutoff
+        let check = await TimeLimit.run(WatchHandoffAcceptance.accountCheckBudget, otherwise: RelayAccountCheck.failed) {
+            await RelayReadings.accountCheck()
+        }
+        guard revision == accountRevision, currentCutoff == cutoff else { return }
+        switch check {
+        case .noAccount:
+            confirmNoAccount(at: .now)
+        case .available, .failed, .unavailable:
+            accountGate.note(WatchAccountKnowledge(check))
+        }
+        applyPendingPhone()
     }
 
     /// Asks the iPhone to open its connect screen. Only a request: the Watch never collects a
@@ -250,6 +342,10 @@ final class WatchStore {
     func openConnectOnPhone() {
         guard canOpenConnectOnPhone else { return }
         link.requestOpenConnect()
+    }
+
+    func noteBackgroundRefresh() {
+        SyncHealthLog.record(.backgroundRefresh, .ok, in: AppGroup.defaults)
     }
 
     func scheduleBackgroundRefresh(now: Date = .now) {
