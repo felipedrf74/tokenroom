@@ -134,7 +134,7 @@ The next version can say that the Watch, widgets, and Lock Screen lead with the 
 
 - Enter the Description above: its privacy bullet replaces the old one, which 1.2.0 and 1.2.1 still carry.
 - Done in 1.2.0: the name and subtitle above (the home-screen name stays Tokenroom), and promotional text and review notes that describe plan sign-in on the iPhone.
-- A later description can say the iPhone works without a Mac for every provider read with a key, Copilot's fine-grained token included, and lists the plans that still need Tokenroom for Mac (Antigravity and Devin).
+- A later description can say the iPhone works without a Mac for every provider read with a key, Copilot's fine-grained token included, and lists the plans that still need Tokenroom for Mac (Claude, Antigravity and Devin).
 
 ## Review notes
 

@@ -28,8 +28,8 @@ enum PhoneSessionAvailability {
 
 /// Deletes the sessions of plans this iPhone no longer signs in to (Claude), once a launch,
 /// whatever the connect flag says (`PhoneSessionStore.purgeRetired`: Keychain deletes only, no
-/// request). The items need the iPhone unlocked once since it started, so a launch before that (a
-/// background push) waits for protected data instead of failing: it tries once when that arrives,
+/// request). It runs only while protected data is available, so a launch while the iPhone is
+/// locked (a background push) waits for it instead of failing: it tries once when that arrives,
 /// and an item still left is tried on the next launch, never in a loop.
 @MainActor
 final class RetiredSessionPurge {
