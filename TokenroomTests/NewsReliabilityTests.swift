@@ -74,26 +74,60 @@ final class NewsReliabilityTests: XCTestCase {
         XCTAssertNil(news.problem(for: .today))
     }
 
-    /// The Mac going to sleep: the owner cancels whatever pass is under way, and what was queued
-    /// behind it doesn't go out then.
+    /// The Mac going to sleep: the owner cancels whatever pass is under way, and what the owner
+    /// queued behind it (its loop's check) goes with it. A manual request another caller queued
+    /// (Check Now, a pull) still runs after it, and its caller waits until it has.
     @MainActor func testCancelPassStopsThePassAndWhatsQueued() async {
-        let calls = LockedBox(0), sawCancel = LockedBox(false)
+        let requests = LockedBox<[NewsFetcher.Request]>([]), sawCancel = LockedBox(false)
         let news = NewsStore(defaults: defaults(), directory: nil, fetch: { request in
-            calls.value += 1
-            if calls.value == 1 {
+            requests.value.append(request)
+            if requests.value.count == 1 {
                 while !Task.isCancelled { try? await Task.sleep(for: .milliseconds(5)) }
                 sawCancel.value = true
             }
             return .init(cache: request.cache, newModels: [])
         }, notify: { _, _, _ in })
         let first = Task { await news.refresh(preferences: AlertPreferences(), notifies: false) }
-        await eventually { calls.value == 1 }
-        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false)
+        await eventually { requests.value.count == 1 }
+        // The owner's loop comes due meanwhile, and the person presses Check Now.
+        let loop = Task { await news.refresh(preferences: AlertPreferences(), notifies: false, forcedSources: ["devin"], waitsForFollowUp: true, cancellable: true) }
+        for _ in 0..<20 { await Task.yield() }
+        let manualDone = LockedBox(false)
+        let manual = Task {
+            await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, forcedSources: ["cursor"], waitsForFollowUp: true)
+            manualDone.value = true
+        }
+        for _ in 0..<20 { await Task.yield() }
+        loop.cancel()
         news.cancelPass()
         await first.value
+        await loop.value
+        await manual.value
         XCTAssertTrue(sawCancel.value)
-        XCTAssertEqual(calls.value, 1, "What was queued waits for the owner's next pass")
+        XCTAssertEqual(requests.value.count, 2, "The cancelled pass, then the manual request alone")
+        XCTAssertEqual(requests.value.last?.forcedSources, ["cursor"], "The owner's queued check is dropped")
+        XCTAssertEqual(requests.value.last?.maxAge, 0)
+        XCTAssertTrue(manualDone.value, "Its caller waited for it")
+        await eventually { !news.isRefreshing }
         XCTAssertFalse(news.isRefreshing)
+    }
+
+    /// A cancellable owner's own pass ending (the background refresh's time running out) leaves a
+    /// follow-up a foreground pull asked for meanwhile.
+    @MainActor func testACancelledOwnersPassLeavesAnotherCallersFollowUp() async {
+        let requests = LockedBox<[NewsFetcher.Request]>([])
+        let news = NewsStore(defaults: defaults(), directory: nil, fetch: { request in
+            requests.value.append(request)
+            if requests.value.count == 1 { while !Task.isCancelled { try? await Task.sleep(for: .milliseconds(5)) } }
+            return .init(cache: request.cache, newModels: [])
+        }, notify: { _, _, _ in })
+        let owner = Task { await news.refresh(preferences: AlertPreferences(), notifies: false, cancellable: true) }
+        await eventually { requests.value.count == 1 }
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false) // A pull, not waiting.
+        owner.cancel()
+        await owner.value
+        await eventually { requests.value.count == 2 && !news.isRefreshing }
+        XCTAssertEqual(requests.value.map(\.maxAge), [nil, 0], "The pull's follow-up ran after the cancelled pass")
     }
 
     /// The Mac's sleep cancels its News loop and the pass that loop started.
@@ -339,13 +373,13 @@ final class NewsReliabilityTests: XCTestCase {
 
     private static let trendingBody = Data("""
     {"generatedAt":"2026-11-07T08:40:03.745Z","kind":"skills","windowHours":24,"items":[
-      {"rank":1,"slug":"xdrop","displayName":"Xdrop","summary":"Send files","source":"clawhub","publisher":{"handle":"xixu-me","kind":"user"},
-       "metrics":{"lifetimeInstalls":294,"updatedAt":1794038454497},"trust":{"clawHubVerdict":"clean"}},
-      {"rank":2,"slug":"ai-image-generation","displayName":"AI image generation","source":"skills-sh","publisher":null,
-       "sourceIdentity":{"owner":"skills-shell"},"metrics":{"lifetimeInstalls":28910}},
-      {"rank":3,"slug":"risky","displayName":"Risky","source":"clawhub","publisher":{"handle":"someone"},"trust":{"clawHubVerdict":"suspicious"}},
-      {"rank":4,"slug":"self-improving-agent","displayName":"Self-improving agent","source":"clawhub","sourceIdentity":{"owner":"pskoett"},
-       "metrics":{"lifetimeInstalls":18528},"trust":{"clawHubVerdict":"clean"}}
+      {"rank":1,"slug":"file-drop","displayName":"File drop","summary":"Moves files","source":"clawhub","publisher":{"handle":"ada-tools","kind":"user"},
+       "metrics":{"lifetimeInstalls":120,"updatedAt":1794000000000},"trust":{"clawHubVerdict":"clean"}},
+      {"rank":2,"slug":"image-maker","displayName":"Image maker","source":"skills-sh","publisher":null,
+       "sourceIdentity":{"owner":"mirror-owner"},"metrics":{"lifetimeInstalls":900}},
+      {"rank":3,"slug":"risky","displayName":"Risky","source":"clawhub","publisher":{"handle":"risky-owner"},"trust":{"clawHubVerdict":"suspicious"}},
+      {"rank":4,"slug":"note-keeper","displayName":"Note keeper","source":"clawhub","sourceIdentity":{"owner":"bea-lab"},
+       "metrics":{"lifetimeInstalls":340},"trust":{"clawHubVerdict":"clean"}}
     ],"nextCursor":"more"}
     """.utf8)
 
@@ -355,13 +389,23 @@ final class NewsReliabilityTests: XCTestCase {
         XCTAssertEqual(URLComponents(url: trending, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "kind" }?.value, "skills")
         XCTAssertEqual(SkillFeed.request(sort: .downloads).url?.path, "/api/v1/skills", "The other rankings stay where they are")
         let page = try SkillFeed.parse(Self.trendingBody)
-        XCTAssertEqual(page.listings.map(\.id), ["xixu-me/xdrop", "pskoett/self-improving-agent"], "ClawHub's own clean uploads only")
+        XCTAssertEqual(page.listings.map(\.id), ["ada-tools/file-drop", "bea-lab/note-keeper"], "ClawHub's own clean uploads only")
         XCTAssertEqual(page.listings.map(\.sourceRank), [1, 4], "Ranked as ClawHub ranked them")
-        XCTAssertEqual(page.listings.map(\.installs), [294, 18528])
-        XCTAssertEqual(page.listings.first?.updatedAt, Date(timeIntervalSince1970: 1_794_038_454.497))
-        XCTAssertEqual(page.listings.first?.canonicalURL.absoluteString, "https://clawhub.ai/xixu-me/skills/xdrop")
+        XCTAssertEqual(page.listings.map(\.installs), [120, 340])
+        XCTAssertEqual(page.listings.first?.updatedAt, Date(timeIntervalSince1970: 1_794_000_000))
+        XCTAssertEqual(page.listings.first?.canonicalURL.absoluteString, "https://clawhub.ai/ada-tools/skills/file-drop")
         XCTAssertNil(page.listings.first?.downloads)
         XCTAssertFalse(SkillSort.trending.label.contains("7 days"), "The successor's window isn't seven days")
+        // An entry that doesn't say it's ClawHub's, or carries no verdict, is left out.
+        let unlabelled = Data("""
+        {"items":[
+          {"rank":1,"slug":"no-source","displayName":"No source","publisher":{"handle":"cara-dev"},"trust":{"clawHubVerdict":"clean"}},
+          {"rank":2,"slug":"no-verdict","displayName":"No verdict","source":"clawhub","publisher":{"handle":"cara-dev"}},
+          {"rank":3,"slug":"no-trust","displayName":"No trust","source":"clawhub","publisher":{"handle":"cara-dev"},"trust":{}},
+          {"rank":4,"slug":"kept","displayName":"Kept","source":"clawhub","publisher":{"handle":"cara-dev"},"trust":{"clawHubVerdict":"clean"}}
+        ]}
+        """.utf8)
+        XCTAssertEqual(try SkillFeed.parse(unlabelled).listings.map(\.slug), ["kept"])
         XCTAssertTrue(SkillFeed.communityNote.contains("doesn't review"))
     }
 
@@ -379,7 +423,7 @@ final class NewsReliabilityTests: XCTestCase {
             calls.value += 1
             return .unreachable
         }, clock: { [now = self.now] in now.addingTimeInterval(60) })
-        XCTAssertEqual(relaunched.listings.map(\.id), ["xixu-me/xdrop", "pskoett/self-improving-agent"], "Shown at once")
+        XCTAssertEqual(relaunched.listings.map(\.id), ["ada-tools/file-drop", "bea-lab/note-keeper"], "Shown at once")
         XCTAssertEqual(relaunched.checkedAt, now, "\"Checked …\"")
         await relaunched.refresh(sort: .downloads)
         XCTAssertEqual(relaunched.listings.first?.owner, "alice")

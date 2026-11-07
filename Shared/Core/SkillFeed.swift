@@ -95,9 +95,10 @@ enum SkillFeed {
 
     /// One entry of the trending endpoint, ranked as ClawHub ranked it (`rank`, else its position).
     private static func trending(_ item: [String: Any], position: Int, ids: inout Set<String>) -> SkillListing? {
-        if let source = item["source"] as? String, source != "clawhub" { return nil }
-        let trust = item["trust"] as? [String: Any]
-        if let verdict = trust?["clawHubVerdict"] as? String, verdict != "clean" { return nil }
+        // Only what says it's ClawHub's and that ClawHub's scan called clean: an entry missing
+        // either is left out, not given the benefit of the doubt.
+        guard item["source"] as? String == "clawhub",
+              (item["trust"] as? [String: Any])?["clawHubVerdict"] as? String == "clean" else { return nil }
         let publisher = item["publisher"] as? [String: Any]
         let identity = item["sourceIdentity"] as? [String: Any]
         guard let owner = segment(publisher?["handle"]) ?? segment(identity?["owner"]), let slug = segment(item["slug"]),
