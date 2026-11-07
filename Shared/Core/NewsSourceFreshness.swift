@@ -7,14 +7,18 @@ struct NewsSourceFreshness {
     var delayedCount = 0
     var unloadedCount = 0
     var failedIDs = Set<String>()
+    /// Read, but only up to their size limit (`NewsCache.SourceCheck.truncatedAt`).
+    var truncatedIDs = Set<String>()
     var totalCount: Int { currentCount + delayedCount + unloadedCount }
 
-    /// How recently a feed must have been read to count as current: two on-screen intervals and a
-    /// download, so feeds don't flip to "delayed" while each check is under way.
-    static let currentInterval = 2 * NewsFetcher.liveInterval + NewsFetcher.downloadTimeout
+    /// How recently an official feed must have been read to count as current: its background
+    /// interval and a download (`NewsCadence.currentInterval`). Each kind is measured against its
+    /// own interval, so a voice read two hours ago is current and a status feed isn't.
+    static let currentInterval = NewsCadence.intervals(for: .official).background + NewsFetcher.downloadTimeout
 
+    /// `currentInterval`, when given, holds every source to one interval instead of its kind's.
     init(cache: NewsCache, sources: [FeedSource], now: Date = .now,
-         currentInterval: TimeInterval = Self.currentInterval) {
+         currentInterval: TimeInterval? = nil) {
         var seen = Set<String>()
         for source in sources where seen.insert(source.id).inserted {
             let check = cache.check(for: source)
@@ -22,9 +26,11 @@ struct NewsSourceFreshness {
                 check.succeededAt == nil || $0 >= check.succeededAt!
             } == true
             if failed { failedIDs.insert(source.id) }
+            if !failed, check.truncatedAt != nil { truncatedIDs.insert(source.id) }
             guard let succeeded = check.succeededAt else { unloadedCount += 1; continue }
             let age = now.timeIntervalSince(succeeded)
-            if !failed, age >= 0, age <= currentInterval { currentCount += 1 }
+            let current = currentInterval ?? NewsCadence.currentInterval(for: source)
+            if !failed, age >= 0, age <= current { currentCount += 1 }
             else { delayedCount += 1 }
         }
     }

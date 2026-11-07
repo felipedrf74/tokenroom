@@ -252,7 +252,7 @@ final class FeedTests: XCTestCase {
         XCTAssertEqual(StubURLProtocol.requests.last?.value(forHTTPHeaderField: "If-None-Match"), "\"v1\"")
         XCTAssertEqual(second.cache.items["claude-code"]?.map(\.title), ["2.1.282"], "A 304 keeps what was cached")
         XCTAssertEqual(second.cache.announcementsFetchedAt, now.addingTimeInterval(60))
-        XCTAssertFalse(NewsFetcher.isDue(second.cache.announcementsFetchedAt, interval: NewsFetcher.announcementInterval, now: now.addingTimeInterval(3600)))
+        XCTAssertFalse(NewsFetcher.isDue(second.cache.announcementsFetchedAt, interval: NewsFetcher.announcementInterval, now: now.addingTimeInterval(NewsFetcher.announcementInterval)))
     }
 
     func testLegacyExcerptRevalidatesBodyOnceWithoutLosingReadIdentity() async throws {
@@ -459,6 +459,9 @@ final class FeedTests: XCTestCase {
         XCTAssertFalse(cut, "A body exactly at the limit is whole")
     }
 
+    /// November 2026: ChatGPT & Codex's changelog grew past its limit, and every check failed
+    /// with "Couldn't read" while its newest entries had arrived whole. A feed past its limit with
+    /// whole entries before it is a read, kept to a 304 by its validator, and noted for health.
     func testAFeedPastItsLimitShowsWhatArrivedAndSaysSo() async {
         defer { unstubNetwork() }
         let long = Data("""
@@ -472,16 +475,33 @@ final class FeedTests: XCTestCase {
         let now = utc(2026, 9, 25, 12)
         let first = await NewsFetcher.refresh(NewsCache(), sources: [source], following: [], now: now)
         XCTAssertEqual(first.cache.items["long"]?.map(\.title), ["Short post"], "What arrived before the limit")
-        XCTAssertNil(first.cache.validators[source.url.absoluteString], "Not taken for the whole feed: no 304 keeps it")
-        XCTAssertEqual(first.cache.unreadable, ["long"])
-        XCTAssertNil(first.cache.announcementsFetchedAt, "A partial answer is a failure, not a successful check")
-        XCTAssertEqual(first.cache.sourceChecks?["long"]?.failedAt, now)
+        XCTAssertEqual(first.cache.validators[source.url.absoluteString]?.etag, "\"v1\"", "A read like any other: its validator keeps the next to a 304")
+        XCTAssertNil(first.cache.unreadable, "Not \"Couldn't read\"")
+        XCTAssertEqual(first.cache.announcementsFetchedAt, now, "A successful check")
+        XCTAssertEqual(first.cache.sourceChecks?["long"]?.succeededAt, now)
+        XCTAssertNil(first.cache.sourceChecks?["long"]?.failedAt)
+        XCTAssertEqual(first.cache.sourceChecks?["long"]?.truncatedAt, now, "Recorded for source health")
+        XCTAssertEqual(NewsSourceFreshness(cache: first.cache, sources: [source], now: now).truncatedIDs, ["long"])
 
         let short = Data("<rss version=\"2.0\"><channel><item><title>Short post</title><link>https://example.com/short</link></item></channel></rss>".utf8)
         StubURLProtocol.handler = { request in request.url == ModelFeed.url ? (200, Self.noModels) : (200, short) }
         let second = await NewsFetcher.refresh(first.cache, sources: [source], following: [], maxAge: 0, now: now.addingTimeInterval(60))
         XCTAssertNil(second.cache.unreadable, "Read in full again")
         XCTAssertEqual(second.cache.validators[source.url.absoluteString]?.etag, "\"v1\"")
+        XCTAssertNil(second.cache.sourceChecks?["long"]?.truncatedAt, "A full read clears the note")
+    }
+
+    /// Past its limit before any entry ended: nothing whole arrived, so it's still a failure.
+    func testAFeedPastItsLimitWithNoWholeEntryIsStillAFailure() async {
+        defer { unstubNetwork() }
+        let long = Data("<rss version=\"2.0\"><channel><item><title>Long post</title><description>\(String(repeating: "Notes. ", count: 400))</description></item></channel></rss>".utf8)
+        stubNetwork { request in request.url == ModelFeed.url ? (200, Self.noModels) : (200, long) }
+        let source = FeedSource(id: "long", name: "Long", url: URL(string: "https://example.com/long.xml")!, sizeLimit: 1024)
+        let now = utc(2026, 9, 25, 12)
+        let result = await NewsFetcher.refresh(NewsCache(), sources: [source], following: [], now: now).cache
+        XCTAssertEqual(result.sourceChecks?["long"]?.failedAt, now)
+        XCTAssertNil(result.validators[source.url.absoluteString])
+        XCTAssertEqual(result.unreadable, ["long"])
     }
 
     func testFeedsHaveLongerToDownloadThanAProviderCheck() throws {
@@ -658,7 +678,7 @@ final class FeedTests: XCTestCase {
     func testCodexChangelogKeepsOnlyCodexNotesAndMayBeLarger() throws {
         let changelog = try XCTUnwrap(FeedSource.catalog.first { $0.id == "codex-changelog" })
         XCTAssertEqual(changelog.linkContains, "#codex-", "Its CLI entries repeat codex-releases")
-        XCTAssertEqual(changelog.sizeLimit, 4 * 1024 * 1024)
+        XCTAssertEqual(changelog.sizeLimit, 8 * 1024 * 1024, "4.76 MB decoded in November 2026, past the 4 MB it had")
         let releaseFeeds = FeedSource.catalog.filter { $0.url.path.hasSuffix("/releases.atom") }
         XCTAssertGreaterThanOrEqual(releaseFeeds.count, 9)
         for source in releaseFeeds {
@@ -1392,21 +1412,68 @@ final class FeedTests: XCTestCase {
         news.followedSources = ["cursor", "devin", "zai"]
         await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: utc(2026, 9, 25, 12))
         XCTAssertEqual(news.modelProblem, "Couldn't read OpenRouter's model list.")
-        XCTAssertEqual(news.announcementProblem, "Couldn't read Cursor.")
+        // November 2026: one failure no longer names a feed; source health still shows it.
+        XCTAssertNil(news.announcementProblem, "One broken answer is a blip, not a banner")
+        XCTAssertEqual(news.sourceHealth(for: FeedSource.catalog.first { $0.id == "cursor" }!).problem, "Couldn't read Cursor.")
         XCTAssertEqual(Set(news.announcements.map(\.source)), ["Devin", "Z.ai"], "The others still read")
 
         StubURLProtocol.handler = { _ in (500, Data()) }
         await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: utc(2026, 9, 25, 13))
-        XCTAssertEqual(news.announcementProblem, "Couldn't read the feeds.")
+        XCTAssertNil(news.announcementProblem, "Two failures in a row aren't three")
         XCTAssertEqual(Set(news.announcements.map(\.source)), ["Devin", "Z.ai"], "What was read stays")
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: utc(2026, 9, 25, 13, 30))
+        XCTAssertEqual(news.announcementProblem, "Couldn't read Cursor.", "Three in a row over more than an hour")
 
         StubURLProtocol.handler = { request in
             if request.url == ModelFeed.url { return (200, Self.noModels) }
             return request.url == cursor || request.url == devin ? (404, Data()) : (200, post(request))
         }
         await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: utc(2026, 9, 25, 14))
-        XCTAssertEqual(news.announcementProblem, "Couldn't read Cursor and Devin.")
+        XCTAssertEqual(news.announcementProblem, "Couldn't read Cursor and Devin.", "A 404 is permanent: named at once")
         XCTAssertNil(news.modelProblem, "A good answer clears it")
+    }
+
+    /// A feed is named only once it keeps failing: a permanent error (404, 410, not a feed) at
+    /// once, else three failures in a row spanning more than an hour.
+    func testOnlyPermanentOrLastingFailuresNameAFeed() throws {
+        let source = try XCTUnwrap(FeedSource.catalog.first { $0.id == "cursor" })
+        let now = utc(2026, 11, 7, 12)
+        var cache = NewsCache()
+        func failing(failures: Int, since minutes: Double, permanent: Bool? = nil) -> NewsCache {
+            var cache = cache
+            cache.sourceChecks = [source.id: .init(succeededAt: now.addingTimeInterval(-86_400), failedAt: now, failures: failures,
+                                                   firstFailedAt: now.addingTimeInterval(-minutes * 60), isPermanent: permanent)]
+            return cache
+        }
+        XCTAssertFalse(failing(failures: 1, since: 0).isPersistentlyFailing(source))
+        XCTAssertFalse(failing(failures: 5, since: 50).isPersistentlyFailing(source), "Many, but within the hour")
+        XCTAssertFalse(failing(failures: 2, since: 120).isPersistentlyFailing(source), "Over an hour, but two")
+        XCTAssertTrue(failing(failures: 3, since: 61).isPersistentlyFailing(source))
+        XCTAssertTrue(failing(failures: 1, since: 0, permanent: true).isPersistentlyFailing(source))
+        cache.sourceChecks = [source.id: .init(succeededAt: now, failedAt: nil)]
+        XCTAssertFalse(cache.isPersistentlyFailing(source), "Read since")
+        cache.sourceChecks = nil
+        cache.items[source.id] = []
+        cache.unreadable = [source.id]
+        XCTAssertFalse(cache.isPersistentlyFailing(source), "An earlier release's failure, without a count, waits for this release's own")
+    }
+
+    func testAnAnswerThatIsntAFeedOrIsGoneIsPermanentAndOthersArent() async {
+        defer { unstubNetwork() }
+        let now = utc(2026, 11, 7, 12)
+        for (status, body, permanent) in [(404, "", true), (410, "", true), (200, "<html><body>Moved</body></html>", true),
+                                          (503, "", false), (429, "", false), (200, "<rss><channel><item><title>Cut", false)] {
+            stubNetwork { request in request.url == ModelFeed.url ? (200, Self.noModels) : (status, Data(body.utf8)) }
+            let cache = await NewsFetcher.refresh(NewsCache(), sources: [claudeCode], following: [], now: now).cache
+            XCTAssertEqual(cache.sourceChecks?[claudeCode.id]?.isPermanent ?? false, permanent, "\(status) \(body)")
+            XCTAssertEqual(cache.sourceChecks?[claudeCode.id]?.firstFailedAt, now)
+        }
+        // A run's first failure is kept while it goes on.
+        stubNetwork { request in request.url == ModelFeed.url ? (200, Self.noModels) : (503, Data()) }
+        var cache = await NewsFetcher.refresh(NewsCache(), sources: [claudeCode], following: [], now: now).cache
+        cache = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], maxAge: 0, now: now.addingTimeInterval(600)).cache
+        XCTAssertEqual(cache.sourceChecks?[claudeCode.id]?.firstFailedAt, now)
+        XCTAssertEqual(cache.sourceChecks?[claudeCode.id]?.failures, 2)
     }
 
     @MainActor
@@ -1445,7 +1512,8 @@ final class FeedTests: XCTestCase {
         let defaults = makeDefaults()
         defaults.set(["claude-code", "cursor"], forKey: NewsStore.Keys.sources)
         let news = NewsStore(defaults: defaults, directory: nil, fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
-        let addedSince = Set(FeedSource.catalog.map(\.id)).subtracting(NewsStore.firstCatalog)
+        // Feeds added since November 2026 are offered in Following instead of turned on.
+        let addedSince = Set(FeedSource.catalog.filter(\.startsOnForUpgraders).map(\.id)).subtracting(NewsStore.firstCatalog)
         XCTAssertEqual(news.followedSources, Set(["claude-code", "cursor"]).union(addedSince), "2.0 had offered every feed it knew")
     }
     func testFeedsRetryIndependentlyAndNewlyFollowedSourcesFetchImmediately() async {
@@ -1495,11 +1563,101 @@ final class FeedTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [OfflineFeedProtocol.self, StubETagProtocol.self]
         TokenroomHTTP.overrideSession(URLSession(configuration: configuration))
+        // A connection the host refused to secure reached it: the source's failure. (Being
+        // offline isn't, since November 2026: `testBeingOfflineFailsNoSource`.)
+        OfflineFeedProtocol.error = URLError(.secureConnectionFailed)
+        defer { OfflineFeedProtocol.error = URLError(.notConnectedToInternet) }
         let source = FeedSource(id: "offline", name: "Offline", url: URL(string: "https://offline.example.com/feed")!)
         let now = utc(2026, 9, 25, 12)
         let cache = await NewsFetcher.refresh(NewsCache(), sources: [source], following: [], now: now).cache
         XCTAssertEqual(cache.sourceChecks?[source.id]?.failedAt, now)
         XCTAssertTrue(cache.unreadable?.contains(source.id) == true)
+    }
+
+    /// Offline (not connected, no DNS, the link dropped) for every request in the pass: no source
+    /// failed, so none counts a failure, backs off, or says "Couldn't read", and the next pass asks
+    /// as usual. Only a whole pass is offline: one host failing so while others answer is that
+    /// host's failure (`testAHostThatCantBeFoundWhileOthersAnswerFailsByItself`).
+    @MainActor
+    func testBeingOfflineFailsNoSource() async throws {
+        defer { unstubNetwork() }
+        StubURLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [NoNetworkProtocol.self]
+        TokenroomHTTP.overrideSession(URLSession(configuration: configuration))
+        let now = utc(2026, 11, 7, 12)
+        var cache = NewsCache()
+        cache.items[claudeCode.id] = [FeedItem(id: "kept", title: "Kept", source: "Claude Code")]
+        cache.sourceChecks = [claudeCode.id: .init(succeededAt: now.addingTimeInterval(-3600))]
+        cache.modelsFetchedAt = now.addingTimeInterval(-3600)
+        for code in [URLError.Code.notConnectedToInternet, .cannotFindHost, .networkConnectionLost, .dataNotAllowed] {
+            NoNetworkProtocol.code = code
+            let result = await NewsFetcher.refresh(cache, sources: [claudeCode], following: [], maxAge: 0, now: now).cache
+            XCTAssertNil(result.sourceChecks?[claudeCode.id]?.failedAt, "\(code)")
+            XCTAssertNil(result.sourceChecks?[claudeCode.id]?.failures)
+            XCTAssertNil(result.modelsFailedAt, "\(code): the model list didn't fail either")
+            XCTAssertNil(result.modelsFailures)
+            XCTAssertNil(result.unreadable, "\(code): nothing \"couldn't be read\"")
+            XCTAssertEqual(result.items[claudeCode.id]?.map(\.id), ["kept"])
+            XCTAssertTrue(NewsFetcher.isDue(result.sourceChecks?[claudeCode.id]?.succeededAt, failedAt: result.sourceChecks?[claudeCode.id]?.failedAt,
+                                            interval: NewsFetcher.announcementInterval, now: now.addingTimeInterval(60)), "No backoff: due as before")
+        }
+        let news = NewsStore(defaults: makeDefaults(), directory: nil, initialCache: cache, fetch: {
+            await NewsFetcher.refresh($0.cache, sources: $0.sources, following: $0.vendors, maxAge: $0.maxAge, now: $0.now, isAllowed: $0.isAllowed)
+        }, notify: { _, _, _ in })
+        news.followedSources = [claudeCode.id]
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: now)
+        XCTAssertNil(news.problem(for: .today))
+        XCTAssertNil(news.sourceHealth(for: claudeCode).problem)
+    }
+
+    /// A lapsed domain answers "can't find host" while everything else answers: that's the host's
+    /// own failure, which backs off (5 minutes, then 15, …) instead of being asked every minute.
+    func testAHostThatCantBeFoundWhileOthersAnswerFailsByItself() async {
+        defer { unstubNetwork() }
+        StubURLProtocol.reset()
+        StubURLProtocol.handler = { request in request.url == ModelFeed.url ? (200, Self.noModels) : (200, Self.rss("Post", "Thu, 05 Nov 2026 12:00:00 GMT")) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [GoneHostProtocol.self, StubETagProtocol.self]
+        TokenroomHTTP.overrideSession(URLSession(configuration: configuration))
+        let gone = FeedSource(id: "gone", name: "Gone", url: URL(string: "https://gone.example.com/feed")!)
+        let now = utc(2026, 11, 7, 12)
+        for code in [URLError.Code.cannotFindHost, .cannotConnectToHost, .dnsLookupFailed, .networkConnectionLost] {
+            GoneHostProtocol.code = code
+            let cache = await NewsFetcher.refresh(NewsCache(), sources: [claudeCode, gone], following: [], now: now).cache
+            let check = cache.sourceChecks?[gone.id]
+            XCTAssertEqual(check?.failures, 1, "\(code)")
+            XCTAssertEqual(check?.failedAt, now)
+            XCTAssertNil(check?.isPermanent, "A passing failure")
+            XCTAssertTrue(cache.unreadable?.contains(gone.id) == true)
+            XCTAssertEqual(cache.sourceChecks?[claudeCode.id]?.succeededAt, now, "The others answered")
+            // Its retry time is the failure backoff: not before 5 minutes, then at 5.
+            XCTAssertFalse(NewsFetcher.isDue(nil, failedAt: check?.failedAt, failures: check?.failures, retryAt: check?.retryAt,
+                                             interval: NewsFetcher.announcementInterval, now: now.addingTimeInterval(4 * 60)))
+            XCTAssertEqual(NewsCadence.nextCheck(cache: cache, sources: [gone], now: now), now.addingTimeInterval(5 * 60), "Not every minute")
+        }
+        // The model list is held to the same rule.
+        GoneHostProtocol.code = .cannotFindHost
+        GoneHostProtocol.alsoModels = true
+        defer { GoneHostProtocol.alsoModels = false }
+        let cache = await NewsFetcher.refresh(NewsCache(), sources: [claudeCode], following: [], now: now).cache
+        XCTAssertEqual(cache.modelsFailures, 1)
+        XCTAssertEqual(cache.modelsFailedAt, now)
+    }
+
+    /// A body the network cut short before its root tag isn't "not a feed": it's a passing failure.
+    func testABodyCutShortBeforeItsRootIsNotPermanent() async {
+        defer { unstubNetwork() }
+        StubURLProtocol.reset()
+        StubURLProtocol.handler = { request in request.url == ModelFeed.url ? (200, Self.noModels) : (200, Data("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rs".utf8)) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [CutOffFeedProtocol.self]
+        TokenroomHTTP.overrideSession(URLSession(configuration: configuration))
+        let now = utc(2026, 11, 7, 12)
+        let cache = await NewsFetcher.refresh(NewsCache(), sources: [claudeCode], following: [], now: now).cache
+        XCTAssertEqual(cache.sourceChecks?[claudeCode.id]?.failedAt, now)
+        XCTAssertNil(cache.sourceChecks?[claudeCode.id]?.isPermanent, "Cut short, not gone")
+        XCTAssertFalse(cache.isPersistentlyFailing(claudeCode))
     }
 
     func testAnExplicitUncachedFollowRetriesOnlyThatSourceBeforeItsFailureCooldown() async {
@@ -1745,9 +1903,32 @@ private final class CutOffFeedProtocol: URLProtocol, @unchecked Sendable {
 }
 
 private final class OfflineFeedProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var error = URLError(.notConnectedToInternet)
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "offline.example.com" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-    override func startLoading() { client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet)) }
+    override func startLoading() { client?.urlProtocol(self, didFailWithError: Self.error) }
+    override func stopLoading() {}
+}
+
+/// One host (`gone.example.com`, and the model list when `alsoModels`) fails by `code`; the rest
+/// go on to the next protocol.
+private final class GoneHostProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var code = URLError.Code.cannotFindHost
+    nonisolated(unsafe) static var alsoModels = false
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "gone.example.com" || (alsoModels && request.url == ModelFeed.url)
+    }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() { client?.urlProtocol(self, didFailWithError: URLError(Self.code)) }
+    override func stopLoading() {}
+}
+
+/// Every request fails as one does with no network, by `code`.
+private final class NoNetworkProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var code = URLError.Code.notConnectedToInternet
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() { client?.urlProtocol(self, didFailWithError: URLError(Self.code)) }
     override func stopLoading() {}
 }
 

@@ -17,8 +17,7 @@ struct TokenroomMobileApp: App {
     var body: some Scene {
         MobileWindowScene(store: appDelegate.store, news: appDelegate.news)
             .backgroundTask(.appRefresh(MobileStore.backgroundTaskID)) {
-                await appDelegate.store.backgroundRefresh()
-                await appDelegate.news.refresh(preferences: appDelegate.store.alertPreferences)
+                await appDelegate.backgroundRefresh()
             }
     }
 }
@@ -53,10 +52,12 @@ private struct MobileWindowScene: Scene {
                     case .active:
                         store.becameActive()
                         Task {
-                            await store.refresh()
-                            // What's due by News's hourly schedule, so its badge is current. With News on
-                            // screen, its own 5-minute checks (`NewsView`) start as the app comes forward.
-                            await news.refresh(preferences: store.alertPreferences)
+                            // News beside usage, not behind it: feeds older than 15 minutes, so the
+                            // badge is current. With News on screen, its own checks (`NewsView`)
+                            // start as the app comes forward.
+                            await NewsLifecycle.cameForward(news: news, preferences: { store.alertPreferences }) {
+                                await store.refresh()
+                            }
                         }
                     case .background:
                         Task { await store.scheduleBackgroundRefresh() }

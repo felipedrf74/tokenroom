@@ -224,6 +224,11 @@ struct FeedSource: Sendable, Identifiable, Equatable {
     /// Keyword blog and DeepMind's): the same title within a couple of days is one post.
     var titleFoldGroup: String? = nil
 
+    /// Whether an install that saved its choices before this feed was in the catalog starts
+    /// following it. Feeds added before November 2026 did; later ones are offered in Following's
+    /// "New sources" instead (`NewsStore.newSources`), so an update never follows anything on its own.
+    var startsOnForUpgraders = true
+
     var kind: NewsSourceKind = .officialAnnouncement
     /// Legacy tool changelogs suppress repeated titles; people, incidents, and commits never do.
     var suppressesRepeatedTitles: Bool { kind == .officialAnnouncement && !isCommitLog }
@@ -269,12 +274,16 @@ struct FeedSource: Sendable, Identifiable, Equatable {
         // ChatGPT and Codex product notes: each links to a `#codex-…` anchor, ChatGPT's included.
         // Its `#github-release-…` entries are CLI releases, which `codex-releases` already has.
         // Those embed each release's full notes (up to 360 KB apiece), so the feed's size follows
-        // them: 1.2 MB in September 2026, 850 KB of it the last 13 releases. 4 MB, twice the
-        // usual limit, leaves room for a run of long ones.
-        FeedSource(id: "codex-changelog", name: "ChatGPT & Codex", url: URL(string: "https://learn.chatgpt.com/docs/changelog/rss.xml")!, provider: .openai, linkContains: "#codex-", sizeLimit: 4 * 1024 * 1024),
+        // them: 1.2 MB in September 2026, 4.76 MB decoded (320 KB on the wire) in November, past
+        // the 4 MB it had then. 8 MB leaves room to grow, and a feed past its limit still reads
+        // the entries before it (`NewsFetcher.refresh`).
+        FeedSource(id: "codex-changelog", name: "ChatGPT & Codex", url: URL(string: "https://learn.chatgpt.com/docs/changelog/rss.xml")!, provider: .openai, linkContains: "#codex-", sizeLimit: 8 * 1024 * 1024),
         FeedSource(id: "antigravity-blog", name: "Antigravity", url: URL(string: "https://antigravity.google/blog/rss.xml")!, provider: .antigravity),
         FeedSource(id: "antigravity-cli", name: "Antigravity CLI", url: URL(string: "https://github.com/google-antigravity/antigravity-cli/releases.atom")!, provider: .antigravity, skipsPrereleases: true),
         FeedSource(id: "minimax-code", name: "MiniMax Code", url: URL(string: "https://github.com/MiniMax-AI/minimax-code/releases.atom")!, provider: .minimax, skipsPrereleases: true),
+        // Mistral's news, a lab without a Tokenroom provider. It redirects to /news/rss and is
+        // served as text/plain (November 2026); the parser reads it as RSS either way.
+        FeedSource(id: "mistral-news", name: "Mistral AI", url: URL(string: "https://mistral.ai/rss.xml")!, provider: nil, startsOnForUpgraders: false),
     ]
 }
 
@@ -290,10 +299,11 @@ enum FeedParser {
         read(data, source: source).items
     }
 
-    /// The feed's items, whether the whole document parsed as a feed, and how many entries it had
-    /// before any were left out. One cut short at the size limit, or broken, still gives the items
-    /// that ended before the break.
-    static func read(_ data: Data, source: FeedSource) -> (items: [FeedItem], isComplete: Bool, entries: Int) {
+    /// The feed's items, whether the whole document parsed as a feed, how many entries it had
+    /// before any were left out, and whether it's a feed at all (an RSS channel or an Atom feed,
+    /// not a web page or an error document). One cut short at the size limit, or broken, still
+    /// gives the items that ended before the break.
+    static func read(_ data: Data, source: FeedSource) -> (items: [FeedItem], isComplete: Bool, entries: Int, isFeed: Bool) {
         let delegate = FeedXMLDelegate(source: source)
         let parser = XMLParser(data: data.prefix(source.sizeLimit))
         parser.delegate = delegate
@@ -311,7 +321,7 @@ enum FeedParser {
             // Newest first, so the day's newest update to each thing stays.
             .filter { item in !source.isCommitLog || dailyUpdateKey(item).map { updates.insert($0).inserted } ?? true }
             .prefix(itemLimit)
-        return (Array(items), parsed && delegate.isFeed && data.count <= source.sizeLimit, delegate.items.count)
+        return (Array(items), parsed && delegate.isFeed && data.count <= source.sizeLimit, delegate.items.count, delegate.isFeed)
     }
 
     /// A message GitHub cut mid-word ("Add guidance for structured outp…") ends at its last whole

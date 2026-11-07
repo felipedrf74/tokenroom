@@ -387,7 +387,7 @@ struct NewsSourceHealth: View {
                     let hasPreviousArticles = health.sourceIDs.contains { !(news.cache.items[$0] ?? []).isEmpty }
                     Text(problem + (hasPreviousArticles ? " Previous articles remain available." : ""))
                     Button(health.retryIDs.count > 1 ? "Retry failed sources" : "Retry source") {
-                        Task { await news.retrySources(health.retryIDs) }
+                        Task { await news.retrySources(health.retryIDs, waitsForFollowUp: true) }
                     }.frame(minHeight: NewsControlMetrics.minimumHeight)
                 } else if isEmpty {
                     Text("No articles in the latest feeds.")

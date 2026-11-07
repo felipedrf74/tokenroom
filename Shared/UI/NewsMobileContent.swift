@@ -134,7 +134,7 @@ struct MobileNewsSourceHealthDetail: View {
                     if !news.allAnnouncements.isEmpty || !news.models().isEmpty { Text("Previous items remain available.").foregroundStyle(MobileNewsPalette.secondary) }
                     Button("Retry failed sources") {
                         let ids = summary.failedIDs.union(news.cache.modelsFailedAt != nil ? [ModelFeed.id] : [])
-                        Task { await news.retrySources(ids) }
+                        Task { await news.retrySources(ids, waitsForFollowUp: true) }
                     }.frame(minHeight: 44).disabled(news.isRefreshing)
                 }
                 MobileNewsFollowing(news: news, library: library)

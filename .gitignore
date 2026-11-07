@@ -25,3 +25,7 @@ build/
 
 # Coverage data from running debug builds directly
 *.profraw
+
+# Python bytecode from running scripts locally
+__pycache__/
+*.pyc

@@ -53,10 +53,18 @@ final class QuotaStore {
     /// for every provider they asked for (nil: all of them).
     private var followUp: Task<Void, Never>?
     private var followUpProviders: Set<Provider>? = []
-    /// Sending readings, history, and alerts to iCloud, and checking News, after a check.
+    /// Sending readings, history, and alerts to iCloud after a check.
     private var sharing: Task<Void, Never>?
     /// Keeps News current while its window is open.
     private var liveNews: Task<Void, Never>?
+    /// Checks News by itself, apart from usage checks and iCloud sharing, at each kind's
+    /// background interval (`NewsCadence`). Sleep cancels it and the pass it started.
+    private var newsLoop: Task<Void, Never>?
+    /// Waits until the News loop's next pass (returning early, throwing, when cancelled). Tests
+    /// stand in.
+    @ObservationIgnored var waitForNextNewsCheck: @Sendable (TimeInterval) async throws -> Void = {
+        try await Task.sleep(for: .seconds($0))
+    }
     /// The one check more after a check that couldn't reach the network at all.
     private(set) var offlineRetry: Task<Void, Never>?
     /// How long after a check where no call reached the network it's tried once more: the Mac
@@ -119,9 +127,12 @@ final class QuotaStore {
             await self?.checkOnTimer()
         }
         schedulePresentationClock()
+        startNewsLoop()
         wakeTask = Task { [weak self] in
             let notifications = NSWorkspace.shared.notificationCenter.notifications(named: NSWorkspace.didWakeNotification)
             for await _ in notifications {
+                // News first, on its own: it doesn't wait for the usage check.
+                self?.startNewsLoop()
                 // Forced: however short the sleep, what it cut short is checked again.
                 await self?.refresh(force: true)
             }
@@ -168,13 +179,42 @@ final class QuotaStore {
     }
 
     /// Calls cut off by sleep would come back as failures. Cancelled, they don't count, and the
-    /// refresh on waking checks again.
+    /// refresh on waking checks again. News's loop stops, with the pass under way, whoever started
+    /// it; waking starts the loop again.
     func willSleep() {
         inFlight?.cancel()
         followUp?.cancel()
         sharing?.cancel()
         offlineRetry?.cancel()
         offlineRetry = nil
+        newsLoop?.cancel()
+        newsLoop = nil
+        news?.cancelPass()
+    }
+
+    /// News's own loop: a pass now, then one whenever the next source comes due
+    /// (`NewsCadence.nextCheck`), while News is on. A pass under way when one comes due (the
+    /// window's live check, Check Now) is waited for rather than dropped.
+    func startNewsLoop() {
+        guard newsLoop == nil, news != nil else { return }
+        newsLoop = Task { [weak self] in await self?.runNewsLoop() }
+    }
+
+    private func runNewsLoop() async {
+        while !Task.isCancelled {
+            guard let news else { return }
+            if settings.newsEnabled {
+                await news.refresh(preferences: settings.alertPreferences, notifies: settings.showsAlertsOnMac,
+                                   waitsForFollowUp: true, cancellable: true)
+            }
+            let now = Date()
+            let next = settings.newsEnabled ? NewsCadence.nextCheck(cache: news.cache, sources: news.sources, now: now) : now.addingTimeInterval(NewsCadence.longestWait)
+            do {
+                try await waitForNextNewsCheck(max(0, next.timeIntervalSince(now)))
+            } catch {
+                return
+            }
+        }
     }
 
     func stop() {
@@ -197,6 +237,8 @@ final class QuotaStore {
         sharing = nil
         offlineRetry?.cancel()
         offlineRetry = nil
+        newsLoop?.cancel()
+        newsLoop = nil
         signIn.cancel()
     }
 
@@ -343,9 +385,9 @@ final class QuotaStore {
         }
     }
 
-    /// Sends readings, history, and alerts to iCloud and checks News, one round at a time and
-    /// outside the check, so a slow iCloud doesn't hold up the next check. A check that finishes
-    /// meanwhile leaves one more round, with the newest readings then.
+    /// Sends readings, history, and alerts to iCloud, one round at a time and outside the check,
+    /// so a slow iCloud doesn't hold up the next check. A check that finishes meanwhile leaves one
+    /// more round, with the newest readings then. News has its own loop (`startNewsLoop`).
     func share() async {
         if let sharing {
             // A round going to sleep cancelled doesn't go round again: this request gets a round
@@ -378,8 +420,6 @@ final class QuotaStore {
         await relay?.publishHistory(history.relayHistory(for: relayed), now: now)
         await sendAlerts(for: envelope.providers, now: now)
         await relay?.pruneEventsIfDue(now: now)
-        // News checks on its own, so a slow feed doesn't hold up the next round of sharing.
-        Task { [weak self] in await self?.refreshNews(now: now) }
     }
 
     private func refreshNow(providers: [Provider]?) async {
@@ -506,9 +546,11 @@ final class QuotaStore {
     }
 
     /// Checks News when it's turned on; the fetcher only goes out when a feed is due.
-    func refreshNews(force: Bool = false, now: Date = .now) async {
+    /// `waitsForFollowUp`: Check Now's spinner lasts until a pass under way and its own are done.
+    func refreshNews(force: Bool = false, now: Date = .now, waitsForFollowUp: Bool = false) async {
         guard settings.newsEnabled, let news else { return }
-        await news.refresh(maxAge: force ? 0 : nil, preferences: settings.alertPreferences, notifies: settings.showsAlertsOnMac, now: now)
+        await news.refresh(maxAge: force ? 0 : nil, preferences: settings.alertPreferences, notifies: settings.showsAlertsOnMac, now: now,
+                           waitsForFollowUp: waitsForFollowUp)
     }
 
     /// Alerts for crossings since the last refresh: to the iPhone through iCloud, and on this Mac

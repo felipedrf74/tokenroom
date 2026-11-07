@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         store = QuotaStore(
             settings: AppSettings(),
             relay: RelayPublisher(),
-            news: NewsStore(defaults: .standard, directory: SnapshotCache.defaultDirectory),
+            news: NewsRuntime.liveNewsStore(defaults: .standard, directory: SnapshotCache.defaultDirectory),
             showsLegacyNotice: LegacyMigration.shouldShowNotice()
         )
         super.init()

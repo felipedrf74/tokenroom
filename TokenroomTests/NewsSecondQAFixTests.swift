@@ -230,7 +230,7 @@ final class NewsSecondQAFixTests: XCTestCase {
         XCTAssertEqual(detail.item.rankText, "Rank 4")
         XCTAssertTrue(library.save(result.bookmark(sort: .trending, checkedAt: now, now: now)))
         let reopened = NewsLibrary(directory: directory)
-        XCTAssertEqual(reopened.saved.first?.skill?.ranking, "Trending · 7 days · Rank 4")
+        XCTAssertEqual(reopened.saved.first?.skill?.ranking, "Trending · Rank 4")
         XCTAssertEqual(reopened.saved.first?.skill?.checkedAt, now)
     }
 

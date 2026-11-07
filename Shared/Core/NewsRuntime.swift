@@ -36,7 +36,13 @@ import Foundation
             return NewsStore(defaults: inertDefaults ?? isolatedDefaults, directory: nil,
                              initialCache: fixture, fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
         }
-        return NewsStore()
+        return liveNewsStore()
+    }
+    /// The app's own News: a new install follows `NewsVoice.newInstallFollows`; an update never
+    /// adds a follow. The Mac passes its standard defaults and Application Support folder.
+    static func liveNewsStore(defaults: UserDefaults = AppGroup.defaults,
+                              directory: URL? = AppGroup.containerURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first) -> NewsStore {
+        NewsStore(defaults: defaults, directory: directory, newInstallVoices: NewsVoice.newInstallFollows)
     }
     static var libraryDirectory: URL? {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("Tokenroom/News")
@@ -53,13 +59,16 @@ import Foundation
                 return (try? Data(contentsOf: folder.appendingPathComponent(name))).map { (sort.apiValue, $0) }
             })
             return SkillsStore(fetch: { request in
-                guard let url = request.url,
-                      let sort = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "sort" })?.value else { return .unreachable }
-                return bodies[sort].map { .body($0) } ?? .unreachable
+                guard let url = request.url else { return .unreachable }
+                // Trending has its own endpoint, without a `sort`.
+                let sort = url.lastPathComponent == "trending" ? SkillSort.trending.apiValue
+                    : URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "sort" })?.value
+                return sort.flatMap { bodies[$0] }.map { .body($0) } ?? .unreachable
             })
         }
         #endif
         if isInert() { return SkillsStore(fetch: { _ in .unreachable }) }
-        return SkillsStore()
+        // The last good lists stay beside the saved library, on this device only.
+        return SkillsStore(directory: libraryDirectory)
     }
 }

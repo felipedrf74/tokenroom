@@ -135,7 +135,7 @@ struct NewsWindowView: View {
         NewsWindowCommands(isChecking: news.isRefreshing || skills.isRefreshing, checkNow: {
             Task {
                 if page == .destination(.skills) { await skills.refresh(sort: skills.sort, force: true) }
-                else { await store.refreshNews(force: true) }
+                else { await store.refreshNews(force: true, waitsForFollowUp: true) }
             }
         }, openSettings: onOpenSettings, settingsEnabled: !NewsRuntime.isInert())
     }

@@ -2,7 +2,16 @@ import Foundation
 import Observation
 
 @Observable @MainActor final class SkillsStore {
-    enum Answer: Sendable { case body(Data), status(Int, retryAfter: String?), unreachable }
+    /// `tooLarge`: an answer past `SkillFeed.sizeLimit`. `offline`: no network to ask on
+    /// (`TokenroomHTTP.meansOffline`), which isn't ClawHub's failure.
+    enum Answer: Sendable { case body(Data), status(Int, retryAfter: String?), unreachable, tooLarge, offline }
+    /// One absolute deadline per physical request, shared by every reader waiting on it.
+    static let budget: TimeInterval = 20
+    /// After a server error (5xx) a ranking isn't asked for again by itself before this; Retry
+    /// still asks. Longer after a second one in a row.
+    static let serverErrorBackoff: [TimeInterval] = [5 * 60, 15 * 60]
+    /// The last good list of each ranking, kept on the device so a launch shows it at once.
+    static let cacheFileName = "skills.json"
     private(set) var listings: [SkillListing] = []
     private(set) var sort: SkillSort = .trending
     private(set) var checkedAt: Date?
@@ -43,11 +52,21 @@ import Observation
     private var results: [SkillSort: (items: [SkillListing], date: Date)] = [:]
     private var problems: [SkillSort: String] = [:]
     private var retries: [SkillSort: Date] = [:]
+    /// Server errors in a row per ranking, and when it may be asked for again by itself.
+    private var backoffs: [SkillSort: (until: Date, failures: Int)] = [:]
+    @ObservationIgnored private let directory: URL?
 
-    init(fetch: @escaping @MainActor @Sendable (URLRequest) async -> Answer = SkillsStore.get,
+    /// What `cacheFileName` holds: each ranking's last good list and when it was checked.
+    struct Saved: Codable, Equatable {
+        var items: [SkillListing]
+        var checkedAt: Date
+    }
+
+    init(directory: URL? = nil,
+         fetch: @escaping @MainActor @Sendable (URLRequest) async -> Answer = SkillsStore.get,
          clock: @escaping @Sendable () -> Date = { .now },
          waitForAnswer: @escaping @Sendable (Task<Answer, Never>) async -> Answer = { task in
-             await TimeLimit.run(8, otherwise: Answer.unreachable) { await task.value }
+             await TimeLimit.run(SkillsStore.budget, otherwise: Answer.unreachable) { await task.value }
          },
          beforeDispatch: @escaping @Sendable () async -> Void = {},
          monotonicClock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
@@ -56,13 +75,32 @@ import Observation
          }) {
         self.fetch = fetch; self.clock = clock; self.waitForAnswer = waitForAnswer
         self.beforeDispatch = beforeDispatch; self.monotonicClock = monotonicClock; self.limitAnswer = limitAnswer
+        self.directory = directory
+        for (sort, saved) in Self.load(from: directory) { results[sort] = (saved.items, saved.checkedAt) }
+        presentSelection()
     }
+
+    static func load(from directory: URL?) -> [SkillSort: Saved] {
+        guard let url = directory?.appendingPathComponent(cacheFileName), let data = try? Data(contentsOf: url),
+              let saved = try? RelayEnvelope.decoder.decode([String: Saved].self, from: data) else { return [:] }
+        return Dictionary(saved.compactMap { key, value in SkillSort(rawValue: key).map { ($0, value) } }) { first, _ in first }
+    }
+
+    private func save() {
+        guard let url = directory?.appendingPathComponent(Self.cacheFileName) else { return }
+        let saved = Dictionary(uniqueKeysWithValues: results.map { ($0.key.rawValue, Saved(items: $0.value.items, checkedAt: $0.value.date)) })
+        guard let data = try? RelayEnvelope.encoder.encode(saved) else { return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
+    }
+
     func refresh(sort selected: SkillSort, force: Bool = false) async {
         guard !Task.isCancelled, allowsRefresh() else { return }
         sort = selected
         presentSelection()
         let now = clock()
         if let retry = retries[selected], retry > now { return }
+        if !force, let backoff = backoffs[selected], backoff.until > now { return }
         // Join an active forced check before consulting the cache. Re-entry must keep its
         // progress visible, even when the last successful result is still fresh.
         if running[selected] == nil, !force, let result = results[selected], now.timeIntervalSince(result.date) < 15 * 60 { return }
@@ -76,7 +114,7 @@ import Observation
         }
         else {
             let fetch = fetch, beforeDispatch = beforeDispatch, monotonic = monotonicClock, limit = limitAnswer
-            let id = UUID(), receipt = Receipt(), deadline = monotonic() + 8
+            let id = UUID(), receipt = Receipt(), deadline = monotonic() + Self.budget
             // Start on MainActor so the live owner/cancellation check and fetch invocation
             // have no intervening actor suspension. The optional dispatch hook precedes it.
             let physical = Task { @MainActor [weak self] in
@@ -92,7 +130,7 @@ import Observation
                 return answer
             }
             // One answer and one absolute budget belong to the physical request. A reader
-            // joining later observes this answer rather than starting another eight seconds.
+            // joining later observes this answer rather than starting another budget.
             task = Task.detached { [weak self] in
                 if let answer = await limit(max(0, deadline - monotonic()), physical) { return answer }
                 receipt.expire() // fence a body before waiting for MainActor cleanup
@@ -153,19 +191,31 @@ import Observation
             retries[selected] = Self.retryDate(retry, now: clock())
             problems[selected] = "ClawHub asked us to wait before trying again."
         } else if !request.task.isCancelled, !request.receipt.isExpired, monotonicClock() < request.deadline, hasLiveWaiter {
+            let hasRetainedRows = results[selected]?.items.isEmpty == false
             switch answer {
             case .body(let data):
                 if let page = try? SkillFeed.parse(data) {
                     results[selected] = (page.listings, clock())
-                    problems[selected] = nil; retries[selected] = nil
+                    problems[selected] = nil; retries[selected] = nil; backoffs[selected] = nil
+                    save()
                 } else {
-                    let hasRetainedRows = results[selected]?.items.isEmpty == false
                     problems[selected] = hasRetainedRows
                         ? "ClawHub returned an unreadable ranking. Showing the last available result."
                         : "ClawHub returned an unreadable ranking. Try again later."
                 }
-            case .status: problems[selected] = "ClawHub is unavailable. Try again later."
+            case .status(let code, _):
+                problems[selected] = "ClawHub is unavailable. Try again later."
+                if (500..<600).contains(code) {
+                    // A server that's down isn't asked again on every visit.
+                    let failures = (backoffs[selected]?.failures ?? 0) + 1
+                    let wait = Self.serverErrorBackoff[min(failures, Self.serverErrorBackoff.count) - 1]
+                    backoffs[selected] = (clock().addingTimeInterval(wait), failures)
+                }
             case .unreachable: problems[selected] = "Couldn't reach ClawHub. Check your connection and retry."
+            case .tooLarge: problems[selected] = "Couldn't read ClawHub's ranking: it was larger than Tokenroom reads (2 MB)."
+            case .offline:
+                // Not ClawHub's failure: the last list stays, without a "Couldn't".
+                problems[selected] = hasRetainedRows ? nil : "Skills will load when you're online."
             }
         } else if hasLiveWaiter {
             problems[selected] = "Couldn't reach ClawHub. Check your connection and retry."
@@ -193,8 +243,9 @@ import Observation
     }
 
     /// Off the main actor and a buffer at a time, as `NewsFetcher.download` reads: a hop to the
-    /// main actor for every byte made a large answer take seconds.
-    @concurrent nonisolated static func download(_ request: URLRequest, session: URLSession = TokenroomHTTP.defaultSession) async -> Answer {
+    /// main actor for every byte made a large answer take seconds. News's session, whose whole
+    /// download may take longer than a provider check's, within `budget`.
+    @concurrent nonisolated static func download(_ request: URLRequest, session: URLSession = NewsFetcher.session) async -> Answer {
         do {
             let (bytes, response) = try await session.bytes(for: request)
             defer { bytes.task.cancel() }
@@ -204,7 +255,7 @@ import Observation
             var buffer: [UInt8] = []
             buffer.reserveCapacity(64 * 1024)
             for try await byte in bytes {
-                guard data.count + buffer.count < SkillFeed.sizeLimit else { return .unreachable }
+                guard data.count + buffer.count < SkillFeed.sizeLimit else { return .tooLarge }
                 buffer.append(byte)
                 if buffer.count == buffer.capacity {
                     data.append(contentsOf: buffer)
@@ -213,6 +264,8 @@ import Observation
             }
             data.append(contentsOf: buffer)
             return .body(data)
+        } catch let error as URLError where !Task.isCancelled && TokenroomHTTP.meansOffline(error) {
+            return .offline
         } catch { return .unreachable }
     }
 }

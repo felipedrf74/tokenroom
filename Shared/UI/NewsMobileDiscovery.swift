@@ -10,12 +10,13 @@ struct MobileNewsFollowing: View {
     var query = ""
     var suggestedProviders: Set<String> = []
     private var tools: [FeedSource] { FeedSource.toggles.filter { NewsSearch.matches(query, title: $0.name, source: "") } }
-    private var voices: [NewsVoice] { NewsVoice.catalog.filter { NewsSearch.matches(query, title: $0.name, source: "") } }
+    private var voices: [NewsVoice] { NewsVoice.catalog.filter { $0.role == .voice && NewsSearch.matches(query, title: $0.name, source: "") } }
+    private var discussion: [NewsVoice] { NewsVoice.catalog.filter { $0.role == .discussion && NewsSearch.matches(query, title: $0.name, source: "") } }
     private var statuses: [FeedSource] { NewsStatusSource.catalog.filter { NewsSearch.matches(query, title: $0.name, source: "") } }
     private var labs: [(id: String, name: String)] { news.vendorChoices.filter { NewsSearch.matches(query, title: $0.name, source: "") } }
     private var hasMatches: Bool {
         ((group == .all || group == .tools) && (!tools.isEmpty || !labs.isEmpty)) ||
-        ((group == .all || group == .voices) && !voices.isEmpty) ||
+        ((group == .all || group == .voices) && (!voices.isEmpty || !discussion.isEmpty)) ||
         ((group == .all || group == .status) && !statuses.isEmpty)
     }
     var body: some View {
@@ -26,6 +27,19 @@ struct MobileNewsFollowing: View {
                 }.pickerStyle(.inline).labelsHidden()
             }
             if !hasMatches { ContentUnavailableView.search(text: query) }
+            if query.isEmpty, !news.newSources.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    let layout = typeSize >= .xxLarge ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0)) : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
+                    layout {
+                        heading("New sources").frame(maxWidth: .infinity, alignment: .leading)
+                        Button("Dismiss") { news.dismissNewSources() }
+                            .buttonStyle(.plain).font(.subheadline).fontWeight(.medium).foregroundStyle(TokenroomTokens.newsAction).frame(minHeight: 44)
+                            .accessibilityLabel("Dismiss new sources")
+                    }.padding(.bottom, -8)
+                    Text("Added in this update. None is followed until you turn it on.").font(.footnote).foregroundStyle(MobileNewsPalette.secondary)
+                    rows(news.newSources) { sourceRow($0) }
+                }
+            }
             if group == .all || group == .tools {
                 if !tools.isEmpty {
                     let layout = typeSize >= .xxLarge ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0)) : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
@@ -60,6 +74,15 @@ struct MobileNewsFollowing: View {
                         Text("Public articles and X profile links. A follow here stays in Tokenroom.").font(.footnote).foregroundStyle(MobileNewsPalette.secondary)
                     }
                     rows(voices) { voiceRow($0) }
+                }.padding(.top, 8)
+            }
+            if (group == .all || group == .voices), !discussion.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        heading("Discussion & industry")
+                        Text("What the industry is reading and releasing. Public feeds, checked every few hours.").font(.footnote).foregroundStyle(MobileNewsPalette.secondary)
+                    }
+                    rows(discussion) { voiceRow($0) }
                 }.padding(.top, 8)
             }
             if (group == .all || group == .status), !statuses.isEmpty {
@@ -112,15 +135,8 @@ struct MobileNewsFollowing: View {
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }.frame(minHeight: 44).contentShape(Rectangle())
                 }.buttonStyle(.plain)
-                Toggle("Follow \(source.name)", isOn: Binding(get: {
-                    source.kind == .officialStatus ? news.followedStatusSources.contains(source.id) : news.followedSources.contains(source.id)
-                }, set: { on in
-                    if source.kind == .officialStatus {
-                        if on { news.followedStatusSources.insert(source.id) } else { news.followedStatusSources.remove(source.id) }
-                    } else {
-                        if on { news.followedSources.insert(source.id) } else { news.followedSources.remove(source.id) }
-                    }
-                })).toggleStyle(NewsFollowToggleStyle(showsLabel: false)).padding(.trailing, -12).accessibilityLabel("Follow \(source.name)")
+                Toggle("Follow \(source.name)", isOn: Binding(get: { news.isFollowing(source) }, set: { on in news.setFollowing(source, on) }))
+                    .toggleStyle(NewsFollowToggleStyle(showsLabel: false)).padding(.trailing, -12).accessibilityLabel("Follow \(source.name)")
             }
             if health != nil { NewsSourceHealth(news: news, source: source, showsCaption: false).padding(.leading, 40).padding(.bottom, 4) }
         }.padding(.vertical, 2)
@@ -164,6 +180,7 @@ struct MobileNewsSkillsShelf: View {
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text(skills.sort.explanation).font(.footnote).foregroundStyle(MobileNewsPalette.secondary)
+                Text(SkillFeed.communityNote).font(.footnote).foregroundStyle(MobileNewsPalette.secondary)
                 if let date = skills.checkedAt { Text("ClawHub · Checked \(RelativeTime.ago(date))").font(.footnote).foregroundStyle(MobileNewsPalette.secondary) }
             }
             if skills.isRefreshing { ProgressView("Checking skills…") }
@@ -217,6 +234,7 @@ struct MobileNewsSkillsShelf: View {
     }
     @ViewBuilder private func metrics(_ item: SkillListing) -> some View {
         if let downloads = item.downloads { Label("\(downloads.formatted()) lifetime downloads", systemImage: "arrow.down").fixedSize(horizontal: false, vertical: true) }
+        if let installs = item.installs { Label("\(installs.formatted()) lifetime installs", systemImage: "arrow.down").fixedSize(horizontal: false, vertical: true) }
         if let stars = item.stars { Label(stars.formatted(), systemImage: "star").accessibilityLabel("\(stars) stars") }
     }
 }

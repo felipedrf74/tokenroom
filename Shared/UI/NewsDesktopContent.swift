@@ -167,7 +167,7 @@ struct MacNewsFreshnessView: View {
                             .buttonStyle(.plain).foregroundStyle(TokenroomTokens.newsSecondaryText)
                         Button("Retry") {
                             let ids = summary.failedIDs.union(news.cache.modelsFailedAt != nil ? [ModelFeed.id] : [])
-                            Task { await news.retrySources(ids) }
+                            Task { await news.retrySources(ids, waitsForFollowUp: true) }
                         }.disabled(news.isRefreshing)
                     }
                 }

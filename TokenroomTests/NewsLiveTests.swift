@@ -50,8 +50,9 @@ final class NewsLiveTests: XCTestCase {
         XCTAssertEqual(sleeps.value, Array(repeating: NewsFetcher.liveInterval, count: 3))
         XCTAssertEqual(NewsFetcher.liveInterval, 5 * 60, "On screen, News checks every five minutes")
         XCTAssertEqual(NewsFetcher.openInterval, 5 * 60, "Opening News shows feeds no older than five minutes")
-        XCTAssertEqual(NewsFetcher.modelInterval, 3600, "In the background, the model list every hour")
-        XCTAssertEqual(NewsFetcher.announcementInterval, 3600, "…and each feed")
+        // November 2026: each kind has its own background interval (`NewsCadence`).
+        XCTAssertEqual(NewsFetcher.modelInterval, 30 * 60, "In the background, the model list every 30 minutes")
+        XCTAssertEqual(NewsFetcher.announcementInterval, 15 * 60, "…and each official feed every 15")
     }
 
     @MainActor

@@ -18,6 +18,23 @@ final class NewsStore {
         static let status = "newsStatusSources"
         static let seenAt = "newsSeenAt"
         static let quietSources = "newsQuietSources"
+        /// The sources an update may add without following them (`suggestibleSources`) that this
+        /// install has been offered, so the ones added since show in Following as "New sources".
+        /// `voices` and `status` are written only when a choice changes, so they can't tell an
+        /// install that never chose from one that didn't exist.
+        static let knownSuggestions = "newsKnownSuggestions"
+    }
+
+    /// Voices and status sources Tokenroom 2.6 offered: what an install that saved nothing about
+    /// them had been offered before `Keys.knownSuggestions` existed.
+    static let firstSuggestions: Set<String> = [
+        "voice-simonw", "voice-emollick", "voice-karpathy", "voice-bcherny", "status-openai", "status-claude",
+    ]
+
+    /// Sources nothing follows by itself after an update: voices and discussion, provider status,
+    /// and catalog feeds that don't start on for upgraders (`FeedSource.startsOnForUpgraders`).
+    static var suggestibleSources: [FeedSource] {
+        FeedSource.toggles.filter { !$0.startsOnForUpgraders } + NewsVoice.catalog.compactMap(\.feed) + NewsStatusSource.catalog
     }
 
     /// Tokenroom 2.0's feeds: what a list saved before `Keys.knownSources` existed had offered.
@@ -34,13 +51,23 @@ final class NewsStore {
     private var visitIsOpen = false
     /// Per-call permission is an additional veto at pass/GET dispatch and follows queued work.
     private typealias RefreshRequest = (maxAge: TimeInterval?, preferences: AlertPreferences, notifies: Bool, now: Date, forcedSources: Set<String>, isAllowed: (@MainActor @Sendable () -> Bool)?)
+    /// The follow-up asked for during a pass, by callers that don't own it (a pull, Retry, Check
+    /// Now, coming forward): it survives the pass being cancelled, and runs after it.
     private var queuedRefresh: RefreshRequest?
+    /// What cancellable owners (the Mac's loop, the background refresh) asked for during a pass:
+    /// dropped with the pass when it's cancelled, since its owner is going away.
+    private var ownedRefresh: RefreshRequest?
+    /// A cancelled pass's surviving follow-up runs in work of its own: waiters follow it there.
+    @ObservationIgnored private var successor: (from: Task<Void, Never>, to: Task<Void, Never>)?
     /// The maxAge of the pass under way, so a request for fresher feeds is queued behind it.
     private var runningMaxAge: TimeInterval??
     private var runningIsAllowed: (@MainActor @Sendable () -> Bool)?
     private var lastPreferences = AlertPreferences()
     /// A notifying request arrived while a pass that doesn't notify (a live check) was under way.
     private var notifyAsked = false
+    /// The pass under way and the follow-ups it runs, so an owner can cancel it (`cancelPass`,
+    /// `refresh(cancellable:)`) and a request can wait for the follow-up it queued.
+    @ObservationIgnored private var work: Task<Void, Never>?
     /// The owning app's policy applies to every entry point, including Follow and Retry.
     @ObservationIgnored var allowsRefresh: @MainActor @Sendable () -> Bool = { true }
 
@@ -82,6 +109,40 @@ final class NewsStore {
         didSet { defaults.set(quietSources.sorted(), forKey: Keys.quietSources) }
     }
 
+    /// Suggestible sources this install has been offered (`Keys.knownSuggestions`).
+    private var knownSuggestions: Set<String> {
+        didSet { defaults.set(knownSuggestions.sorted(), forKey: Keys.knownSuggestions) }
+    }
+
+    /// Sources added since this install last looked, offered in Following until dismissed:
+    /// an update shows what's new there rather than following it.
+    var newSources: [FeedSource] {
+        Self.suggestibleSources.filter { !knownSuggestions.contains($0.id) }
+    }
+
+    func dismissNewSources() {
+        knownSuggestions.formUnion(Self.suggestibleSources.map(\.id))
+    }
+
+    /// Whether a source of any kind is followed: a voice or discussion source, a status feed, or a
+    /// catalog feed (through the feed it's part of).
+    func isFollowing(_ source: FeedSource) -> Bool {
+        switch source.kind {
+        case .commentary: followedVoices.contains(source.id)
+        case .officialStatus: followedStatusSources.contains(source.id)
+        case .officialAnnouncement: followedSources.contains(source.partOf ?? source.id)
+        }
+    }
+
+    func setFollowing(_ source: FeedSource, _ isOn: Bool) {
+        let id = source.partOf ?? source.id
+        switch source.kind {
+        case .commentary: if isOn { followedVoices.insert(id) } else { followedVoices.remove(id) }
+        case .officialStatus: if isOn { followedStatusSources.insert(id) } else { followedStatusSources.remove(id) }
+        case .officialAnnouncement: if isOn { followedSources.insert(id) } else { followedSources.remove(id) }
+        }
+    }
+
     /// Newly followed sources are read at once. One followed before, with its old copy still
     /// cached, is read quietly (`quietSources`).
     private func startFollowing(_ added: [FeedSource]) {
@@ -110,6 +171,7 @@ final class NewsStore {
         directory: URL? = AppGroup.containerURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
         now: Date = .now,
         initialCache: NewsCache? = nil,
+        newInstallVoices: Set<String> = [],
         fetch: @escaping @Sendable (NewsFetcher.Request) async -> NewsFetcher.Result = {
             await NewsFetcher.refresh($0.cache, sources: $0.sources, following: $0.vendors, maxAge: $0.maxAge, now: $0.now, forcedSources: $0.forcedSources, quietSources: $0.quietSources, isAllowed: $0.isAllowed, publish: $0.publish)
         },
@@ -124,17 +186,26 @@ final class NewsStore {
         var loaded = initialCache ?? NewsCache.load(from: directory)
         loaded.bringDatesBack(to: now)
         cache = loaded
+        // Nothing of News saved yet: a new install, not an update. Every earlier release saved
+        // `seenAt` on its first launch.
+        let isNewInstall = [Keys.seenAt, Keys.vendors, Keys.sources, Keys.knownSources, Keys.voices, Keys.status]
+            .allSatisfy { defaults.object(forKey: $0) == nil }
         // A saved choice, plus labs added to the defaults since it was saved, as with feeds below.
         let knownVendors = (defaults.array(forKey: Keys.knownVendors) as? [String]).map(Set.init) ?? Self.firstDefaultVendors
         followedVendors = (defaults.array(forKey: Keys.vendors) as? [String]).map { Set($0).union(ModelFeed.defaultVendors.subtracting(knownVendors)) } ?? ModelFeed.defaultVendors
         // A saved choice, plus feeds added to the catalog since it was saved: those start on,
-        // as every feed does before anything is saved.
+        // as every feed does before anything is saved, except feeds an update only offers
+        // (`startsOnForUpgraders`), which a new install follows and an update suggests.
         let catalog = Set(FeedSource.catalog.map(\.id))
+        let offeredOnly = Set(FeedSource.catalog.filter { !$0.startsOnForUpgraders }.map(\.id))
         let known = (defaults.array(forKey: Keys.knownSources) as? [String]).map(Set.init) ?? Self.firstCatalog
-        followedSources = (defaults.array(forKey: Keys.sources) as? [String]).map { Set($0).union(catalog.subtracting(known)) } ?? catalog
-        followedVoices = Set(defaults.stringArray(forKey: Keys.voices) ?? [])
+        followedSources = (defaults.array(forKey: Keys.sources) as? [String]).map { Set($0).union(catalog.subtracting(known).subtracting(offeredOnly)) }
+            ?? (isNewInstall ? catalog : catalog.subtracting(offeredOnly))
+        followedVoices = Set(defaults.stringArray(forKey: Keys.voices) ?? (isNewInstall ? Array(newInstallVoices) : []))
         followedStatusSources = Set(defaults.stringArray(forKey: Keys.status) ?? [])
         quietSources = Set(defaults.stringArray(forKey: Keys.quietSources) ?? [])
+        knownSuggestions = (defaults.stringArray(forKey: Keys.knownSuggestions)).map(Set.init)
+            ?? (isNewInstall ? Set(Self.suggestibleSources.map(\.id)) : Self.firstSuggestions)
         // A first launch starts from now, so the whole list isn't "new". A time saved ahead of the
         // clock (set while it was wrong) comes back to now, or nothing would be new until then.
         let saved = (defaults.object(forKey: Keys.seenAt) as? Double).map(Date.init(timeIntervalSince1970:))
@@ -143,6 +214,12 @@ final class NewsStore {
         visitBaseline = seen
         if saved != seen {
             defaults.set(seen.timeIntervalSince1970, forKey: Keys.seenAt)
+        }
+        // Written now: the next launch isn't a new install, and `voices` is otherwise written only
+        // when a choice changes.
+        if isNewInstall {
+            defaults.set(knownSuggestions.sorted(), forKey: Keys.knownSuggestions)
+            if !followedVoices.isEmpty { defaults.set(followedVoices.sorted(), forKey: Keys.voices) }
         }
     }
 
@@ -204,9 +281,11 @@ final class NewsStore {
         cache.unreadable?.contains(ModelFeed.id) == true ? "Couldn't read OpenRouter's model list." : nil
     }
 
-    /// "Couldn't read …" naming the followed feeds whose last answer couldn't be read in full.
+    /// "Couldn't read …" naming the followed feeds that keep failing: a permanent error (404, 410,
+    /// not a feed), or three failures in a row over more than an hour
+    /// (`NewsCache.isPersistentlyFailing`). One that failed once shows in source health instead.
     var announcementProblem: String? {
-        let names = sources.filter { cache.unreadable?.contains($0.id) == true || cache.check(for: $0).failedAt != nil }.map(\.name)
+        let names = sources.filter { cache.isPersistentlyFailing($0) }.map(\.name)
         guard let last = names.last else { return nil }
         if names.count > 1, names.count == sources.count {
             return "Couldn't read the feeds."
@@ -268,14 +347,33 @@ final class NewsStore {
     }
 
     /// A discovery retry retains the latest real preferences, including a queued notifying pass.
-    func retrySources(_ ids: Set<String>) async {
+    /// `waitsForFollowUp`: as `refresh`'s, for a Retry or pull whose spinner should last.
+    func retrySources(_ ids: Set<String>, waitsForFollowUp: Bool = false) async {
         guard !ids.isEmpty else { return }
-        await refresh(preferences: lastPreferences, notifies: false, forcedSources: ids)
+        await refresh(preferences: lastPreferences, notifies: false, forcedSources: ids, waitsForFollowUp: waitsForFollowUp)
+    }
+
+    /// Cancels the pass under way and what cancellable owners queued behind it, for the store's
+    /// owner: the Mac going to sleep. What the pass had read stays; the checks it cut short count
+    /// no failure. A follow-up another caller asked for (a pull, Check Now) still runs after it.
+    /// Views never call this: a page going away leaves its pass running.
+    func cancelPass() {
+        work?.cancel()
     }
 
     /// Fetches what's due, or anything older than `maxAge`. New models from followed labs get one
     /// notification when `notifies` and the preferences allow it.
-    func refresh(maxAge: TimeInterval? = nil, preferences: AlertPreferences, notifies: Bool = true, now: Date = .now, forcedSources: Set<String> = [], isAllowed: (@MainActor @Sendable () -> Bool)? = nil) async {
+    ///
+    /// During a pass, a request joins a single follow-up when it asks for something that pass
+    /// won't cover; with `waitsForFollowUp` it always does, and returns once that follow-up is
+    /// done (pull to refresh, Retry, Check Now, the Mac waking), rather than at once.
+    ///
+    /// `cancellable` is for an owner whose time can run out (iPhone background refresh, the Mac's
+    /// News loop): cancelling the caller then cancels the pass it started, and the checks cut short
+    /// count no failure. By default a pass outlives its caller, so a view going away while its
+    /// request waits never cancels or drops the pass or what's queued behind it.
+    func refresh(maxAge: TimeInterval? = nil, preferences: AlertPreferences, notifies: Bool = true, now: Date = .now, forcedSources: Set<String> = [], isAllowed: (@MainActor @Sendable () -> Bool)? = nil,
+                 waitsForFollowUp: Bool = false, cancellable: Bool = false) async {
         guard allowsRefresh(), isAllowed?() != false else { return }
         lastPreferences = preferences
         if isRefreshing {
@@ -285,18 +383,30 @@ final class NewsStore {
             // Every accepted request updates preferences on an existing follow-up, even a
             // cached/slower visit that would not independently justify another fetch. Keep
             // that pass's permission, freshest age, forced feeds and notification intent.
-            if var queued = queuedRefresh {
+            for keyPath in [\NewsStore.queuedRefresh, \NewsStore.ownedRefresh] {
+                guard var queued = self[keyPath: keyPath] else { continue }
                 queued.preferences = preferences
                 queued.notifies = queued.notifies || notifies
-                queuedRefresh = queued
+                self[keyPath: keyPath] = queued
             }
-            if maxAge == 0 || !forcedSources.isEmpty || fresher || sources.contains(where: { cache.items[$0.id] == nil && cache.sourceChecks?[$0.id] == nil }) {
-                let queued = queuedRefresh
-                queuedRefresh = (queued.map { Self.shorter($0.maxAge, maxAge) } ?? maxAge, preferences,
-                                 (queued?.notifies ?? false) || notifies, now,
-                                 (queued?.forcedSources ?? []).union(forcedSources), isAllowed ?? queued?.isAllowed ?? runningIsAllowed)
+            if waitsForFollowUp || maxAge == 0 || !forcedSources.isEmpty || fresher || sources.contains(where: { cache.items[$0.id] == nil && cache.sourceChecks?[$0.id] == nil }) {
+                let keyPath = cancellable ? \NewsStore.ownedRefresh : \NewsStore.queuedRefresh
+                let queued = self[keyPath: keyPath]
+                self[keyPath: keyPath] = (queued.map { Self.shorter($0.maxAge, maxAge) } ?? maxAge, preferences,
+                                          (queued?.notifies ?? false) || notifies, now,
+                                          (queued?.forcedSources ?? []).union(forcedSources), isAllowed ?? queued?.isAllowed ?? runningIsAllowed)
             }
             if notifies { notifyAsked = true }
+            // The running work takes the queued follow-up before it ends, so its end is the
+            // follow-up's; a cancelled pass hands a surviving follow-up to work of its own, which
+            // the waiter follows. Waiting doesn't own the pass: the waiter going away leaves it.
+            if waitsForFollowUp {
+                var current = work
+                while let running = current {
+                    await running.value
+                    current = successor?.from == running ? successor?.to : nil
+                }
+            }
             return
         }
         isRefreshing = true
@@ -304,7 +414,14 @@ final class NewsStore {
         // its queued manual/follow-up requests alive independently of that view's cancellation.
         let request: RefreshRequest = (maxAge, preferences, notifies, now, forcedSources, isAllowed)
         let work = Task { await performRefresh(request) }
-        await work.value
+        self.work = work
+        if cancellable {
+            // An owner whose time runs out takes its pass with it.
+            await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
+        } else {
+            await work.value
+        }
+        if self.work == work { self.work = nil }
     }
 
     /// Whether `maxAge` asks for fresher feeds than `other`: 0 is freshest, nil (each feed's own
@@ -317,6 +434,16 @@ final class NewsStore {
 
     private static func shorter(_ a: TimeInterval?, _ b: TimeInterval?) -> TimeInterval? {
         isShorter(b, than: a) ? b : a
+    }
+
+    /// One follow-up for what other callers and owners queued: the freshest age, every forced
+    /// feed, either's notification intent, the latest preferences and time, and the other
+    /// callers' permission before the owners'.
+    private static func merged(_ queued: RefreshRequest?, _ owned: RefreshRequest?) -> RefreshRequest? {
+        guard let queued, let owned else { return queued ?? owned }
+        let latest = owned.now > queued.now ? owned : queued
+        return (shorter(queued.maxAge, owned.maxAge), latest.preferences, queued.notifies || owned.notifies, latest.now,
+                queued.forcedSources.union(owned.forcedSources), queued.isAllowed ?? owned.isAllowed)
     }
 
     /// When the newest item that arrived in this pass was dated, no later than the check.
@@ -379,11 +506,25 @@ final class NewsStore {
 
     private func performRefresh(_ initial: RefreshRequest) async {
         defer {
+            // Cancelled by its owner: what owners queued goes with it; what another caller asked
+            // for (a pull, Check Now, coming forward) runs next, in work of its own.
+            let survivor = Task.isCancelled ? queuedRefresh : nil
             isRefreshing = false
             notifyAsked = false
             runningMaxAge = nil
             runningIsAllowed = nil
             queuedRefresh = nil
+            ownedRefresh = nil
+            if let survivor, let cancelled = work {
+                isRefreshing = true
+                let next = Task { await performRefresh(survivor) }
+                successor = (cancelled, next)
+                work = next
+            } else {
+                // This pass (or a successor that ran in its place) is done: nothing is running.
+                // A newer pass can't have started yet, since `isRefreshing` was set until now.
+                work = nil
+            }
         }
         // The first check (turning News on) marks nothing new, even with News open, as the Mac's
         // window is when News is turned on from it: what it finds was there before.
@@ -394,7 +535,7 @@ final class NewsStore {
         var request = initial
         while true {
             // Recheck at physical dispatch, after the owning Task/previous pass yielded.
-            guard allowsRefresh(), request.isAllowed?() != false else { break }
+            guard !Task.isCancelled, allowsRefresh(), request.isAllowed?() != false else { break }
             runningMaxAge = .some(request.maxAge)
             runningIsAllowed = request.isAllowed
             let previous = cache
@@ -434,8 +575,11 @@ final class NewsStore {
             if notifies, preferences.newModels, !result.newModels.isEmpty {
                 notify(result.newModels, preferences, request.now)
             }
-            guard let next = queuedRefresh else { break }
+            // Cancelled by its owner (sleep, the end of background time): what it read is kept,
+            // and the owners' queued checks wait for their next pass (see `defer`).
+            guard !Task.isCancelled, let next = Self.merged(queuedRefresh, ownedRefresh) else { break }
             queuedRefresh = nil
+            ownedRefresh = nil
             request = next
         }
     }
