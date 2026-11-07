@@ -20,8 +20,9 @@ final class SkillFeedTests: XCTestCase {
         XCTAssertEqual(data, body, "Every byte, across buffer boundaries")
         XCTAssertLessThan(elapsed, .seconds(1), "A main-actor hop per byte took seconds for this size")
 
+        // November 2026: its own answer, not "Couldn't reach ClawHub".
         StubURLProtocol.handler = { _ in (200, Data(count: SkillFeed.sizeLimit + 1)) }
-        guard case .unreachable = await SkillsStore.download(request, session: session) else { return XCTFail("Past the size limit") }
+        guard case .tooLarge = await SkillsStore.download(request, session: session) else { return XCTFail("Past the size limit") }
     }
 
     @MainActor func testCancelledPhysicalRequestStillRecordsLateRetryAfter() async {
@@ -103,7 +104,9 @@ final class SkillFeedTests: XCTestCase {
     @MainActor func testCoalescingAndStaleSortCannotReplaceSelection() async {
         let calls = LockedBox<[String]>([])
         let store = SkillsStore(fetch: { request in
-            let sort = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!.first { $0.name == "sort" }!.value!
+            // Trending has its own endpoint, without a `sort`, since November 2026.
+            let sort = request.url!.lastPathComponent == "trending" ? "trending"
+                : URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!.first { $0.name == "sort" }!.value!
             calls.value.append(sort)
             if sort == "trending" { try? await Task.sleep(for: .milliseconds(80)) }
             return .body(Self.body)

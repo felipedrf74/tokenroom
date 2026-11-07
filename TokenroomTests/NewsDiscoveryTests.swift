@@ -13,13 +13,16 @@ final class NewsDiscoveryTests: XCTestCase {
             requests.value.append(request)
             return .init(cache: request.cache, newModels: [])
         }, notify: { _, _, _ in notifications.value += 1 })
-        let voice = try XCTUnwrap(NewsVoice.catalog.first { $0.feed == nil })
+        // The catalog's one profile-only voice was removed in November 2026; a follow it left
+        // behind, or a profile-only voice added later, is the same case.
+        XCTAssertTrue(NewsVoice.catalog.allSatisfy { $0.feed != nil })
+        let voiceID = "voice-embirico"
         let cache = news.cache
         let unread = news.unseenCount
-        news.followedVoices.insert(voice.id)
+        news.followedVoices.insert(voiceID)
         for _ in 0..<10 { await Task.yield() }
-        XCTAssertTrue(news.followedVoices.contains(voice.id))
-        XCTAssertFalse(news.sources.contains { $0.id == voice.id })
+        XCTAssertTrue(news.followedVoices.contains(voiceID))
+        XCTAssertFalse(news.sources.contains { $0.id == voiceID })
         XCTAssertTrue(requests.value.isEmpty)
         XCTAssertEqual(news.cache, cache)
         XCTAssertEqual(news.unseenCount, unread)
@@ -123,7 +126,7 @@ final class NewsDiscoveryTests: XCTestCase {
         XCTAssertEqual(item.bookmark(now: now).publishedAt, now)
         let skill = SkillListing(owner: "owner", slug: "tool", name: "Tool", summary: nil, version: "1.0", updatedAt: nil, downloads: nil, stars: nil, requirements: [], sourceRank: 2)
         let saved = skill.bookmark(sort: .trending, checkedAt: now)
-        XCTAssertEqual(saved.skill?.ranking, "Trending · 7 days · Rank 2")
+        XCTAssertEqual(saved.skill?.ranking, "Trending · Rank 2")
         XCTAssertEqual(saved.skill?.checkedAt, now)
     }
 }
