@@ -279,9 +279,9 @@ final class PhoneSignInTests: XCTestCase {
             hosts.value.append(request.url?.host ?? "")
             return (Data(), Self.http(503))
         }, sleep: { _ in })
-        let busyOutcome = await busy.renew(.claude, session, now: now)
+        let busyOutcome = await busy.renew(.openai, session, now: now)
         XCTAssertEqual(busyOutcome, .notDispatched)
-        XCTAssertEqual(hosts.value, ["platform.claude.com"])
+        XCTAssertEqual(hosts.value, ["issuing-host.example.com"])
         let offline = PhoneSignInClient(send: { _ in throw URLError(.notConnectedToInternet) }, sleep: { _ in })
         let notSent = await offline.renew(.openai, session, now: now)
         XCTAssertEqual(notSent, .notDispatched)
@@ -611,13 +611,13 @@ final class PhoneSignInTests: XCTestCase {
 
     /// While a Mac reads it (`MacCoveragePause`), 7 November 2026 sync decision.
     func testAPausedPlanStaysListedAndIsntRead() {
-        let plan = PhoneSignIn.plansToRead(signedIn: [.claude, .openai, .cursor, .grokBot], notOnPlan: [.grokBot: now.addingTimeInterval(-2 * 86_400)],
-                                           now: now, paused: [.claude, .grokBot], isHeldOff: { _ in false })
-        XCTAssertEqual(plan.listed, [.claude, .openai, .cursor])
+        let plan = PhoneSignIn.plansToRead(signedIn: [.grok, .openai, .cursor, .grokBot], notOnPlan: [.grokBot: now.addingTimeInterval(-2 * 86_400)],
+                                           now: now, paused: [.grok, .grokBot], isHeldOff: { _ in false })
+        XCTAssertEqual(plan.listed, [.grok, .openai, .cursor])
         XCTAssertEqual(plan.due, [.openai, .cursor])
         XCTAssertTrue(plan.rechecks.isEmpty, "Nor rechecked while a Mac reads it")
-        let unpaused = PhoneSignIn.plansToRead(signedIn: [.claude, .openai], notOnPlan: [:], now: now, isHeldOff: { _ in false })
-        XCTAssertEqual(unpaused.due, [.claude, .openai])
+        let unpaused = PhoneSignIn.plansToRead(signedIn: [.grok, .openai], notOnPlan: [:], now: now, isHeldOff: { _ in false })
+        XCTAssertEqual(unpaused.due, [.grok, .openai])
     }
 
     // MARK: Signing out during a renewal
