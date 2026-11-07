@@ -28,7 +28,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LIMIT = 2 * 1024 * 1024
-USER_AGENT = "Tokenroom feed-health (+https://github.com/felipedrf74/tokenroom)"
+USER_AGENT = "Tokenroom feed-health"
 STALE_DAYS = {"official": 30, "voice": 60, "status": None, "models": None, "skills": None}
 NEAR_LIMIT = 0.8
 
@@ -51,6 +51,13 @@ class Result:
     newest: datetime | None = None
     problems: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+
+
+def code(text, limit=200):
+    """Server-supplied text (a Link header, an error's reason) as inline code in the issue:
+    no Markdown, mentions or links of its own, and no `|` to break the table."""
+    text = " ".join(str(text).split())[:limit].replace("`", "'").replace("|", "\\|")
+    return f"`{text}`"
 
 
 def _limit(text):
@@ -138,7 +145,7 @@ def read_json(source, body):
     if not isinstance(items, list) or not items:
         return 0, ["no `items` list"]
     if source.id == "clawhub-trending":
-        usable = [item for item in items if isinstance(item, dict) and item.get("source") in (None, "clawhub")
+        usable = [item for item in items if isinstance(item, dict) and item.get("source") == "clawhub"
                   and ((item.get("publisher") or {}).get("handle") or (item.get("sourceIdentity") or {}).get("owner"))]
         if not usable or not all("slug" in item and "displayName" in item for item in usable):
             return len(items), ["trending items lack `publisher.handle`/`sourceIdentity.owner`, `slug` or `displayName`"]
@@ -164,7 +171,8 @@ def assess(source, status, body, headers=None, now=None):
         result.problems += problems
         deprecation = (headers or {}).get("deprecation")
         if deprecation and deprecation.lower() != "false":
-            result.problems.append(f"deprecated; successor: {(headers or {}).get('link', 'not named')}")
+            link = (headers or {}).get("link")
+            result.problems.append(f"deprecated; successor: {code(link) if link else 'not named'}")
         return result
     is_feed, result.entries, result.newest = read_feed(body)
     if not is_feed:
@@ -200,7 +208,7 @@ def check(source):
     status, body, headers = fetch(source)
     if status is None:
         result = Result(source)
-        result.problems.append(f"no answer: {body.decode(errors='replace')}")
+        result.problems.append(f"no answer: {code(body.decode(errors='replace'))}")
         return result
     return assess(source, status, body, headers)
 

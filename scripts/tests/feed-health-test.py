@@ -72,7 +72,20 @@ class AssessTests(unittest.TestCase):
         self.assertTrue(health.assess(trending, 200, b'{"items":[{"source":"clawhub","slug":"x"}]}', now=NOW).problems)
         ranked = health.Source("clawhub-downloads", "Downloads", "https://clawhub.ai/api/v1/skills", "skills")
         deprecated = health.assess(ranked, 200, b'{"items":[{"ownerHandle":"me","slug":"x"}]}', {"deprecation": "true", "link": "</next>"}, now=NOW)
-        self.assertEqual(deprecated.problems, ["deprecated; successor: </next>"])
+        self.assertEqual(deprecated.problems, ["deprecated; successor: `</next>`"])
+
+    def test_server_text_reaches_the_issue_only_as_inline_code(self):
+        ranked = health.Source("clawhub-downloads", "Downloads", "https://clawhub.ai/api/v1/skills", "skills")
+        hostile = "</x>; rel=a | @someone `ping` [link](https://evil.example)\n| injected | row |"
+        result = health.assess(ranked, 200, b'{"items":[{"ownerHandle":"me","slug":"x"}]}', {"deprecation": "true", "link": hostile}, now=NOW)
+        problem = result.problems[0]
+        self.assertTrue(problem.startswith("deprecated; successor: `") and problem.endswith("`"))
+        inner = problem[len("deprecated; successor: `"):-1]
+        self.assertNotIn("`", inner)
+        self.assertNotIn("\n", inner)
+        self.assertNotIn(" | ", inner.replace("\\|", ""), "Pipes are escaped so the table holds")
+        row = [line for line in health.report([result], now=NOW).splitlines() if line.startswith("| Downloads | `clawhub-downloads`")][0]
+        self.assertEqual(row.replace("\\|", "").count("|"), 4, "One row, three cells")
 
     def test_report_lists_what_needs_attention_first(self):
         results = [health.assess(self.official, 200, rss(), now=NOW), health.assess(self.voice, 410, b"", now=NOW)]
