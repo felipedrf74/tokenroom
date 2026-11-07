@@ -510,7 +510,11 @@ final class NewsReliabilityTests: XCTestCase {
             let voice = try XCTUnwrap(NewsVoice.catalog.first { $0.id == id })
             XCTAssertNotEqual(voice.profileURL.host(), "x.com", id)
             XCTAssertEqual(voice.profileURL.host(), voice.feed?.url.host(), id)
+            XCTAssertEqual(voice.listCaption, "Public articles · Website", id)
         }
+        let latentSpace = try XCTUnwrap(NewsVoice.catalog.first { $0.id == "voice-latentspace" })
+        XCTAssertEqual(latentSpace.listCaption, "Public articles · X profile")
+        XCTAssertTrue(NewsVoice.catalog.filter { $0.feed == nil }.allSatisfy { $0.listCaption == "Profile only" })
     }
 
     /// PRIVACY.md lists every host News and Skills read.

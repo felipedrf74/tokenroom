@@ -2,15 +2,19 @@
 
 A draft for App Store Connect. Provider names appear only in the description, as facts, never in the name, subtitle, or keywords. Tokenroom isn't affiliated with any provider.
 
-## What's New — 1.3.0
-
-A lighter, calmer Tokenroom on iPhone, widgets and Apple Watch. Colour now means something: percentages stay in ink until a limit is critical, charts are neutral with a dot at your current level, and controls are blue. Provider pages have one title and plain facts. Welcome starts with one clear step.
+## What's New — 1.3.1
 
 News checks release and status feeds every few minutes while it's open, adds more AI newsletters, discussion and status pages, and stops showing errors when you're simply offline. Skills keeps its last list when ClawHub can't be reached.
 
 Apple Watch gets readings from your iPhone even when its app isn't open, widgets refresh before a reading goes stale, and the Live Activity says how old a reading is. Plan sign-ins ride out a busy server instead of asking you to sign in again.
 
 Claude can no longer be signed in to on iPhone, because Anthropic doesn't allow other apps to offer a Claude login. Claude readings come from Tokenroom for Mac, and a Claude sign-in an earlier version kept is deleted from your iPhone.
+
+## What's New — 1.3.0
+
+Released 7 November 2026 at 19:56 UTC with build 1.3.0 (1), the UI overhaul only. The review notes went in unchanged from 1.2.x, so they still described Claude sign-in on the iPhone; 1.3.1 carries the notes below.
+
+A lighter, calmer Tokenroom on iPhone, widgets and Apple Watch. Colour now means something: percentages stay in ink until a limit is critical, charts are neutral with a dot at your current level, and controls are blue. Provider pages have one title and plain facts. News has fewer boxes, with actions under each title. Welcome starts with one clear step.
 
 ## What's New — 1.2.2
 
@@ -70,7 +74,7 @@ Usage readings now show when each provider was last checked and flag stale data.
 | Content rights | Yes: shows third-party content (provider names, model and feed titles) it has the right to use |
 | EU trader status (DSA) | Non-trader |
 | Tracking | None |
-| Release | 1.3.0 (2) uploaded 7 November 2026; 1.2.2 publicly released 31 October 2026; 1.2.1 publicly released 30 October 2026; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
+| Release | 1.3.1 (1) submitted 7 November 2026; 1.3.0 publicly released 7 November 2026; 1.2.2 publicly released 31 October 2026; 1.2.1 publicly released 30 October 2026; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
 
 ## App privacy
 
@@ -158,7 +162,7 @@ The Watch app reads the same iCloud records. Notifications are optional and come
 
 6.9" iPhone (1320 × 2868), from sample data on the iPhone 18 Pro Max simulator in US English, with the status bar set to 9:41:
 
-Replace all of these with 1.3.0: they show the interface before the overhaul.
+Captured for 1.3.1 on 7 November 2026 with `scripts/ui-snapshots.sh` on the iPhone 18 Pro Max, Apple Watch Ultra 4 (49mm) and Series 12 (46mm) simulators.
 
 1. Usage: Close to a limit and the plan tiles
 2. Detail with pace and a week of history (OpenAI)

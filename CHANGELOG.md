@@ -1,24 +1,27 @@
 # Changelog
 
-## 1.3.0 for iPhone — 7 November 2026
+## 2.6.1 for Mac and 1.3.1 for iPhone — 7 November 2026
 
-iPhone, widgets and Apple Watch 1.3.0(2) carry the UI overhaul from #58 (as in Mac 2.6.0, below), with News (#60), Watch and widget delivery (#61) and the end of Claude sign-in on the iPhone (#62). Build 1.3.0(1) was uploaded before #60–#62 merged and is never submitted.
+Mac 2.6.1(1) and iPhone, widgets and Apple Watch 1.3.1(1) carry News (#60), Watch and widget delivery (#61), the end of Claude sign-in on the iPhone (#62), and the Following caption fix (#64). iPhone 1.3.0(1), released on the App Store on 7 November 2026 at 19:56 UTC, has only the UI overhaul from #58 (under 2.6.0, below). Build 1.3.0(2), uploaded the same day with these changes, was never submitted.
 
-- The UI overhaul: the iPhone, widgets and Apple Watch items under 2.6.0 below.
-- News checks release and status feeds every 5 to 15 minutes, voices and discussion every 30 minutes to 3 hours, and anything older than 15 minutes when the app comes forward. Background refresh checks News alongside usage.
-- News adds Import AI, Interconnects and Latent Space, Techmeme and Hugging Face discussion, Mistral's news, and GitHub, OpenRouter and xAI status. Updates turn nothing on silently: a dismissible card offers the new sources.
+On every device
+
+- News checks release and status feeds every 5 to 15 minutes, voices and discussion every 30 minutes to 3 hours. On the Mac, News has its own refresh loop, no longer tied to iCloud sharing.
+- News adds Import AI, Interconnects and Latent Space, Techmeme and Hugging Face discussion, Mistral's news, and GitHub, OpenRouter and xAI status. Updates turn nothing on silently: a dismissible card offers the new sources. Following says whether a voice links to its X profile or its website.
 - Being offline isn't a feed failure, and the banner names a feed only when it's gone or has failed for over an hour. The ChatGPT & Codex changelog reads again (it had outgrown its size limit).
 - Skills keeps its last good list for each sort, backs off after a server error, and says community uploads aren't reviewed.
+
+iPhone, widgets and Apple Watch
+
+- Coming forward checks News older than 15 minutes, and background refresh checks News alongside usage.
 - Apple Watch keeps and applies a reading the iPhone hands over while its app is closed, or while its iCloud is off or failing. A provider re-checked with unchanged numbers still reaches the Watch.
 - Widgets and complications reload 5 minutes before a reading turns stale. The Live Activity reads "As of …" once its reading is an hour old.
 - A plan sign-in rides out a busy token server (429 or 503) instead of asking to sign in again. The iPhone pauses reading a plan while your Mac reads it, and pull to refresh still reads it.
-- Claude can't be signed in to on the iPhone any more (see below).
+- Claude can't be signed in to on the iPhone any more: Anthropic's terms don't allow other apps to offer a Claude.ai login or keep its tokens. Settings › Plans lists Claude under Needs Tokenroom on a Mac, a Claude reading a Mac sends still shows, and a Claude sign-in an earlier version kept is deleted from the iPhone's Keychain on launch, with no request to Anthropic. Codex, Grok Build, Cursor and Grok Bot still sign in on the iPhone. The Mac is unchanged.
 
-The Mac side of #60 (News on its own refresh loop, the size limit, the new sources) is on `main` for the next Mac version; Mac 2.6.0 doesn't have it.
+## 2.6.0 for Mac — released 6 November 2026 / 1.3.0 for iPhone — released 7 November 2026
 
-## 2.6.0 for Mac — released 6 November 2026
-
-Mac 2.6.0(1) is [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.6.0) and carries the UI overhaul from #58. The iPhone, widgets and Apple Watch items below shipped in 1.3.0, above.
+Mac 2.6.0(1) is [publicly released](https://github.com/felipedrf74/tokenroom/releases/tag/v2.6.0), and iPhone, widgets and Apple Watch 1.3.0(1) was released on the App Store on 7 November 2026 at 19:56 UTC. Both carry the UI overhaul from #58.
 
 On every device
 
@@ -39,7 +42,6 @@ iPhone, widgets and Apple Watch
 - News drops the status card, keeps its main story to two lines, and puts actions under the title.
 - Widgets show the pace mark, and the large one uses its full height. On the Lock Screen and tinted watch faces, meters are ink, so a critical one stays bright.
 - Apple Watch shows the title in ink and leads a provider's page with its reading, then the plan.
-- Claude can't be signed in to on the iPhone any more: Anthropic's terms don't allow other apps to offer a Claude.ai login or keep its tokens. Settings › Plans lists Claude under Needs Tokenroom on a Mac, a Claude reading a Mac sends still shows, and a Claude sign-in an earlier version kept is deleted from the iPhone's Keychain on launch, with no request to Anthropic. Codex, Grok Build, Cursor and Grok Bot still sign in on the iPhone. The Mac is unchanged.
 
 ## 2.5.3 for Mac — released 2 November 2026
 
