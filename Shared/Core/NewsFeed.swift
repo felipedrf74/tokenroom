@@ -395,7 +395,8 @@ enum NewsFetcher {
             }
             let listed = cache.models
             switch answer {
-            case .offline, .unreachable where Task.isCancelled: break
+            case .offline: break
+            case .unreachable where Task.isCancelled: break
             default: answered = true
             }
             switch answer {
