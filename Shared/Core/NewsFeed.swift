@@ -378,6 +378,12 @@ enum NewsFetcher {
         if !migrated.isEmpty { cache.sourceChecks = migrated }
         var newModels: [ModelRelease] = []
         var unreadable = cache.unreadable ?? []
+        // A request that found no network (`.offline`) only says so for itself: one host's DNS or
+        // connection failing while others answer is that host's failure. Whether the pass was
+        // offline is known once every answer is in (`answered`).
+        var answered = false
+        var modelsOffline = false
+        var offlineSources: [FeedSource] = []
 
         // The model list has no validators, so every check downloads all of it (about 81 KB on the
         // wire): every 30 minutes in the background and 15 on screen; a pull or Check Now asks now.
@@ -388,6 +394,10 @@ enum NewsFetcher {
                 return .init(cache: cache, newModels: [])
             }
             let listed = cache.models
+            switch answer {
+            case .offline, .unreachable where Task.isCancelled: break
+            default: answered = true
+            }
             switch answer {
             case let .body(data, validator, isTruncated):
                 if !isTruncated, let releases = try? ModelFeed.releases(from: data) {
@@ -421,8 +431,8 @@ enum NewsFetcher {
                     unreadable.insert(ModelFeed.id)
                 }
             case .offline:
-                // No network: OpenRouter didn't fail, and the next pass asks as if nothing happened.
-                break
+                // Settled once the feeds are in: a failure unless nothing in the pass answered.
+                modelsOffline = true
             }
             // A list that changed shows before the feeds are in; the same list again waits for
             // the pass, so it isn't folded and shown for nothing.
@@ -511,7 +521,10 @@ enum NewsFetcher {
                                 truncated = true
                             } else {
                                 cache.validators[key] = nil
-                                permanent = !read.isFeed
+                                // Not a feed is permanent, unless the network cut the body short
+                                // before its root: then it's a passing failure like any other.
+                                let cutShort = isTruncated && data.count < source.sizeLimit
+                                permanent = !read.isFeed && !cutShort
                             }
                         }
                     case .notModified:
@@ -525,9 +538,11 @@ enum NewsFetcher {
                     case .unreachable:
                         if Task.isCancelled { continue }
                     case .offline:
-                        // No network: neither a failure nor a fresh reading.
+                        // Settled after the pass: a failure unless nothing answered at all.
+                        offlineSources.append(source)
                         continue
                     }
+                    answered = true
                     if success {
                         check.succeededAt = now
                         check.failedAt = nil
@@ -539,12 +554,7 @@ enum NewsFetcher {
                         unreadable.remove(source.id)
                         anySucceeded = true
                     } else {
-                        let running = (check.failures ?? 0) > 0
-                        check.firstFailedAt = running ? (check.firstFailedAt ?? check.failedAt ?? now) : now
-                        check.failedAt = now
-                        check.failures = (check.failures ?? 0) + 1
-                        check.retryAt = allowedRetry(retryAfter, now: now)
-                        check.isPermanent = permanent ? true : nil
+                        recordFailure(&check, now: now, retryAfter: retryAfter, permanent: permanent)
                         unreadable.insert(source.id)
                         anyFailed = true
                     }
@@ -562,10 +572,37 @@ enum NewsFetcher {
                     }
                 }
             }
+            // Something answered, so the network was there: a host it couldn't find or reach
+            // failed by itself, and backs off like any other failure.
+            if answered {
+                for source in offlineSources {
+                    var check = cache.check(for: source)
+                    recordFailure(&check, now: now, retryAfter: nil, permanent: false)
+                    checks[source.id] = check
+                    unreadable.insert(source.id)
+                    anyFailed = true
+                }
+                if !offlineSources.isEmpty { cache.sourceChecks = checks }
+            }
             if anySucceeded || anyFailed { cache.announcementsFailedAt = anyFailed ? now : nil }
+        }
+        if answered, modelsOffline {
+            cache.modelsFailed(at: now)
+            unreadable.insert(ModelFeed.id)
         }
         cache.unreadable = unreadable.isEmpty ? nil : unreadable
         return Result(cache: cache, newModels: newModels)
+    }
+
+    /// One more failure in a row for a source: when the run began, its backoff count, the
+    /// server's Retry-After (as allowed), and whether it can fix itself.
+    static func recordFailure(_ check: inout NewsCache.SourceCheck, now: Date, retryAfter: Date?, permanent: Bool) {
+        let running = (check.failures ?? 0) > 0
+        check.firstFailedAt = running ? (check.firstFailedAt ?? check.failedAt ?? now) : now
+        check.failedAt = now
+        check.failures = (check.failures ?? 0) + 1
+        check.retryAt = allowedRetry(retryAfter, now: now)
+        check.isPermanent = permanent ? true : nil
     }
 
     /// Due once `interval` has passed since `fetchedAt`, or when `fetchedAt` is later than `now`:

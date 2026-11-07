@@ -1574,8 +1574,10 @@ final class FeedTests: XCTestCase {
         XCTAssertTrue(cache.unreadable?.contains(source.id) == true)
     }
 
-    /// Offline (not connected, no DNS, the link dropped), no source failed: none counts a
-    /// failure, backs off, or says "Couldn't read", and the next pass asks as usual.
+    /// Offline (not connected, no DNS, the link dropped) for every request in the pass: no source
+    /// failed, so none counts a failure, backs off, or says "Couldn't read", and the next pass asks
+    /// as usual. Only a whole pass is offline: one host failing so while others answer is that
+    /// host's failure (`testAHostThatCantBeFoundWhileOthersAnswerFailsByItself`).
     @MainActor
     func testBeingOfflineFailsNoSource() async throws {
         defer { unstubNetwork() }
@@ -1607,6 +1609,55 @@ final class FeedTests: XCTestCase {
         await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: now)
         XCTAssertNil(news.problem(for: .today))
         XCTAssertNil(news.sourceHealth(for: claudeCode).problem)
+    }
+
+    /// A lapsed domain answers "can't find host" while everything else answers: that's the host's
+    /// own failure, which backs off (5 minutes, then 15, …) instead of being asked every minute.
+    func testAHostThatCantBeFoundWhileOthersAnswerFailsByItself() async {
+        defer { unstubNetwork() }
+        StubURLProtocol.reset()
+        StubURLProtocol.handler = { request in request.url == ModelFeed.url ? (200, Self.noModels) : (200, Self.rss("Post", "Thu, 05 Nov 2026 12:00:00 GMT")) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [GoneHostProtocol.self, StubETagProtocol.self]
+        TokenroomHTTP.overrideSession(URLSession(configuration: configuration))
+        let gone = FeedSource(id: "gone", name: "Gone", url: URL(string: "https://gone.example.com/feed")!)
+        let now = utc(2026, 11, 7, 12)
+        for code in [URLError.Code.cannotFindHost, .cannotConnectToHost, .dnsLookupFailed, .networkConnectionLost] {
+            GoneHostProtocol.code = code
+            let cache = await NewsFetcher.refresh(NewsCache(), sources: [claudeCode, gone], following: [], now: now).cache
+            let check = cache.sourceChecks?[gone.id]
+            XCTAssertEqual(check?.failures, 1, "\(code)")
+            XCTAssertEqual(check?.failedAt, now)
+            XCTAssertNil(check?.isPermanent, "A passing failure")
+            XCTAssertTrue(cache.unreadable?.contains(gone.id) == true)
+            XCTAssertEqual(cache.sourceChecks?[claudeCode.id]?.succeededAt, now, "The others answered")
+            // Its retry time is the failure backoff: not before 5 minutes, then at 5.
+            XCTAssertFalse(NewsFetcher.isDue(nil, failedAt: check?.failedAt, failures: check?.failures, retryAt: check?.retryAt,
+                                             interval: NewsFetcher.announcementInterval, now: now.addingTimeInterval(4 * 60)))
+            XCTAssertEqual(NewsCadence.nextCheck(cache: cache, sources: [gone], now: now), now.addingTimeInterval(5 * 60), "Not every minute")
+        }
+        // The model list is held to the same rule.
+        GoneHostProtocol.code = .cannotFindHost
+        GoneHostProtocol.alsoModels = true
+        defer { GoneHostProtocol.alsoModels = false }
+        let cache = await NewsFetcher.refresh(NewsCache(), sources: [claudeCode], following: [], now: now).cache
+        XCTAssertEqual(cache.modelsFailures, 1)
+        XCTAssertEqual(cache.modelsFailedAt, now)
+    }
+
+    /// A body the network cut short before its root tag isn't "not a feed": it's a passing failure.
+    func testABodyCutShortBeforeItsRootIsNotPermanent() async {
+        defer { unstubNetwork() }
+        StubURLProtocol.reset()
+        StubURLProtocol.handler = { request in request.url == ModelFeed.url ? (200, Self.noModels) : (200, Data("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rs".utf8)) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [CutOffFeedProtocol.self]
+        TokenroomHTTP.overrideSession(URLSession(configuration: configuration))
+        let now = utc(2026, 11, 7, 12)
+        let cache = await NewsFetcher.refresh(NewsCache(), sources: [claudeCode], following: [], now: now).cache
+        XCTAssertEqual(cache.sourceChecks?[claudeCode.id]?.failedAt, now)
+        XCTAssertNil(cache.sourceChecks?[claudeCode.id]?.isPermanent, "Cut short, not gone")
+        XCTAssertFalse(cache.isPersistentlyFailing(claudeCode))
     }
 
     func testAnExplicitUncachedFollowRetriesOnlyThatSourceBeforeItsFailureCooldown() async {
@@ -1856,6 +1907,19 @@ private final class OfflineFeedProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "offline.example.com" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() { client?.urlProtocol(self, didFailWithError: Self.error) }
+    override func stopLoading() {}
+}
+
+/// One host (`gone.example.com`, and the model list when `alsoModels`) fails by `code`; the rest
+/// go on to the next protocol.
+private final class GoneHostProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var code = URLError.Code.cannotFindHost
+    nonisolated(unsafe) static var alsoModels = false
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "gone.example.com" || (alsoModels && request.url == ModelFeed.url)
+    }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() { client?.urlProtocol(self, didFailWithError: URLError(Self.code)) }
     override func stopLoading() {}
 }
 
