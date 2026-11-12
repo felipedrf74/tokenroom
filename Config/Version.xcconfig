@@ -1,10 +1,10 @@
 // Versions. The Mac collector is versioned on its own.
 // scripts/build.sh reads these for the swiftc fallback.
 // Mac 2.6.1 build 1 follows the published 2.6.0: News (#60) and the Following caption (#64).
-// Mobile 1.3.1 build 1 follows the published 1.3.0 (build 1, the overhaul): #60, #61, #62 and #64.
+// Mobile 1.3.2 build 1 adds the iPhone/widget freshness correction from #66.
 TOKENROOM_MAC_VERSION = 2.6.1
 TOKENROOM_MAC_BUILD = 1
 
 // iPhone app, widgets, and Watch app share one version.
-TOKENROOM_MOBILE_VERSION = 1.3.1
+TOKENROOM_MOBILE_VERSION = 1.3.2
 TOKENROOM_MOBILE_BUILD = 1

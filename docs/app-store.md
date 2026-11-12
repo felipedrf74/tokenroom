@@ -2,6 +2,10 @@
 
 A draft for App Store Connect. Provider names appear only in the description, as facts, never in the name, subtitle, or keywords. Tokenroom isn't affiliated with any provider.
 
+## What's New — 1.3.2
+
+More reliable usage updates on iPhone and widgets, including when your Mac rechecks the same numbers, after reopening the app, or after a brief loss of connection. Readings from iCloud appear sooner while slower provider checks finish.
+
 ## What's New — 1.3.1
 
 News checks release and status feeds every few minutes while it's open, adds more AI newsletters, discussion and status pages, and stops showing errors when you're simply offline. Skills keeps its last list when ClawHub can't be reached.
