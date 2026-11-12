@@ -68,6 +68,10 @@ struct WidgetRefreshResult: Sendable {
     var cache: ReadingCache?
     var retryAt: Date? = nil
 
+    static func retryDate(cloudRetryAt: Date?, keyFailures: [ProviderError], now: Date) -> Date? {
+        cloudRetryAt ?? (keyFailures.contains(.unreachable) ? now : nil)
+    }
+
     func nextReload(after now: Date, reloads: Int) -> Date {
         if let retryAt {
             let interval = reloads < Self.retryAllowance ? 5 * 60.0 : WidgetSchedule.calmInterval

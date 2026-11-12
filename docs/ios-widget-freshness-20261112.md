@@ -27,6 +27,8 @@ follows that proposal, with these boundaries:
   after 16 timeline builds, reserving room for hourly recovery for the rest of an offline
   day. An explicit CloudKit Retry-After remains the earliest
   retry time. Timelines still fade and expire real old readings.
+  Permanent key errors and provider rate limits retain the normal cadence; only an
+  unreachable key provider asks for the short retry.
 - The iPhone retries a connection failure after 15 seconds, with at most one additional
   foreground recovery attempt. Activation and manual refresh can bypass this connection
   wait, while server-directed rate limits, busy responses and container waits remain.
@@ -51,7 +53,7 @@ and the new bounded widget renewals instead of expecting no delivery at all.
 
 Exact command results and simulator acceptance are recorded in the pull request.
 
-Local final checks: 1,023 Mac tests and 53 hosted iPhone tests passed, Shared typechecked
+Local final checks: 1,024 Mac tests and 53 hosted iPhone tests passed, Shared typechecked
 for macOS/iOS/watchOS, and the optimized Swift fallback built with installation skipped.
 Fresh-context review reported no remaining findings after correcting response-time
 Retry-After deadlines, monotonic partial/final presentation, and the separate short-retry

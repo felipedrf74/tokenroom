@@ -99,6 +99,16 @@ final class WidgetFreshnessTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(reloads, 24, "Recovery continues after the short retry allowance")
     }
 
+    func testOnlyTransientKeyFailuresRequestAShortWidgetRetry() {
+        XCTAssertNil(WidgetRefreshResult.retryDate(cloudRetryAt: nil,
+            keyFailures: [.expired("Key refused"), .notEntitled("Not on this plan"), .rateLimited(until: now.addingTimeInterval(3600))], now: now))
+        XCTAssertEqual(WidgetRefreshResult.retryDate(cloudRetryAt: nil,
+            keyFailures: [.expired("Key refused"), .unreachable], now: now), now)
+        let serverWait = now.addingTimeInterval(3600)
+        XCTAssertEqual(WidgetRefreshResult.retryDate(cloudRetryAt: serverWait,
+            keyFailures: [.unreachable], now: now), serverWait, "A connection failure cannot shorten a server wait")
+    }
+
     func testPresentationSavesCannotDelayAWidgetsOwnCloudRead() throws {
         var saved = cache(checked: now)
         saved.cloudReadAt = now.addingTimeInterval(-20 * 60)
