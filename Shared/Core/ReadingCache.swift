@@ -45,6 +45,14 @@ struct ReadingCache: Codable, Equatable, Sendable {
     /// The paired phone's own authoritative membership, including an empty provider list.
     /// Unlike merged rows, this retains a phone reading even when a Mac wins that row.
     var localSource: SourceSnapshot? = nil
+    /// Last complete successful cloud read, distinct from a presentation/cache save. A failed
+    /// app refresh must not postpone a widget's own attempt for another fifteen minutes.
+    var cloudReadAt: Date? = nil
+
+    func needsWidgetRefresh(at now: Date, maxAge: TimeInterval) -> Bool {
+        guard let cloudReadAt, (0..<maxAge).contains(now.timeIntervalSince(cloudReadAt)) else { return true }
+        return nearsStale(at: now)
+    }
 
     struct SourceSnapshot: Codable, Equatable, Sendable {
         var id: String

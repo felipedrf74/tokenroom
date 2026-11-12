@@ -44,9 +44,19 @@ enum RelayErrorPolicy {
         }
     }
 
-    static func outcome(for error: Error, defaultRetry: TimeInterval) -> Outcome {
+    static func isConnectionFailure(_ error: Error) -> Bool {
+        if let error = error as? CKError {
+            return error.retryAfterSeconds == nil && [.networkUnavailable, .networkFailure].contains(error.code)
+        }
+        return (error as? URLError).map(TokenroomHTTP.meansOffline) ?? false
+    }
+
+    static func outcome(for error: Error, defaultRetry: TimeInterval, networkRetry: TimeInterval? = nil) -> Outcome {
         if error is CancellationError || (error as? CKError)?.code == .operationCancelled {
             return .cancelled
+        }
+        if let networkRetry, isConnectionFailure(error) {
+            return .retry(after: networkRetry, message: "Couldn't reach iCloud. Trying again soon.")
         }
         guard let error = error as? CKError else {
             return .failed("Couldn't reach iCloud.")

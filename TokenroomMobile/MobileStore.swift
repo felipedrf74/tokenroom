@@ -4,6 +4,12 @@ import Observation
 import UserNotifications
 import os
 
+/// Read-side boundary, so recovery and partial presentation can be exercised without iCloud.
+struct MobileRelayReads: Sendable {
+    var accountStatus: @Sendable () async throws -> CKAccountStatus
+    var contents: @Sendable () async throws -> CloudRelay.Contents
+}
+
 /// Everything the iPhone shows: readings your Macs relay through iCloud, providers read with keys
 /// added on this iPhone or plans signed in to on it, or sample data. Saves the merged readings for
 /// widgets and, while this iPhone reads any itself, relays its own readings to your other devices.
@@ -74,6 +80,7 @@ final class MobileStore {
     /// push iOS held back or dropped. Shorter than a Mac's 9-minute heartbeat, so a Mac's check
     /// shows within a couple of minutes of reaching iCloud.
     static let liveInterval: TimeInterval = 2 * 60
+    static let connectionRetry: TimeInterval = 15
 
     private(set) var relayPhase: RelayPhase = .idle
     /// Other collectors' records; this iPhone's own record is left out.
@@ -179,13 +186,14 @@ final class MobileStore {
     @ObservationIgnored private let platformEffects: MobilePlatformEffects
     @ObservationIgnored private let claimOverride: (@MainActor @Sendable (UsageAlert, Date) async -> Claim)?
     private let relay: CloudRelay?
+    private let relayReads: MobileRelayReads?
     private let defaults: UserDefaults
     private let history: HistoryStore
     private let cacheURL: URL?
     private var publishPolicy = RelayPublishPolicy()
     private var lastHistoryHour: Date?
-    /// The readings this app last saved for widgets (at launch, the saved ones): what they read.
-    /// A new cache is measured against them, both as drawn now.
+    /// The last save is the Watch's material-change baseline. Widget requests have their own
+    /// durable baseline (`WidgetReloadSchedule`).
     @ObservationIgnored private var lastSavedCache: ReadingCache?
     /// How many caches have gone out as a change, for a silent push to say whether one did.
     @ObservationIgnored private var changesGivenOut = 0
@@ -194,6 +202,9 @@ final class MobileStore {
     private let keyGate: KeyFetchGate
     /// iCloud asked to wait (rate limit, busy); reads and writes pause until then.
     private var relayRetryAt: Date?
+    private var relayConnectionFailed = false
+    @ObservationIgnored private var relayRecovery: Task<Void, Never>?
+    private var cloudReadAt: Date?
     private var alertLedger: AlertLedger
     private var relayEvents: [(id: String, createdAt: Date?)] = []
     /// This iPhone's record as iCloud last had it. With the App Group cache, which widgets also
@@ -233,8 +244,6 @@ final class MobileStore {
     @ObservationIgnored private var queuedManual = false
     /// When this launch's last check of each key provider failed.
     @ObservationIgnored private var localFailedAt: [Provider: Date] = [:]
-    /// A reload held back in the background, made when the app comes forward.
-    @ObservationIgnored private var reloadHeldBack = false
     @ObservationIgnored private var liveActivityUpdate: Task<Void, Never>?
     private let directory: URL?
     private let logger = Logger(subsystem: TokenroomIdentity.bundleID, category: "store")
@@ -254,13 +263,15 @@ final class MobileStore {
         launchDefaults: UserDefaults = .standard,
         sessions: PhoneSessionStore? = PhoneSessionAvailability.store(),
         sessionSend: @escaping @Sendable (Provider) -> PhoneSessionClient.Send = PhoneSessionClient.live,
-        sessionRenew: @escaping PhoneSessionRefresher.Post = { await PhoneSignInClient().renew($0, $1) }
+        sessionRenew: @escaping PhoneSessionRefresher.Post = { await PhoneSignInClient().renew($0, $1) },
+        relayReads: MobileRelayReads? = nil
     ) {
         self.defaults = defaults
         self.allowsExternalEffects = allowsExternalEffects
         cacheGeneration = PhoneCacheAccess.generation(in: defaults)
         self.notificationScheduler = notificationScheduler
         self.platformEffects = platformEffects
+        self.relayReads = relayReads
         claimOverride = claimAlert
         self.connectOnIPhone = connectOnIPhone
         // A fixture root never touches this device's sign-ins.
@@ -279,7 +290,7 @@ final class MobileStore {
             defaults.set(sourceID, forKey: Keys.sourceID)
         }
         relay = containerIdentifier.map { CloudRelay(containerIdentifier: $0, zoneDeletion: RelayZoneDeletion(defaults: defaults)) }
-        relayPhase = relay == nil ? .unavailable : .idle
+        relayPhase = relay == nil && relayReads == nil ? .unavailable : .idle
         history = HistoryStore(directory: directory)
         self.directory = directory
         alertLedger = AlertLedger.load(from: directory)
@@ -320,6 +331,9 @@ final class MobileStore {
     func refresh(force: Bool = false, includeKeys: Bool = true, manual: Bool = false, now fixedNow: Date? = nil) async {
         guard allowsExternalEffects else { return }
         let now = fixedNow ?? .now
+        if manual, relayConnectionFailed {
+            relayRetryAt = nil
+        }
         if !sampleMode, cacheGeneration != PhoneCacheAccess.generation(in: defaults) {
             rebuild(now: now)
         }
@@ -341,7 +355,7 @@ final class MobileStore {
         }
         let pass = Task<Void, Never> { @MainActor [weak self] in
             guard let self else { return }
-            await self.refreshPass(readsKeys: includeKeys, manual: manual, now: now)
+            await self.refreshPass(readsKeys: includeKeys, manual: manual, now: now, clock: { fixedNow ?? .now })
         }
         running = pass
         isRefreshing = true
@@ -419,17 +433,17 @@ final class MobileStore {
         return !(0..<Self.foregroundInterval).contains(now.timeIntervalSince(last))
     }
 
-    private func refreshPass(readsKeys: Bool, manual: Bool = false, now: Date) async {
+    private func refreshPass(readsKeys: Bool, manual: Bool = false, now: Date, clock: @escaping @Sendable () -> Date) async {
         // Readings the widgets took since the last refresh, before this one's newer ones.
         history.takePending(now: now)
-        async let relayRead: Void = readRelay()
+        async let relayRead: Void = readRelayAndPresent(now: now, clock: clock)
         async let keyRead: Void = readsKeys ? readKeys(now: now) : ()
         async let sessionRead: Void = readsKeys ? readSessions(now: now, manual: manual) : ()
         _ = await (relayRead, keyRead, sessionRead)
         guard !Task.isCancelled else { return }
 
         followTimeZone()
-        rebuild(now: now)
+        rebuild(now: clock())
         // Before the pass ends, so a push handler or intent doesn't return first.
         await liveActivityUpdate?.value
         await publish(now: now)
@@ -444,18 +458,26 @@ final class MobileStore {
         }
     }
 
-    private func readRelay() async {
-        guard let relay else {
+    private func readRelayAndPresent(now: Date, clock: @escaping @Sendable () -> Date) async {
+        await readRelay(now: now, clock: clock)
+        guard !Task.isCancelled, relay != nil || relayReads != nil else { return }
+        rebuild(now: clock())
+    }
+
+    private func readRelay(now: Date, clock: @escaping @Sendable () -> Date) async {
+        guard let reads = relayReads ?? relay.map({ relay in
+            MobileRelayReads(accountStatus: { try await relay.accountStatus() }, contents: { try await relay.contents() })
+        }) else {
             relayPhase = .unavailable
             return
         }
-        if isWaitingForRelay(.now) { return }
+        if isWaitingForRelay(now) { return }
         let generation = relayGeneration
         if relaySources.isEmpty {
             relayPhase = .loading
         }
         do {
-            let account = try await Self.iCloud { try await relay.accountStatus() }
+            let account = try await Self.iCloud { try await reads.accountStatus() }
             guard relayGeneration == generation, !Task.isCancelled else { return }
             switch account {
             case .available:
@@ -472,18 +494,20 @@ final class MobileStore {
                 return
             }
             let readStartedAt = Date()
-            let contents = try await Self.iCloud { try await relay.contents() }
+            let contents = try await Self.iCloud { try await reads.contents() }
             guard relayGeneration == generation, !Task.isCancelled else { return }
             ownRecord = contents.sources.first { $0.id == sourceID }?.envelope
             relaySources = contents.sources.filter { $0.id != sourceID }
             relayHistories = contents.histories
             relayEvents = contents.events
             relayRetryAt = nil
+            relayConnectionFailed = false
+            cloudReadAt = clock()
             relayReadOnce = true
             guard !contents.deletedByUser else {
                 // Deleted in iCloud settings: known to hold nothing, so the saved cache's readings
                 // don't stand in, and nothing is sent until the user starts again.
-                handleRelayError(CKError(.userDeletedZone))
+                handleRelayError(CKError(.userDeletedZone), now: clock())
                 return
             }
             relayPhase = .ready
@@ -493,7 +517,8 @@ final class MobileStore {
             guard relayGeneration == generation, !Task.isCancelled else { return }
             SyncHealthLog.record(.cloudRead, error is ICloudTimeout ? .timedOut : .failed, in: defaults)
             logger.error("relay read failed: \(String(describing: error), privacy: .public)")
-            handleRelayError(error)
+            handleRelayError(error, now: clock())
+            scheduleRelayRecovery()
         }
     }
 
@@ -528,6 +553,10 @@ final class MobileStore {
                                                                checkedAt: .now, providers: retainedLocal)
         relayReadOnce = true
         relayRetryAt = nil
+        relayConnectionFailed = false
+        cloudReadAt = nil
+        relayRecovery?.cancel()
+        relayRecovery = nil
         preferencesBase = nil
         preferencesSharedAt = nil
         sharingPreferences?.cancel()
@@ -641,7 +670,11 @@ final class MobileStore {
     }
 
     private func handleRelayError(_ error: Error, now: Date = .now) {
-        switch RelayErrorPolicy.outcome(for: error, defaultRetry: RelayPublishPolicy.minimumInterval) {
+        relayConnectionFailed = error is ICloudTimeout || RelayErrorPolicy.isConnectionFailure(error)
+        let outcome: RelayErrorPolicy.Outcome = error is ICloudTimeout
+            ? .retry(after: Self.connectionRetry, message: "Couldn't reach iCloud. Trying again soon.")
+            : RelayErrorPolicy.outcome(for: error, defaultRetry: RelayPublishPolicy.minimumInterval, networkRetry: Self.connectionRetry)
+        switch outcome {
         case .noAccount:
             resetRelayAccount(phase: .noAccount)
         case .paused(let message), .failed(let message):
@@ -653,6 +686,19 @@ final class MobileStore {
             relayPhase = .unavailable
         case .cancelled:
             break
+        }
+    }
+
+    /// One bounded retry after the network is still coming up on activation. A failed retry
+    /// leaves the ordinary foreground loop in charge; CloudKit's own waits are never bypassed.
+    private func scheduleRelayRecovery() {
+        guard relayConnectionFailed, relayRecovery == nil, !platformEffects.applicationIsBackground() else { return }
+        relayRecovery = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(Self.connectionRetry)) } catch { return }
+            guard let self else { return }
+            defer { self.relayRecovery = nil }
+            guard !Task.isCancelled, self.relayConnectionFailed, !self.platformEffects.applicationIsBackground() else { return }
+            await self.refresh(force: true, includeKeys: false)
         }
     }
 
@@ -901,6 +947,7 @@ final class MobileStore {
         // Delivery still compares against what widgets/the Watch last received on disk, so
         // removing an ambiguous legacy meter is propagated on the next successful cache save.
         lastSavedCache = saved
+        cloudReadAt = saved.cloudReadAt
         lastHandoverRunOuts = saved.runOuts
         lastHandoverChecks = WatchHandoffSchedule.checks(in: saved)
     }
@@ -954,6 +1001,7 @@ final class MobileStore {
         storedReadings = output.connected.map { Reading($0, now: now) }
         disconnected = output.disconnected.map { Reading($0, now: now) }
         var cache = ReadingCache(savedAt: now, isSample: false, items: output.connected)
+        cache.cloudReadAt = cloudReadAt
         // This phone owns its source membership even before an iCloud publish succeeds. An
         // empty envelope is authoritative too: a removed key must not return on the Watch.
         cache.localSource = ReadingCache.SourceSnapshot(RelayMerge.Source(
@@ -988,20 +1036,19 @@ final class MobileStore {
         return samples
     }
 
-    /// Widgets redraw from this. When nothing they'd draw changed, only the save time moves, so
-    /// they don't refetch, and they aren't reloaded.
+    /// Saves readings and independently decides delivery to the Watch and widget timelines.
     private func saveCache(_ cache: ReadingCache) {
         guard allowsExternalEffects, let cacheURL else { return }
+        var cache = cache
+        cache.accountGeneration = cacheGeneration
         do {
             guard try PhoneCacheAccess.save(cache, at: cacheURL, defaults: defaults, generation: cacheGeneration) else { return }
         } catch {
             logger.error("cache save failed: \(String(describing: error), privacy: .public)")
             return
         }
-        // Against what widgets read until now, the last cache saved, both as drawn now: one that
-        // held a reading faded an hour after its check, which is live again with the same
-        // numbers, is a change. A reading that was live in it isn't, however long ago that cache
-        // was given out (a Mac's unchanged heartbeats): widgets read every save.
+        // The Watch has its own check cadence. Widget delivery below compares with its durable
+        // last reload request, since a file save alone never updates a WidgetKit timeline.
         let previous = lastSavedCache
         lastSavedCache = cache
         let changed = cache.materialHash(at: cache.savedAt) != previous?.materialHash(at: cache.savedAt)
@@ -1010,42 +1057,40 @@ final class MobileStore {
         // The Watch shows a Mac's measured run-out, which widgets don't: one that moved an
         // hour goes to it too. So do checks that found the same numbers, once one has moved
         // half an hour: the Watch fades a reading an hour after the check it holds.
-        guard changed || RelayPublishPolicy.runOutsMoved(runOuts, since: lastHandoverRunOuts)
-                || WatchHandoffSchedule.checksMoved(checks, since: lastHandoverChecks) else { return }
+        let handover = changed || RelayPublishPolicy.runOutsMoved(runOuts, since: lastHandoverRunOuts)
+                || WatchHandoffSchedule.checksMoved(checks, since: lastHandoverChecks)
         // Sample readings stay on this iPhone; the Watch keeps showing real ones.
-        if !cache.isSample {
+        if handover, !cache.isSample {
             if let saved = PhoneCacheAccess.load(at: cacheURL, defaults: defaults) {
                 platformEffects.sendToWatch(saved.applyingLocalBudgetReferences(in: defaults))
             }
             lastHandoverRunOuts = runOuts
             lastHandoverChecks = checks
         }
-        guard changed else { return }
-        changesGivenOut += 1
-        reloadWidgets(for: cache, since: previous)
+        if changed { changesGivenOut += 1 }
+        reloadWidgets(for: cache, at: cache.savedAt)
     }
 
-    /// Reloads widgets for new readings. Reloads asked for in the background (a silent push)
-    /// count against WidgetKit's daily budget, so then only what matters goes out at once
-    /// (`ReadingCache.reloadSignature`); smaller moves wait for the widgets' next timeline, which
-    /// reads this cache, or for the app to come forward. What matters is measured from the cache
-    /// saved before this one, both as drawn now.
-    private func reloadWidgets(for cache: ReadingCache, since previous: ReadingCache?) {
+    private func reloadWidgets(for cache: ReadingCache, at now: Date, background: Bool? = nil) {
         guard allowsExternalEffects else { return }
-        let matters = cache.reloadSignature(at: cache.savedAt) != previous?.reloadSignature(at: cache.savedAt)
-        guard !platformEffects.applicationIsBackground() || matters else {
-            reloadHeldBack = true
-            return
-        }
-        reloadHeldBack = false
+        guard WidgetReloadSchedule.needsReload(cache, since: WidgetReloadSchedule.load(from: defaults), at: now,
+            background: background ?? platformEffects.applicationIsBackground(),
+            reloads: WidgetReloadLog.count(lastDayBefore: now, defaults: defaults)) else { return }
         platformEffects.reloadWidgets()
+        WidgetReloadSchedule.record(cache, at: now, in: defaults)
     }
 
-    /// The app came forward: a reload held back in the background goes out now.
-    func becameActive() {
-        guard allowsExternalEffects, reloadHeldBack else { return }
-        reloadHeldBack = false
-        platformEffects.reloadWidgets()
+    /// Reconcile even after process death, including a cache written by the widget extension.
+    func becameActive(now: Date = .now) {
+        guard allowsExternalEffects else { return }
+        if relayConnectionFailed {
+            relayRetryAt = nil
+            lastRefresh = nil
+            lastKeyRefresh = nil
+        }
+        if let cache = PhoneCacheAccess.load(at: cacheURL, defaults: defaults) {
+            reloadWidgets(for: cache, at: now, background: false)
+        }
     }
 
     func reading(id: String) -> Reading? {

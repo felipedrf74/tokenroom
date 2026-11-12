@@ -19,24 +19,32 @@ enum WidgetRefresher {
     }
 
     static func cache(force: Bool = false, now: Date = .now) async -> ReadingCache? {
+        await timeline(force: force, now: now).cache
+    }
+
+    static func timeline(force: Bool = false, now: Date = .now) async -> WidgetRefreshResult {
         _ = accountObserver
         if AppGroup.defaults.bool(forKey: "sampleMode") {
-            return SampleData.cache(now: now)
+            return WidgetRefreshResult(cache: SampleData.cache(now: now))
         }
         let cached = PhoneCacheAccess.load(at: ReadingCache.defaultURL, defaults: AppGroup.defaults)?
             .applyingLocalBudgetReferences(in: AppGroup.defaults)
         // A cache saved minutes ago still waits for a read when a live reading in it is about to
         // go stale: the reload asked for then (`WidgetSchedule`) is for that.
-        if !force, let cached, (0..<maxAge).contains(now.timeIntervalSince(cached.savedAt)), !cached.nearsStale(at: now) {
-            return cached
+        if !force, let cached, !cached.needsWidgetRefresh(at: now, maxAge: maxAge) {
+            return WidgetRefreshResult(cache: cached)
         }
         // Widgets whose timelines are due together share one refresh, rather than each reading
         // iCloud and calling every key provider.
-        let task = running.withLock { running -> Task<ReadingCache?, Never> in
+        let task = running.withLock { running -> Task<WidgetRefreshResult, Never> in
             if let running {
                 return running
             }
-            let task = Task { await TimeLimit.run(budget, otherwise: nil) { await refresh(previous: cached, now: now) } }
+            let task = Task {
+                await TimeLimit.run(budget, otherwise: WidgetRefreshResult(cache: nil, retryAt: now)) {
+                    await refresh(previous: cached, now: now)
+                }
+            }
             running = task
             return task
         }
@@ -46,16 +54,17 @@ enum WidgetRefresher {
                 running = nil
             }
         }
-        return refreshed.flatMap { PhoneCacheAccess.accepts($0, defaults: AppGroup.defaults) ? $0 : nil }
+        let cache = refreshed.cache.flatMap { PhoneCacheAccess.accepts($0, defaults: AppGroup.defaults) ? $0 : nil }
             ?? PhoneCacheAccess.load(at: ReadingCache.defaultURL, defaults: AppGroup.defaults)?
                 .applyingLocalBudgetReferences(in: AppGroup.defaults)
+        return WidgetRefreshResult(cache: cache, retryAt: refreshed.retryAt)
     }
 
     /// The refresh under way in this process.
-    private static let running = Mutex<Task<ReadingCache?, Never>?>(nil)
+    private static let running = Mutex<Task<WidgetRefreshResult, Never>?>(nil)
 
     /// Saves what it read for the app and the other widgets.
-    static func refresh(previous: ReadingCache?, now: Date) async -> ReadingCache? {
+    static func refresh(previous: ReadingCache?, now: Date) async -> WidgetRefreshResult {
         let defaults = AppGroup.defaults
         var generation = PhoneCacheAccess.generation(in: defaults)
         // A refresh can start after the account changed but hold a cache captured before it.
@@ -67,14 +76,17 @@ enum WidgetRefresher {
         async let relayRead = readRelay()
         async let keyRead = readKeys(defaults: defaults, now: now)
         let (relayResult, (fresh, readings, failures)) = await (relayRead, keyRead)
-        guard generation == PhoneCacheAccess.generation(in: defaults) else { return nil }
+        guard generation == PhoneCacheAccess.generation(in: defaults) else { return WidgetRefreshResult(cache: nil) }
         let contents = relayResult.contents
         let signedOut = relayResult.signedOut
         if signedOut {
             PhoneCacheAccess.invalidate(in: defaults)
             generation = PhoneCacheAccess.generation(in: defaults)
         }
-        guard contents != nil || !fresh.isEmpty || signedOut || (previous != nil && !failures.isEmpty) else { return nil }
+        let retryAt = relayResult.retryAt ?? (!failures.isEmpty ? now : nil)
+        guard contents != nil || !fresh.isEmpty || signedOut || (previous != nil && !failures.isEmpty) else {
+            return WidgetRefreshResult(cache: nil, retryAt: retryAt)
+        }
         // For the week's history: the app records these the next time it refreshes.
         HistoryStore.queue(readings, in: AppGroup.containerURL)
 
@@ -140,11 +152,14 @@ enum WidgetRefresher {
         }
         let output = ReadingAssembler.assemble(sources: sources, histories: histories, now: now)
         var cache = ReadingCache(savedAt: now, isSample: false, items: output.connected)
+        cache.cloudReadAt = contents != nil || signedOut ? now : previous?.cloudReadAt
         cache.localSource = localSource.map(ReadingCache.SourceSnapshot.init)
         do {
-            guard try PhoneCacheAccess.save(cache, at: ReadingCache.defaultURL, defaults: defaults, generation: generation) else { return nil }
-        } catch { return nil }
-        return PhoneCacheAccess.load(at: ReadingCache.defaultURL, defaults: defaults)
+            guard try PhoneCacheAccess.save(cache, at: ReadingCache.defaultURL, defaults: defaults, generation: generation) else {
+                return WidgetRefreshResult(cache: nil, retryAt: retryAt)
+            }
+        } catch { return WidgetRefreshResult(cache: nil, retryAt: now) }
+        return WidgetRefreshResult(cache: PhoneCacheAccess.load(at: ReadingCache.defaultURL, defaults: defaults), retryAt: retryAt)
     }
 
     private static func readingTime(_ provider: RelayProvider) -> Date? {
@@ -156,18 +171,24 @@ enum WidgetRefresher {
     private struct RelayResult: Sendable {
         var contents: CloudRelay.Contents?
         var signedOut = false
+        var retryAt: Date? = nil
     }
 
     private static func readRelay() async -> RelayResult {
         guard let container = RelayAvailability.containerIdentifier else { return RelayResult() }
-        return await TimeLimit.run(readBudget, otherwise: RelayResult()) {
+        return await TimeLimit.run(readBudget, otherwise: RelayResult(retryAt: .now)) {
             let relay = CloudRelay.shared(containerIdentifier: container)
-            let status = try? await relay.accountStatus()
-            if status == .noAccount { return RelayResult(signedOut: true) }
-            guard status == .available else { return RelayResult() }
-            do { return RelayResult(contents: try await relay.contents()) }
+            do {
+                let status = try await relay.accountStatus()
+                if status == .noAccount { return RelayResult(signedOut: true) }
+                guard status == .available else { return RelayResult(retryAt: .now) }
+                return RelayResult(contents: try await relay.contents())
+            }
             catch let error as CKError where error.code == .notAuthenticated { return RelayResult(signedOut: true) }
-            catch { return RelayResult() }
+            catch {
+                let wait = (error as? CKError)?.retryAfterSeconds ?? 0
+                return RelayResult(retryAt: Date.now.addingTimeInterval(wait))
+            }
         }
     }
 
