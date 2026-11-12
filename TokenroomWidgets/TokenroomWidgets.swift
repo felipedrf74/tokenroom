@@ -40,14 +40,15 @@ struct ReadingsTimelineProvider: AppIntentTimelineProvider {
         let now = Date.now
         // WidgetKit budgets each widget on its own; two set up alike reload together.
         let reloads = WidgetReloadLog.record("\(context.family)-\(configuration.provider.rawValue)", at: now)
-        let cache = await WidgetRefresher.cache(now: now)
+        let result = await WidgetRefresher.timeline(now: now)
+        let cache = result.cache
         // Reset, stale, and expiry boundaries update presentation without inventing usage.
         let horizon = now.addingTimeInterval(8 * 3600)
         let boundaries = cache?.presentationDates(after: now, until: horizon) ?? []
         let dates = [now] + boundaries.prefix(31)
         return Timeline(
             entries: dates.map { ReadingsEntry.make(cache, choice: configuration.provider, date: $0) },
-            policy: .after(cache?.nextReload(after: now, reloads: reloads) ?? WidgetSchedule.nextReload(after: now, items: [], reloads: reloads))
+            policy: .after(result.nextReload(after: now, reloads: reloads))
         )
     }
 }

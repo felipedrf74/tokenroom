@@ -1,3 +1,4 @@
+import CloudKit
 import SwiftUI
 import Security
 import Synchronization
@@ -125,10 +126,10 @@ final class MobileStoreTests: XCTestCase {
     /// A store with no iCloud whose widget reloads and Watch handovers are counted, as from the
     /// background. The Mac's readings reach it as a widget's refresh saved them (`fromMac`).
     @MainActor
-    private func countingStore(defaults: UserDefaults, folder: URL, calls: EffectCalls) -> MobileStore {
+    private func countingStore(defaults: UserDefaults, folder: URL, calls: EffectCalls, background: Bool = true) -> MobileStore {
         let effects = MobilePlatformEffects(
             setWatchConnectAvailable: { _ in }, sendToWatch: { _ in calls.append("watch") },
-            reloadWidgets: { calls.append("widgets") }, applicationIsBackground: { true },
+            reloadWidgets: { calls.append("widgets") }, applicationIsBackground: { background },
             updateLiveActivities: { _, _, _, _ in }, makeKeyFetchGate: { KeyFetchGate(defaults: $0, lockDirectory: nil) },
             scheduleBackgroundRefresh: { _ in }
         )
@@ -147,11 +148,140 @@ final class MobileStoreTests: XCTestCase {
         return ReadingCache(savedAt: checked, isSample: false, items: [ReadingCache.Item(provider: provider, source: "Mac")])
     }
 
-    /// A Mac awake with unchanged usage sends a heartbeat (`RelayPublishPolicy.heartbeat`), and the iPhone, in
-    /// the background, takes each one. Widgets already show every one of them live: no reload is
-    /// spent on WidgetKit's budget, and the Watch isn't handed the same numbers again.
     @MainActor
-    func testHeartbeatsWithTheSameNumbersReloadNothingFromTheBackground() async throws {
+    func testUnchangedHeartbeatsRenewTheWidgetsBeforeTheirTimelineFades() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let url = folder.appendingPathComponent(ReadingCache.fileName)
+        try fromMac(checked: now).save(to: url)
+        let calls = EffectCalls()
+        let store = countingStore(defaults: defaults, folder: folder, calls: calls)
+        await store.refresh(force: true, now: now)
+        let initialReloads = calls.all.filter { $0 == "widgets" }.count
+        for beat in 1...6 {
+            let date = now.addingTimeInterval(Double(beat) * 9 * 60)
+            try fromMac(checked: date).save(to: url)
+            await store.refresh(force: true, now: date)
+        }
+        XCTAssertEqual(calls.all.filter { $0 == "widgets" }.count - initialReloads, 1,
+                       "New checks must reach the timeline even when every percentage stays the same")
+    }
+
+    @MainActor
+    func testActivationAfterRelaunchReloadsChangesWithheldInTheBackground() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let url = folder.appendingPathComponent(ReadingCache.fileName)
+        try fromMac(checked: now).save(to: url)
+        let calls = EffectCalls()
+        let store = countingStore(defaults: defaults, folder: folder, calls: calls)
+        await store.refresh(force: true, now: now)
+        var update = fromMac(checked: now.addingTimeInterval(60))
+        update.items[0].provider.windows[0].used = 43
+        try update.save(to: url)
+        await store.refresh(force: true, now: update.savedAt)
+        let beforeActivation = calls.all.filter { $0 == "widgets" }.count
+        let relaunched = countingStore(defaults: defaults, folder: folder, calls: calls, background: false)
+        relaunched.becameActive(now: update.savedAt)
+        XCTAssertEqual(calls.all.filter { $0 == "widgets" }.count, beforeActivation + 1,
+                       "The file saved during suspension is not proof that widgets read it")
+    }
+
+    private func cloudContents(checked: Date) -> CloudRelay.Contents {
+        let envelope = RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: checked,
+                                     providers: fromMac(checked: checked).items.map(\.provider))
+        return .init(sources: [.init(id: "mac-fixture", kind: "mac", label: "Mac", modifiedAt: checked,
+                                    envelope: envelope, needsNewerApp: false)], histories: [:])
+    }
+
+    @MainActor
+    func testCloudReadAppearsBeforeASlowKeyLookupCompletes() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let release = DispatchSemaphore(value: 0)
+        let blocked = Mutex(false)
+        let keys = APIKeyStore(servicePrefix: "app.tokenroom.tests.slow-lookup.", keychain: .init(
+            copy: { _ in
+                let first = blocked.withLock { value in let first = !value; value = true; return first }
+                if first { release.wait() }
+                return (errSecItemNotFound, nil)
+            }, add: { _ in errSecInteractionNotAllowed }, update: { _, _ in errSecInteractionNotAllowed },
+            delete: { _ in errSecItemNotFound }
+        ))
+        let shown = expectation(description: "The relay reading was presented")
+        shown.assertForOverFulfill = false
+        var effects = MobilePlatformEffects.inert
+        effects.updateLiveActivities = { providers, _, _, _ in
+            if providers.contains(where: { $0.id == "claude" }) { shown.fulfill() }
+        }
+        let contents = cloudContents(checked: now)
+        let store = MobileStore(defaults: defaults, containerIdentifier: nil, keys: keys,
+            directory: folder, connectOnIPhone: false, platformEffects: effects, launchDefaults: defaults,
+            sessions: nil, relayReads: .init(accountStatus: { .available }, contents: { contents }))
+        let refresh = Task { await store.refresh(force: true, now: now) }
+        await fulfillment(of: [shown], timeout: 3)
+        XCTAssertTrue(store.isRefreshing, "Key lookup is still blocked")
+        XCTAssertEqual(store.readings.map(\.id), ["claude"])
+        release.signal()
+        await refresh.value
+        let saved = try XCTUnwrap(ReadingCache.load(from: folder.appendingPathComponent(ReadingCache.fileName)))
+        XCTAssertEqual(saved.cloudReadAt, now)
+    }
+
+    @MainActor
+    func testActivationAndManualRefreshRecoverFromConnectionFailureButHonorServerWaits() async throws {
+        for code in [CKError.Code.networkUnavailable, .requestRateLimited] {
+            for manual in [true, false] {
+                let defaults = makeDefaults()
+                let folder = try makeFolder()
+                let attempts = Mutex(0)
+                let contents = cloudContents(checked: now)
+                let reads = MobileRelayReads(accountStatus: {
+                    let attempt = attempts.withLock { $0 += 1; return $0 }
+                    if attempt == 1 { throw CKError(code, userInfo: code == .requestRateLimited ? [CKErrorRetryAfterKey: 90.0] : [:]) }
+                    return .available
+                }, contents: { contents })
+                // Background avoids a real scheduled recovery task; this test explicitly drives
+                // the same activation/manual boundary on a fixed clock.
+                var effects = MobilePlatformEffects.inert
+                effects.applicationIsBackground = { true }
+                let store = MobileStore(defaults: defaults, containerIdentifier: nil, keys: MobileFixtureKeychain().keys,
+                    directory: folder, connectOnIPhone: false, platformEffects: effects, launchDefaults: defaults,
+                    sessions: nil, relayReads: reads)
+                await store.refresh(force: true, now: now)
+                let retry = now.addingTimeInterval(1)
+                if !manual { store.becameActive(now: retry) }
+                await store.refresh(force: manual, manual: manual, now: retry)
+                XCTAssertEqual(attempts.withLock { $0 }, code == .networkUnavailable ? 2 : 1)
+                await store.refresh(force: true, now: now.addingTimeInterval(91))
+                XCTAssertEqual(store.readings.map(\.id), ["claude"])
+            }
+        }
+    }
+
+    @MainActor
+    func testServerRetryAfterStartsWhenTheSlowFailureArrives() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let attempts = Mutex(0)
+        let reads = MobileRelayReads(accountStatus: {
+            attempts.withLock { $0 += 1 }
+            try await Task.sleep(for: .seconds(1))
+            throw CKError(.requestRateLimited, userInfo: [CKErrorRetryAfterKey: 2.0])
+        }, contents: { XCTFail("The account check failed"); return .init(sources: [], histories: [:]) })
+        let store = MobileStore(defaults: defaults, containerIdentifier: nil, keys: MobileFixtureKeychain().keys,
+            directory: folder, connectOnIPhone: false, platformEffects: .inert, launchDefaults: defaults,
+            sessions: nil, relayReads: reads)
+        let started = Date.now
+        await store.refresh(force: true)
+        await store.refresh(force: true, includeKeys: false, manual: true, now: started.addingTimeInterval(2.25))
+        XCTAssertEqual(attempts.withLock { $0 }, 1, "Two seconds after the request began is still inside the response's Retry-After")
+    }
+
+    /// Re-confirmed readings must periodically reach the Watch and widget timelines even when
+    /// the Mac's usage numbers stay unchanged.
+    @MainActor
+    func testHeartbeatsWithTheSameNumbersPeriodicallyRenewWidgetsAndWatchFromTheBackground() async throws {
         let defaults = makeDefaults()
         let folder = try makeFolder()
         let cacheURL = folder.appendingPathComponent(ReadingCache.fileName)
@@ -163,13 +293,14 @@ final class MobileStoreTests: XCTestCase {
             try fromMac(checked: date.addingTimeInterval(-60)).save(to: cacheURL)
             await store.refresh(force: true, now: date)
         }
-        XCTAssertEqual(calls.all, [], "Four hours of heartbeats: nothing to reload or hand over")
+        XCTAssertEqual(calls.all.filter { $0 == "watch" }.count, 7)
+        XCTAssertEqual(calls.all.filter { $0 == "widgets" }.count, 4)
     }
 
     /// The same from a Mac whose clock runs six minutes fast: its readings are live, not "dated
     /// ahead", so each heartbeat isn't a reading come back to life.
     @MainActor
-    func testHeartbeatsFromAMacWithAFastClockReloadNothing() async throws {
+    func testHeartbeatsFromAMacWithAFastClockPeriodicallyRenewWidgetsAndWatch() async throws {
         let defaults = makeDefaults()
         let folder = try makeFolder()
         let cacheURL = folder.appendingPathComponent(ReadingCache.fileName)
@@ -181,7 +312,8 @@ final class MobileStoreTests: XCTestCase {
             try fromMac(checked: date.addingTimeInterval(6 * 60)).save(to: cacheURL)
             await store.refresh(force: true, now: date)
         }
-        XCTAssertEqual(calls.all, [], "Four hours of heartbeats: nothing to reload or hand over")
+        XCTAssertEqual(calls.all.filter { $0 == "watch" }.count, 8)
+        XCTAssertEqual(calls.all.filter { $0 == "widgets" }.count, 4)
         XCTAssertEqual(store.readings.first?.provider.state, "live")
     }
 
@@ -194,6 +326,7 @@ final class MobileStoreTests: XCTestCase {
         let folder = try makeFolder()
         let cacheURL = folder.appendingPathComponent(ReadingCache.fileName)
         try fromMac(checked: now).save(to: cacheURL)
+        WidgetReloadSchedule.record(fromMac(checked: now), at: now, in: defaults)
         let calls = EffectCalls()
         let store = countingStore(defaults: defaults, folder: folder, calls: calls)
         await store.refresh(force: true, now: now.addingTimeInterval(70 * 60))
