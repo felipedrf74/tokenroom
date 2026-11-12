@@ -4,9 +4,19 @@ A draft for App Store Connect. Provider names appear only in the description, as
 
 ## What's New — 1.3.2
 
+Submitted 12 November 2026 with build 1.3.2 (1): Waiting for Review, with automatic release after approval. The unsubmitted 1.3.1 draft was updated to this version, so its changes are included in the submitted text below. [The delivery record](release-delivery-20261112.md) retains the signed package and submission receipts.
+
 More reliable usage updates on iPhone and widgets, including when your Mac rechecks the same numbers, after reopening the app, or after a brief loss of connection. Readings from iCloud appear sooner while slower provider checks finish.
 
+News checks release and status feeds every few minutes while it is open, adds more AI newsletters, discussion and status pages, and avoids showing errors when you are simply offline. Skills keeps its last list when ClawHub cannot be reached.
+
+Improved reading delivery between iPhone, widgets and Apple Watch, including Watch updates while its app is not open. Widgets check readings as they approach staleness, and Live Activities show how old a reading is. Plan sign-ins handle busy servers without asking you to sign in again.
+
+Claude sign-in has been removed from iPhone because Anthropic does not allow other apps to offer it. Claude readings still come from Tokenroom for Mac. Any Claude sign-in kept by an earlier version is deleted from your iPhone.
+
 ## What's New — 1.3.1
+
+Historical draft text. The build was uploaded on 7 November 2026, but the version was never submitted or publicly released. Its changes are included in 1.3.2.
 
 News checks release and status feeds every few minutes while it's open, adds more AI newsletters, discussion and status pages, and stops showing errors when you're simply offline. Skills keeps its last list when ClawHub can't be reached.
 
@@ -16,7 +26,7 @@ Claude can no longer be signed in to on iPhone, because Anthropic doesn't allow 
 
 ## What's New — 1.3.0
 
-Released 7 November 2026 at 19:56 UTC with build 1.3.0 (1), the UI overhaul only. The review notes went in unchanged from 1.2.x, so they still described Claude sign-in on the iPhone; 1.3.1 carries the notes below.
+Released 7 November 2026 at 19:56 UTC with build 1.3.0 (1), the UI overhaul only. The review notes went in unchanged from 1.2.x, so they still described Claude sign-in on the iPhone; 1.3.2 carries the current notes below.
 
 A lighter, calmer Tokenroom on iPhone, widgets and Apple Watch. Colour now means something: percentages stay in ink until a limit is critical, charts are neutral with a dot at your current level, and controls are blue. Provider pages have one title and plain facts. News has fewer boxes, with actions under each title. Welcome starts with one clear step.
 
@@ -78,7 +88,7 @@ Usage readings now show when each provider was last checked and flag stale data.
 | Content rights | Yes: shows third-party content (provider names, model and feed titles) it has the right to use |
 | EU trader status (DSA) | Non-trader |
 | Tracking | None |
-| Release | 1.3.1 (1) submitted 7 November 2026; 1.3.0 publicly released 7 November 2026; 1.2.2 publicly released 31 October 2026; 1.2.1 publicly released 30 October 2026; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
+| Release | 1.3.2 (1) submitted 12 November 2026, Waiting for Review with automatic release; 1.3.1 remained an unsubmitted draft and was superseded; 1.3.0 publicly released 7 November 2026; 1.2.2 publicly released 31 October 2026; 1.2.1 publicly released 30 October 2026; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
 
 ## App privacy
 
