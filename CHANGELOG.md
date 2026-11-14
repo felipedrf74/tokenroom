@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.6.1 for Mac and 1.3.3 for iPhone — prepared 14 November 2026
+
+Usage recovers more reliably after sleep, a lost connection or temporary credential-access problems. Release and submission receipts are recorded separately after delivery.
+
+- Mac checks resume after waking even when sleep cancelled the previous check.
+- One connected provider can recover after a network interruption; another provider's missing login no longer prevents that recovery.
+- Pending readings reach iCloud when its existing send allowance opens, without waiting for another provider collection. Server-requested retry waits remain respected.
+- The iPhone keeps newer readings and source removals received by its widgets instead of replacing them with an older in-memory snapshot.
+- Credential discovery has a bounded wait and shares blocked lookups. A temporarily unreadable Keychain item keeps its provider visible without consuming a usage request.
+
+The Mac release also includes the previously unreleased News, Watch/widget delivery and sign-in changes documented in the 7 November preparation below. Mobile 1.3.2 was publicly released on 13 November 2026; 1.3.3 adds the recovery corrections from #69.
+
 ## 2.6.1 for Mac and 1.3.1 for iPhone — 7 November 2026
 
 Mac 2.6.1(1) and iPhone, widgets and Apple Watch 1.3.1(1) carry News (#60), Watch and widget delivery (#61), the end of Claude sign-in on the iPhone (#62), and the Following caption fix (#64). iPhone 1.3.0(1), released on the App Store on 7 November 2026 at 19:56 UTC, has only the UI overhaul from #58 (under 2.6.0, below). Build 1.3.0(2), uploaded the same day with these changes, was never submitted.
