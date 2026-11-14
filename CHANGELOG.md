@@ -1,8 +1,8 @@
 # Changelog
 
-## 2.6.1 for Mac and 1.3.3 for iPhone — prepared 14 November 2026
+## 2.6.1 for Mac — released 14 November 2026 / 1.3.3 for iPhone — prepared 14 November 2026
 
-Usage recovers more reliably after sleep, a lost connection or temporary credential-access problems. Release and submission receipts are recorded separately after delivery.
+Usage recovers more reliably after sleep, a lost connection or temporary credential-access problems. Mac 2.6.1 is public and installed on both Macs; mobile 1.3.3 is signed, with Apple delivery pending at the documented checkpoint. [The delivery record](docs/release-delivery-20261114.md) binds the package and installations to their source.
 
 - Mac checks resume after waking even when sleep cancelled the previous check.
 - One connected provider can recover after a network interruption; another provider's missing login no longer prevents that recovery.
