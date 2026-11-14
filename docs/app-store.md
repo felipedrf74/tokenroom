@@ -2,6 +2,14 @@
 
 A draft for App Store Connect. Provider names appear only in the description, as facts, never in the name, subtitle, or keywords. Tokenroom isn't affiliated with any provider.
 
+## What's New — 1.3.3
+
+Prepared 14 November 2026. Submission and public availability are recorded separately after delivery. Version 1.3.2 was publicly released on 13 November 2026.
+
+Usage updates recover more reliably after a lost connection or temporary Keychain problems. The iPhone preserves newer readings received by its widgets, and a temporarily unavailable credential no longer removes its provider or stalls later updates.
+
+With Tokenroom for Mac 2.6.1, checks resume more reliably after sleep, a single connected provider can recover after a network interruption, and pending readings reach iCloud without waiting for another collection cycle.
+
 ## What's New — 1.3.2
 
 Submitted 12 November 2026 with build 1.3.2 (1): Waiting for Review, with automatic release after approval. The unsubmitted 1.3.1 draft was updated to this version, so its changes are included in the submitted text below. [The delivery record](release-delivery-20261112.md) retains the signed package and submission receipts.
