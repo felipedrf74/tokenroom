@@ -1,8 +1,9 @@
-# Mac 2.6.1 delivery and mobile 1.3.3 preparation — 14 November 2026
+# Mac 2.6.1 delivery and mobile 1.3.3 submission — 14 November 2026
 
-**Mac 2.6.1 (1) is public and installed on both Macs.** Apple accepted the mobile
-1.3.3 (1) upload at 16:30:36 UTC. App Review submission remains unconfirmed: the
-Safari context exposed to automation still showed a login form at 16:36 UTC.
+**Mac 2.6.1 (1) is public and installed on both Macs. Mobile 1.3.3 (1) is Waiting
+for Review**, submitted at 16:59 UTC with automatic release after approval to all
+users. Apple accepted its upload at 16:30:36 UTC. Approval and public availability
+of 1.3.3 remain pending; submission is not publication.
 Apple's public US/PT listings confirm the preceding mobile 1.3.2 released on
 13 November at 03:20:05 UTC.
 
@@ -84,23 +85,33 @@ archive/dSYM UUIDs, with all 509 source input hashes rechecked.
 - Receipts: canonical artifact directory's `mobile-upload-20261114T162708Z/`,
   including `verified-upload-receipt.json`, `READINESS.md` and the redacted upload log.
 
-The upload identifier is not a verified processed-build or App Review submission ID.
+The processed build ID was unconfirmed at the upload checkpoint. The subsequent
+authenticated App Store Connect build link confirmed that same identifier as the
+processed build selected for review. It is distinct from the submission ID below.
 **Do not upload 1.3.3 (1) again.**
 
-## Remaining App Review step
+## Accepted App Review submission
 
-At the initial checkpoint, App Store Connect returned `authResult=FAILED`. Its saved
-passkey required local authentication, and Computer Use refused access to
-`com.apple.LocalAuthenticationRemoteService`. After the maintainer reported signing
-in, the Safari context accessible to automation still redirected to an empty login
-form at approximately 16:36 UTC. The authenticated browser context must be reconciled
-before selecting the exact processed 1.3.3 (1) build and submitting it.
+After the authenticated Safari context became accessible, TestFlight showed the
+existing 1.3.3 (1) build as Ready to Submit and its metadata as Validated. That exact
+build was attached to the new 1.3.3 version, reusing the successful upload.
 
-Processed-build ID, App Review submission ID and public availability remain
-unconfirmed. Automatic release after approval was requested but has not yet been
-observed or configured. The existing checkpoint is retained under
-`mobile-submission/submission-status.json` and its `READINESS.md`; an accepted upload
-is separate from submission and publication.
+- Apple processed-build ID: `e8f96ee7-ad2e-4b74-82f6-aeb2a70cd38c`.
+- App Review submission ID: `3b105c79-375e-4539-8743-c6659cb6ced7`.
+- Accepted: **14 November 2026, 16:59 UTC**.
+- Observed state: **Waiting for Review**.
+- Release mode: **automatic after approval, all users**.
+
+The two What's New paragraphs from `docs/app-store.md` were saved exactly.
+Description, promotional text, review information and the existing seven iPhone
+and two Watch screenshots were preserved. The attached build and release mode were
+checked again after submission. No second upload or source change was required.
+
+The redacted receipt is retained in the canonical artifact directory as
+`mobile-submission/app-review-receipt-20261114T170020Z.md`. Earlier authentication
+checkpoints remain separately dated; they no longer describe a current blocker.
+Apple must review and approve the submission. Public 1.3.3 availability was not
+observed at this checkpoint.
 
 No schema deployment, credential copying, source behavior or CI gate change was
 needed for packaging. Physical private-iCloud delivery and background WidgetKit/
