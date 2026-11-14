@@ -9,6 +9,8 @@ description: >-
 
 # Tokenroom for iPhone and Apple Watch
 
+**Delivery checkpoint (14 November 2026):** Mac 2.6.1(1) is public and installed on both Macs. Apple accepted the verified mobile 1.3.3(1) upload at 16:30 UTC, with processing begun; do not reupload this consumed build. App Review submission remained unconfirmed at 16:36 UTC because Safari exposed a login form. Mobile 1.3.2 was confirmed public on 13 November. See `docs/release-delivery-20261114.md`; upload is separate from submission and public release.
+
 **Release preparation (14 November 2026):** iPhone, widgets and Watch 1.3.3(1) is prepared with #69's usage recovery. Apple's public US/PT lookup confirms 1.3.2 released on 13 November. Mac 2.6.1(1) is prepared alongside it. Signing, upload, submission and installation remain separate delivery steps; this paragraph does not claim those outcomes.
 
 **Mobile delivery update (12 November 2026):** iPhone, widgets and Watch 1.3.2 (1) was uploaded, processed and submitted to App Review at 17:22 UTC, with automatic release after approval. Status is **Waiting for Review**, not public availability. The portal confirmed 1.3.1 was an unsubmitted draft; its changes and #66's freshness fix are combined in 1.3.2. `docs/release-delivery-20261112.md` binds the signed export, source/CI and Apple submission. Physical iCloud delivery remains unverified. No new Mac release was performed.
