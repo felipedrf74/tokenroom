@@ -1,3 +1,4 @@
+import CloudKit
 import XCTest
 @testable import Tokenroom
 
@@ -160,6 +161,117 @@ final class RefreshReliabilityTests: XCTestCase {
 
     // MARK: Waking
 
+    @MainActor
+    func testADeferredReadingIsSharedWithoutAnotherProviderCheck() async throws {
+        let now = Date()
+        let cloud = StandInCloud()
+        let publisher = RelayPublisher(defaults: makeDefaults(enabled: []), cloud: cloud)
+        let earlier = snapshot(.cursor, used: 30, fetchedAt: now.addingTimeInterval(-300))
+        await publisher.publish(RelayEnvelope(producer: "mac", appVersion: "test", checkedAt: earlier.fetchedAt,
+            providers: [RelayProvider(provider: .cursor, status: .live(earlier), checkedAt: earlier.fetchedAt)]),
+            now: now.addingTimeInterval(-RelayPublishPolicy.minimumInterval + 2))
+        let latest = snapshot(.cursor, used: 40, fetchedAt: now)
+        let client = Scripted(provider: .cursor, results: [.success(latest)])
+        let store = QuotaStore(settings: AppSettings(defaults: makeDefaults(enabled: [.cursor])), clients: [client],
+            cache: SnapshotCache(directory: try makeFolder()), relay: publisher)
+        defer { store.stop() }
+        await store.refresh(force: true)
+        XCTAssertEqual(cloud.envelopes.count, 1, "The five-minute send spacing still applies")
+        await waitUntil(timeout: 5) { cloud.envelopes.count == 2 }
+        XCTAssertEqual(cloud.envelopes.count, 2, "The retained reading must go out when the spacing ends")
+        XCTAssertEqual(client.calls, 1, "Delivery must not make another provider request")
+        XCTAssertEqual(cloud.envelopes.last?.providers.first?.checkedAt, latest.fetchedAt)
+    }
+
+    @MainActor
+    func testDeferredDeliveryCoalescesTheLatestReading() async throws {
+        let start = Date()
+        var clock = start
+        let cloud = StandInCloud()
+        let publisher = RelayPublisher(defaults: makeDefaults(enabled: []), cloud: cloud)
+        let client = Scripted(provider: .cursor, results: [
+            .success(snapshot(.cursor, used: 30, fetchedAt: start)),
+            .success(snapshot(.cursor, used: 40, fetchedAt: start.addingTimeInterval(60))),
+            .success(snapshot(.cursor, used: 50, fetchedAt: start.addingTimeInterval(120)))
+        ])
+        let store = QuotaStore(settings: AppSettings(defaults: makeDefaults(enabled: [.cursor])), clients: [client],
+            cache: SnapshotCache(directory: try makeFolder()), relay: publisher)
+        let gate = TestGate()
+        store.sharingClock = { clock }
+        store.waitBeforeSharing = { _ in await gate.wait() }
+        defer { store.stop(); gate.open() }
+        await store.refresh(force: true)
+        clock = start.addingTimeInterval(60)
+        await store.refresh(force: true)
+        clock = start.addingTimeInterval(120)
+        await store.refresh(force: true)
+        XCTAssertEqual(cloud.envelopes.count, 1)
+        clock = start.addingTimeInterval(300)
+        gate.open()
+        await waitUntil { cloud.envelopes.count == 2 }
+        XCTAssertEqual(cloud.envelopes.count, 2)
+        XCTAssertEqual(cloud.envelopes.last?.providers.first?.primaryWindow?.used, 50)
+        XCTAssertEqual(cloud.envelopes.last?.providers.first?.checkedAt, start.addingTimeInterval(120))
+        XCTAssertEqual(client.calls, 3)
+        XCTAssertNil(publisher.nextPublishDate(store.relayEnvelope(at: clock), now: clock))
+    }
+
+    @MainActor
+    func testDeferredDeliveryStopsAtSleepOrStop() async throws {
+        for sleeping in [true, false] {
+            let start = Date()
+            var clock = start
+            let cloud = StandInCloud()
+            let publisher = RelayPublisher(defaults: makeDefaults(enabled: []), cloud: cloud)
+            let client = Scripted(provider: .cursor, results: [
+                .success(snapshot(.cursor, used: 30, fetchedAt: start)),
+                .success(snapshot(.cursor, used: 40, fetchedAt: start.addingTimeInterval(60)))
+            ])
+            let store = QuotaStore(settings: AppSettings(defaults: makeDefaults(enabled: [.cursor])), clients: [client],
+                cache: SnapshotCache(directory: try makeFolder()), relay: publisher)
+            let gate = TestGate()
+            store.sharingClock = { clock }
+            store.waitBeforeSharing = { _ in await gate.wait() }
+            defer { store.stop(); gate.open() }
+            await store.refresh(force: true)
+            clock = start.addingTimeInterval(60)
+            await store.refresh(force: true)
+            if sleeping { store.willSleep() } else { store.stop() }
+            clock = start.addingTimeInterval(300)
+            gate.open()
+            try await Task.sleep(for: .milliseconds(30))
+            XCTAssertEqual(cloud.envelopes.count, 1)
+            XCTAssertEqual(client.calls, 2)
+        }
+    }
+
+    @MainActor
+    func testAFailedRelaySendRetriesWithoutAnotherCollection() async throws {
+        let start = Date()
+        var clock = start
+        let cloud = StandInCloud()
+        cloud.publishFailure = CKError(.networkFailure)
+        let publisher = RelayPublisher(defaults: makeDefaults(enabled: []), cloud: cloud)
+        let client = Scripted(provider: .cursor, results: [.success(snapshot(.cursor, fetchedAt: start))])
+        let store = QuotaStore(settings: AppSettings(defaults: makeDefaults(enabled: [.cursor])), clients: [client],
+            cache: SnapshotCache(directory: try makeFolder()), relay: publisher)
+        let gate = TestGate()
+        store.sharingClock = { clock }
+        store.waitBeforeSharing = { _ in await gate.wait() }
+        defer { store.stop(); gate.open() }
+        await store.refresh(force: true)
+        XCTAssertEqual(cloud.publishStarts, 1)
+        XCTAssertTrue(cloud.envelopes.isEmpty)
+        cloud.publishFailure = nil
+        clock = start.addingTimeInterval(301)
+        gate.open()
+        await waitUntil { cloud.envelopes.count == 1 }
+        XCTAssertEqual(cloud.envelopes.count, 1)
+        XCTAssertEqual(cloud.publishStarts, 2)
+        XCTAssertEqual(client.calls, 1)
+        XCTAssertEqual(cloud.envelopes.first?.providers.first?.checkedAt, start)
+    }
+
     /// No call reached the network (awake before the Wi-Fi): checked once more soon after.
     @MainActor
     func testACheckThatCouldntReachTheNetworkIsTriedOnceMore() async throws {
@@ -192,12 +304,72 @@ final class RefreshReliabilityTests: XCTestCase {
         XCTAssertEqual(offline.map(\.calls), [2, 2])
         XCTAssertNil(still.offlineRetry, "No second retry")
 
-        // One provider alone can't tell an outage from being offline: no retry.
+        // A single provider also recovers when the network explicitly reports being offline.
         let alone = ReachingClient(provider: .cursor, reading: snapshot(.cursor))
         let single = try makeStore([alone], enabled: [.cursor])
-        defer { single.stop() }
+        let singleGate = TestGate()
+        single.waitBeforeOfflineRetry = { await singleGate.wait() }
+        defer { singleGate.open(); single.stop() }
         await single.refresh(force: true)
+        let singleRetry = try XCTUnwrap(single.offlineRetry)
+        network(status: 200)
+        singleGate.open()
+        await singleRetry.value
+        XCTAssertEqual(alone.calls, 2)
+        guard case .live = single.statuses[.cursor] else {
+            return XCTFail("Expected the single provider to recover")
+        }
         XCTAssertNil(single.offlineRetry)
+    }
+
+    @MainActor
+    func testASignedOutProviderDoesNotPreventOfflineRecovery() async throws {
+        network(failure: .notConnectedToInternet)
+        let claude = ReachingClient(provider: .claude, reading: snapshot(.claude))
+        let cursor = Scripted(provider: .cursor, results: [.failure(.signedOut(Provider.cursor.signInHint))])
+        let store = try makeStore([claude, cursor], enabled: [.claude, .cursor])
+        let gate = TestGate()
+        store.waitBeforeOfflineRetry = { await gate.wait() }
+        defer { gate.open(); store.stop() }
+
+        await store.refresh(force: true)
+        let retry = try XCTUnwrap(store.offlineRetry)
+        network(status: 200)
+        gate.open()
+        await retry.value
+
+        XCTAssertEqual(claude.calls, 2, "An offline attempt does not consume Claude's five-minute interval")
+        XCTAssertEqual(cursor.calls, 1, "The signed-out provider is not part of the network retry")
+        guard case .live = store.statuses[.claude] else {
+            return XCTFail("Expected the connected provider to recover")
+        }
+        XCTAssertNil(store.offlineRetry)
+    }
+
+    @MainActor
+    func testAWakeRefreshDoesNotJoinACancelledFollowUp() async throws {
+        let client = HeldFirstClient(provider: .cursor, reading: snapshot(.cursor))
+        let store = try makeStore([client], enabled: [.cursor])
+        defer { client.release(); store.stop() }
+        let first = Task { await store.refresh(force: true) }
+        await waitUntil { client.calls == 1 }
+        XCTAssertEqual(client.calls, 1)
+
+        var followUpStarted = false
+        let followUp = Task {
+            followUpStarted = true
+            await store.refresh(force: true)
+        }
+        await waitUntil { followUpStarted }
+        store.willSleep()
+        await store.refresh(force: true)
+
+        XCTAssertEqual(client.calls, 2, "Waking starts a fresh check after the cancelled follow-up ends")
+        guard case .live = store.statuses[.cursor] else {
+            return XCTFail("Expected a reading from the wake check")
+        }
+        await first.value
+        await followUp.value
     }
 
     /// A server that answered with an error, or was too slow, was reached: that isn't the Mac
@@ -381,6 +553,32 @@ final class ReachingClient: ProviderClient, @unchecked Sendable {
             return .failure(.unreachable)
         }
     }
+}
+
+private final class HeldFirstClient: ProviderClient, @unchecked Sendable {
+    let provider: Provider
+    private let reading: QuotaSnapshot
+    private let lock = NSLock()
+    private let gate = TestGate()
+    private var count = 0
+
+    init(provider: Provider, reading: QuotaSnapshot) {
+        self.provider = provider
+        self.reading = reading
+    }
+
+    var calls: Int { lock.withLock { count } }
+
+    func fetch() async -> Result<QuotaSnapshot, ProviderError> {
+        let first = lock.withLock {
+            count += 1
+            return count == 1
+        }
+        if first { await gate.wait() }
+        return .success(reading)
+    }
+
+    func release() { gate.open() }
 }
 
 /// Answers each check with the next scripted result, repeating the last one.

@@ -10,6 +10,39 @@ struct MobileRelayReads: Sendable {
     var contents: @Sendable () async throws -> CloudRelay.Contents
 }
 
+/// A blocked Security call keeps one physical discovery in flight. Callers can time out while
+/// later refreshes join it; credential changes fence its eventual result without stacking work.
+@MainActor
+private final class MobileCredentialDiscovery<Value: Sendable> {
+    private struct Flight {
+        let id = UUID()
+        let generation: UUID
+        let task: Task<Value, Never>
+    }
+
+    private var generation = UUID()
+    private var flight: Flight?
+
+    func invalidate() { generation = UUID() }
+
+    func read(within budget: TimeInterval, operation: @escaping @Sendable () async -> Value) async -> Value? {
+        let current: Flight
+        if let flight {
+            current = flight
+        } else {
+            current = Flight(generation: generation, task: Task { await operation() })
+            flight = current
+        }
+        let result = await TimeLimit.run(budget, otherwise: Optional<Value>.none) {
+            await current.task.value
+        }
+        guard let result else { return nil }
+        if flight?.id == current.id { flight = nil }
+        guard !Task.isCancelled, current.generation == generation else { return nil }
+        return result
+    }
+}
+
 /// Everything the iPhone shows: readings your Macs relay through iCloud, providers read with keys
 /// added on this iPhone or plans signed in to on it, or sample data. Saves the merged readings for
 /// widgets and, while this iPhone reads any itself, relays its own readings to your other devices.
@@ -200,11 +233,15 @@ final class MobileStore {
     private var rateLimitedUntil: [Provider: Date] = [:]
     /// When each key provider was last called, shared with the widgets.
     private let keyGate: KeyFetchGate
+    private let credentialDiscoveryBudget: TimeInterval
+    @ObservationIgnored private let keyDiscovery = MobileCredentialDiscovery<[Provider: APIKeyStore.Lookup]>()
+    @ObservationIgnored private let sessionDiscovery = MobileCredentialDiscovery<[Provider: PhoneSessionStore.Lookup]>()
     /// iCloud asked to wait (rate limit, busy); reads and writes pause until then.
     private var relayRetryAt: Date?
     private var relayConnectionFailed = false
     @ObservationIgnored private var relayRecovery: Task<Void, Never>?
     private var cloudReadAt: Date?
+    private var relaySnapshot: ReadingCache.RelaySnapshot?
     private var alertLedger: AlertLedger
     private var relayEvents: [(id: String, createdAt: Date?)] = []
     /// This iPhone's record as iCloud last had it. With the App Group cache, which widgets also
@@ -264,7 +301,8 @@ final class MobileStore {
         sessions: PhoneSessionStore? = PhoneSessionAvailability.store(),
         sessionSend: @escaping @Sendable (Provider) -> PhoneSessionClient.Send = PhoneSessionClient.live,
         sessionRenew: @escaping PhoneSessionRefresher.Post = { await PhoneSignInClient().renew($0, $1) },
-        relayReads: MobileRelayReads? = nil
+        relayReads: MobileRelayReads? = nil,
+        credentialDiscoveryBudget: TimeInterval = TokenroomHTTP.fetchBudget
     ) {
         self.defaults = defaults
         self.allowsExternalEffects = allowsExternalEffects
@@ -272,6 +310,7 @@ final class MobileStore {
         self.notificationScheduler = notificationScheduler
         self.platformEffects = platformEffects
         self.relayReads = relayReads
+        self.credentialDiscoveryBudget = credentialDiscoveryBudget
         claimOverride = claimAlert
         self.connectOnIPhone = connectOnIPhone
         // A fixture root never touches this device's sign-ins.
@@ -502,7 +541,13 @@ final class MobileStore {
             relayEvents = contents.events
             relayRetryAt = nil
             relayConnectionFailed = false
-            cloudReadAt = clock()
+            let readAt = clock()
+            cloudReadAt = readAt
+            relaySnapshot = ReadingCache.RelaySnapshot(checkedAt: readAt, sources: contents.sources.compactMap { source in
+                source.envelope.map { ReadingCache.SourceSnapshot(RelayMerge.Source(
+                    id: source.id, label: source.label, envelope: $0, kind: CollectorKind(recordKind: source.kind)
+                )) }
+            })
             relayReadOnce = true
             guard !contents.deletedByUser else {
                 // Deleted in iCloud settings: known to hold nothing, so the saved cache's readings
@@ -555,6 +600,7 @@ final class MobileStore {
         relayRetryAt = nil
         relayConnectionFailed = false
         cloudReadAt = nil
+        relaySnapshot = nil
         relayRecovery?.cancel()
         relayRecovery = nil
         preferencesBase = nil
@@ -704,8 +750,17 @@ final class MobileStore {
 
     private func readKeys(now: Date) async {
         let keys = self.keys
-        let providers = await BlockingIO.run {
-            Provider.allCases.filter { $0.readsWithKey && keys.hasKey(for: $0) }
+        guard let lookups = await keyDiscovery.read(within: credentialDiscoveryBudget, operation: {
+            await BlockingIO.run {
+                Provider.allCases.filter(\.readsWithKey).reduce(into: [Provider: APIKeyStore.Lookup]()) { lookups, provider in
+                    lookups[provider] = keys.lookup(for: provider)
+                }
+            }
+        }), !Task.isCancelled else { return }
+        let unreadable = Set(lookups.filter { $0.value == .unreadable }.keys)
+        let providers = Provider.allCases.filter { provider in
+            if case .found = lookups[provider] { return true }
+            return unreadable.contains(provider) && keyedProviders.contains(provider)
         }
         keyedProviders = providers
         keysRead = true
@@ -719,7 +774,7 @@ final class MobileStore {
         // pull to refresh or not, and a 429 holds every caller off.
         let gate = keyGate
         var claims: [Provider: KeyFetchGate.FetchClaim] = [:]
-        for provider in providers {
+        for provider in providers where !unreadable.contains(provider) {
             if let until = rateLimitedUntil[provider], until > now { continue }
             claims[provider] = gate.claim(provider, at: now)
         }
@@ -756,11 +811,13 @@ final class MobileStore {
     private func readSessions(now: Date, manual: Bool = false) async {
         guard let sessions, let refresher else { return }
         let owners = Array(Set(PhoneSignIn.providers.map(PhoneSignIn.sessionOwner)))
-        let lookups = await BlockingIO.run {
-            owners.reduce(into: [Provider: PhoneSessionStore.Lookup]()) { lookups, owner in
-                lookups[owner] = sessions.lookup(for: owner)
+        guard let lookups = await sessionDiscovery.read(within: credentialDiscoveryBudget, operation: {
+            await BlockingIO.run {
+                owners.reduce(into: [Provider: PhoneSessionStore.Lookup]()) { lookups, owner in
+                    lookups[owner] = sessions.lookup(for: owner)
+                }
             }
-        }
+        }), !Task.isCancelled else { return }
         // A Keychain that couldn't be read now (locked, busy) isn't a sign-out: a plan listed
         // before stays listed, and is read on the next pass.
         let unreadable = Set(lookups.filter { $0.value == .unreadable }.keys)
@@ -954,6 +1011,35 @@ final class MobileStore {
 
     func ageReadings(at date: Date) { presentationNow = date }
 
+    /// A widget can finish a newer complete cloud read while this app is suspended. Adopt its
+    /// exact membership, including removals, without treating a failed app request as success.
+    @discardableResult
+    private func reconcileCachedRelay(now: Date) -> Bool {
+        guard let cache = PhoneCacheAccess.load(at: cacheURL, defaults: defaults), !cache.isSample,
+              let snapshot = cache.relaySnapshot,
+              !relayReadOnce || cloudReadAt.map({
+                  ReadingFreshness.ownOrdering(snapshot.checkedAt, now: now) > ReadingFreshness.ownOrdering($0, now: now)
+              }) ?? true
+        else { return false }
+        relaySnapshot = snapshot
+        cloudReadAt = snapshot.checkedAt
+        relayReadOnce = true
+        ownRecord = snapshot.sources.first { $0.id == sourceID }?.envelope
+        relaySources = snapshot.sources.filter { $0.id != sourceID }.map { source in
+            CloudRelay.Source(id: source.id, kind: source.kind == .mac ? "mac" : "iphone", label: source.label,
+                              modifiedAt: source.envelope.checkedAt, envelope: source.envelope, needsNewerApp: false)
+        }
+        let sourceIDs = Set(snapshot.sources.map(\.id))
+        relayHistories = relayHistories.filter { sourceIDs.contains($0.key) }
+        for item in cache.items {
+            guard let sourceID = item.sourceID, sourceIDs.contains(sourceID) else { continue }
+            for (window, history) in item.history {
+                relayHistories[sourceID, default: RelayHistory(series: [:])].series[RelayHistory.key(provider: item.id, window: window)] = history
+            }
+        }
+        return true
+    }
+
     private func rebuild(now: Date = .now) {
         presentationNow = now
         if sampleMode {
@@ -977,6 +1063,7 @@ final class MobileStore {
             lastKeyRefresh = nil
             resetRelayAccount(phase: relay == nil ? .unavailable : .idle, invalidateCache: false)
         }
+        reconcileCachedRelay(now: now)
 
         var sources = relaySources.compactMap { source in
             source.envelope.map { RelayMerge.Source(id: source.id, label: source.label, envelope: $0, kind: CollectorKind(recordKind: source.kind)) }
@@ -1002,6 +1089,7 @@ final class MobileStore {
         disconnected = output.disconnected.map { Reading($0, now: now) }
         var cache = ReadingCache(savedAt: now, isSample: false, items: output.connected)
         cache.cloudReadAt = cloudReadAt
+        cache.relaySnapshot = relaySnapshot
         // This phone owns its source membership even before an iCloud publish succeeds. An
         // empty envelope is authoritative too: a removed key must not return on the Watch.
         cache.localSource = ReadingCache.SourceSnapshot(RelayMerge.Source(
@@ -1087,6 +1175,9 @@ final class MobileStore {
             relayRetryAt = nil
             lastRefresh = nil
             lastKeyRefresh = nil
+        }
+        if reconcileCachedRelay(now: now) {
+            rebuild(now: now)
         }
         if let cache = PhoneCacheAccess.load(at: cacheURL, defaults: defaults) {
             reloadWidgets(for: cache, at: now, background: false)
@@ -1507,6 +1598,9 @@ final class MobileStore {
         relayHistories = [:]
         // Known to be empty now, so the saved cache's readings don't stand in for it.
         relayReadOnce = true
+        let now = Date.now
+        cloudReadAt = now
+        relaySnapshot = .init(checkedAt: now, sources: [])
         publishPolicy.reset()
         lastHistoryHour = nil
         relayEvents = []
@@ -1593,6 +1687,7 @@ final class MobileStore {
     func saveKey(_ key: String, for provider: Provider, region: String?, warning: String? = nil, now: Date? = nil) async throws {
         let keys = self.keys
         try await BlockingIO.run { try keys.save(key, for: provider, region: region, warning: warning, now: now ?? .now) }
+        keyDiscovery.invalidate()
         keyedProviders = Provider.allCases.filter { $0 == provider || keyedProviders.contains($0) }
         defaults.set(keyedProviders.map(\.rawValue), forKey: Keys.keyedProviders)
         // Checked now: the old key's spacing and any 429 wait don't apply to a new one.
@@ -1610,6 +1705,7 @@ final class MobileStore {
     func removeKey(for provider: Provider, now: Date? = nil) async throws {
         let keys = self.keys
         try await BlockingIO.run { try keys.remove(for: provider) }
+        keyDiscovery.invalidate()
         localStatuses[provider] = nil
         localCheckedAt[provider] = nil
         localFailedAt[provider] = nil
@@ -1638,6 +1734,7 @@ final class MobileStore {
         guard let refresher, PhoneConnect.productionAllowlist.contains(provider) else { throw PhoneSessionStore.SessionError.encoding }
         let owner = PhoneSignIn.sessionOwner(for: provider)
         try await refresher.replace(owner, with: session, now: now ?? .now)
+        sessionDiscovery.invalidate()
         let covered = PhoneSignIn.sharingSession(with: provider)
         setSessionProviders(PhoneSignIn.providers.filter { covered.contains($0) || sessionProviders.contains($0) })
         refusedSessions.remove(owner)
@@ -1663,6 +1760,7 @@ final class MobileStore {
         guard let refresher else { return }
         let owner = PhoneSignIn.sessionOwner(for: provider)
         try await refresher.replace(owner, with: nil)
+        sessionDiscovery.invalidate()
         let covered = PhoneSignIn.sharingSession(with: provider)
         for plan in covered {
             localStatuses[plan] = nil

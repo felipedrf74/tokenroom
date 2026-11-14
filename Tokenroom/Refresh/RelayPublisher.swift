@@ -63,6 +63,7 @@ final class RelayPublisher {
                 state = .waiting
                 forgetWhatWasSent()
                 retryAt = nil
+                retryStartedAt = nil
                 lastHistoryHour = nil
                 // Turning sync back on is how someone who deleted Tokenroom's iCloud data in
                 // Settings starts again: the zone is created anew (the choices go back when
@@ -91,9 +92,11 @@ final class RelayPublisher {
     /// The longest a sharing round waits for any one iCloud call, as on the iPhone.
     private let iCloudBudget: TimeInterval
     private var policy = RelayPublishPolicy()
+    private var sentChecks: [String: Date] = [:]
     /// The shared alert choices as iCloud last had them (nil: none yet).
     private var preferencesCache: (preferences: AlertPreferences?, readAt: Date)?
     private var retryAt: Date?
+    private var retryStartedAt: Date?
     private var lastHistoryHour: Date?
     /// How many times what was sent has been forgotten. A send out meanwhile records itself as
     /// sent when it returns, so it checks this to keep the next round due.
@@ -126,6 +129,28 @@ final class RelayPublisher {
         relay != nil
     }
 
+    /// Only unsent readings need a deferred round. Sending the same checks repeatedly would
+    /// spend iCloud requests without making the readings any newer.
+    func nextPublishDate(_ envelope: RelayEnvelope, now: Date) -> Date? {
+        guard relay != nil, isEnabled else { return nil }
+        switch state {
+        case .unavailable, .off, .noAccount, .paused:
+            return nil
+        case .failed where retryAt == nil:
+            return nil
+        default:
+            break
+        }
+        guard policy.hasChanges(envelope) || sentChecks != Self.checks(envelope) else { return nil }
+        let due = policy.nextSendDate(envelope, now: now)
+        return isWaiting(now) ? max(due, retryAt ?? due) : due
+    }
+
+    private static func checks(_ envelope: RelayEnvelope) -> [String: Date] {
+        Dictionary(envelope.providers.map { ($0.id, $0.checkedAt ?? $0.fetchedAt ?? .distantPast) },
+                   uniquingKeysWith: { first, _ in first })
+    }
+
     /// Sends when usage changed materially (at most every 5 minutes), when a provider's status
     /// changed (after a minute), or every 9 minutes as a heartbeat (`RelayPublishPolicy`).
     func publish(_ envelope: RelayEnvelope, force: Bool = false, now: Date = .now) async {
@@ -136,6 +161,7 @@ final class RelayPublisher {
         let sourceID = sourceID
         let label = sharedLabel
         let forgetsBefore = forgets
+        let started = ContinuousClock.now
         do {
             if case .noAccount = state {
                 guard try await iCloud({ try await relay.accountStatus() }) == .available else { return }
@@ -151,17 +177,20 @@ final class RelayPublisher {
                 logger.notice("relay account \(fingerprint, privacy: .private)")
             }
             policy.didSend(envelope, at: now)
+            sentChecks = Self.checks(envelope)
             if forgets != forgetsBefore {
                 // Forgotten while this was out (a provider turned off, sync turned on again).
                 policy.reset()
             }
             retryAt = nil
+            retryStartedAt = nil
             // Turned off while it was out: the switch keeps saying Off.
             if isEnabled {
                 state = .sent(now)
             }
         } catch {
-            handle(error, now: now)
+            let elapsed = started.duration(to: .now).components
+            handle(error, now: now.addingTimeInterval(Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18), attemptedAt: now)
         }
     }
 
@@ -333,11 +362,11 @@ final class RelayPublisher {
         }
     }
 
-    /// Whether iCloud asked to wait. A wait further off than an hour means the clock was set back
-    /// since it was saved.
+    /// Honor the server's wait, including one longer than an hour. A clock actually moved back
+    /// before this attempt invalidates the wall-clock deadline.
     private func isWaiting(_ now: Date) -> Bool {
         guard let retryAt, retryAt > now else { return false }
-        return retryAt.timeIntervalSince(now) <= 3600
+        return retryStartedAt.map { now >= $0 } ?? true
     }
 
     private struct ICloudTimeout: Error {}
@@ -361,7 +390,7 @@ final class RelayPublisher {
     }
 
     @discardableResult
-    private func handle(_ error: Error, now: Date) -> RelayErrorPolicy.Outcome {
+    private func handle(_ error: Error, now: Date, attemptedAt: Date? = nil) -> RelayErrorPolicy.Outcome {
         logger.error("relay failed: \(String(describing: error), privacy: .public)")
         // A call that didn't answer in time is waited out like a dropped connection, so the
         // rest of the round doesn't wait on iCloud call by call.
@@ -373,17 +402,27 @@ final class RelayPublisher {
         guard isEnabled else { return outcome }
         switch outcome {
         case .noAccount:
+            retryAt = nil
+            retryStartedAt = nil
             state = .noAccount
         case .paused(let message):
+            retryAt = nil
+            retryStartedAt = nil
             state = .paused(message)
         case .retry(let after, let message):
-            retryAt = now.addingTimeInterval(after)
+            let delay = after.isFinite && after > 0 ? max(RelayPublishPolicy.statusInterval, after) : Self.minimumInterval
+            retryAt = now.addingTimeInterval(delay)
+            retryStartedAt = attemptedAt ?? now
             state = .failed(message)
         case .unavailable:
+            retryAt = nil
+            retryStartedAt = nil
             state = .unavailable
         case .cancelled:
             break
         case .failed(let message):
+            retryAt = nil
+            retryStartedAt = nil
             state = .failed(message)
         }
         return outcome

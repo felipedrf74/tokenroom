@@ -195,6 +195,127 @@ final class MobileStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testWidgetCloudReadSurvivesAFailedRefreshInALivingApp() async throws {
+        for removesRemote in [false, true] {
+            let defaults = makeDefaults()
+            defaults.set([Provider.openrouter.rawValue], forKey: MobileStore.Keys.keyedProviders)
+            let folder = try makeFolder()
+            let url = folder.appendingPathComponent(ReadingCache.fileName)
+            let initial = cloudContents(checked: now)
+            let available = Mutex(true)
+            var effects = MobilePlatformEffects.inert
+            effects.applicationIsBackground = { true }
+            let store = MobileStore(defaults: defaults, containerIdentifier: nil, keys: MobileFixtureKeychain().keys,
+                directory: folder, connectOnIPhone: false, platformEffects: effects, launchDefaults: defaults,
+                sessions: nil, relayReads: .init(accountStatus: { .available }, contents: {
+                    guard available.withLock({ $0 }) else { throw CKError(.networkUnavailable) }
+                    return initial
+                }))
+            await store.refresh(force: true, includeKeys: false, now: now)
+
+            let widgetCheck = now.addingTimeInterval(5 * 60)
+            var widget = fromMac(checked: widgetCheck)
+            widget.items[0].provider.windows[0].used = 84
+            widget.items[0].sourceID = "mac-fixture"
+            if removesRemote { widget.items = [] }
+            widget.cloudReadAt = widgetCheck
+            widget.relaySnapshot = .init(checkedAt: widgetCheck, sources: removesRemote ? [] : [.init(.init(
+                id: "mac-fixture", label: "Mac", envelope: .init(producer: "mac", appVersion: "1",
+                    checkedAt: widgetCheck, providers: widget.items.map(\.provider)), kind: .mac
+            ))])
+            let local = RelayProvider(id: "openrouter", name: "OpenRouter", shortName: "OpenRouter", monogram: "O", tint: "#777777",
+                state: "live", checkedAt: widgetCheck, windows: [.init(id: "quota", kind: "monthly", title: "Monthly", used: 20)])
+            widget.localSource = .init(.init(id: store.sourceID, label: MobileStore.localLabel,
+                envelope: .init(producer: "iphone", appVersion: "1", checkedAt: widgetCheck, providers: [local]), kind: .thisPhone))
+            widget.items.append(.init(provider: local, source: MobileStore.localLabel, origin: .thisPhone, sourceID: store.sourceID))
+            XCTAssertTrue(try PhoneCacheAccess.save(widget, at: url, defaults: defaults,
+                                                    generation: PhoneCacheAccess.generation(in: defaults)))
+            available.withLock { $0 = false }
+
+            let resumed = widgetCheck.addingTimeInterval(60)
+            store.becameActive(now: resumed)
+            await store.refresh(force: true, includeKeys: false, now: resumed)
+
+            XCTAssertEqual(store.reading(id: "claude")?.provider.windows.first?.used, removesRemote ? nil : 84)
+            XCTAssertEqual(store.reading(id: "openrouter")?.provider.windows.first?.used, 20)
+            let retained = try XCTUnwrap(PhoneCacheAccess.load(at: url, defaults: defaults))
+            XCTAssertEqual(retained.items.first { $0.id == "claude" }?.provider.windows.first?.used, removesRemote ? nil : 84)
+            XCTAssertEqual(retained.localSource?.envelope.providers.first?.id, "openrouter")
+            XCTAssertEqual(retained.cloudReadAt, widgetCheck)
+            if case .failed = store.relayPhase {} else { XCTFail("The connection failure must remain visible") }
+        }
+    }
+
+    @MainActor
+    func testNewCloudReadOverridesOlderWidgetSnapshotIncludingRemovals() async throws {
+        for removesRemote in [false, true] {
+            let defaults = makeDefaults()
+            let folder = try makeFolder()
+            let url = folder.appendingPathComponent(ReadingCache.fileName)
+            let contents = Mutex(cloudContents(checked: now))
+            let store = MobileStore(defaults: defaults, containerIdentifier: nil, keys: MobileFixtureKeychain().keys,
+                directory: folder, connectOnIPhone: false, platformEffects: .inert, launchDefaults: defaults,
+                sessions: nil, relayReads: .init(accountStatus: { .available }, contents: { contents.withLock { $0 } }))
+            await store.refresh(force: true, includeKeys: false, now: now)
+            let widgetCheck = now.addingTimeInterval(5 * 60)
+            var widget = try XCTUnwrap(PhoneCacheAccess.load(at: url, defaults: defaults))
+            widget.savedAt = widgetCheck
+            widget.cloudReadAt = widgetCheck
+            widget.relaySnapshot?.checkedAt = widgetCheck
+            widget.items[0].provider.windows[0].used = 84
+            widget.relaySnapshot?.sources[0].envelope.providers[0].windows[0].used = 84
+            try widget.save(to: url)
+
+            let currentCheck = widgetCheck.addingTimeInterval(60)
+            var current = cloudContents(checked: currentCheck)
+            current.sources[0].envelope?.providers[0].windows[0].used = 12
+            if removesRemote { current.sources = [] }
+            contents.withLock { $0 = current }
+            await store.refresh(force: true, includeKeys: false, now: currentCheck)
+
+            XCTAssertEqual(store.reading(id: "claude")?.provider.windows.first?.used, removesRemote ? nil : 12)
+            let saved = try XCTUnwrap(PhoneCacheAccess.load(at: url, defaults: defaults))
+            XCTAssertEqual(saved.cloudReadAt, currentCheck)
+            XCTAssertEqual(saved.relaySnapshot?.checkedAt, currentCheck)
+            XCTAssertEqual(saved.relaySnapshot?.sources.isEmpty, removesRemote)
+        }
+    }
+
+    @MainActor
+    func testWidgetSnapshotFromAnotherAccountCannotReplaceLivingAppReadings() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let url = folder.appendingPathComponent(ReadingCache.fileName)
+        let initial = cloudContents(checked: now)
+        let available = Mutex(true)
+        var effects = MobilePlatformEffects.inert
+        effects.applicationIsBackground = { true }
+        let store = MobileStore(defaults: defaults, containerIdentifier: nil, keys: MobileFixtureKeychain().keys,
+            directory: folder, connectOnIPhone: false, platformEffects: effects, launchDefaults: defaults,
+            sessions: nil, relayReads: .init(accountStatus: { .available }, contents: {
+                guard available.withLock({ $0 }) else { throw CKError(.networkUnavailable) }
+                return initial
+            }))
+        await store.refresh(force: true, includeKeys: false, now: now)
+        var otherAccount = try XCTUnwrap(PhoneCacheAccess.load(at: url, defaults: defaults))
+        let later = now.addingTimeInterval(60)
+        otherAccount.accountGeneration = "superseded-fixture-generation"
+        otherAccount.cloudReadAt = later
+        otherAccount.relaySnapshot?.checkedAt = later
+        otherAccount.items[0].provider.windows[0].used = 84
+        otherAccount.relaySnapshot?.sources[0].envelope.providers[0].windows[0].used = 84
+        try otherAccount.save(to: url)
+        available.withLock { $0 = false }
+        store.becameActive(now: later)
+        await store.refresh(force: true, includeKeys: false, now: later)
+
+        XCTAssertEqual(store.reading(id: "claude")?.provider.windows.first?.used, 42)
+        let saved = try XCTUnwrap(PhoneCacheAccess.load(at: url, defaults: defaults))
+        XCTAssertNil(saved.accountGeneration)
+        XCTAssertEqual(saved.cloudReadAt, now)
+    }
+
+    @MainActor
     func testCloudReadAppearsBeforeASlowKeyLookupCompletes() async throws {
         let defaults = makeDefaults()
         let folder = try makeFolder()
@@ -226,6 +347,195 @@ final class MobileStoreTests: XCTestCase {
         await refresh.value
         let saved = try XCTUnwrap(ReadingCache.load(from: folder.appendingPathComponent(ReadingCache.fileName)))
         XCTAssertEqual(saved.cloudReadAt, now)
+    }
+
+    @MainActor
+    func testBlockedCredentialDiscoveryDoesNotHoldLaterCloudReadsOrStackPhysicalLookups() async throws {
+        for blocksSession in [false, true] {
+            let defaults = makeDefaults()
+            let folder = try makeFolder()
+            let release = DispatchSemaphore(value: 0)
+            let copies = Mutex(0)
+            let started = expectation(description: "Credential discovery began")
+            let operations = KeychainOperations(copy: { _ in
+                let first = copies.withLock { $0 += 1; return $0 == 1 }
+                if first { started.fulfill(); release.wait() }
+                return (errSecInteractionNotAllowed, nil)
+            }, add: { _ in errSecInteractionNotAllowed }, update: { _, _ in errSecInteractionNotAllowed },
+               delete: { _ in errSecItemNotFound })
+            let provider: Provider = blocksSession ? .openai : .openrouter
+            defaults.set("phone-fixture", forKey: MobileStore.Keys.sourceID)
+            defaults.set([provider.rawValue], forKey: blocksSession ? MobileStore.Keys.sessionProviders : MobileStore.Keys.keyedProviders)
+            let local = RelayProvider(provider: provider, status: .loading, checkedAt: now)
+            var cached = fromMac(checked: now)
+            cached.localSource = .init(.init(id: "phone-fixture", label: MobileStore.localLabel,
+                envelope: .init(producer: "iphone", appVersion: "1", checkedAt: now, providers: [local]), kind: .thisPhone))
+            try cached.save(to: folder.appendingPathComponent(ReadingCache.fileName))
+            let cloudReads = Mutex(0)
+            let initial = cloudContents(checked: now)
+            var newer = cloudContents(checked: now.addingTimeInterval(60))
+            newer.sources[0].envelope?.providers[0].windows[0].used = 84
+            let nextContents = newer
+            let sessions = blocksSession ? PhoneSessionStore(accessGroup: "fixture.shared", keychain: operations) : nil
+            let keys = blocksSession ? MobileFixtureKeychain().keys : APIKeyStore(servicePrefix: "app.tokenroom.tests.blocked-discovery.", keychain: operations)
+            let store = MobileStore(defaults: defaults, containerIdentifier: nil, keys: keys,
+                directory: folder, connectOnIPhone: blocksSession, platformEffects: .inert, launchDefaults: defaults,
+                sessions: sessions, relayReads: .init(accountStatus: { .available }, contents: {
+                    cloudReads.withLock { $0 += 1; return $0 == 1 ? initial : nextContents }
+                }), credentialDiscoveryBudget: 0.03)
+            let first = Task { await store.refresh(force: true, now: now) }
+            await fulfillment(of: [started], timeout: 2)
+            let firstFinished = await TimeLimit.run(0.2, otherwise: false) { await first.value; return true }
+            XCTAssertTrue(firstFinished, "Discovery must yield within its own budget")
+            let next = Task { await store.refresh(force: true, now: now.addingTimeInterval(60)) }
+            let nextFinished = await TimeLimit.run(0.2, otherwise: false) { await next.value; return true }
+            XCTAssertTrue(nextFinished, "Another cloud pass must not queue behind blocked Keychain work")
+            XCTAssertEqual(cloudReads.withLock { $0 }, 2)
+            XCTAssertEqual(store.reading(id: "claude")?.provider.windows.first?.used, 84)
+            XCTAssertTrue(store.localProviders.contains(provider), "A timed-out lookup is not a sign-out")
+            XCTAssertEqual(copies.withLock { $0 }, 1, "Retries join the physical lookup already in flight")
+            release.signal()
+            await first.value
+            await next.value
+        }
+    }
+
+    @MainActor
+    func testUnreadableAPIKeyDiscoveryRetainsProviderUntilConfirmedRemoval() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let provider = Provider.anthropicOrg
+        defaults.set("phone-fixture", forKey: MobileStore.Keys.sourceID)
+        defaults.set([provider.rawValue], forKey: MobileStore.Keys.keyedProviders)
+        let metadata = APIKeyStore.Metadata(last4: "demo", addedAt: now, region: "fixture", warning: "Fixture metadata")
+        let encoded = try JSONEncoder().encode(metadata)
+        let status = Mutex<OSStatus>(errSecInteractionNotAllowed)
+        let secretReads = Mutex(0)
+        let keys = APIKeyStore(servicePrefix: "app.tokenroom.tests.unreadable-key.", keychain: .init(copy: { query in
+            guard query[kSecAttrService as String] as? String == "app.tokenroom.tests.unreadable-key." + provider.rawValue else {
+                return (errSecItemNotFound, nil)
+            }
+            if query[kSecReturnData as String] as? Bool == true {
+                secretReads.withLock { $0 += 1 }
+                return (errSecInteractionNotAllowed, nil)
+            }
+            let result = status.withLock { $0 }
+            return (result, result == errSecSuccess ? [kSecAttrGeneric as String: encoded] as CFDictionary : nil)
+        }, add: { _ in XCTFail("Discovery must not write credentials"); return errSecInteractionNotAllowed },
+           update: { _, _ in XCTFail("Discovery must not write credentials"); return errSecInteractionNotAllowed },
+           delete: { _ in XCTFail("Discovery must not delete credentials"); return errSecInteractionNotAllowed }))
+        let reading = RelayProvider(id: provider.rawValue, name: "Anthropic API", shortName: "Anthropic", monogram: "A", tint: "#777777",
+            state: "live", checkedAt: now, windows: [.init(id: "quota", kind: "monthly", title: "Monthly", used: 42)])
+        var cache = ReadingCache(savedAt: now, isSample: false, items: [.init(provider: reading, source: MobileStore.localLabel)])
+        cache.localSource = .init(.init(id: "phone-fixture", label: MobileStore.localLabel,
+            envelope: .init(producer: "iphone", appVersion: "1", checkedAt: now, providers: [reading]), kind: .thisPhone))
+        let url = folder.appendingPathComponent(ReadingCache.fileName)
+        try cache.save(to: url)
+        let store = MobileStore(defaults: defaults, containerIdentifier: nil, keys: keys,
+            directory: folder, connectOnIPhone: false, platformEffects: .inert, launchDefaults: defaults, sessions: nil)
+
+        await store.refresh(force: true, now: now)
+        XCTAssertEqual(store.keyedProviders, [provider])
+        XCTAssertEqual(store.reading(id: provider.rawValue)?.provider.windows.first?.used, 42)
+        XCTAssertEqual(PhoneCacheAccess.load(at: url, defaults: defaults)?.localSource?.envelope.providers.map(\.id), [provider.rawValue])
+        XCTAssertEqual(secretReads.withLock { $0 }, 0, "Unreadable metadata must skip this provider's fetch")
+        let gate = KeyFetchGate(defaults: defaults, lockDirectory: nil)
+        XCTAssertNil(gate.lastAttempt(provider), "Unreadable metadata must not consume a provider attempt")
+
+        // Recovery finds the same metadata. Keep the vendor resting so this fixture needs no
+        // bearer value or network transport; only discovery and membership are under test.
+        status.withLock { $0 = errSecSuccess }
+        gate.recordAttempt(provider, at: now)
+        await store.refresh(force: true, now: now.addingTimeInterval(60))
+        XCTAssertEqual(keys.metadata(for: provider), metadata)
+        XCTAssertEqual(store.keyedProviders, [provider])
+        XCTAssertEqual(store.reading(id: provider.rawValue)?.provider.windows.first?.used, 42)
+
+        status.withLock { $0 = errSecItemNotFound }
+        await store.refresh(force: true, now: now.addingTimeInterval(120))
+        XCTAssertTrue(store.keyedProviders.isEmpty)
+        XCTAssertNil(store.reading(id: provider.rawValue))
+        XCTAssertEqual(PhoneCacheAccess.load(at: url, defaults: defaults)?.localSource?.envelope.providers.count, 0)
+    }
+
+    @MainActor
+    func testLateDiscoveryCannotRestoreCredentialsRemovedWhileItWasBlocked() async throws {
+        for removesSession in [false, true] {
+            let defaults = makeDefaults()
+            let folder = try makeFolder()
+            let release = DispatchSemaphore(value: 0)
+            let blocked = Mutex(false)
+            let provider: Provider = removesSession ? .openai : .openrouter
+            let prefix = "app.tokenroom.tests.discovery-removal."
+            let metadata = removesSession
+                ? try JSONEncoder().encode(PhoneSessionMetadata(addedAt: now, state: .rejected, clientRefused: true))
+                : try JSONEncoder().encode(APIKeyStore.Metadata(last4: "demo", addedAt: now, region: "fixture"))
+            let operations = KeychainOperations(copy: { query in
+                guard query[kSecAttrService as String] as? String == prefix + provider.rawValue,
+                      query[kSecReturnAttributes as String] as? Bool == true else { return (errSecItemNotFound, nil) }
+                let first = blocked.withLock { let first = !$0; $0 = true; return first }
+                guard first else { return (errSecItemNotFound, nil) }
+                release.wait()
+                return (errSecSuccess, [kSecAttrGeneric as String: metadata] as CFDictionary)
+            }, add: { _ in errSecSuccess }, update: { _, _ in errSecSuccess }, delete: { _ in errSecSuccess })
+            defaults.set([provider.rawValue], forKey: removesSession ? MobileStore.Keys.sessionProviders : MobileStore.Keys.keyedProviders)
+            let keys = removesSession ? MobileFixtureKeychain().keys : APIKeyStore(servicePrefix: prefix, keychain: operations)
+            let sessions = removesSession ? PhoneSessionStore(accessGroup: "fixture.shared", servicePrefix: prefix, keychain: operations) : nil
+            let store = MobileStore(defaults: defaults, containerIdentifier: nil, keys: keys,
+                directory: folder, connectOnIPhone: removesSession, platformEffects: .inert, launchDefaults: defaults,
+                sessions: sessions, credentialDiscoveryBudget: 0.03)
+            await store.refresh(force: true, now: now)
+            XCTAssertTrue(blocked.withLock { $0 })
+            if removesSession {
+                try await store.removeSession(for: provider, now: now.addingTimeInterval(60))
+            } else {
+                try await store.removeKey(for: provider, now: now.addingTimeInterval(60))
+            }
+            XCTAssertFalse(store.localProviders.contains(provider))
+            release.signal()
+            await store.refresh(force: true, now: now.addingTimeInterval(120))
+            XCTAssertFalse(store.localProviders.contains(provider), "A pre-removal metadata result cannot re-add the provider")
+            XCTAssertFalse(store.refusedSessions.contains(provider), "Old rejection metadata cannot replace the newer credential state")
+            let saved = try XCTUnwrap(PhoneCacheAccess.load(at: folder.appendingPathComponent(ReadingCache.fileName), defaults: defaults))
+            XCTAssertFalse(saved.localSource?.envelope.providers.contains { $0.id == provider.rawValue } ?? true)
+        }
+    }
+
+    @MainActor
+    func testAccountChangeDuringBlockedDiscoveryCannotRestoreOldCloudReadings() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let release = DispatchSemaphore(value: 0)
+        let firstCopy = Mutex(true)
+        let cloudPresented = expectation(description: "Old account reading presented")
+        cloudPresented.assertForOverFulfill = false
+        let keys = APIKeyStore(servicePrefix: "app.tokenroom.tests.discovery-account.", keychain: .init(copy: { _ in
+            if firstCopy.withLock({ let first = $0; $0 = false; return first }) { release.wait() }
+            return (errSecItemNotFound, nil)
+        }, add: { _ in errSecInteractionNotAllowed }, update: { _, _ in errSecInteractionNotAllowed }, delete: { _ in errSecItemNotFound }))
+        var effects = MobilePlatformEffects.inert
+        effects.updateLiveActivities = { providers, _, _, _ in
+            if providers.contains(where: { $0.id == "claude" }) { cloudPresented.fulfill() }
+        }
+        let contents = Mutex(cloudContents(checked: now))
+        let store = MobileStore(defaults: defaults, containerIdentifier: nil, keys: keys,
+            directory: folder, connectOnIPhone: false, platformEffects: effects, launchDefaults: defaults,
+            sessions: nil, relayReads: .init(accountStatus: { .available }, contents: { contents.withLock { $0 } }),
+            credentialDiscoveryBudget: 0.2)
+        let first = Task { await store.refresh(force: true, now: now) }
+        await fulfillment(of: [cloudPresented], timeout: 2)
+        contents.withLock { $0 = .init(sources: [], histories: [:]) }
+        store.accountChanged()
+        await first.value
+        XCTAssertTrue(store.readings.isEmpty)
+        await store.refresh(force: true, includeKeys: false, now: now.addingTimeInterval(60))
+        release.signal()
+        await store.refresh(force: true, now: now.addingTimeInterval(120))
+        XCTAssertTrue(store.readings.isEmpty)
+        let saved = try XCTUnwrap(PhoneCacheAccess.load(at: folder.appendingPathComponent(ReadingCache.fileName), defaults: defaults))
+        XCTAssertTrue(saved.items.isEmpty)
+        XCTAssertEqual(saved.accountGeneration, PhoneCacheAccess.generation(in: defaults))
+        XCTAssertEqual(saved.relaySnapshot?.sources.isEmpty, true)
     }
 
     @MainActor

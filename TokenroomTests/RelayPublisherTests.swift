@@ -22,6 +22,86 @@ final class RelayPublisherTests: XCTestCase {
         RelayEnvelope(producer: "mac", appVersion: "test", checkedAt: Date(), providers: [])
     }
 
+    private func reading(used: Double = 40, checkedAt: Date, state: String = "live") -> RelayEnvelope {
+        let window = RelayWindow(id: "weekly", kind: "weekly", title: "Weekly", used: used,
+                                 resetsAt: checkedAt.addingTimeInterval(86_400))
+        return RelayEnvelope(producer: "mac", appVersion: "test", checkedAt: checkedAt, providers: [
+            RelayProvider(id: "cursor", name: "Cursor", shortName: "Cursor", monogram: "C", tint: "#000000",
+                          state: state, checkedAt: checkedAt, fetchedAt: checkedAt, primaryWindowID: "weekly", windows: [window])
+        ])
+    }
+
+    @MainActor
+    func testDeferredDeliveryKeepsTheExistingSpacingAndStopsWhenNothingIsPending() async {
+        let publisher = RelayPublisher(defaults: makeDefaults(), cloud: StandInCloud())
+        let now = Date()
+        let first = reading(checkedAt: now)
+        await publisher.publish(first, now: now)
+        XCTAssertNil(publisher.nextPublishDate(first, now: now.addingTimeInterval(600)), "An old check needs no repeated heartbeat")
+
+        var checkedAgain = first
+        checkedAgain.providers[0].checkedAt = now.addingTimeInterval(30)
+        XCTAssertEqual(publisher.nextPublishDate(checkedAgain, now: now.addingTimeInterval(30)), now.addingTimeInterval(540))
+
+        var changed = checkedAgain
+        changed.providers[0].windows[0].used = 50
+        XCTAssertEqual(publisher.nextPublishDate(changed, now: now.addingTimeInterval(30)), now.addingTimeInterval(300))
+        changed.providers[0].windows[0].used = 85
+        XCTAssertEqual(publisher.nextPublishDate(changed, now: now.addingTimeInterval(30)), now.addingTimeInterval(60))
+        publisher.isEnabled = false
+        XCTAssertNil(publisher.nextPublishDate(changed, now: now.addingTimeInterval(30)))
+    }
+
+    @MainActor
+    func testFailedDeliveryRetriesFromTheAnswerAndHonorsServerWait() async throws {
+        let cloud = StandInCloud()
+        cloud.publishFailure = CKError(.requestRateLimited, userInfo: [CKErrorRetryAfterKey: 600.0])
+        let publisher = RelayPublisher(defaults: makeDefaults(), cloud: cloud)
+        let now = Date()
+        let payload = reading(checkedAt: now)
+        await publisher.publish(payload, now: now)
+        let retry = try XCTUnwrap(publisher.nextPublishDate(payload, now: now))
+        XCTAssertGreaterThanOrEqual(retry.timeIntervalSince(now), 600)
+        XCTAssertLessThan(retry.timeIntervalSince(now), 605)
+        cloud.publishFailure = nil
+        await publisher.publish(payload, now: retry.addingTimeInterval(-1))
+        XCTAssertEqual(cloud.publishStarts, 1, "No send before Retry-After")
+        await publisher.publish(payload, now: retry)
+        XCTAssertEqual(cloud.envelopes.count, 1)
+        XCTAssertNil(publisher.nextPublishDate(payload, now: retry))
+    }
+
+    @MainActor
+    func testLongCloudWaitAndPermanentFailureDoNotCreateARetryLoop() async throws {
+        let cloud = StandInCloud()
+        cloud.publishFailure = CKError(.requestRateLimited, userInfo: [CKErrorRetryAfterKey: 7200.0])
+        let publisher = RelayPublisher(defaults: makeDefaults(), cloud: cloud)
+        let now = Date()
+        let payload = reading(checkedAt: now)
+        await publisher.publish(payload, now: now)
+        let retry = try XCTUnwrap(publisher.nextPublishDate(payload, now: now))
+        XCTAssertGreaterThanOrEqual(retry.timeIntervalSince(now), 7200)
+        await publisher.publish(payload, now: now.addingTimeInterval(60))
+        XCTAssertEqual(cloud.publishStarts, 1)
+        cloud.publishFailure = CKError(.invalidArguments)
+        await publisher.publish(payload, now: retry)
+        XCTAssertEqual(cloud.publishStarts, 2)
+        XCTAssertNil(publisher.nextPublishDate(payload, now: retry), "A permanent failure has no automatic tight retry")
+    }
+
+    @MainActor
+    func testCloudRetryRecoversWhenTheClockMovesBack() async throws {
+        let cloud = StandInCloud()
+        cloud.publishFailure = CKError(.networkFailure)
+        let publisher = RelayPublisher(defaults: makeDefaults(), cloud: cloud)
+        let now = Date()
+        let payload = reading(checkedAt: now)
+        await publisher.publish(payload, now: now)
+        cloud.publishFailure = nil
+        await publisher.publish(payload, now: now.addingTimeInterval(-3600))
+        XCTAssertEqual(cloud.envelopes.count, 1)
+    }
+
     @MainActor
     private func waitUntil(timeout: TimeInterval = 3, _ condition: () -> Bool) async {
         let deadline = Date().addingTimeInterval(timeout)
@@ -142,6 +222,12 @@ final class StandInCloud: RelayCloud, @unchecked Sendable {
     private var alertCalls = 0
     private var resets = 0
     private var reads = 0
+    private var failure: CKError?
+
+    var publishFailure: CKError? {
+        get { lock.withLock { failure } }
+        set { lock.withLock { failure = newValue } }
+    }
 
     init(holdsPublishes: Int = 0, holdsAlerts: Int = 0) {
         held = holdsPublishes
@@ -191,6 +277,7 @@ final class StandInCloud: RelayCloud, @unchecked Sendable {
         if holds {
             await waitForRelease()
         }
+        if let failure = publishFailure { throw failure }
         lock.withLock {
             sent.append(envelope)
             sentLabels.append(label)
