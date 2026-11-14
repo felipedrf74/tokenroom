@@ -4,7 +4,7 @@ A draft for App Store Connect. Provider names appear only in the description, as
 
 ## What's New — 1.3.3
 
-Prepared 14 November 2026. Submission and public availability are recorded separately after delivery. Version 1.3.2 was publicly released on 13 November 2026.
+Submitted 14 November 2026 at 16:59 UTC with build 1.3.3 (1): Waiting for Review, with automatic release after approval to all users. Approval and public availability remain pending. Version 1.3.2 was publicly released on 13 November 2026. [The delivery record](release-delivery-20261114.md) retains the signed export, upload and accepted submission receipts.
 
 Usage updates recover more reliably after a lost connection or temporary Keychain problems. The iPhone preserves newer readings received by its widgets, and a temporarily unavailable credential no longer removes its provider or stalls later updates.
 
@@ -96,7 +96,7 @@ Usage readings now show when each provider was last checked and flag stale data.
 | Content rights | Yes: shows third-party content (provider names, model and feed titles) it has the right to use |
 | EU trader status (DSA) | Non-trader |
 | Tracking | None |
-| Release | 1.3.2 (1) submitted 12 November 2026, Waiting for Review with automatic release; 1.3.1 remained an unsubmitted draft and was superseded; 1.3.0 publicly released 7 November 2026; 1.2.2 publicly released 31 October 2026; 1.2.1 publicly released 30 October 2026; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
+| Release | 1.3.3 (1) submitted 14 November 2026, Waiting for Review with automatic release to all users; 1.3.2 publicly released 13 November 2026; 1.3.1 remained an unsubmitted draft and was superseded; 1.3.0 publicly released 7 November 2026; 1.2.2 publicly released 31 October 2026; 1.2.1 publicly released 30 October 2026; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
 
 ## App privacy
 
