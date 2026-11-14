@@ -1,8 +1,8 @@
 # Mac 2.6.1 delivery and mobile 1.3.3 preparation — 14 November 2026
 
-**Mac 2.6.1 (1) is public and installed on both Macs.** Mobile 1.3.3 (1) is signed
-and verified. At the 16:24 UTC installation checkpoint, mobile upload and App Review
-submission had not been observed; App Store Connect required local authentication.
+**Mac 2.6.1 (1) is public and installed on both Macs.** Apple accepted the mobile
+1.3.3 (1) upload at 16:30:36 UTC. App Review submission remains unconfirmed: the
+Safari context exposed to automation still showed a login form at 16:36 UTC.
 Apple's public US/PT listings confirm the preceding mobile 1.3.2 released on
 13 November at 03:20:05 UTC.
 
@@ -61,24 +61,46 @@ Canonical signing and MacBook receipts remain under
 `local-installation.json`, package verification, the public download and its rollback
 app under `~/Documents/Tokenroom Reports/release-delivery-20261114/`.
 
-## Signed mobile package and remaining delivery
+## Signed mobile package and upload
 
 The iPhone app, widgets, Watch app and complications are all 1.3.3 (1), exported for
 App Store Connect. All four passed Distribution profile, version, entitlement,
 no-debug and UUID verification. Production iCloud/push and App Group/Keychain roles
 were checked against the source-defined roles; export compliance is unchanged.
 
-IPA SHA-256: `729fd64576d985d0b74502a491a2649e73097a7e9f29c034ba2e2c933b30f99d`.
-The verified IPA is retained in the canonical artifact directory's
+Original local-export IPA SHA-256:
+`729fd64576d985d0b74502a491a2649e73097a7e9f29c034ba2e2c933b30f99d`.
+That verified IPA remains unchanged in the canonical artifact directory's
 `export/TokenroomMobile.ipa` beside its archive and receipts.
 
-At the checkpoint, App Store Connect returned `authResult=FAILED`. Its saved
+The existing Xcode account completed one upload successfully, without a web login,
+at **16:30:36.111 UTC**, exit code 0. Apple reported `PROCESSING`, with no errors or
+warnings. The upload reexport was captured and matched Apple's checksum; all four
+components retained their approved versions, signatures, Production entitlements and
+archive/dSYM UUIDs, with all 509 source input hashes rechecked.
+
+- Uploaded IPA SHA-256: `d4929da79a6a4c331c17c4ac9590c4cbc429e9b9fc80249a7e8fcf009636108d`.
+- Upload/archive identifier: `e8f96ee7-ad2e-4b74-82f6-aeb2a70cd38c`.
+- Receipts: canonical artifact directory's `mobile-upload-20261114T162708Z/`,
+  including `verified-upload-receipt.json`, `READINESS.md` and the redacted upload log.
+
+The upload identifier is not a verified processed-build or App Review submission ID.
+**Do not upload 1.3.3 (1) again.**
+
+## Remaining App Review step
+
+At the initial checkpoint, App Store Connect returned `authResult=FAILED`. Its saved
 passkey required local authentication, and Computer Use refused access to
-`com.apple.LocalAuthenticationRemoteService`. Secure-entry prompts expired without
-a supplied secret. Mobile build/draft availability, Apple processing, submission
-and public availability therefore remain unconfirmed in this receipt. A subsequent
-authorized Xcode upload attempt and authenticated submission need their own receipt;
-signed export alone is not delivery.
+`com.apple.LocalAuthenticationRemoteService`. After the maintainer reported signing
+in, the Safari context accessible to automation still redirected to an empty login
+form at approximately 16:36 UTC. The authenticated browser context must be reconciled
+before selecting the exact processed 1.3.3 (1) build and submitting it.
+
+Processed-build ID, App Review submission ID and public availability remain
+unconfirmed. Automatic release after approval was requested but has not yet been
+observed or configured. The existing checkpoint is retained under
+`mobile-submission/submission-status.json` and its `READINESS.md`; an accepted upload
+is separate from submission and publication.
 
 No schema deployment, credential copying, source behavior or CI gate change was
 needed for packaging. Physical private-iCloud delivery and background WidgetKit/
@@ -89,5 +111,5 @@ Watch execution remain distinct unverified integration limits.
 The previous public Mac release and both local rollback apps remain available.
 Restore the preceding signed app to reverse an installation. Any correction to a
 public package must use a new version; do not overwrite its assets or retag it.
-Mobile 1.3.3 (1) must be checked against Apple before reuse or replacement because
-an upload after this checkpoint can consume its build number.
+Mobile 1.3.3 (1) is consumed by the successful upload. Any replacement package must
+use a new build number and pass the release process; do not reupload this build.

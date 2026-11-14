@@ -10,7 +10,7 @@ description: >-
 
 # Tokenroom macOS
 
-**Delivery checkpoint (14 November 2026):** Mac 2.6.1(1) is public as `v2.6.1` and installed from the same verified notarized package on MacBook Pro and Maquinho Pro. Mobile 1.3.3(1) is signed and verified; upload/submission were unobserved at the 16:24 UTC checkpoint because App Store Connect required local authentication. `docs/release-delivery-20261114.md` binds source, checks, package hashes, both installations and the remaining mobile delivery step.
+**Delivery checkpoint (14 November 2026):** Mac 2.6.1(1) is public as `v2.6.1` and installed from the same verified notarized package on MacBook Pro and Maquinho Pro. Apple accepted mobile 1.3.3(1) at 16:30 UTC; its build number is consumed. App Review submission remained unconfirmed at 16:36 UTC because the automated Safari context showed a login form. `docs/release-delivery-20261114.md` binds source, checks, package hashes, both installations, upload and the remaining submission step.
 
 **Release preparation (14 November 2026):** Mac 2.6.1(1) includes the unreleased News updates and #69's usage recovery. Mobile 1.3.3(1) is prepared for the corresponding recovery update; Apple's public US/PT lookup confirms 1.3.2 released on 13 November. This paragraph does not claim signing, publication, installation or App Review submission; delivery receipts follow those actions.
 
