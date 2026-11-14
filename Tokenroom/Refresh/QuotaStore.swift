@@ -55,6 +55,11 @@ final class QuotaStore {
     private var followUpProviders: Set<Provider>? = []
     /// Sending readings, history, and alerts to iCloud after a check.
     private var sharing: Task<Void, Never>?
+    private var deferredSharing: Task<Void, Never>?
+    @ObservationIgnored var sharingClock: () -> Date = { .now }
+    @ObservationIgnored var waitBeforeSharing: @Sendable (TimeInterval) async throws -> Void = {
+        try await Task.sleep(for: .seconds($0))
+    }
     /// Keeps News current while its window is open.
     private var liveNews: Task<Void, Never>?
     /// Checks News by itself, apart from usage checks and iCloud sharing, at each kind's
@@ -185,6 +190,8 @@ final class QuotaStore {
         inFlight?.cancel()
         followUp?.cancel()
         sharing?.cancel()
+        deferredSharing?.cancel()
+        deferredSharing = nil
         offlineRetry?.cancel()
         offlineRetry = nil
         newsLoop?.cancel()
@@ -235,6 +242,8 @@ final class QuotaStore {
         followUp = nil
         sharing?.cancel()
         sharing = nil
+        deferredSharing?.cancel()
+        deferredSharing = nil
         offlineRetry?.cancel()
         offlineRetry = nil
         newsLoop?.cancel()
@@ -284,7 +293,21 @@ final class QuotaStore {
     }
 
     func refresh(force: Bool = false, providers: [Provider]? = nil) async {
+        if let followUp, followUp.isCancelled {
+            // Sleep cancelled this queued check. Let it release its own state before the new
+            // request joins or starts a check; it cannot satisfy a refresh requested on waking.
+            await followUp.value
+            await refresh(force: force, providers: providers)
+            return
+        }
         if let inFlight {
+            if inFlight.isCancelled {
+                await inFlight.value
+                if self.inFlight == inFlight { self.inFlight = nil }
+                // The cut-short attempt does not satisfy even an ordinary timer check.
+                await refresh(force: true, providers: providers)
+                return
+            }
             // A check in flight finishes rather than being cancelled: its calls are already out,
             // and calling a rate-limited provider again right away can earn a 429.
             guard force else {
@@ -389,6 +412,8 @@ final class QuotaStore {
     /// so a slow iCloud doesn't hold up the next check. A check that finishes meanwhile leaves one
     /// more round, with the newest readings then. News has its own loop (`startNewsLoop`).
     func share() async {
+        deferredSharing?.cancel()
+        deferredSharing = nil
         if let sharing {
             // A round going to sleep cancelled doesn't go round again: this request gets a round
             // of its own once that one has ended (or joins one another request started).
@@ -405,12 +430,27 @@ final class QuotaStore {
             guard let self else { return }
             repeat {
                 self.shareAgain = false
-                await self.shareReadings(now: Date())
+                await self.shareReadings(now: self.sharingClock())
             } while self.shareAgain && !Task.isCancelled
             self.sharing = nil
+            if !Task.isCancelled { self.scheduleSharing() }
         }
         sharing = task
         await task.value
+    }
+
+    private func scheduleSharing() {
+        deferredSharing?.cancel()
+        deferredSharing = nil
+        let now = sharingClock()
+        guard let due = relay?.nextPublishDate(relayEnvelope(at: now), now: now) else { return }
+        let wait = waitBeforeSharing
+        deferredSharing = Task { @MainActor [weak self] in
+            do { try await wait(max(0.01, due.timeIntervalSince(now))) } catch { return }
+            guard !Task.isCancelled, let self else { return }
+            self.deferredSharing = nil
+            await self.share()
+        }
     }
 
     private func shareReadings(now: Date) async {
@@ -454,6 +494,7 @@ final class QuotaStore {
                 }
             }
             var unreachable: [Provider] = []
+            var signedOut: Set<Provider> = []
             for await (provider, result) in group {
                 // Cut short (the Mac went to sleep, or Tokenroom is quitting): not a failure, and
                 // not an attempt, so the next refresh asks again.
@@ -465,6 +506,7 @@ final class QuotaStore {
                 // expired session may have been refused by the server, which keeps the spacing.)
                 if case .failure(.signedOut) = result {
                     lastAttemptAt[provider] = earlierAttempts[provider]
+                    signedOut.insert(provider)
                 }
                 if case .failure(.unreachable) = result {
                     unreachable.append(provider)
@@ -473,12 +515,12 @@ final class QuotaStore {
             }
             // Every call failed, nothing answered meanwhile, and the network said it wasn't there:
             // the Mac was offline (awake before its Wi-Fi), so none of them was a call to space out.
-            // A server's error or a slow answer reached the provider, and keeps its spacing. One
-            // provider alone can't tell an outage from being offline.
+            // A server's error or a slow answer keeps its spacing. A missing login made no call,
+            // so it cannot prevent the providers that did try the network from recovering.
             let networkAfter = TokenroomHTTP.networkTally
             let offline = networkAfter.answers == networkBefore.answers && networkAfter.offline > networkBefore.offline
-            let called = due.filter { clients[$0] != nil }
-            if called.count >= 2, unreachable.count == called.count, offline {
+            let called = due.filter { clients[$0] != nil && !signedOut.contains($0) }
+            if !called.isEmpty, unreachable.count == called.count, offline {
                 for provider in unreachable {
                     lastAttemptAt[provider] = earlierAttempts[provider]
                 }

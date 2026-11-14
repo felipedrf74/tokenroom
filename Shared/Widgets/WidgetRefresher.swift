@@ -154,6 +154,17 @@ enum WidgetRefresher {
         let output = ReadingAssembler.assemble(sources: sources, histories: histories, now: now)
         var cache = ReadingCache(savedAt: now, isSample: false, items: output.connected)
         cache.cloudReadAt = contents != nil || signedOut ? now : previous?.cloudReadAt
+        if let contents {
+            cache.relaySnapshot = .init(checkedAt: now, sources: contents.sources.compactMap { source in
+                source.envelope.map { ReadingCache.SourceSnapshot(RelayMerge.Source(
+                    id: source.id, label: source.label, envelope: $0, kind: CollectorKind(recordKind: source.kind)
+                )) }
+            })
+        } else if signedOut {
+            cache.relaySnapshot = .init(checkedAt: now, sources: [])
+        } else {
+            cache.relaySnapshot = previous?.relaySnapshot
+        }
         cache.localSource = localSource.map(ReadingCache.SourceSnapshot.init)
         do {
             guard try PhoneCacheAccess.save(cache, at: ReadingCache.defaultURL, defaults: defaults, generation: generation) else {

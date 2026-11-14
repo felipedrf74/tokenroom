@@ -18,20 +18,21 @@ struct RelayPublishPolicy: Sendable, Equatable {
     private(set) var lastSent: Date?
 
     func isDue(_ envelope: RelayEnvelope, force: Bool = false, now: Date) -> Bool {
-        if force || lastHash == nil { return true }
-        let hash = envelope.materialHash
-        var sinceLast = lastSent.map { now.timeIntervalSince($0) } ?? .infinity
-        // The clock was set back since the last send: how long ago that was is unknown, and
-        // waiting for the clock to catch up would hold every send back just as long.
-        if sinceLast < 0 {
-            sinceLast = .infinity
-        }
+        force || nextSendDate(envelope, now: now) <= now
+    }
+
+    func nextSendDate(_ envelope: RelayEnvelope, now: Date) -> Date {
+        guard lastHash != nil, let lastSent, lastSent <= now else { return now }
         // A crossing can hide inside the rounded hash (79.6% to 80.3%), so it goes out on its own.
         let urgent = Self.states(envelope) != lastStates || Self.levels(envelope) != lastLevels
-        let changed = hash != lastHash || runOutsMoved(envelope)
-        return (urgent && sinceLast >= Self.statusInterval)
-            || (changed && sinceLast >= Self.minimumInterval)
-            || sinceLast >= Self.heartbeat
+        let changed = envelope.materialHash != lastHash || runOutsMoved(envelope)
+        let interval = urgent ? Self.statusInterval : changed ? Self.minimumInterval : Self.heartbeat
+        return max(now, lastSent.addingTimeInterval(interval))
+    }
+
+    func hasChanges(_ envelope: RelayEnvelope) -> Bool {
+        envelope.materialHash != lastHash || Self.states(envelope) != lastStates
+            || Self.levels(envelope) != lastLevels || runOutsMoved(envelope)
     }
 
     mutating func didSend(_ envelope: RelayEnvelope, at now: Date) {

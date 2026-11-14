@@ -61,6 +61,24 @@ struct APIKeyStore: Sendable {
         return nil
     }
 
+    /// Discovery distinguishes a missing item from one Security cannot read right now. It
+    /// reads only metadata; a locked or damaged item never means the user removed its key.
+    enum Lookup: Equatable, Sendable {
+        case found(Metadata)
+        case none
+        case unreadable
+    }
+
+    func lookup(for provider: Provider) -> Lookup {
+        let result = readMetadataLookup(baseQuery(provider))
+        #if os(macOS)
+        if case .none = result, usesDataProtection {
+            return readMetadataLookup(legacyQuery(provider))
+        }
+        #endif
+        return result
+    }
+
     private func readKey(_ base: [String: Any]) -> String? {
         var query = base
         query[kSecReturnData as String] = true
@@ -74,15 +92,22 @@ struct APIKeyStore: Sendable {
     }
 
     private func readMetadata(_ base: [String: Any]) -> Metadata? {
+        guard case .found(let metadata) = readMetadataLookup(base) else { return nil }
+        return metadata
+    }
+
+    private func readMetadataLookup(_ base: [String: Any]) -> Lookup {
         var query = base
         query[kSecReturnAttributes as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         let (status, item) = keychain.copy(query)
+        if status == errSecItemNotFound { return .none }
         guard status == errSecSuccess,
               let attributes = item as? [String: Any],
-              let data = attributes[kSecAttrGeneric as String] as? Data
-        else { return nil }
-        return try? JSONDecoder().decode(Metadata.self, from: data)
+              let data = attributes[kSecAttrGeneric as String] as? Data,
+              let metadata = try? JSONDecoder().decode(Metadata.self, from: data)
+        else { return .unreadable }
+        return .found(metadata)
     }
 
     #if os(macOS)

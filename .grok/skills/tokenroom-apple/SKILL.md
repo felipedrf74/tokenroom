@@ -29,6 +29,12 @@ description: >-
 
 The Mac collects; everything else reads. Macs relay readings through the user's private CloudKit database. The iPhone adds providers it reads with its own API keys and plans it signs in to itself (Codex, Grok Build, Cursor, Grok Bot). Claude comes only from a Mac: Anthropic's terms bar other apps from offering a Claude.ai login or keeping its tokens. The Watch reads iCloud directly. There is no Tokenroom server. Mac rules (providers, tokens, the menu bar) are in `.grok/skills/tokenroom-macos/SKILL.md`.
 
+## Usage recovery (14 November 2026, source changes)
+
+The iPhone and widgets save the complete compatible cloud source snapshot in the optional existing `ReadingCache.relaySnapshot` field. A living iPhone app reconciles a newer validated widget snapshot before rebuilding, including on activation and after a failed cloud read. Its source membership is authoritative: removed sources stay removed, device-local providers remain independent, and account-generation fences still apply. Successful cloud-read dates never come from presentation saves; a connection failure stays visible beside recovered readings.
+
+Key and plan-session discovery wait at most 20 seconds, retaining one physical lookup when Security does not answer. Subsequent refreshes can read iCloud while joining that same lookup. Timeout/cancellation retain existing provider membership; credential changes fence late results. API-key metadata discovery distinguishes found, missing and unreadable; an unreadable item keeps its previously listed provider and consumes no fetch claim, while a confirmed missing item removes it. This bounds the wait, not the operating system's Security call.
+
 ## Targets and folders
 
 | Target | Bundle ID | Compiles |
