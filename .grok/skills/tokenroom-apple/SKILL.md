@@ -11,7 +11,7 @@ description: >-
 
 **Delivery status (14 November 2026):** Mobile 1.3.3(1) was uploaded, processed and submitted at 16:59 UTC: **Waiting for Review**, with automatic release after approval to all users. Approval and public availability remain pending; do not reupload this consumed build. Mac 2.6.1(1) is public and installed on both Macs. Mobile 1.3.2 was confirmed public on 13 November. `docs/release-delivery-20261114.md` binds the signed packages, upload, submission and installations.
 
-**Release preparation (15 November 2026):** iPhone, widgets and Watch 1.3.4(1) is prepared with the usage ingestion change; Apple's public US/PT lookup shows 1.3.3 released on 15 November. The Mac version is unchanged. Upload, submission and approval are separate delivery steps.
+**Release preparation (15 November 2026):** iPhone, widgets and Watch 1.3.4(1) is prepared with the usage ingestion change; Apple's public US/PT lookup shows 1.3.3 released on 15 November. Mac 2.6.2(1) is prepared alongside it. Upload, submission, approval, notarization, publication and installation are separate delivery steps.
 
 **Release preparation (14 November 2026):** iPhone, widgets and Watch 1.3.3(1) is prepared with #69's usage recovery. Apple's public US/PT lookup confirms 1.3.2 released on 13 November. Mac 2.6.1(1) is prepared alongside it. Signing, upload, submission and installation remain separate delivery steps; this paragraph does not claim those outcomes.
 

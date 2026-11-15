@@ -1,8 +1,8 @@
 // Versions. The Mac collector is versioned on its own.
 // scripts/build.sh reads these for the swiftc fallback.
-// Mac 2.6.1 build 1 includes the unreleased News updates and usage recovery from #69.
+// Mac 2.6.2 build 1 adds the usage ingestion change (docs/usage-ingestion-council-20261115.md).
 // Mobile 1.3.4 build 1 follows released 1.3.3 with the usage ingestion change (docs/usage-ingestion-council-20261115.md).
-TOKENROOM_MAC_VERSION = 2.6.1
+TOKENROOM_MAC_VERSION = 2.6.2
 TOKENROOM_MAC_BUILD = 1
 
 // iPhone app, widgets, and Watch app share one version.
