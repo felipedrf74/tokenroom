@@ -4,10 +4,12 @@ extension ProviderStatus {
     /// An expired session keeps its last reading, faded, this long.
     static let expiredGrace: TimeInterval = 24 * 3600
 
-    /// What a failed check leaves behind. The last reading stays, faded, where it still helps:
-    /// through an outage or a rate limit, and for a day after a session expires.
     /// - Parameter lastChecked: when the cached reading was last confirmed.
     static func failure(_ error: ProviderError, cached: QuotaSnapshot?, lastChecked: Date?, now: Date) -> ProviderStatus {
+        if error.isTransient, let cached, let checked = lastChecked ?? Optional(cached.fetchedAt),
+           (0...ReadingFreshness.staleAfter).contains(now.timeIntervalSince(checked)) {
+            return .live(cached)
+        }
         switch error {
         case .signedOut(let hint):
             return .signedOut(hint)
@@ -22,6 +24,11 @@ extension ProviderStatus {
         case .unreachable, .parse:
             return cached.map(ProviderStatus.stale) ?? .unreachable(cached: nil)
         }
+    }
+
+    static func retryDate(after error: ProviderError, now: Date) -> Date? {
+        guard case .rateLimited(let until) = error else { return nil }
+        return clampedRetry(until, now: now)
     }
 
     /// Honors Retry-After, within one minute to six hours.
@@ -41,6 +48,26 @@ extension ProviderStatus {
             true
         default:
             false
+        }
+    }
+}
+
+extension ProviderError {
+    var isTransient: Bool {
+        switch self {
+        case .rateLimited, .unreachable, .parse: true
+        case .signedOut, .expired, .notEntitled: false
+        }
+    }
+
+    var logClass: String {
+        switch self {
+        case .signedOut: "signedOut"
+        case .expired: "expired"
+        case .notEntitled: "notEntitled"
+        case .rateLimited: "rateLimited"
+        case .unreachable: "unreachable"
+        case .parse: "parse"
         }
     }
 }

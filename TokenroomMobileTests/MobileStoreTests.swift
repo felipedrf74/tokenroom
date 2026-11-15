@@ -195,6 +195,84 @@ final class MobileStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testKnownCollectorsReadByNameStandWhenTheZoneReadRunsOutOfTime() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let url = folder.appendingPathComponent(ReadingCache.fileName)
+        let zoneHangs = Mutex(false)
+        let initial = cloudContents(checked: now)
+        let later = now.addingTimeInterval(10 * 60)
+        var newer = cloudContents(checked: later)
+        newer.sources[0].envelope?.providers[0].windows[0].used = 77
+        let byName = CloudRelay.SourceRead(sources: newer.sources, missing: [])
+        let names = Mutex<[[String]]>([])
+        var effects = MobilePlatformEffects.inert
+        effects.applicationIsBackground = { true }
+        let store = MobileStore(defaults: defaults, containerIdentifier: nil, keys: MobileFixtureKeychain().keys,
+            directory: folder, connectOnIPhone: false, platformEffects: effects, launchDefaults: defaults,
+            sessions: nil, relayReads: .init(accountStatus: { .available }, contents: {
+                if zoneHangs.withLock({ $0 }) { try await Task.sleep(for: .seconds(60)) }
+                return initial
+            }, sources: { ids in
+                names.withLock { $0.append(ids) }
+                return byName
+            }))
+        await store.refresh(force: true, includeKeys: false, now: now)
+        XCTAssertNotEqual(store.reading(id: "claude")?.provider.windows.first?.used, 77)
+
+        zoneHangs.withLock { $0 = true }
+        await store.refresh(force: true, includeKeys: false, now: later)
+        XCTAssertEqual(store.reading(id: "claude")?.provider.windows.first?.used, 77)
+        XCTAssertEqual(names.withLock { $0.last }, ["mac-fixture"])
+        if case .failed = store.relayPhase { XCTFail("Readings read by name are not a connection failure") }
+        let saved = try XCTUnwrap(PhoneCacheAccess.load(at: url, defaults: defaults))
+        XCTAssertEqual(saved.relaySnapshot?.checkedAt, now, "Membership is still the last complete read's")
+        XCTAssertEqual(saved.relaySnapshot?.sources.first?.envelope.providers.first?.windows.first?.used, 77)
+        XCTAssertNotNil(saved.cloudReadAt)
+    }
+
+    @MainActor
+    func testCollectorAWidgetConfirmedGoneStaysGoneWhenTheAppsReadFails() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let url = folder.appendingPathComponent(ReadingCache.fileName)
+        var contents = cloudContents(checked: now)
+        var second = contents.sources[0]
+        second.id = "mac-second"
+        second.envelope?.providers[0].id = "cursor"
+        contents.sources.append(second)
+        let initial = contents
+        let available = Mutex(true)
+        var effects = MobilePlatformEffects.inert
+        effects.applicationIsBackground = { true }
+        let store = MobileStore(defaults: defaults, containerIdentifier: nil, keys: MobileFixtureKeychain().keys,
+            directory: folder, connectOnIPhone: false, platformEffects: effects, launchDefaults: defaults,
+            sessions: nil, relayReads: .init(accountStatus: { .available }, contents: {
+                guard available.withLock({ $0 }) else { throw CKError(.networkUnavailable) }
+                return initial
+            }))
+        await store.refresh(force: true, includeKeys: false, now: now)
+        XCTAssertNotNil(store.reading(id: "cursor"))
+
+        let widgetCheck = now.addingTimeInterval(5 * 60)
+        var widget = try XCTUnwrap(PhoneCacheAccess.load(at: url, defaults: defaults))
+        let snapshot = try XCTUnwrap(widget.relaySnapshot)
+        let read = CloudRelay.SourceRead(sources: [initial.sources[0]], missing: ["mac-second"])
+        widget.relaySnapshot = .init(checkedAt: snapshot.checkedAt, sources: snapshot.sources.filter { $0.id != "mac-second" },
+                                     removed: RelaySourceRefresh.removals(of: snapshot, after: read, now: widgetCheck))
+        widget.items.removeAll { $0.sourceID == "mac-second" }
+        widget.savedAt = widgetCheck
+        widget.cloudReadAt = widgetCheck
+        try widget.save(to: url)
+
+        available.withLock { $0 = false }
+        await store.refresh(force: true, includeKeys: false, now: widgetCheck.addingTimeInterval(60))
+        XCTAssertNil(store.reading(id: "cursor"))
+        let saved = try XCTUnwrap(PhoneCacheAccess.load(at: url, defaults: defaults))
+        XCTAssertEqual(saved.relaySnapshot?.sources.map(\.id), ["mac-fixture"])
+    }
+
+    @MainActor
     func testWidgetCloudReadSurvivesAFailedRefreshInALivingApp() async throws {
         for removesRemote in [false, true] {
             let defaults = makeDefaults()

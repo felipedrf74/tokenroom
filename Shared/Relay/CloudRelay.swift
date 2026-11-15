@@ -18,11 +18,11 @@ import Synchronization
 actor CloudRelay {
     private static let readers = Mutex<[String: CloudRelay]>([:])
 
-    /// Reuse the zone cursor while a widget/Watch process remains alive, as the app does.
     static func shared(containerIdentifier: String) -> CloudRelay {
         readers.withLock { readers in
             if let reader = readers[containerIdentifier] { return reader }
-            let reader = CloudRelay(containerIdentifier: containerIdentifier)
+            let reader = CloudRelay(containerIdentifier: containerIdentifier,
+                                    zoneArchive: RelayZoneArchive.defaultURL(containerIdentifier: containerIdentifier).map(RelayZoneArchive.init))
             readers[containerIdentifier] = reader
             return reader
         }
@@ -40,6 +40,7 @@ actor CloudRelay {
     static let eventLifetime: TimeInterval = 14 * 86_400
     /// The most records CloudKit takes in one request.
     static let batchLimit = 400
+    static let changesPageLimit = 100
 
     enum Field {
         /// A plain field, not `encryptedValues`: it holds usage numbers, names, and reset times
@@ -92,6 +93,8 @@ actor CloudRelay {
     private let accountEpoch: RelayAccountEpoch
     private var subscriptionsWrite: Task<Bool, any Error>?
     private let zoneReader: RelayZoneReader<CKRecord.ID, CKRecord, CKServerChangeToken>
+    private let zoneArchive: RelayZoneArchive?
+    private var restoredEpoch: UUID?
     private let accountObserver: RelayAccountObserver
     private let zoneDeletion: RelayZoneDeletion
     /// The signed-in account's fingerprint, for `zoneDeletion`, as of an account epoch: an account
@@ -105,16 +108,19 @@ actor CloudRelay {
     /// Only call when `RelayAvailability` reports the container; CloudKit traps without the entitlement.
     /// - Parameter zoneDeletion: where this device remembers that the user deleted Tokenroom's
     ///   data in iCloud settings; the writers pass their own defaults.
-    init(containerIdentifier: String, zoneDeletion: RelayZoneDeletion = RelayZoneDeletion(defaults: .standard)) {
+    init(containerIdentifier: String, zoneDeletion: RelayZoneDeletion = RelayZoneDeletion(defaults: .standard),
+         zoneArchive: RelayZoneArchive? = nil) {
         self.containerIdentifier = containerIdentifier
         self.zoneDeletion = zoneDeletion
+        self.zoneArchive = zoneArchive
         let container = CKContainer(identifier: containerIdentifier)
         self.container = container
         let database = container.privateCloudDatabase
         let epoch = RelayAccountEpoch()
         accountEpoch = epoch
         let reader = RelayZoneReader<CKRecord.ID, CKRecord, CKServerChangeToken>(fetch: { token in
-            let changes = try await database.recordZoneChanges(inZoneWith: Self.zoneID, since: token)
+            let changes = try await database.recordZoneChanges(inZoneWith: Self.zoneID, since: token,
+                                                               resultsLimit: Self.changesPageLimit)
             return .init(
                 modifications: changes.modificationResultsByID.mapValues { $0.map(\.record) },
                 deletions: changes.deletions.map(\.recordID),
@@ -153,7 +159,7 @@ actor CloudRelay {
     func accountStatus() async throws -> CKAccountStatus {
         let status = try await container.accountStatus()
         if status == .noAccount {
-            accountEpoch.invalidate(); await zoneReader.invalidate(); zoneReady = false
+            accountEpoch.invalidate(); await zoneReader.invalidate(); restoredEpoch = nil; zoneReady = false
             // Deletions found for an account stay with it, for when it signs in again.
             zoneDeletion.forgetUnattributed()
         }
@@ -204,6 +210,7 @@ actor CloudRelay {
     /// longer make every foreground refresh download the whole retained notification history.
     func contents() async throws -> Contents {
         let epoch = accountEpoch.value
+        await restoreZone(for: epoch)
         let reader = zoneReader
         guard let records = try await zoneDeletion.read(account: { await self.currentAccount() }, {
             try await reader.contents(scope: epoch)
@@ -212,7 +219,7 @@ actor CloudRelay {
             // what was deleted; the iPhone keeps saying how to start again.
             guard epoch == accountEpoch.value, !Task.isCancelled else { throw CancellationError() }
             zoneReady = false
-            await zoneReader.invalidate()
+            await zoneReader.invalidate(); restoredEpoch = nil
             return Contents(sources: [], histories: [:], deletedByUser: true)
         }
         guard epoch == accountEpoch.value, !Task.isCancelled else { throw CancellationError() }
@@ -244,6 +251,49 @@ actor CloudRelay {
 
     func sources() async throws -> [Source] {
         try await contents().sources
+    }
+
+    private func restoreZone(for epoch: UUID) async {
+        guard let zoneArchive, restoredEpoch != epoch else { return }
+        guard let account = await currentAccount(), accountEpoch.value == epoch else { return }
+        restoredEpoch = epoch
+        await zoneReader.restore(zoneArchive.load(account: account), scope: epoch) { saved in
+            zoneArchive.save(saved, account: account)
+        }
+    }
+
+    struct SourceRead: Sendable {
+        var sources: [Source]
+        var missing: Set<String>
+    }
+
+    func sources(named ids: [String]) async throws -> SourceRead {
+        let epoch = accountEpoch.value
+        let names = Array(Set(ids)).sorted()
+        var found: [Source] = []
+        var missing: Set<String> = []
+        for start in stride(from: 0, to: names.count, by: Self.batchLimit) {
+            try Task.checkCancellation()
+            let batch = names[start..<min(start + Self.batchLimit, names.count)]
+            let results = try await database.records(
+                for: batch.map { CKRecord.ID(recordName: $0, zoneID: Self.zoneID) },
+                desiredKeys: [Field.payload, Field.kind, Field.label]
+            )
+            for (id, result) in results {
+                switch result {
+                case .success(let record) where record.recordType == RecordType.source:
+                    found.append(Self.source(from: record))
+                case .success:
+                    missing.insert(id.recordName)
+                case .failure(let error as CKError) where error.code == .unknownItem:
+                    missing.insert(id.recordName)
+                case .failure:
+                    continue
+                }
+            }
+        }
+        guard epoch == accountEpoch.value, !Task.isCancelled else { throw CancellationError() }
+        return SourceRead(sources: found.sorted { $0.id < $1.id }, missing: missing)
     }
 
     /// Whether a balance alert already went out, less than a day ago, under the name of the day
@@ -546,7 +596,7 @@ extension CloudRelay {
                 throw error
             }
         }
-        await zoneReader.invalidate()
+        await zoneReader.invalidate(); restoredEpoch = nil
     }
 
     /// Makes the next save create the zone again. For after the user deleted Tokenroom's iCloud

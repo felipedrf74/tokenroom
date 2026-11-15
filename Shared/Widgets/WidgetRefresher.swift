@@ -73,7 +73,7 @@ enum WidgetRefresher {
             !$0.isSample && PhoneCacheAccess.accepts($0, defaults: defaults) ? $0 : nil
         }
         let ownID = defaults.string(forKey: "relaySourceID")
-        async let relayRead = readRelay()
+        async let relayRead = readRelay(previous: previous, now: now)
         async let keyRead = readKeys(defaults: defaults, now: now)
         let (relayResult, (fresh, readings, failures)) = await (relayRead, keyRead)
         guard generation == PhoneCacheAccess.generation(in: defaults) else { return WidgetRefreshResult(cache: nil) }
@@ -155,11 +155,11 @@ enum WidgetRefresher {
         var cache = ReadingCache(savedAt: now, isSample: false, items: output.connected)
         cache.cloudReadAt = contents != nil || signedOut ? now : previous?.cloudReadAt
         if let contents {
-            cache.relaySnapshot = .init(checkedAt: now, sources: contents.sources.compactMap { source in
+            cache.relaySnapshot = .init(checkedAt: relayResult.membershipAt ?? now, sources: contents.sources.compactMap { source in
                 source.envelope.map { ReadingCache.SourceSnapshot(RelayMerge.Source(
                     id: source.id, label: source.label, envelope: $0, kind: CollectorKind(recordKind: source.kind)
                 )) }
-            })
+            }, removed: relayResult.removed)
         } else if signedOut {
             cache.relaySnapshot = .init(checkedAt: now, sources: [])
         } else {
@@ -184,16 +184,27 @@ enum WidgetRefresher {
         var contents: CloudRelay.Contents?
         var signedOut = false
         var retryAt: Date? = nil
+        var membershipAt: Date? = nil
+        var removed: [String: Date]? = nil
     }
 
-    private static func readRelay() async -> RelayResult {
+    private static func readRelay(previous: ReadingCache?, now: Date) async -> RelayResult {
         guard let container = RelayAvailability.containerIdentifier else { return RelayResult() }
+        let snapshot = previous?.relaySnapshot
+        let names = RelaySourceRefresh.names(in: snapshot)
+        let histories = previous?.historiesBySource ?? [:]
         return await TimeLimit.run(readBudget, otherwise: RelayResult(retryAt: .now)) {
             let relay = CloudRelay.shared(containerIdentifier: container)
             do {
                 let status = try await relay.accountStatus()
                 if status == .noAccount { return RelayResult(signedOut: true) }
                 guard status == .available else { return RelayResult(retryAt: .now) }
+                if let snapshot, !names.isEmpty {
+                    let read = try await relay.sources(named: names)
+                    return RelayResult(contents: RelaySourceRefresh.contents(from: snapshot, histories: histories, read: read, now: now),
+                                       membershipAt: snapshot.checkedAt,
+                                       removed: RelaySourceRefresh.removals(of: snapshot, after: read, now: now))
+                }
                 return RelayResult(contents: try await relay.contents())
             }
             catch let error as CKError where error.code == .notAuthenticated { return RelayResult(signedOut: true) }

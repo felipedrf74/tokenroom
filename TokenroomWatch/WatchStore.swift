@@ -115,8 +115,9 @@ final class WatchStore {
         // it and continues to work when the phone is away. Neither source can hold this pass,
         // and iCloud's answer is applied as soon as it comes (`WatchRefreshOrder`).
         let link = self.link
+        let known = cache
         await WatchRefreshOrder.run(
-            cloud: { await TimeLimit.run(Self.readBudget, otherwise: .failed) { await RelayReadings.read(now: now) } },
+            cloud: { await TimeLimit.run(Self.readBudget, otherwise: .failed) { await RelayReadings.read(now: now, known: known) } },
             phone: { await TimeLimit.run(Self.phoneBudget, otherwise: Optional<ReadingCache>.none) { await link.refreshReadings() } },
             applyCloud: { outcome in
                 guard revision == accountRevision, currentCutoff == cutoff else {

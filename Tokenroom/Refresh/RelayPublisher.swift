@@ -91,12 +91,14 @@ final class RelayPublisher {
     private let defaults: UserDefaults
     /// The longest a sharing round waits for any one iCloud call, as on the iPhone.
     private let iCloudBudget: TimeInterval
+    private let maintenanceBudget: TimeInterval
     private var policy = RelayPublishPolicy()
     private var sentChecks: [String: Date] = [:]
     /// The shared alert choices as iCloud last had them (nil: none yet).
     private var preferencesCache: (preferences: AlertPreferences?, readAt: Date)?
     private var retryAt: Date?
     private var retryStartedAt: Date?
+    private var pruneRetryAt: Date?
     private var lastHistoryHour: Date?
     /// How many times what was sent has been forgotten. A send out meanwhile records itself as
     /// sent when it returns, so it checks this to keep the next round due.
@@ -105,13 +107,15 @@ final class RelayPublisher {
     private let logger = Logger(subsystem: TokenroomIdentity.bundleID, category: "relay")
 
     convenience init(defaults: UserDefaults = .standard, containerIdentifier: String? = RelayAvailability.containerIdentifier) {
-        self.init(defaults: defaults, cloud: containerIdentifier.map { CloudRelay(containerIdentifier: $0, zoneDeletion: RelayZoneDeletion(defaults: defaults)) })
+        self.init(defaults: defaults, cloud: containerIdentifier.map { CloudRelay(containerIdentifier: $0, zoneDeletion: RelayZoneDeletion(defaults: defaults),
+                                                     zoneArchive: RelayZoneArchive.defaultURL(containerIdentifier: $0).map(RelayZoneArchive.init)) })
     }
 
     /// `cloud` is nil when this copy can't use iCloud. Tests pass a stand-in and a short budget.
-    init(defaults: UserDefaults, cloud: (any RelayCloud)?, iCloudBudget: TimeInterval = 20) {
+    init(defaults: UserDefaults, cloud: (any RelayCloud)?, iCloudBudget: TimeInterval = 20, maintenanceBudget: TimeInterval = 120) {
         self.defaults = defaults
         self.iCloudBudget = iCloudBudget
+        self.maintenanceBudget = maintenanceBudget
         if let existing = defaults.string(forKey: Keys.sourceID) {
             sourceID = existing
         } else {
@@ -325,16 +329,22 @@ final class RelayPublisher {
         return delivery
     }
 
+    static let pruneRetry: TimeInterval = 3600
+
     /// Once a day, deletes alert records older than two weeks, so they don't pile up in iCloud
-    /// on a Mac used without the iPhone app.
     func pruneEventsIfDue(now: Date = .now) async {
         guard let relay, isEnabled else { return }
         if isWaiting(now) { return }
+        if let pruneRetryAt, pruneRetryAt > now, pruneRetryAt.timeIntervalSince(now) <= Self.pruneRetry { return }
         if let pruned = defaults.object(forKey: Keys.prunedAt) as? Date, (0..<86_400).contains(now.timeIntervalSince(pruned)) { return }
         do {
-            try await iCloud { try await relay.pruneEvents(now: now) }
+            try await iCloud(within: maintenanceBudget) { try await relay.pruneEvents(now: now) }
             defaults.set(now, forKey: Keys.prunedAt)
+            pruneRetryAt = nil
+        } catch is CancellationError {
+            return
         } catch {
+            pruneRetryAt = now.addingTimeInterval(Self.pruneRetry)
             logger.error("relay pruning failed: \(String(describing: error), privacy: .public)")
         }
     }
@@ -374,8 +384,8 @@ final class RelayPublisher {
     /// `work`'s answer within `iCloudBudget`, or `ICloudTimeout`: a call that never answers
     /// (account status, say, which ignores cancellation) counts as iCloud being unreachable
     /// rather than holding the sharing round, and every one queued behind it, forever.
-    private func iCloud<T: Sendable>(_ work: @escaping @Sendable () async throws -> T) async throws -> T {
-        let result = await TimeLimit.run(iCloudBudget, otherwise: Result<T, any Error>.failure(ICloudTimeout())) {
+    private func iCloud<T: Sendable>(within budget: TimeInterval? = nil, _ work: @escaping @Sendable () async throws -> T) async throws -> T {
+        let result = await TimeLimit.run(budget ?? iCloudBudget, otherwise: Result<T, any Error>.failure(ICloudTimeout())) {
             do {
                 return .success(try await work())
             } catch {

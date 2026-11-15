@@ -56,6 +56,8 @@ final class QuotaStore {
     /// Sending readings, history, and alerts to iCloud after a check.
     private var sharing: Task<Void, Never>?
     private var deferredSharing: Task<Void, Never>?
+    private(set) var maintenance: Task<Void, Never>?
+    private var maintenanceID: UUID?
     @ObservationIgnored var sharingClock: () -> Date = { .now }
     @ObservationIgnored var waitBeforeSharing: @Sendable (TimeInterval) async throws -> Void = {
         try await Task.sleep(for: .seconds($0))
@@ -192,6 +194,8 @@ final class QuotaStore {
         sharing?.cancel()
         deferredSharing?.cancel()
         deferredSharing = nil
+        maintenance?.cancel()
+        maintenance = nil
         offlineRetry?.cancel()
         offlineRetry = nil
         newsLoop?.cancel()
@@ -244,6 +248,8 @@ final class QuotaStore {
         sharing = nil
         deferredSharing?.cancel()
         deferredSharing = nil
+        maintenance?.cancel()
+        maintenance = nil
         offlineRetry?.cancel()
         offlineRetry = nil
         newsLoop?.cancel()
@@ -433,7 +439,10 @@ final class QuotaStore {
                 await self.shareReadings(now: self.sharingClock())
             } while self.shareAgain && !Task.isCancelled
             self.sharing = nil
-            if !Task.isCancelled { self.scheduleSharing() }
+            if !Task.isCancelled {
+                self.scheduleSharing()
+                self.startMaintenance()
+            }
         }
         sharing = task
         await task.value
@@ -459,7 +468,18 @@ final class QuotaStore {
         let relayed = Provider.allCases.filter { settings.isEnabled($0) }
         await relay?.publishHistory(history.relayHistory(for: relayed), now: now)
         await sendAlerts(for: envelope.providers, now: now)
-        await relay?.pruneEventsIfDue(now: now)
+    }
+
+    private func startMaintenance() {
+        guard maintenance == nil, let relay else { return }
+        let now = sharingClock()
+        let id = UUID()
+        maintenanceID = id
+        maintenance = Task { @MainActor [weak self] in
+            await relay.pruneEventsIfDue(now: now)
+            guard let self, self.maintenanceID == id else { return }
+            self.maintenance = nil
+        }
     }
 
     private func refreshNow(providers: [Provider]?) async {
@@ -938,13 +958,13 @@ final class QuotaStore {
             snapshotsDirty = true
         case .failure(let error):
             let next = ProviderStatus.failure(error, cached: statuses[provider]?.snapshot, lastChecked: checkedAt[provider], now: now)
-            if case .rateLimited(let until, _) = next {
+            if let until = ProviderStatus.retryDate(after: error, now: now) {
                 rateLimitedUntil[provider] = until
             }
+            logger.error("refresh failed \(provider.rawValue, privacy: .public) \(error.logClass, privacy: .public)")
             if statuses[provider] != next {
                 statuses[provider] = next
                 snapshotsDirty = true
-                logger.error("refresh failed \(provider.rawValue, privacy: .public)")
             }
         }
     }

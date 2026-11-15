@@ -10,7 +10,7 @@ final class KeyReadingFailureTests: XCTestCase {
     }
 
     func testFailedWidgetCheckRetainsMeasurementWithoutRefreshingSuccessfulCheck() {
-        let saved = reading()
+        let saved = reading(age: 3601)
         for failure in [ProviderError.unreachable, .parse, .rateLimited(until: now.addingTimeInterval(60))] {
             let shown = saved.retainingAfterFailure(failure, at: now)
             XCTAssertFalse(shown.isLive)
@@ -18,6 +18,14 @@ final class KeyReadingFailureTests: XCTestCase {
             XCTAssertEqual(shown.checkedAt, saved.checkedAt)
             XCTAssertEqual(shown.fetchedAt, saved.fetchedAt)
         }
+    }
+
+    func testTransientWidgetFailureAfterARecentSuccessKeepsTheReadingAsItIs() {
+        let saved = reading(age: 600)
+        for failure in [ProviderError.unreachable, .parse, .rateLimited(until: now.addingTimeInterval(60))] {
+            XCTAssertEqual(saved.retainingAfterFailure(failure, at: now), saved)
+        }
+        XCTAssertEqual(saved.retainingAfterFailure(.expired("Session expired."), at: now).state, "expired")
     }
 
     func testRejectedKeyIsExpiredAndRetainsAtMostADayOfMeasurements() {

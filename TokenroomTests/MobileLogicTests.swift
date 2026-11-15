@@ -33,7 +33,7 @@ final class MobileLogicTests: XCTestCase {
     // MARK: Status rules
 
     func testFailuresKeepTheLastReadingWhereItHelps() {
-        let cached = snapshot(fetchedAt: now.addingTimeInterval(-3600))
+        let cached = snapshot(fetchedAt: now.addingTimeInterval(-3601))
         XCTAssertEqual(ProviderStatus.failure(.unreachable, cached: cached, lastChecked: nil, now: now), .stale(cached))
         XCTAssertEqual(ProviderStatus.failure(.unreachable, cached: nil, lastChecked: nil, now: now), .unreachable(cached: nil))
         XCTAssertEqual(ProviderStatus.failure(.expired("x"), cached: cached, lastChecked: now.addingTimeInterval(-3600), now: now), .expired("x", cached: cached))
@@ -42,6 +42,23 @@ final class MobileLogicTests: XCTestCase {
         XCTAssertEqual(ProviderStatus.failure(.signedOut("hint"), cached: cached, lastChecked: nil, now: now), .signedOut("hint"))
         XCTAssertTrue(ProviderStatus.signedOut("hint").isDisconnected)
         XCTAssertFalse(ProviderStatus.stale(cached).isDisconnected)
+    }
+
+    func testTransientFailureAfterARecentSuccessKeepsTheReadingLive() {
+        let recent = snapshot(fetchedAt: now.addingTimeInterval(-600))
+        for error in [ProviderError.unreachable, .parse, .rateLimited(until: now.addingTimeInterval(900))] {
+            XCTAssertEqual(ProviderStatus.failure(error, cached: recent, lastChecked: nil, now: now), .live(recent))
+            XCTAssertEqual(ProviderStatus.failure(error, cached: recent, lastChecked: now.addingTimeInterval(-3600), now: now), .live(recent),
+                           "The last confirmation counts, through the hour")
+            XCTAssertEqual(ProviderStatus.failure(error, cached: recent, lastChecked: now.addingTimeInterval(-3601), now: now), error == .unreachable || error == .parse ? .stale(recent) : .rateLimited(until: now.addingTimeInterval(900), cached: recent))
+        }
+        XCTAssertEqual(ProviderStatus.failure(.expired("x"), cached: recent, lastChecked: nil, now: now), .expired("x", cached: recent),
+                       "An account failure is never hidden")
+        XCTAssertEqual(ProviderStatus.failure(.signedOut("hint"), cached: recent, lastChecked: nil, now: now), .signedOut("hint"))
+        XCTAssertEqual(ProviderStatus.retryDate(after: .rateLimited(until: now.addingTimeInterval(900)), now: now), now.addingTimeInterval(900),
+                       "The wait still comes from the failure")
+        XCTAssertNil(ProviderStatus.retryDate(after: .unreachable, now: now))
+        XCTAssertEqual(ProviderError.rateLimited(until: nil).logClass, "rateLimited")
     }
 
     func testRelayProviderCarriesReadingsAndStates() {
