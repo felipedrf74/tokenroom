@@ -40,13 +40,10 @@ struct ReadingCache: Codable, Equatable, Sendable {
     /// A device-local random cache generation, never an account identifier or relay field.
     /// iPhone widgets use it to reject caches written before an Apple Account change.
     var accountGeneration: String? = nil
-    /// Complete cloud membership, captured only after the whole read succeeds.
     var relaySnapshot: RelaySnapshot? = nil
     /// The paired phone's own authoritative membership, including an empty provider list.
     /// Unlike merged rows, this retains a phone reading even when a Mac wins that row.
     var localSource: SourceSnapshot? = nil
-    /// Last complete successful cloud read, distinct from a presentation/cache save. A failed
-    /// app refresh must not postpone a widget's own attempt for another fifteen minutes.
     var cloudReadAt: Date? = nil
 
     func needsWidgetRefresh(at now: Date, maxAge: TimeInterval) -> Bool {
@@ -77,6 +74,11 @@ struct ReadingCache: Codable, Equatable, Sendable {
     struct RelaySnapshot: Codable, Equatable, Sendable {
         var checkedAt: Date
         var sources: [SourceSnapshot]
+        var removed: [String: Date]? = nil
+
+        func removals(after date: Date, now: Date) -> [String: Date] {
+            (removed ?? [:]).filter { ReadingFreshness.ordering($0.value, now: now) > ReadingFreshness.ordering(date, now: now) }
+        }
     }
 
     /// Nil leaves the established legacy-cache policy in place when exact provenance is absent.
@@ -112,24 +114,39 @@ struct ReadingCache: Codable, Equatable, Sendable {
         }
 
         let relay: RelaySnapshot?
+        var other: RelaySnapshot?
         switch (relaySnapshot, incoming.relaySnapshot) {
         case (nil, let candidate): relay = candidate
         case (let retained, nil): relay = retained
         case (let retained?, let candidate?):
-            relay = order(candidate.checkedAt) >= order(retained.checkedAt) ? candidate : retained
+            let candidateWins = order(candidate.checkedAt) >= order(retained.checkedAt)
+            relay = candidateWins ? candidate : retained
+            other = candidateWins ? retained : candidate
         }
-        guard let relay, var local, local.envelope.isReadable else { return nil }
+        guard let relay else { return nil }
+        if let local, !local.envelope.isReadable { return nil }
 
         var sources = Dictionary(relay.sources.filter { $0.envelope.isReadable }.map { ($0.id, $0) },
                                  uniquingKeysWith: { first, second in
             order(second.envelope.checkedAt) > order(first.envelope.checkedAt) ? second : first
         })
-        if let published = sources[local.id], order(published.envelope.checkedAt) > order(local.envelope.checkedAt) {
-            // A newer published snapshot can remove a provider too. Keep the paired source's
-            // local scope and wording, but use the source's actual published membership.
-            local.envelope = published.envelope
+        for candidate in other?.sources ?? [] where candidate.envelope.isReadable {
+            guard let kept = sources[candidate.id], order(candidate.envelope.checkedAt) > order(kept.envelope.checkedAt) else { continue }
+            sources[candidate.id] = candidate
         }
-        sources[local.id] = local
+        var removed = relay.removals(after: relay.checkedAt, now: now)
+        for (id, date) in other?.removals(after: relay.checkedAt, now: now) ?? [:] where removed[id].map({ order(date) > order($0) }) ?? true {
+            removed[id] = date
+        }
+        if let local { removed[local.id] = nil }
+        for id in removed.keys { sources[id] = nil }
+        if var paired = local {
+            if let published = sources[paired.id], order(published.envelope.checkedAt) > order(paired.envelope.checkedAt) {
+                paired.envelope = published.envelope
+            }
+            sources[paired.id] = paired
+            local = paired
+        }
 
         // Histories are already stored with displayed items. Carry only ones belonging to the
         // exact winning collector; raw snapshots need no duplicate week of hourly samples.
@@ -150,7 +167,9 @@ struct ReadingCache: Codable, Equatable, Sendable {
 
         var result = incomingIsNewer ? incoming : self
         result.savedAt = max(result.savedAt, relay.checkedAt)
-        result.relaySnapshot = relay
+        result.relaySnapshot = RelaySnapshot(checkedAt: relay.checkedAt, sources: relay.sources.compactMap { source in
+            source.id == local?.id ? source : removed[source.id] == nil ? sources[source.id] ?? source : nil
+        }, removed: removed.isEmpty ? nil : removed)
         result.localSource = local
         result.items = ReadingAssembler.assemble(sources: sources.values.sorted { $0.id < $1.id }.map(\.source),
                                                histories: histories, now: result.savedAt).connected

@@ -1,10 +1,13 @@
 import Foundation
 
 extension RelayProvider {
-    /// A widget's failed check keeps the last measurement, but cannot keep calling it live.
     /// Successful-check timestamps stay intact, so a fresh cache cannot make old data newer.
     func retainingAfterFailure(_ error: ProviderError, at now: Date) -> RelayProvider {
         guard (checkedAt ?? fetchedAt).map({ $0 <= now }) != false else { return self }
+        if error.isTransient, isLive, let checked = checkedAt ?? fetchedAt,
+           now.timeIntervalSince(checked) <= ReadingFreshness.staleAfter {
+            return self
+        }
         var result = self
         switch error {
         case .signedOut(let message):

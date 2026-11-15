@@ -24,6 +24,13 @@ final class RelayZoneReaderTests: XCTestCase {
             return try retries.removeFirst().get()
         }
     }
+    private final class SavedStore: @unchecked Sendable {
+        private let lock = NSLock()
+        private var saved: Reader.Saved?
+        var value: Reader.Saved? { lock.withLock { saved } }
+        func set(_ value: Reader.Saved?) { lock.withLock { saved = value } }
+    }
+
     private func reader(_ pages: Pages, retryingRecords: Bool = false) -> Reader {
         let retry: (@Sendable ([String]) async throws -> RetryResults)?
         if retryingRecords { retry = { try await pages.retry($0) } }
@@ -215,23 +222,23 @@ final class RelayZoneReaderTests: XCTestCase {
         XCTAssertEqual(tokens, [nil, 1, 2])
     }
 
-    func testPageOperationFailureRollsBackMixedChangesAndNewQuarantine() async throws {
+    func testPageOperationFailureKeepsTheFinishedMixedPageAndItsQuarantine() async throws {
         let pages = Pages([
             .success(.init(modifications: ["kept": .success(10)], token: 1)),
             .success(.init(modifications: ["blocked": .failure(Failure.rejectedRecord), "partial": .success(20)], token: 2, moreComing: true)),
             .failure(Failure.unavailable),
             .success(.init(modifications: [:], token: 3)),
-        ])
+        ], retries: [.success(["blocked": .success(30)])])
         let reader = reader(pages, retryingRecords: true)
         _ = try await reader.contents()
         do { _ = try await reader.contents(); XCTFail("The failed page operation must remain visible") }
         catch { XCTAssertEqual(error as? Failure, .unavailable) }
-        let retained = try await reader.contents()
-        XCTAssertEqual(retained, ["kept": 10])
+        let recovered = try await reader.contents()
+        XCTAssertEqual(recovered, ["kept": 10, "partial": 20, "blocked": 30])
         let tokens = await pages.tokens
         let retries = await pages.retriedIDs
-        XCTAssertEqual(tokens, [nil, 1, 2, 1])
-        XCTAssertTrue(retries.isEmpty, "A rolled-back page must not leave a new ID quarantined")
+        XCTAssertEqual(tokens, [nil, 1, 2, 2], "The next read continues after the finished page")
+        XCTAssertEqual(retries, [["blocked"]], "The finished page's failed record is retried by ID")
     }
 
     func testRetryOperationFailureRollsBackUnrelatedDeltaAndKeepsQuarantine() async throws {
@@ -281,7 +288,7 @@ final class RelayZoneReaderTests: XCTestCase {
         }
     }
 
-    func testPageFailureRollsBackEveryPageInThatRead() async throws {
+    func testPageFailureKeepsFinishedPagesAndContinuesFromTheirCursor() async throws {
         let pages = Pages([
             .success(.init(modifications: ["kept": .success(10)], token: 1)),
             .success(.init(modifications: ["partial": .success(20)], token: 2, moreComing: true)),
@@ -293,9 +300,76 @@ final class RelayZoneReaderTests: XCTestCase {
         do { _ = try await reader.contents(); XCTFail("The second page failed") } catch {}
         let recovered = try await reader.contents()
         let tokens = await pages.tokens
-        XCTAssertEqual(recovered, ["kept": 10])
+        XCTAssertEqual(recovered, ["kept": 10, "partial": 20])
         XCTAssertEqual(tokens[2], 2)
-        XCTAssertEqual(tokens[3], 1)
+        XCTAssertEqual(tokens[3], 2, "Continues after the finished page rather than from the last complete read")
+    }
+
+    func testReadsCutShortAccumulateProgressUntilTheZoneIsRead() async throws {
+        let pages = Pages([
+            .success(.init(modifications: ["a": .success(1)], token: 1, moreComing: true)),
+            .failure(Failure.unavailable),
+            .success(.init(modifications: ["b": .success(2)], token: 2, moreComing: true)),
+            .failure(Failure.unavailable),
+            .success(.init(modifications: ["c": .success(3)], token: 3)),
+        ])
+        let saved = SavedStore()
+        let reader = reader(pages)
+        await reader.restore(nil, scope: nil, persist: { saved.set($0) })
+        for _ in 0..<2 {
+            do { _ = try await reader.contents(); XCTFail("Cut short") } catch {}
+        }
+        XCTAssertEqual(saved.value?.records, ["a": 1, "b": 2])
+        XCTAssertEqual(saved.value?.token, 2)
+
+        let next = self.reader(pages)
+        await next.restore(saved.value, scope: nil, persist: { saved.set($0) })
+        let complete = try await next.contents()
+        let tokens = await pages.tokens
+        XCTAssertEqual(complete, ["a": 1, "b": 2, "c": 3])
+        XCTAssertEqual(tokens, [nil, 1, 1, 2, 2])
+        XCTAssertEqual(saved.value?.token, 3)
+        XCTAssertNil(saved.value?.pass)
+
+        await next.invalidate()
+        XCTAssertNil(saved.value, "An account change forgets the saved copy too")
+    }
+
+    func testRestartedPassKeepsRecordsUntilItCompletesThenDropsUnseenOnes() async throws {
+        let pages = Pages([
+            .success(.init(modifications: ["gone": .success(1), "stays": .success(2)], token: 1)),
+            .failure(Failure.expired),
+            .success(.init(modifications: ["stays": .success(20)], token: 10, moreComing: true)),
+            .failure(Failure.unavailable),
+            .success(.init(modifications: ["new": .success(30)], token: 11)),
+        ])
+        let saved = SavedStore()
+        let reader = reader(pages)
+        await reader.restore(nil, scope: nil, persist: { saved.set($0) })
+        _ = try await reader.contents()
+        do { _ = try await reader.contents(); XCTFail("Cut short") } catch {}
+        XCTAssertEqual(saved.value?.records, ["gone": 1, "stays": 20], "Held records stay while the pass is under way")
+        XCTAssertEqual(saved.value?.pass, ["stays"])
+
+        let next = self.reader(pages)
+        await next.restore(saved.value, scope: nil, persist: { saved.set($0) })
+        let complete = try await next.contents()
+        XCTAssertEqual(complete, ["stays": 20, "new": 30], "The completed pass drops what it didn't see")
+        XCTAssertNil(saved.value?.pass)
+    }
+
+    func testRestoreNeverReplacesProgressAlreadyHeld() async throws {
+        let pages = Pages([
+            .success(.init(modifications: ["current": .success(1)], token: 1)),
+            .success(.init(modifications: [:], token: 2)),
+        ])
+        let reader = reader(pages)
+        _ = try await reader.contents()
+        await reader.restore(.init(records: ["older": 9], quarantined: [], token: 99, pass: nil), scope: nil, persist: { _ in })
+        let held = try await reader.contents()
+        let tokens = await pages.tokens
+        XCTAssertEqual(held, ["current": 1])
+        XCTAssertEqual(tokens[1], 1, "What this process already read wins over an older saved copy")
     }
 
     func testExpiredCursorRebuildsWithoutResurrectingDeletedRecords() async throws {

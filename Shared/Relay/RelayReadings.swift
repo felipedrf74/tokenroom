@@ -34,15 +34,31 @@ enum RelayReadings {
         }
     }
 
-    static func read(now: Date = .now) async -> Outcome {
+    static let zoneShare: TimeInterval = 7
+
+    static func read(now: Date = .now, known: ReadingCache? = nil,
+                     isExtension: Bool = Bundle.main.bundleURL.pathExtension == "appex") async -> Outcome {
         guard let container = RelayAvailability.containerIdentifier else { return .unavailable }
         let relay = CloudRelay.shared(containerIdentifier: container)
         guard let status = try? await relay.accountStatus() else { return .failed }
         if status == .noAccount { return .noAccount }
         guard status == .available else { return .failed }
-        guard let contents = try? await relay.contents() else { return .failed }
-        // Complete membership is authoritative as of completion, not the time the read began.
-        return .readings(cache(from: contents, now: .now))
+        let snapshot = known.flatMap { $0.isSample ? nil : $0.relaySnapshot }
+        let names = RelaySourceRefresh.names(in: snapshot)
+        async let byName: CloudRelay.SourceRead? = names.isEmpty ? nil : try? await relay.sources(named: names)
+        if !isExtension || names.isEmpty {
+            let complete: CloudRelay.Contents? = if isExtension {
+                try? await relay.contents()
+            } else {
+                await TimeLimit.run(zoneShare, otherwise: Optional<CloudRelay.Contents>.none) { try? await relay.contents() }
+            }
+            if let complete { return .readings(cache(from: complete, now: .now)) }
+        }
+        guard let snapshot, let read = await byName else { return .failed }
+        let contents = RelaySourceRefresh.contents(from: snapshot, histories: known?.historiesBySource ?? [:], read: read, now: .now)
+        let readAt = Date.now
+        return .readings(cache(from: contents, now: readAt, membershipAt: snapshot.checkedAt,
+                               removed: RelaySourceRefresh.removals(of: snapshot, after: read, now: readAt)))
     }
 
     /// Nil when this build has no iCloud container, there's no account, or iCloud didn't answer.
@@ -53,19 +69,22 @@ enum RelayReadings {
         return nil
     }
 
-    static func cache(from contents: CloudRelay.Contents, now: Date = .now) -> ReadingCache {
+    static func cache(from contents: CloudRelay.Contents, now: Date = .now, membershipAt: Date? = nil,
+                      removed: [String: Date]? = nil) -> ReadingCache {
         let sources = contents.sources.compactMap { source in
             source.envelope.map { RelayMerge.Source(id: source.id, label: source.label, envelope: $0, kind: CollectorKind(recordKind: source.kind)) }
         }
         let output = ReadingAssembler.assemble(sources: sources, histories: contents.histories, now: now)
         return ReadingCache(savedAt: now, isSample: false, items: output.connected,
-                            relaySnapshot: .init(checkedAt: now, sources: sources.map(ReadingCache.SourceSnapshot.init)))
+                            relaySnapshot: .init(checkedAt: membershipAt ?? now, sources: sources.map(ReadingCache.SourceSnapshot.init),
+                                                 removed: removed))
     }
 
     /// The cache, or a fresh read when it's older than `maxAge`, within `budget` seconds.
     static func cache(at url: URL?, maxAge: TimeInterval, budget: TimeInterval, now: Date = .now) async -> ReadingCache? {
-        await cache(at: url, maxAge: maxAge, budget: budget, now: now,
-                    defaults: accountDefaults, readOutcome: { await read(now: now) })
+        let known = cached(at: url)
+        return await cache(at: url, maxAge: maxAge, budget: budget, now: now,
+                           defaults: accountDefaults, readOutcome: { await read(now: now, known: known) })
     }
 
     /// Production and regression source share the outcome path, including durable sign-out.

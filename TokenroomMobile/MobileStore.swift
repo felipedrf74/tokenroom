@@ -8,6 +8,7 @@ import os
 struct MobileRelayReads: Sendable {
     var accountStatus: @Sendable () async throws -> CKAccountStatus
     var contents: @Sendable () async throws -> CloudRelay.Contents
+    var sources: (@Sendable ([String]) async throws -> CloudRelay.SourceRead)? = nil
 }
 
 /// A blocked Security call keeps one physical discovery in flight. Callers can time out while
@@ -328,7 +329,8 @@ final class MobileStore {
             sourceID = "src-\(UUID().uuidString.lowercased())"
             defaults.set(sourceID, forKey: Keys.sourceID)
         }
-        relay = containerIdentifier.map { CloudRelay(containerIdentifier: $0, zoneDeletion: RelayZoneDeletion(defaults: defaults)) }
+        relay = containerIdentifier.map { CloudRelay(containerIdentifier: $0, zoneDeletion: RelayZoneDeletion(defaults: defaults),
+                                                     zoneArchive: RelayZoneArchive.defaultURL(containerIdentifier: $0).map(RelayZoneArchive.init)) }
         relayPhase = relay == nil && relayReads == nil ? .unavailable : .idle
         history = HistoryStore(directory: directory)
         self.directory = directory
@@ -505,7 +507,8 @@ final class MobileStore {
 
     private func readRelay(now: Date, clock: @escaping @Sendable () -> Date) async {
         guard let reads = relayReads ?? relay.map({ relay in
-            MobileRelayReads(accountStatus: { try await relay.accountStatus() }, contents: { try await relay.contents() })
+            MobileRelayReads(accountStatus: { try await relay.accountStatus() }, contents: { try await relay.contents() },
+                             sources: { try await relay.sources(named: $0) })
         }) else {
             relayPhase = .unavailable
             return
@@ -515,6 +518,8 @@ final class MobileStore {
         if relaySources.isEmpty {
             relayPhase = .loading
         }
+        var byName: Task<CloudRelay.SourceRead?, Never>?
+        defer { byName?.cancel() }
         do {
             let account = try await Self.iCloud { try await reads.accountStatus() }
             guard relayGeneration == generation, !Task.isCancelled else { return }
@@ -531,6 +536,10 @@ final class MobileStore {
                 SyncHealthLog.record(.cloudRead, .unavailable, in: defaults)
                 relayPhase = .failed(RelayErrorPolicy.unusableAccount(account) ?? "Couldn't reach iCloud.")
                 return
+            }
+            let names = RelaySourceRefresh.names(in: relaySnapshot)
+            if let read = reads.sources, !names.isEmpty {
+                byName = Task { try? await Self.iCloud { try await read(names) } }
             }
             let readStartedAt = Date()
             let contents = try await Self.iCloud { try await reads.contents() }
@@ -562,9 +571,39 @@ final class MobileStore {
             guard relayGeneration == generation, !Task.isCancelled else { return }
             SyncHealthLog.record(.cloudRead, error is ICloudTimeout ? .timedOut : .failed, in: defaults)
             logger.error("relay read failed: \(String(describing: error), privacy: .public)")
+            if error is ICloudTimeout, let read = await byName?.value,
+               relayGeneration == generation, !Task.isCancelled, adoptSourcesByName(read, now: clock()) {
+                SyncHealthLog.record(.cloudRead, .ok, in: defaults)
+                scheduleRelayRecovery()
+                return
+            }
             handleRelayError(error, now: clock())
             scheduleRelayRecovery()
         }
+    }
+
+    private func adoptSourcesByName(_ read: CloudRelay.SourceRead, now: Date) -> Bool {
+        guard let snapshot = relaySnapshot else { return false }
+        let contents = RelaySourceRefresh.contents(from: snapshot, histories: relayHistories, read: read, now: now)
+        if let own = contents.sources.first(where: { $0.id == sourceID }) {
+            ownRecord = own.envelope
+        } else if read.missing.contains(sourceID) {
+            ownRecord = nil
+        }
+        relaySources = contents.sources.filter { $0.id != sourceID }
+        relayHistories = contents.histories
+        relaySnapshot = ReadingCache.RelaySnapshot(checkedAt: snapshot.checkedAt, sources: contents.sources.compactMap { source in
+            source.envelope.map { ReadingCache.SourceSnapshot(RelayMerge.Source(
+                id: source.id, label: source.label, envelope: $0, kind: CollectorKind(recordKind: source.kind)
+            )) }
+        }, removed: RelaySourceRefresh.removals(of: snapshot, after: read, now: now))
+        cloudReadAt = now
+        relayRetryAt = nil
+        relayConnectionFailed = false
+        relayReadOnce = true
+        if case .failed = relayPhase { relayPhase = .ready }
+        if relayPhase == .loading { relayPhase = .ready }
+        return true
     }
 
     /// An Apple Account change must remove the previous account's readings immediately, even
@@ -963,7 +1002,7 @@ final class MobileStore {
             history.record(raw.applyingBudget(reference: budgetReference(for: provider)), now: now)
         case .failure(let error):
             let next = ProviderStatus.failure(error, cached: localStatuses[provider]?.snapshot, lastChecked: localCheckedAt[provider], now: now)
-            if case .rateLimited(let until, _) = next {
+            if let until = ProviderStatus.retryDate(after: error, now: now) {
                 rateLimitedUntil[provider] = until
             }
             localStatuses[provider] = next
@@ -1016,13 +1055,16 @@ final class MobileStore {
     @discardableResult
     private func reconcileCachedRelay(now: Date) -> Bool {
         guard let cache = PhoneCacheAccess.load(at: cacheURL, defaults: defaults), !cache.isSample,
-              let snapshot = cache.relaySnapshot,
-              !relayReadOnce || cloudReadAt.map({
-                  ReadingFreshness.ownOrdering(snapshot.checkedAt, now: now) > ReadingFreshness.ownOrdering($0, now: now)
-              }) ?? true
+              let snapshot = cache.relaySnapshot
         else { return false }
+        guard !relayReadOnce || (relaySnapshot?.checkedAt ?? cloudReadAt).map({
+            ReadingFreshness.ownOrdering(snapshot.checkedAt, now: now) > ReadingFreshness.ownOrdering($0, now: now)
+        }) ?? true else {
+            return adoptNewerCopies(from: snapshot, cloudReadAt: cache.cloudReadAt, now: now)
+        }
         relaySnapshot = snapshot
-        cloudReadAt = snapshot.checkedAt
+        cloudReadAt = [cloudReadAt, cache.cloudReadAt ?? snapshot.checkedAt].compactMap(\.self)
+            .max { ReadingFreshness.ownOrdering($0, now: now) < ReadingFreshness.ownOrdering($1, now: now) }
         relayReadOnce = true
         ownRecord = snapshot.sources.first { $0.id == sourceID }?.envelope
         relaySources = snapshot.sources.filter { $0.id != sourceID }.map { source in
@@ -1036,6 +1078,49 @@ final class MobileStore {
             for (window, history) in item.history {
                 relayHistories[sourceID, default: RelayHistory(series: [:])].series[RelayHistory.key(provider: item.id, window: window)] = history
             }
+        }
+        return true
+    }
+
+    private func adoptNewerCopies(from snapshot: ReadingCache.RelaySnapshot, cloudReadAt cached: Date?, now: Date) -> Bool {
+        let order = { (date: Date) in ReadingFreshness.ordering(date, now: now) }
+        var changed = false
+        for copy in snapshot.sources where copy.envelope.isReadable {
+            if copy.id == sourceID {
+                if let own = ownRecord, order(copy.envelope.checkedAt) > order(own.checkedAt) {
+                    ownRecord = copy.envelope
+                    changed = true
+                }
+                continue
+            }
+            guard let index = relaySources.firstIndex(where: { $0.id == copy.id }),
+                  let kept = relaySources[index].envelope, order(copy.envelope.checkedAt) > order(kept.checkedAt)
+            else { continue }
+            relaySources[index].envelope = copy.envelope
+            changed = true
+        }
+        let membershipAt = relaySnapshot?.checkedAt ?? snapshot.checkedAt
+        var removed = relaySnapshot?.removals(after: membershipAt, now: now) ?? [:]
+        for (id, date) in snapshot.removals(after: membershipAt, now: now) where id != sourceID {
+            guard removed[id].map({ order(date) > order($0) }) ?? true else { continue }
+            removed[id] = date
+            if relaySources.contains(where: { $0.id == id }) {
+                relaySources.removeAll { $0.id == id }
+                relayHistories[id] = nil
+                changed = true
+            }
+        }
+        guard changed else { return false }
+        if var current = relaySnapshot {
+            current.sources = current.sources.compactMap { known in
+                guard removed[known.id] == nil else { return nil }
+                return snapshot.sources.first { $0.id == known.id && order($0.envelope.checkedAt) > order(known.envelope.checkedAt) } ?? known
+            }
+            current.removed = removed.isEmpty ? nil : removed
+            relaySnapshot = current
+        }
+        if let cached, cloudReadAt.map({ ReadingFreshness.ownOrdering(cached, now: now) > ReadingFreshness.ownOrdering($0, now: now) }) ?? true {
+            cloudReadAt = cached
         }
         return true
     }

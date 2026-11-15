@@ -30,6 +30,10 @@ description: >-
 
 Community menu-bar extra. Glance first. Apple-native, not a web page. Bundle ID `app.tokenroom.mac`.
 
+## Usage ingestion (15 November 2026, source changes)
+
+`docs/usage-ingestion-council-20261115.md` is the decision. Pruning old alert records is upkeep: `QuotaStore.startMaintenance` runs it after a sharing round, one at a time and never awaited, cancelled by sleep; `RelayPublisher.pruneEventsIfDue` gives it 120 s and waits `pruneRetry` (an hour) after a failure without touching sharing's retry. Its zone read keeps the pages it finished in `RelayZoneArchive`, so a first read longer than any one attempt completes over several. A failed check logs `refresh failed <provider> <class>` (`ProviderError.logClass`, never the message). A transient failure within an hour of the last success keeps the reading live (`ProviderStatus.failure`); `rateLimitedUntil` comes from the error.
+
 ## Usage recovery (14 November 2026, source changes)
 
 A wake or manual refresh waits for a cancelled check/follow-up to release its state, then starts a fresh check. A signed-out provider cannot suppress the one 45-second offline recovery attempt, and one networked provider can recover by itself. HTTP errors, timeouts without offline evidence, provider spacing and Retry-After remain separate.

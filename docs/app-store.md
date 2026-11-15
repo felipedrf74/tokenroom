@@ -2,9 +2,17 @@
 
 A draft for App Store Connect. Provider names appear only in the description, as facts, never in the name, subtitle, or keywords. Tokenroom isn't affiliated with any provider.
 
+## What's New — 1.3.4
+
+Prepared 15 November 2026 with build 1.3.4 (1), with automatic release after approval to all users. Version 1.3.3 was publicly released on 15 November 2026.
+
+Usage stays current on iPhone, widgets and Apple Watch even after a lot of history and alerts have built up in iCloud. Tokenroom now reads the newest readings from each of your devices directly, and a longer sync picks up where it left off instead of starting over.
+
+A brief rate limit or lost connection no longer marks a reading from the last hour as stale.
+
 ## What's New — 1.3.3
 
-Submitted 14 November 2026 at 16:59 UTC with build 1.3.3 (1): Waiting for Review, with automatic release after approval to all users. Approval and public availability remain pending. Version 1.3.2 was publicly released on 13 November 2026. [The delivery record](release-delivery-20261114.md) retains the signed export, upload and accepted submission receipts.
+Submitted 14 November 2026 at 16:59 UTC with build 1.3.3 (1), with automatic release after approval to all users; Apple's public US/PT listings show it released on 15 November 2026 at 06:37 UTC. Version 1.3.2 was publicly released on 13 November 2026. [The delivery record](release-delivery-20261114.md) retains the signed export, upload and accepted submission receipts.
 
 Usage updates recover more reliably after a lost connection or temporary Keychain problems. The iPhone preserves newer readings received by its widgets, and a temporarily unavailable credential no longer removes its provider or stalls later updates.
 
@@ -96,7 +104,7 @@ Usage readings now show when each provider was last checked and flag stale data.
 | Content rights | Yes: shows third-party content (provider names, model and feed titles) it has the right to use |
 | EU trader status (DSA) | Non-trader |
 | Tracking | None |
-| Release | 1.3.3 (1) submitted 14 November 2026, Waiting for Review with automatic release to all users; 1.3.2 publicly released 13 November 2026; 1.3.1 remained an unsubmitted draft and was superseded; 1.3.0 publicly released 7 November 2026; 1.2.2 publicly released 31 October 2026; 1.2.1 publicly released 30 October 2026; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
+| Release | 1.3.4 (1) prepared 15 November 2026 with automatic release to all users; 1.3.3 (1) publicly released 15 November 2026; 1.3.2 publicly released 13 November 2026; 1.3.1 remained an unsubmitted draft and was superseded; 1.3.0 publicly released 7 November 2026; 1.2.2 publicly released 31 October 2026; 1.2.1 publicly released 30 October 2026; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
 
 ## App privacy
 
