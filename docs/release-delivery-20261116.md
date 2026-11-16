@@ -69,6 +69,27 @@ Done in the maintainer's own App Store Connect session, which he signed in to hi
 - The direct read running on a signed iPhone, widget or Watch. It ran against Production
   from the Mac only.
 
+## Which iCloud each device used (16 November, 23:25 UTC)
+
+Checked after the delivery, with the probe on both Macs and the iPhone's App Group
+preferences. No account was read or compared by name; this is what each device's own
+Tokenroom saw.
+
+| Device | iCloud for Tokenroom | Evidence |
+| --- | --- | --- |
+| MacBook Pro (2.6.3) | Signed in, sending | Account available; a send every few minutes, none failed; its zone holds this Mac and one iPhone record last written on 15 November at 11:09 UTC by 1.3.2 |
+| Maquinho Pro (2.6.3) | No iCloud account | The probe answers "no account"; every send in 30 minutes failed with CloudKit's "Not Authenticated"; Claude is signed out there too |
+| iPhone (1.3.3) | Signed in, to a database with no Mac in it | A successful cloud read at 23:22:18 UTC built a cache with only the four plans it reads itself, 96 seconds after the MacBook Pro's send; nothing it sent that day is in the MacBook Pro's zone |
+
+Version 1.3.3 reads the whole zone, so a read that succeeds returns every collector in that
+database. The MacBook Pro's record was there and fresh, so the iPhone wasn't reading that
+database. The three devices don't share one iCloud account for Tokenroom, and until they do
+no version makes the iPhone or the Watch show a Mac's readings.
+
+What only the owner can do: sign the iPhone and the MacBook Pro in to the same Apple Account
+(Settings, at the top, on the iPhone; System Settings, at the top, on the Mac), and sign
+Maquinho Pro in to it too, with iCloud on for it.
+
 ## Revert
 
 The previous public Mac release and both rollback apps remain. Put the kept app back to
