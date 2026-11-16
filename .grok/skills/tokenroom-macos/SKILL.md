@@ -30,6 +30,10 @@ description: >-
 
 Community menu-bar extra. Glance first. Apple-native, not a web page. Bundle ID `app.tokenroom.mac`.
 
+## Direct read (16 November 2026, source changes)
+
+`docs/usage-direct-read-20261116.md` is the measurement and the decision. The Mac no longer reads the zone: pruning lists alert records with a query (`CloudRelay.pruneEvents`, `alertKey != ""`) and falls back to the zone read only when the query is refused. `Tokenroom.app/Contents/MacOS/Tokenroom -TokenroomSyncProbe YES` (`SyncProbe`, any build signed for iCloud) times each kind of read against the signed-in account and exits: by name, the queries, the whole zone page by page, and `CloudRelay.contents`. It builds the inert store the test host uses, so it starts no collector, reads no login and writes nothing, and it prints counts, states and ages only. Run it before changing how readers read.
+
 ## Usage ingestion (15 November 2026, source changes)
 
 `docs/usage-ingestion-council-20261115.md` is the decision. Pruning old alert records is upkeep: `QuotaStore.startMaintenance` runs it after a sharing round, one at a time and never awaited, cancelled by sleep; `RelayPublisher.pruneEventsIfDue` gives it 120 s and waits `pruneRetry` (an hour) after a failure without touching sharing's retry. Its zone read keeps the pages it finished in `RelayZoneArchive`, so a first read longer than any one attempt completes over several. A failed check logs `refresh failed <provider> <class>` (`ProviderError.logClass`, never the message). A transient failure within an hour of the last success keeps the reading live (`ProviderStatus.failure`); `rateLimitedUntil` comes from the error.

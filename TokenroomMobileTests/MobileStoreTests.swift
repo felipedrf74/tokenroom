@@ -232,6 +232,40 @@ final class MobileStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testKnownCollectorsReadByNameStandWhenTheCompleteReadFailsWithoutAWait() async throws {
+        for (failure, adopts) in [(CKError(.partialFailure), true),
+                                  (CKError(.requestRateLimited, userInfo: [CKErrorRetryAfterKey: 30.0]), false),
+                                  (CKError(.notAuthenticated), false)] {
+            let defaults = makeDefaults()
+            let folder = try makeFolder()
+            let fails = Mutex(false)
+            let initial = cloudContents(checked: now)
+            let later = now.addingTimeInterval(10 * 60)
+            var newer = cloudContents(checked: later)
+            newer.sources[0].envelope?.providers[0].windows[0].used = 77
+            let byName = CloudRelay.SourceRead(sources: newer.sources, missing: [])
+            var effects = MobilePlatformEffects.inert
+            effects.applicationIsBackground = { true }
+            let store = MobileStore(defaults: defaults, containerIdentifier: nil, keys: MobileFixtureKeychain().keys,
+                directory: folder, connectOnIPhone: false, platformEffects: effects, launchDefaults: defaults,
+                sessions: nil, relayReads: .init(accountStatus: { .available }, contents: {
+                    if fails.withLock({ $0 }) { throw failure }
+                    return initial
+                }, sources: { _ in byName }))
+            await store.refresh(force: true, includeKeys: false, now: now)
+            fails.withLock { $0 = true }
+            await store.refresh(force: true, includeKeys: false, now: later)
+            let used = store.reading(id: "claude")?.provider.windows.first?.used
+            if adopts {
+                XCTAssertEqual(used, 77, "iCloud answered for every known collector")
+                if case .failed = store.relayPhase { XCTFail("Readings read by name are not a connection failure") }
+            } else {
+                XCTAssertNotEqual(used, 77, "A wait iCloud asked for, or a sign-out, is never read around: \(failure.code.rawValue)")
+            }
+        }
+    }
+
+    @MainActor
     func testCollectorAWidgetConfirmedGoneStaysGoneWhenTheAppsReadFails() async throws {
         let defaults = makeDefaults()
         let folder = try makeFolder()

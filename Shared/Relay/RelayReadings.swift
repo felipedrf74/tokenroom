@@ -35,6 +35,7 @@ enum RelayReadings {
     }
 
     static let zoneShare: TimeInterval = 7
+    static let extensionShare: TimeInterval = 3
 
     static func read(now: Date = .now, known: ReadingCache? = nil,
                      isExtension: Bool = Bundle.main.bundleURL.pathExtension == "appex") async -> Outcome {
@@ -46,14 +47,13 @@ enum RelayReadings {
         let snapshot = known.flatMap { $0.isSample ? nil : $0.relaySnapshot }
         let names = RelaySourceRefresh.names(in: snapshot)
         async let byName: CloudRelay.SourceRead? = names.isEmpty ? nil : try? await relay.sources(named: names)
-        if !isExtension || names.isEmpty {
-            let complete: CloudRelay.Contents? = if isExtension {
-                try? await relay.contents()
-            } else {
-                await TimeLimit.run(zoneShare, otherwise: Optional<CloudRelay.Contents>.none) { try? await relay.contents() }
-            }
-            if let complete { return .readings(cache(from: complete, now: .now)) }
+        let share = names.isEmpty ? nil : isExtension ? extensionShare : zoneShare
+        let complete: CloudRelay.Contents? = if let share {
+            await TimeLimit.run(share, otherwise: Optional<CloudRelay.Contents>.none) { try? await relay.contents(known: names) }
+        } else {
+            try? await relay.contents(known: names)
         }
+        if let complete { return .readings(cache(from: complete, now: .now)) }
         guard let snapshot, let read = await byName else { return .failed }
         let contents = RelaySourceRefresh.contents(from: snapshot, histories: known?.historiesBySource ?? [:], read: read, now: .now)
         let readAt = Date.now

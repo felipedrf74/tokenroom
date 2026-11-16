@@ -335,6 +335,27 @@ final class RelayZoneReaderTests: XCTestCase {
         XCTAssertNil(saved.value, "An account change forgets the saved copy too")
     }
 
+    func testPagesWithoutChangesStillAdvanceAReadCutShort() async throws {
+        let pages = Pages([
+            .success(.init(modifications: [:], token: 1, moreComing: true)),
+            .success(.init(modifications: [:], token: 2, moreComing: true)),
+            .failure(Failure.unavailable),
+            .success(.init(modifications: ["last": .success(9)], token: 3)),
+        ])
+        let saved = SavedStore()
+        let reader = reader(pages)
+        await reader.restore(nil, scope: nil, persist: { saved.set($0) })
+        do { _ = try await reader.contents(); XCTFail("Cut short") } catch {}
+        XCTAssertEqual(saved.value?.token, 2, "A long run of empty pages must not start over on every attempt")
+
+        let next = self.reader(pages)
+        await next.restore(saved.value, scope: nil, persist: { saved.set($0) })
+        let complete = try await next.contents()
+        let tokens = await pages.tokens
+        XCTAssertEqual(complete, ["last": 9])
+        XCTAssertEqual(tokens, [nil, 1, 2, 2])
+    }
+
     func testRestartedPassKeepsRecordsUntilItCompletesThenDropsUnseenOnes() async throws {
         let pages = Pages([
             .success(.init(modifications: ["gone": .success(1), "stays": .success(2)], token: 1)),

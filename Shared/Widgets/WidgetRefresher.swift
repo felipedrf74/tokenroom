@@ -12,6 +12,7 @@ enum WidgetRefresher {
     /// iCloud and each key provider get a second under the widget's own limit, so a slow one
     /// doesn't cost the rest and there's time to put what came back together.
     static let readBudget = budget - 1
+    static let completeShare: TimeInterval = 3
     static let localLabel = "This iPhone"
 
     private static let accountObserver = RelayAccountObserver(name: .CKAccountChanged) {
@@ -199,13 +200,21 @@ enum WidgetRefresher {
                 let status = try await relay.accountStatus()
                 if status == .noAccount { return RelayResult(signedOut: true) }
                 guard status == .available else { return RelayResult(retryAt: .now) }
-                if let snapshot, !names.isEmpty {
-                    let read = try await relay.sources(named: names)
-                    return RelayResult(contents: RelaySourceRefresh.contents(from: snapshot, histories: histories, read: read, now: now),
-                                       membershipAt: snapshot.checkedAt,
-                                       removed: RelaySourceRefresh.removals(of: snapshot, after: read, now: now))
+                guard let snapshot, !names.isEmpty else {
+                    return RelayResult(contents: try await relay.contents(known: names))
                 }
-                return RelayResult(contents: try await relay.contents())
+                async let byName: Result<CloudRelay.SourceRead, any Error> = {
+                    do { return .success(try await relay.sources(named: names)) } catch { return .failure(error) }
+                }()
+                if let complete = await TimeLimit.run(completeShare, otherwise: Optional<CloudRelay.Contents>.none, {
+                    try? await relay.contents(known: names)
+                }) {
+                    return RelayResult(contents: complete)
+                }
+                let read = try await byName.get()
+                return RelayResult(contents: RelaySourceRefresh.contents(from: snapshot, histories: histories, read: read, now: now),
+                                   membershipAt: snapshot.checkedAt,
+                                   removed: RelaySourceRefresh.removals(of: snapshot, after: read, now: now))
             }
             catch let error as CKError where error.code == .notAuthenticated { return RelayResult(signedOut: true) }
             catch {

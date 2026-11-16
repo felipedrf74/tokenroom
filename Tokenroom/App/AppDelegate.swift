@@ -25,10 +25,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
         #endif
-        if LaunchEnvironment.isUnitTestHost {
+        if LaunchEnvironment.isUnitTestHost || SyncProbe.isRequested {
             // Tests build their own stores with stubbed readers. This one reads nothing real:
             // no logins, no Keychain, no iCloud, no migrations of the real settings.
-            let name = "TokenroomTestHost"
+            let name = SyncProbe.isRequested ? "TokenroomSyncProbe" : "TokenroomTestHost"
             let defaults = UserDefaults(suiteName: name)!
             defaults.removePersistentDomain(forName: name)
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(name)
@@ -59,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         #endif
         // The test host stays idle: no status item, no session detection, no checks.
         if LaunchEnvironment.isUnitTestHost { return }
+        if SyncProbe.runIfRequested() { return }
         store.signIn.onAddKey = { [weak self] provider in
             self?.store.pendingKeyProvider = provider
             self?.openSettings()
