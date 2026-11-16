@@ -584,11 +584,12 @@ final class MobileStore {
     private static func allowsSourcesByName(after error: any Error) -> Bool {
         if error is ICloudTimeout || error is RelayDirectRead.Incomplete { return true }
         guard let error = error as? CKError else { return false }
-        return error.retryAfterSeconds == nil && error.code != .notAuthenticated
+        return error.retryAfterSeconds == nil
+            && ![.notAuthenticated, .requestRateLimited, .zoneBusy, .serviceUnavailable].contains(error.code)
     }
 
     private func adoptSourcesByName(_ read: CloudRelay.SourceRead, now: Date) -> Bool {
-        guard let snapshot = relaySnapshot else { return false }
+        guard let snapshot = relaySnapshot, !read.sources.isEmpty || !read.missing.isEmpty else { return false }
         let contents = RelaySourceRefresh.contents(from: snapshot, histories: relayHistories, read: read, now: now)
         if let own = contents.sources.first(where: { $0.id == sourceID }) {
             ownRecord = own.envelope

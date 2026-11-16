@@ -8,7 +8,7 @@ Prepared 16 November 2026 with build 1.3.5 (1). Not uploaded or submitted. Build
 
 Usage from your Mac now reaches iPhone, widgets and Apple Watch in under a second. Tokenroom asks iCloud for each device's newest readings directly, instead of replaying its whole sync history, which had grown too long to finish in the few seconds widgets and background updates get.
 
-A new iPhone, a new Apple Watch or a fresh install finds your other devices straight away, and this iPhone's own readings reach your other devices again after the app restarts.
+A new iPhone, a new Apple Watch or a fresh install finds your other devices straight away, and this iPhone's own readings reach your other devices sooner after the app restarts.
 
 ## What's New — 1.3.4
 

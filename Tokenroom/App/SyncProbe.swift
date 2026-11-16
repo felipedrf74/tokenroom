@@ -57,8 +57,7 @@ enum SyncProbe {
             if let answer = query.result {
                 lines.append("query \(name) found \(answer.matchResults.count) more \(answer.queryCursor != nil) \(query.seconds)")
             } else {
-                let reason = (query.error as? CKError)?.localizedDescription ?? ""
-                lines.append("query \(name) failed \(code(query.error)) \(query.seconds) \(reason.prefix(120))")
+                lines.append("query \(name) failed \(code(query.error)) \(query.seconds)")
             }
         }
 

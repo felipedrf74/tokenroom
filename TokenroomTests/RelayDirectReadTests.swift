@@ -103,7 +103,7 @@ final class RelayDirectReadTests: XCTestCase {
             _ = try await read(cloud, known: ["mac"])
             XCTFail("The history request went unanswered")
         } catch {
-            XCTAssertEqual(error as? RelayDirectRead.Incomplete, .init(name: "hist-mac"))
+            XCTAssertTrue(error is RelayDirectRead.Incomplete)
         }
     }
 

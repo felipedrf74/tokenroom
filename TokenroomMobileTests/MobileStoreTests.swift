@@ -235,6 +235,7 @@ final class MobileStoreTests: XCTestCase {
     func testKnownCollectorsReadByNameStandWhenTheCompleteReadFailsWithoutAWait() async throws {
         for (failure, adopts) in [(CKError(.partialFailure), true),
                                   (CKError(.requestRateLimited, userInfo: [CKErrorRetryAfterKey: 30.0]), false),
+                                  (CKError(.serviceUnavailable), false),
                                   (CKError(.notAuthenticated), false)] {
             let defaults = makeDefaults()
             let folder = try makeFolder()

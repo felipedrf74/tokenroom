@@ -213,8 +213,10 @@ actor CloudRelay {
         guard queriesSources else { return try await zoneContents() }
         do {
             return try await directContents(known: known)
-        } catch where Self.isQueryUnsupported(error) {
-            if (error as? CKError)?.code == .invalidArguments { queriesSources = false }
+        } catch let refused as RelayDirectRead.QueryRefused {
+            if refused.isLasting { queriesSources = false }
+            return try await zoneContents()
+        } catch is RelayDirectRead.ZoneMissing {
             return try await zoneContents()
         }
     }
@@ -244,11 +246,17 @@ actor CloudRelay {
                 known: known,
                 companions: { [historyRecordName(for: $0)] },
                 always: [alertPreferencesRecord],
-                discover: { try await sourceNames(database) },
+                discover: {
+                    do {
+                        return try await sourceNames(database)
+                    } catch where isQueryUnsupported(error) {
+                        throw RelayDirectRead.QueryRefused(isLasting: (error as? CKError)?.code == .invalidArguments)
+                    }
+                },
                 fetch: { try await records(database, named: $0) }
             )
         } catch let error as CKError where error.code == .zoneNotFound {
-            return []
+            throw RelayDirectRead.ZoneMissing()
         }
     }
 
@@ -258,11 +266,13 @@ actor CloudRelay {
             matching: CKQuery(recordType: RecordType.source, predicate: NSPredicate(format: "%K > %d", Field.schema, 0)),
             inZoneWith: zoneID, desiredKeys: [], resultsLimit: CKQueryOperation.maximumResults
         )
-        for _ in 0..<queryPageLimit {
+        var pages = 1
+        while true {
             for (id, _) in page.matchResults { names.insert(id.recordName) }
-            guard let cursor = page.queryCursor else { break }
+            guard let cursor = page.queryCursor, pages < queryPageLimit else { break }
             try Task.checkCancellation()
             page = try await database.records(continuingMatchFrom: cursor, desiredKeys: [], resultsLimit: CKQueryOperation.maximumResults)
+            pages += 1
         }
         return names
     }
@@ -277,7 +287,7 @@ actor CloudRelay {
                 switch result {
                 case .success(let record):
                     answers[id.recordName] = .success(record)
-                case .failure(let error as CKError) where error.code == .unknownItem || error.code == .zoneNotFound:
+                case .failure(let error as CKError) where error.code == .unknownItem:
                     answers[id.recordName] = .success(nil)
                 case .failure(let error):
                     answers[id.recordName] = .failure(error)
@@ -656,11 +666,13 @@ extension CloudRelay {
                 matching: CKQuery(recordType: RecordType.event, predicate: NSPredicate(format: "%K != %@", Field.alertKey, "")),
                 inZoneWith: zoneID, desiredKeys: [], resultsLimit: CKQueryOperation.maximumResults
             )
-            for _ in 0..<queryPageLimit {
+            var pages = 1
+            while true {
                 for case (let id, .success(let record)) in page.matchResults { events.append((id.recordName, record.creationDate)) }
-                guard let cursor = page.queryCursor else { break }
+                guard let cursor = page.queryCursor, pages < queryPageLimit else { break }
                 try Task.checkCancellation()
                 page = try await database.records(continuingMatchFrom: cursor, desiredKeys: [], resultsLimit: CKQueryOperation.maximumResults)
+                pages += 1
             }
         } catch let error as CKError where error.code == .zoneNotFound {
             return []

@@ -9,17 +9,17 @@ change that follows from it. It supersedes the transport and freshness rows of
 ## What was measured
 
 A Production-signed Mac build ran a read-only probe (`-TokenroomSyncProbe YES`, see
-"Checking it again") against the real zone, four times on 16 November. The iPhone's App
+"Checking it again") against the real zone, five times on 16 November. The iPhone's App
 Group preferences were read over `devicectl` to see what the phone itself recorded.
 
 | Read | Requests | Time |
 |---|---|---|
-| The collectors' `Source` records by name | 1 | 0.23–0.34 s |
-| The whole zone from the beginning (`recordZoneChanges`) | 66 | 21.0–24.8 s |
-| The same without a page limit | 66 | 21.0–23.1 s |
-| The zone from a saved cursor | 1 | 0.27–0.30 s |
+| The collectors' `Source` records by name | 1 | 0.22–0.34 s |
+| The whole zone from the beginning (`recordZoneChanges`) | 66 | 20.3–24.8 s |
+| The same without a page limit | 66 | 20.2–23.1 s |
+| The zone from a saved cursor | 1 | 0.26–0.30 s |
 | A query for every `Source` (`schema > 0`) | 1 | 0.31–0.38 s |
-| A query for every `Event` (`alertKey != ""`) | 1 | 0.35 s |
+| A query for every `Event` (`alertKey != ""`) | 1 | 0.35–0.48 s |
 
 The zone held 33 records: 2 `Source`, 2 `History`, 12 coordination `Prefs`, 17 `Event`.
 
@@ -34,17 +34,30 @@ The zone held 33 records: 2 `Source`, 2 `History`, 12 coordination `Prefs`, 17 `
 ## What that explains
 
 Every reader built before #73 waited for the whole zone read: 5 s in a widget, 6 s in a
-complication, 10 s on the Watch, 20 s in the iPhone app. A read that needs 21 s or more and
+complication, 10 s on the Watch, 20 s in the iPhone app. A read that needs 20 s or more and
 delivers the readings last can't finish in any of them. A process that stayed alive kept its
 cursor and read in 0.3 s, which is why the app sometimes worked and a relaunch broke it again.
 
-On the iPhone (1.3.3) that showed as:
+The Mac was sending the whole time: 101 sends in 23 hours, none failed.
+
+## What the iPhone showed, and what is still open
+
+The iPhone (1.3.3) had recorded, in its App Group preferences:
 
 - widgets holding four providers, all read on the iPhone itself, and nothing from the Mac;
-- the iPhone's own `Source` record 34 hours old, last written by 1.3.2, because the app
-  publishes only after a read succeeds.
+- no plan paused because a Mac reads it, though the Mac was reading three of them;
+- a cloud read that succeeded at 20:52 UTC, and alert pruning done at 14:29 UTC that day.
 
-The Mac was sending the whole time: 101 sends in 23 hours, none failed.
+In the Mac's iCloud database, the iPhone's own `Source` record was 34 hours old and last
+written by 1.3.2.
+
+Those don't fit together in one database. The iPhone prunes only after its send went
+through or wasn't due, and a successful read of the Mac's zone would have brought the Mac's
+readings. So on 16 November the iPhone was reading and sending somewhere the Mac's database
+doesn't show. The usual reason is a different Apple Account on one of the two devices, and no
+code change fixes that. This is unconfirmed: nothing readable from the Mac says which account
+the iPhone uses. Compare the Apple Account on each device before judging this change by
+whether the iPhone shows the Mac's readings.
 
 #73 (Mac 2.6.2, iPhone 1.3.4) made the read by name the fallback and kept the zone read as
 the complete one. That fixes freshness for collectors a reader already knows. It left three
@@ -76,7 +89,7 @@ says which names exist. So:
 - a record that could be neither read nor confirmed missing fails the read, and the reader
   keeps what it had.
 
-Measured against Production: 0.58 s knowing no collector, 0.34 s after that. It doesn't
+Measured against Production: 0.52 to 0.58 s knowing no collector, 0.31 to 0.35 s after that. It doesn't
 depend on the zone's age, and it fits in a widget's seconds.
 
 Around it:
@@ -90,8 +103,9 @@ Around it:
 - Pruning old alert records uses the `Event` query on the Mac and the iPhone. The iPhone
   used the events from its zone read, which it no longer makes.
 - The zone read remains as the fallback when a query is refused (`invalidArguments`, a schema
-  without the index), and it now keeps its cursor on every page, empty ones included, so any
-  limit makes progress.
+  without the index) and when the zone isn't there, so a zone the user deleted in iCloud
+  settings is found exactly as before. It now keeps its cursor on every page, empty ones
+  included, so any limit makes progress.
 - The iPhone records how its own send went (`SyncHealth` channel `cloudWrite`), beside
   `cloudRead`.
 
@@ -115,11 +129,15 @@ Around it:
 
 ## Verification
 
-- The direct read ran against Production from the probe build: 2 collectors, 2 histories,
-  0.58 s cold, 0.34 s and 0.35 s after; a name that doesn't exist was left out.
+- The direct read ran against Production from the probe build, before and after review:
+  2 collectors, 2 histories, 0.52 and 0.58 s cold, 0.31 to 0.35 s after; a name that
+  doesn't exist was left out.
 - Mac suite: 1,060 tests, 0 failures. New: the direct read's membership rules
   (`RelayDirectReadTests`) and a zone read cut short among empty pages.
-- The iPhone hosted suite, the iPhone scheme build (widgets and Watch), `typecheck-shared.sh`
-  and the Command Line Tools build are recorded in the pull request.
+- iPhone hosted suite: 63 tests, 0 failures, with the iPhone scheme build (widgets and
+  Watch). `typecheck-shared.sh` and the Command Line Tools build passed.
+- A fresh-context review of the diff found no blocking problem. Its smaller findings were
+  applied: a missing zone goes through the zone read, the incomplete-read error carries no
+  record name, and the query loops stop at their page limit.
 - Not verified here: the change running on a signed iPhone, widget or Watch. That needs a
   build Apple has processed; the probe measured the same CloudKit calls from the Mac.

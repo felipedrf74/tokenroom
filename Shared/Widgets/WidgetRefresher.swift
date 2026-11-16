@@ -12,7 +12,7 @@ enum WidgetRefresher {
     /// iCloud and each key provider get a second under the widget's own limit, so a slow one
     /// doesn't cost the rest and there's time to put what came back together.
     static let readBudget = budget - 1
-    static let completeShare: TimeInterval = 3
+    static let completeShare: TimeInterval = 2
     static let localLabel = "This iPhone"
 
     private static let accountObserver = RelayAccountObserver(name: .CKAccountChanged) {

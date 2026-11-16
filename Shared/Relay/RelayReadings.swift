@@ -35,7 +35,7 @@ enum RelayReadings {
     }
 
     static let zoneShare: TimeInterval = 7
-    static let extensionShare: TimeInterval = 3
+    static let extensionShare: TimeInterval = 2
 
     static func read(now: Date = .now, known: ReadingCache? = nil,
                      isExtension: Bool = Bundle.main.bundleURL.pathExtension == "appex") async -> Outcome {

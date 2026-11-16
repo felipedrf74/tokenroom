@@ -1,9 +1,13 @@
 import Foundation
 
 enum RelayDirectRead {
-    struct Incomplete: Error, Equatable {
-        var name: String
+    struct Incomplete: Error, Equatable {}
+
+    struct QueryRefused: Error {
+        var isLasting: Bool
     }
+
+    struct ZoneMissing: Error {}
 
     static func records<Record: Sendable>(
         known: Set<String>,
@@ -25,7 +29,7 @@ enum RelayDirectRead {
         var records: [Record] = []
         var taken: Set<String> = []
         for name in first + added + (first + added).flatMap(companions) + always where taken.insert(name).inserted {
-            guard let answer = answers[name] else { throw Incomplete(name: name) }
+            guard let answer = answers[name] else { throw Incomplete() }
             if let record = try answer.get() { records.append(record) }
         }
         return records
