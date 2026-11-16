@@ -168,7 +168,7 @@ actor RelayZoneReader<ID: Hashable & Sendable, Record: Sendable, Token: Sendable
             }
             cursor = page.token
             if page.moreComing {
-                if madeProgress {
+                if madeProgress || newRecordFailure == nil {
                     commit(records: staged, quarantined: stagedQuarantine, token: cursor, pass: seen)
                 }
                 continue

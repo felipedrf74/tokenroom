@@ -41,6 +41,7 @@ actor CloudRelay {
     /// The most records CloudKit takes in one request.
     static let batchLimit = 400
     static let changesPageLimit = 100
+    static let queryPageLimit = 10
 
     enum Field {
         /// A plain field, not `encryptedValues`: it holds usage numbers, names, and reset times
@@ -95,6 +96,8 @@ actor CloudRelay {
     private let zoneReader: RelayZoneReader<CKRecord.ID, CKRecord, CKServerChangeToken>
     private let zoneArchive: RelayZoneArchive?
     private var restoredEpoch: UUID?
+    private var queriesSources = true
+    private var seenSources: (epoch: UUID, names: Set<String>)?
     private let accountObserver: RelayAccountObserver
     private let zoneDeletion: RelayZoneDeletion
     /// The signed-in account's fingerprint, for `zoneDeletion`, as of an account epoch: an account
@@ -206,9 +209,102 @@ actor CloudRelay {
         }
     }
 
+    func contents(known: [String] = []) async throws -> Contents {
+        guard queriesSources else { return try await zoneContents() }
+        do {
+            return try await directContents(known: known)
+        } catch let refused as RelayDirectRead.QueryRefused {
+            if refused.isLasting { queriesSources = false }
+            return try await zoneContents()
+        } catch is RelayDirectRead.ZoneMissing {
+            return try await zoneContents()
+        }
+    }
+
+    private func directContents(known: [String]) async throws -> Contents {
+        let epoch = accountEpoch.value
+        let database = database
+        let names = (seenSources?.epoch == epoch ? seenSources?.names ?? [] : []).union(known)
+        guard let records = try await zoneDeletion.read(account: { await self.currentAccount() }, {
+            try await Self.directRecords(database, known: names)
+        }) else {
+            guard epoch == accountEpoch.value, !Task.isCancelled else { throw CancellationError() }
+            zoneReady = false
+            seenSources = nil
+            await zoneReader.invalidate(); restoredEpoch = nil
+            return Contents(sources: [], histories: [:], deletedByUser: true)
+        }
+        guard epoch == accountEpoch.value, !Task.isCancelled else { throw CancellationError() }
+        let contents = Self.contents(from: records)
+        seenSources = (epoch, Set(contents.sources.map(\.id)))
+        return contents
+    }
+
+    private static func directRecords(_ database: CKDatabase, known: Set<String>) async throws -> [CKRecord] {
+        do {
+            return try await RelayDirectRead.records(
+                known: known,
+                companions: { [historyRecordName(for: $0)] },
+                always: [alertPreferencesRecord],
+                discover: {
+                    do {
+                        return try await sourceNames(database)
+                    } catch where isQueryUnsupported(error) {
+                        throw RelayDirectRead.QueryRefused(isLasting: (error as? CKError)?.code == .invalidArguments)
+                    }
+                },
+                fetch: { try await records(database, named: $0) }
+            )
+        } catch let error as CKError where error.code == .zoneNotFound {
+            throw RelayDirectRead.ZoneMissing()
+        }
+    }
+
+    private static func sourceNames(_ database: CKDatabase) async throws -> Set<String> {
+        var names: Set<String> = []
+        var page = try await database.records(
+            matching: CKQuery(recordType: RecordType.source, predicate: NSPredicate(format: "%K > %d", Field.schema, 0)),
+            inZoneWith: zoneID, desiredKeys: [], resultsLimit: CKQueryOperation.maximumResults
+        )
+        var pages = 1
+        while true {
+            for (id, _) in page.matchResults { names.insert(id.recordName) }
+            guard let cursor = page.queryCursor, pages < queryPageLimit else { break }
+            try Task.checkCancellation()
+            page = try await database.records(continuingMatchFrom: cursor, desiredKeys: [], resultsLimit: CKQueryOperation.maximumResults)
+            pages += 1
+        }
+        return names
+    }
+
+    private static func records(_ database: CKDatabase, named names: [String]) async throws -> [String: Result<CKRecord?, any Error>] {
+        var answers: [String: Result<CKRecord?, any Error>] = [:]
+        for start in stride(from: 0, to: names.count, by: batchLimit) {
+            try Task.checkCancellation()
+            let batch = names[start..<min(start + batchLimit, names.count)]
+            let results = try await database.records(for: batch.map { CKRecord.ID(recordName: $0, zoneID: zoneID) })
+            for (id, result) in results {
+                switch result {
+                case .success(let record):
+                    answers[id.recordName] = .success(record)
+                case .failure(let error as CKError) where error.code == .unknownItem:
+                    answers[id.recordName] = .success(nil)
+                case .failure(let error):
+                    answers[id.recordName] = .failure(error)
+                }
+            }
+        }
+        return answers
+    }
+
+    static func isQueryUnsupported(_ error: any Error) -> Bool {
+        guard let code = (error as? CKError)?.code else { return false }
+        return code == .invalidArguments || code == .serverRejectedRequest || code == .unknownItem
+    }
+
     /// Read a complete snapshot, then only the zone's deltas on later reads. Alert records no
     /// longer make every foreground refresh download the whole retained notification history.
-    func contents() async throws -> Contents {
+    func zoneContents() async throws -> Contents {
         let epoch = accountEpoch.value
         await restoreZone(for: epoch)
         let reader = zoneReader
@@ -223,11 +319,15 @@ actor CloudRelay {
             return Contents(sources: [], histories: [:], deletedByUser: true)
         }
         guard epoch == accountEpoch.value, !Task.isCancelled else { throw CancellationError() }
+        return Self.contents(from: records.values)
+    }
+
+    static func contents(from records: some Collection<CKRecord>) -> Contents {
         var sources: [Source] = []
         var histories: [String: RelayHistory] = [:]
         var preferences: AlertPreferences?
         var events: [(id: String, createdAt: Date?)] = []
-        for record in records.values {
+        for record in records {
             switch record.recordType {
             case RecordType.source:
                 sources.append(Self.source(from: record))
@@ -547,10 +647,37 @@ extension CloudRelay {
     /// notifications went out long ago; the Mac and the iPhone both do this, so it happens
     /// without the other.
     func pruneEvents(now: Date = .now) async throws {
-        let old = try await contents().events.filter { event in
+        let events: [(id: String, createdAt: Date?)]
+        do {
+            events = try await Self.eventDates(database)
+        } catch where Self.isQueryUnsupported(error) {
+            events = try await zoneContents().events
+        }
+        let old = events.filter { event in
             event.createdAt.map { now.timeIntervalSince($0) > Self.eventLifetime } ?? false
         }
         try await deleteRecords(named: old.map(\.id))
+    }
+
+    private static func eventDates(_ database: CKDatabase) async throws -> [(id: String, createdAt: Date?)] {
+        var events: [(id: String, createdAt: Date?)] = []
+        do {
+            var page = try await database.records(
+                matching: CKQuery(recordType: RecordType.event, predicate: NSPredicate(format: "%K != %@", Field.alertKey, "")),
+                inZoneWith: zoneID, desiredKeys: [], resultsLimit: CKQueryOperation.maximumResults
+            )
+            var pages = 1
+            while true {
+                for case (let id, .success(let record)) in page.matchResults { events.append((id.recordName, record.creationDate)) }
+                guard let cursor = page.queryCursor, pages < queryPageLimit else { break }
+                try Task.checkCancellation()
+                page = try await database.records(continuingMatchFrom: cursor, desiredKeys: [], resultsLimit: CKQueryOperation.maximumResults)
+                pages += 1
+            }
+        } catch let error as CKError where error.code == .zoneNotFound {
+            return []
+        }
+        return events
     }
 
     /// Record names are deterministic, so two Macs seeing the same crossing create one alert.

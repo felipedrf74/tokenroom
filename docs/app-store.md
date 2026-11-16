@@ -2,6 +2,14 @@
 
 A draft for App Store Connect. Provider names appear only in the description, as facts, never in the name, subtitle, or keywords. Tokenroom isn't affiliated with any provider.
 
+## What's New — 1.3.5
+
+Prepared 16 November 2026 with build 1.3.5 (1). Not uploaded or submitted. Build 1.3.4 (1) was uploaded on 15 November; its review status wasn't rechecked for this preparation.
+
+Usage from your Mac now reaches iPhone, widgets and Apple Watch in under a second. Tokenroom asks iCloud for each device's newest readings directly, instead of replaying its whole sync history, which had grown too long to finish in the few seconds widgets and background updates get.
+
+A new iPhone, a new Apple Watch or a fresh install finds your other devices straight away, and this iPhone's own readings reach your other devices sooner after the app restarts.
+
 ## What's New — 1.3.4
 
 Prepared 15 November 2026 with build 1.3.4 (1), with automatic release after approval to all users. Version 1.3.3 was publicly released on 15 November 2026.
@@ -104,7 +112,7 @@ Usage readings now show when each provider was last checked and flag stale data.
 | Content rights | Yes: shows third-party content (provider names, model and feed titles) it has the right to use |
 | EU trader status (DSA) | Non-trader |
 | Tracking | None |
-| Release | 1.3.4 (1) prepared 15 November 2026 with automatic release to all users; 1.3.3 (1) publicly released 15 November 2026; 1.3.2 publicly released 13 November 2026; 1.3.1 remained an unsubmitted draft and was superseded; 1.3.0 publicly released 7 November 2026; 1.2.2 publicly released 31 October 2026; 1.2.1 publicly released 30 October 2026; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
+| Release | 1.3.5 (1) prepared 16 November 2026, not uploaded; 1.3.4 (1) uploaded 15 November 2026 with automatic release to all users; 1.3.3 (1) publicly released 15 November 2026; 1.3.2 publicly released 13 November 2026; 1.3.1 remained an unsubmitted draft and was superseded; 1.3.0 publicly released 7 November 2026; 1.2.2 publicly released 31 October 2026; 1.2.1 publicly released 30 October 2026; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
 
 ## App privacy
 

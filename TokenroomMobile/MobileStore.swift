@@ -244,7 +244,6 @@ final class MobileStore {
     private var cloudReadAt: Date?
     private var relaySnapshot: ReadingCache.RelaySnapshot?
     private var alertLedger: AlertLedger
-    private var relayEvents: [(id: String, createdAt: Date?)] = []
     /// This iPhone's record as iCloud last had it. With the App Group cache, which widgets also
     /// write, it stands in for providers this launch hasn't read (keys not read yet, or resting).
     @ObservationIgnored private var ownRecord: RelayEnvelope?
@@ -506,8 +505,9 @@ final class MobileStore {
     }
 
     private func readRelay(now: Date, clock: @escaping @Sendable () -> Date) async {
+        let known = RelaySourceRefresh.names(in: relaySnapshot) + [sourceID]
         guard let reads = relayReads ?? relay.map({ relay in
-            MobileRelayReads(accountStatus: { try await relay.accountStatus() }, contents: { try await relay.contents() },
+            MobileRelayReads(accountStatus: { try await relay.accountStatus() }, contents: { try await relay.contents(known: known) },
                              sources: { try await relay.sources(named: $0) })
         }) else {
             relayPhase = .unavailable
@@ -547,7 +547,6 @@ final class MobileStore {
             ownRecord = contents.sources.first { $0.id == sourceID }?.envelope
             relaySources = contents.sources.filter { $0.id != sourceID }
             relayHistories = contents.histories
-            relayEvents = contents.events
             relayRetryAt = nil
             relayConnectionFailed = false
             let readAt = clock()
@@ -571,7 +570,7 @@ final class MobileStore {
             guard relayGeneration == generation, !Task.isCancelled else { return }
             SyncHealthLog.record(.cloudRead, error is ICloudTimeout ? .timedOut : .failed, in: defaults)
             logger.error("relay read failed: \(String(describing: error), privacy: .public)")
-            if error is ICloudTimeout, let read = await byName?.value,
+            if Self.allowsSourcesByName(after: error), let read = await byName?.value,
                relayGeneration == generation, !Task.isCancelled, adoptSourcesByName(read, now: clock()) {
                 SyncHealthLog.record(.cloudRead, .ok, in: defaults)
                 scheduleRelayRecovery()
@@ -582,8 +581,15 @@ final class MobileStore {
         }
     }
 
+    private static func allowsSourcesByName(after error: any Error) -> Bool {
+        if error is ICloudTimeout || error is RelayDirectRead.Incomplete { return true }
+        guard let error = error as? CKError else { return false }
+        return error.retryAfterSeconds == nil
+            && ![.notAuthenticated, .requestRateLimited, .zoneBusy, .serviceUnavailable].contains(error.code)
+    }
+
     private func adoptSourcesByName(_ read: CloudRelay.SourceRead, now: Date) -> Bool {
-        guard let snapshot = relaySnapshot else { return false }
+        guard let snapshot = relaySnapshot, !read.sources.isEmpty || !read.missing.isEmpty else { return false }
         let contents = RelaySourceRefresh.contents(from: snapshot, histories: relayHistories, read: read, now: now)
         if let own = contents.sources.first(where: { $0.id == sourceID }) {
             ownRecord = own.envelope
@@ -632,7 +638,6 @@ final class MobileStore {
         relayGeneration = UUID()
         relaySources = []
         relayHistories = [:]
-        relayEvents = []
         ownRecord = retainedLocal.isEmpty ? nil : RelayEnvelope(producer: "iphone", appVersion: TokenroomIdentity.version,
                                                                checkedAt: .now, providers: retainedLocal)
         relayReadOnce = true
@@ -1408,8 +1413,10 @@ final class MobileStore {
                 guard generation == relayGeneration, !Task.isCancelled else { return }
                 publishPolicy.didSend(envelope, at: now)
                 defaults.set(true, forKey: Keys.published)
+                SyncHealthLog.record(.cloudWrite, .ok, in: defaults)
             } catch {
                 guard generation == relayGeneration, !Task.isCancelled else { return }
+                SyncHealthLog.record(.cloudWrite, error is ICloudTimeout ? .timedOut : .failed, in: defaults)
                 logger.error("relay publish failed: \(String(describing: error), privacy: .public)")
                 handleRelayError(error, now: now)
                 return
@@ -1662,11 +1669,8 @@ final class MobileStore {
         let generation = relayGeneration
         guard let relay, relayPhase == .ready else { return }
         if let pruned = defaults.object(forKey: Keys.prunedAt) as? Date, now.timeIntervalSince(pruned) < 86_400 { return }
-        let old = relayEvents.filter { event in
-            event.createdAt.map { now.timeIntervalSince($0) > CloudRelay.eventLifetime } ?? false
-        }.map(\.id)
         do {
-            try await Self.iCloud { try await relay.deleteRecords(named: old) }
+            try await Self.iCloud { try await relay.pruneEvents(now: now) }
             guard generation == relayGeneration, !Task.isCancelled else { return }
             defaults.set(now, forKey: Keys.prunedAt)
         } catch {
@@ -1688,7 +1692,6 @@ final class MobileStore {
         relaySnapshot = .init(checkedAt: now, sources: [])
         publishPolicy.reset()
         lastHistoryHour = nil
-        relayEvents = []
         ownRecord = nil
         subscriptionsCurrent = false
         preferencesBase = nil

@@ -22,6 +22,7 @@ struct SyncHealth: Codable, Equatable, Sendable {
         case phoneReply
         /// A background refresh this device was given.
         case backgroundRefresh
+        case cloudWrite
     }
 
     /// What came of it.

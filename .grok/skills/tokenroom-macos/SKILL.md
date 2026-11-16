@@ -10,6 +10,8 @@ description: >-
 
 # Tokenroom macOS
 
+**Release preparation (16 November 2026):** Mac 2.6.3(1) is prepared with the direct read (`docs/usage-direct-read-20261116.md`); nothing was notarized, published or installed. Mac 2.6.2(1) is public as `v2.6.2` (15 November) and runs on the MacBook Pro. Mobile 1.3.5(1) is prepared alongside it.
+
 **Delivery status (14 November 2026):** Mac 2.6.1(1) is public as `v2.6.1` and installed from the same verified notarized package on MacBook Pro and Maquinho Pro. Mobile 1.3.3(1) was uploaded, processed and submitted at 16:59 UTC: **Waiting for Review**, with automatic release after approval to all users. Apple approval and public mobile availability remain pending. `docs/release-delivery-20261114.md` binds source, checks, package hashes, both installations, upload and accepted submission.
 
 **Release preparation (14 November 2026):** Mac 2.6.1(1) includes the unreleased News updates and #69's usage recovery. Mobile 1.3.3(1) is prepared for the corresponding recovery update; Apple's public US/PT lookup confirms 1.3.2 released on 13 November. This paragraph does not claim signing, publication, installation or App Review submission; delivery receipts follow those actions.
@@ -29,6 +31,10 @@ description: >-
 **Previous delivery status (11 October 2026):** `docs/news-release-delivery-20261011.md` records the prior delivery. Mac 2.4.0 is public and installed on both Macs; mobile 1.1.0(1) is Waiting for Review, with automatic release after approval selected. Preparation/QA status prose below describes its dated checkpoint. Physical Production integration limits remain unverified.
 
 Community menu-bar extra. Glance first. Apple-native, not a web page. Bundle ID `app.tokenroom.mac`.
+
+## Direct read (16 November 2026, source changes)
+
+`docs/usage-direct-read-20261116.md` is the measurement and the decision. The Mac no longer reads the zone: pruning lists alert records with a query (`CloudRelay.pruneEvents`, `alertKey != ""`) and falls back to the zone read only when the query is refused. `Tokenroom.app/Contents/MacOS/Tokenroom -TokenroomSyncProbe YES` (`SyncProbe`, any build signed for iCloud) times each kind of read against the signed-in account and exits: by name, the queries, the whole zone page by page, and `CloudRelay.contents`. It builds the inert store the test host uses, so it starts no collector, reads no login and writes nothing, and it prints counts, states and ages only. Run it before changing how readers read.
 
 ## Usage ingestion (15 November 2026, source changes)
 

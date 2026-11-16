@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.6.3 for Mac and 1.3.5 for iPhone — prepared 16 November 2026
+
+Usage from a Mac reaches the iPhone, its widgets and Apple Watch in about half a second, however long Tokenroom has been syncing. [The measurement and the decision](docs/usage-direct-read-20261116.md) are recorded with it. Signing, notarization, upload, submission and installation are separate delivery steps; none is claimed here.
+
+- Reading everything Tokenroom keeps in iCloud from the beginning took 66 requests and 20 to 25 seconds against a zone holding 33 records, and the readings came last. It grows with every save. Widgets have 5 seconds, complications 6, the Watch 10 and the iPhone app 20, so a newly started reader never finished.
+- Readers now ask iCloud which devices send readings and fetch those records by name: about half a second, whatever the history. A new install, a new Watch and a widget without a saved copy find every device straight away.
+- A device leaves the list only when iCloud confirms its record is gone. One that iCloud couldn't answer for keeps what was shown.
+- Charts and the shared alert choices arrive with the same read.
+- The iPhone sends its own readings after a relaunch without waiting on that read. It sends only after a read succeeds.
+- Old alert records are found with a query on the Mac and the iPhone.
+- `Tokenroom -TokenroomSyncProbe YES` on a Mac times each kind of iCloud read and exits, without starting a check or writing anything.
+
+Mac 2.6.2 was released on 15 November with the earlier change (#73), and iPhone 1.3.4 was uploaded the same day; neither has an entry of its own here.
+
 ## 2.6.1 for Mac — released 14 November 2026 / 1.3.3 for iPhone — submitted 14 November 2026
 
 Usage recovers more reliably after sleep, a lost connection or temporary credential-access problems. Mac 2.6.1 is public and installed on both Macs; mobile 1.3.3 is Waiting for Review, with automatic release after approval to all users. [The delivery record](docs/release-delivery-20261114.md) binds the packages, upload, accepted submission and installations to their source.
