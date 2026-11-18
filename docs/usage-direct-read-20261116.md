@@ -59,6 +59,12 @@ code change fixes that. This is unconfirmed: nothing readable from the Mac says 
 the iPhone uses. Compare the Apple Account on each device before judging this change by
 whether the iPhone shows the Mac's readings.
 
+**Settled on 18 November:** it wasn't the Apple Account. The iPhone was running a
+development build of 1.3.3, installed over the App Store's 1.3.2 after 11:09 UTC on
+15 November, and a
+development build uses CloudKit's Development environment while the Mac release uses
+Production. The evidence is in `release-delivery-20261116.md`, "Correction (18 November)".
+
 #73 (Mac 2.6.2, iPhone 1.3.4) made the read by name the fallback and kept the zone read as
 the complete one. That fixes freshness for collectors a reader already knows. It left three
 gaps, all of which grow with the zone:

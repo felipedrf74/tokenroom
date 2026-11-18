@@ -64,8 +64,9 @@ Done in the maintainer's own App Store Connect session, which he signed in to hi
 ## Not shown by this delivery
 
 - That the iPhone shows this Mac's readings. On 16 November the two weren't using the same
-  iCloud database ([what the iPhone showed](usage-direct-read-20261116.md)); that is the
-  owner's Apple Account to check, and no release changes it.
+  iCloud database ([what the iPhone showed](usage-direct-read-20261116.md)). The cause, found
+  on 18 November, is a development build on the iPhone, not the Apple Account: see
+  "Correction (18 November)" below.
 - The direct read running on a signed iPhone, widget or Watch. It ran against Production
   from the Mac only.
 
@@ -89,6 +90,33 @@ no version makes the iPhone or the Watch show a Mac's readings.
 What only the owner can do: sign the iPhone and the MacBook Pro in to the same Apple Account
 (Settings, at the top, on the iPhone; System Settings, at the top, on the Mac), and sign
 Maquinho Pro in to it too, with iCloud on for it.
+
+### Correction (18 November)
+
+The paragraph above blamed the Apple Account. That was an inference nobody checked, and for
+the iPhone it was wrong. Measured on 18 November at 12:38 UTC:
+
+- `devicectl device info apps` lists Tokenroom on the iPhone as built by a developer, 1.3.3 (1).
+  It lists only developer installs, so the iPhone was not running the App Store build. A
+  development-signed build uses CloudKit's Development environment; the Mac release and the
+  App Store build use Production. Same Apple Account, two databases.
+- The iPhone's collector ID in its App Group preferences is the ID of the one iPhone record
+  in the MacBook Pro's Production zone. So this iPhone wrote there until 15 November at
+  11:09 UTC, as the App Store's 1.3.2, and stopped when the development build replaced it in
+  place (the App Group, and so the ID, stayed).
+- The iPhone recorded a successful cloud read at 12:36:04 UTC and still held only the four
+  plans it reads itself, while the MacBook Pro's record in Production was 93 seconds old with
+  Claude live.
+- That the App Group preferences could be copied over `devicectl` at all, on 16 November
+  too, was already the sign: it only reaches a development install's containers.
+
+A development install doesn't update from the App Store on its own, which is why the iPhone
+stayed on 1.3.3 while 1.3.4 and 1.3.5 were released. Which run installed it isn't recorded.
+
+What the owner does: update Tokenroom from the App Store on the iPhone (1.3.5), or delete it
+and install it again from there. Then a Mac probe shows an iPhone record written by 1.3.5.
+Maquinho Pro's row stands: it has no iCloud account. The rule that follows is in the
+`tokenroom-apple` skill, under "iCloud environments".
 
 ## Revert
 
