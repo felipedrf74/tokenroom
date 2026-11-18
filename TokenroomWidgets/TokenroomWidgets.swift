@@ -51,9 +51,12 @@ struct ReadingsTimelineProvider: AppIntentTimelineProvider {
         // Then where the countdowns of the rows this size draws change, as far as the entries
         // left over go: never in place of a reset or a reading going stale. At most 56 entries: now,
         // 31 of those boundaries, and 24 for countdowns.
-        let rows = ReadingsEntry.make(cache, choice: configuration.provider, arrangement: arrangement, date: now).items.prefix(UsageWidgetView.rows(in: context.family))
-        let wording = ReadingCache.countdownEntries(for: Array(rows), after: now, until: horizon)
-        let dates = Array(Set([now] + boundaries.prefix(31) + wording)).sorted()
+        let kept = [now] + boundaries.prefix(31)
+        let wording = ReadingCache.countdownEntries(at: kept, until: horizon) { date in
+            // The rows as they'll stand then: a reset can bring another provider into view.
+            Array(ReadingsEntry.make(cache, choice: configuration.provider, arrangement: arrangement, date: date).items.prefix(UsageWidgetView.rows(in: context.family)))
+        }
+        let dates = Array(Set(kept + wording)).sorted()
         return Timeline(
             entries: dates.map { ReadingsEntry.make(cache, choice: configuration.provider, arrangement: arrangement, style: configuration.style, date: $0) },
             policy: .after(result.nextReload(after: now, reloads: reloads))

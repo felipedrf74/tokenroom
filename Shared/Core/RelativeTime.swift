@@ -21,7 +21,12 @@ enum RelativeTime {
     static func remaining(until date: Date, now: Date = .now) -> String {
         let seconds = date.timeIntervalSince(now)
         guard seconds > 0 else { return "now" }
-        let hours = max(1, Int((seconds / 3_600).rounded()))
+        return remaining(hours: Int((seconds / 3_600).rounded()))
+    }
+
+    /// The same for a whole number of hours left.
+    static func remaining(hours rounded: Int) -> String {
+        let hours = max(1, rounded)
         if hours >= 72 { return "\((hours + 12) / 24)d" }
         let days = hours / 24
         if days == 0 { return "\(hours)h" }

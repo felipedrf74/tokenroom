@@ -434,6 +434,46 @@ final class ReadingReliabilityTests: XCTestCase {
         XCTAssertEqual(ReadingCache.countdownEntries(for: [two], after: now, until: horizon, limit: 1), [now.addingTimeInterval(2 * 3600 + 1)])
     }
 
+    /// Most urgent first, on a Small: A is at its limit and resets in five minutes, then B leads,
+    /// with 72 minutes to its own reset. B's countdown starts ticking twelve minutes in, and the
+    /// timeline built now has to have that entry, though B isn't on the widget yet.
+    func testAProviderThatComesIntoViewAtAResetGetsItsCountdownEntries() {
+        var first = item("a", age: 0, used: 100)
+        let firstReset = now.addingTimeInterval(5 * 60)
+        first.provider.windows[0].resetsAt = firstReset
+        var second = item("b", age: 0, used: 50)
+        let secondReset = now.addingTimeInterval(72 * 60)
+        second.provider.windows[0].resetsAt = secondReset
+        let cache = ReadingCache(savedAt: now, isSample: false, items: [first, second])
+        let horizon = now.addingTimeInterval(8 * 3600)
+        let small = { (date: Date) in Array(cache.presented(at: date).items.prefix(1)) }
+        XCTAssertEqual(small(now).map(\.id), ["a"])
+        XCTAssertEqual(small(firstReset).map(\.id), ["b"], "Once A has reset, B is the most urgent")
+        let ticking = secondReset.addingTimeInterval(1 - ReadingCache.countdownTicksWithin)
+        XCTAssertEqual(ticking, now.addingTimeInterval(12 * 60 + 1))
+        XCTAssertFalse(ReadingCache.countdownEntries(for: small(now), after: now, until: horizon).contains(ticking), "From the rows as they are now alone, it's missed")
+        let boundaries = cache.presentationDates(after: now, until: horizon)
+        XCTAssertTrue(boundaries.contains(firstReset))
+        XCTAssertTrue(ReadingCache.countdownEntries(at: [now] + boundaries, until: horizon, rows: small).contains(ticking))
+    }
+
+    /// Past three days the words are whole days, so most half hours leave them as they were:
+    /// no entry is spent where nothing on the widget changes.
+    func testCountdownEntriesAreOnlyWhereTheWordsMove() {
+        let horizon = now.addingTimeInterval(8 * 3600)
+        // 12 days and 10 hours out reads "12d", and still does eight hours on.
+        let far = now.addingTimeInterval(12 * 86_400 + 10 * 3600)
+        XCTAssertTrue(ReadingCache.countdownDates(for: [far], after: now, until: horizon).wording.isEmpty, "12d all eight hours")
+        // 12d 14h reads "13d" until 12 days and 11.5 hours are left, two and a half hours on.
+        let turning = now.addingTimeInterval(12 * 86_400 + 14 * 3600)
+        let moves = ReadingCache.countdownDates(for: [turning], after: now, until: horizon).wording
+        XCTAssertEqual(moves, [now.addingTimeInterval(2.5 * 3600 + 1)])
+        XCTAssertEqual(RelativeTime.remaining(until: turning, now: moves[0].addingTimeInterval(-2)), "13d")
+        XCTAssertEqual(RelativeTime.remaining(until: turning, now: moves[0]), "12d")
+        // Under three days every hour still counts.
+        XCTAssertEqual(ReadingCache.countdownDates(for: [now.addingTimeInterval(30 * 3600)], after: now, until: horizon).wording.count, 8)
+    }
+
     /// The window a widget shows under the one it leads with.
     func testTheSecondWindowIsThePrimaryOneThenTheSession() {
         func window(_ id: String, kind: String, used: Double, resetsIn: TimeInterval = 86_400, metered: Bool? = nil) -> RelayWindow {

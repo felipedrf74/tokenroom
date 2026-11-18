@@ -138,6 +138,7 @@ extension ReadingCache {
     }
 
     /// The same for these resets, apart: where each starts ticking, and where its words move on.
+    /// Past three days the words are whole days, which most half hours leave as they were.
     static func countdownDates(for resets: [Date], after now: Date, until horizon: Date) -> (starts: [Date], wording: [Date]) {
         let within = { (date: Date) in date > now && date < horizon }
         var starts = Set<Date>()
@@ -147,7 +148,7 @@ extension ReadingCache {
             let first = max(1, Int(((reset.timeIntervalSince(horizon) / 3_600) - 0.5).rounded(.down)))
             let last = Int((reset.timeIntervalSince(now) / 3_600) - 0.5)
             guard last >= first else { continue }
-            for hours in first...last {
+            for hours in first...last where RelativeTime.remaining(hours: hours + 1) != RelativeTime.remaining(hours: hours) {
                 wording.insert(reset.addingTimeInterval(1 - (Double(hours) + 0.5) * 3_600))
             }
         }
@@ -155,17 +156,36 @@ extension ReadingCache {
     }
 
     /// The countdown entries for a widget drawing `rows` (as presented at `now`, in its order),
-    /// at most `limit`. A row's countdown is its lead window's, so those come first: where each
-    /// starts ticking, then where their words move on, earliest first. What's left goes to the
-    /// rows' other windows, which lead only once the first resets. Providers the widget doesn't
-    /// draw get none, so they can't cost a row its countdown.
+    /// at most `limit`. See `countdownEntries(at:until:limit:rows:)`.
     static func countdownEntries(for rows: [Item], after now: Date, until horizon: Date, limit: Int = 24) -> [Date] {
-        let lead = rows.compactMap { $0.provider.leadWindow(now: now, history: $0.history)?.resetsAt }
-        let others = rows.flatMap { $0.provider.windows.compactMap(\.resetsAt) }.filter { !lead.contains($0) }
-        let first = countdownDates(for: lead, after: now, until: horizon)
-        let second = countdownDates(for: others, after: now, until: horizon)
+        countdownEntries(at: [now], until: horizon, limit: limit) { _ in rows }
+    }
+
+    /// The countdown entries for a widget's timeline, at most `limit`. A row's countdown is its
+    /// lead window's, so where each of those starts ticking comes first, then where their
+    /// words move on, earliest first; what's left goes to the rows' other windows, which lead
+    /// only once the first resets. Providers the widget doesn't draw get none, so they can't
+    /// cost a row its countdown.
+    /// - Parameters:
+    ///   - dates: now, then each later entry at which the rows can change: a reset or a
+    ///     reading going stale can bring another provider into view.
+    ///   - rows: the rows the widget draws at one of those dates, as presented then.
+    static func countdownEntries(at dates: [Date], until horizon: Date, limit: Int = 24, rows: (Date) -> [Item]) -> [Date] {
+        var starts: [Date] = []
+        var wording: [Date] = []
+        var rest: [Date] = []
+        for date in dates {
+            let shown = rows(date)
+            let lead = shown.compactMap { $0.provider.leadWindow(now: date, history: $0.history)?.resetsAt }
+            let others = shown.flatMap { $0.provider.windows.compactMap(\.resetsAt) }.filter { !lead.contains($0) }
+            let first = countdownDates(for: lead, after: date, until: horizon)
+            let second = countdownDates(for: others, after: date, until: horizon)
+            starts += first.starts
+            wording += first.wording
+            rest += second.starts + second.wording
+        }
         var kept: [Date] = []
-        for date in first.starts + first.wording + (second.starts + second.wording).sorted() where kept.count < limit && !kept.contains(date) {
+        for date in starts.sorted() + wording.sorted() + rest.sorted() where kept.count < limit && !kept.contains(date) {
             kept.append(date)
         }
         return kept.sorted()

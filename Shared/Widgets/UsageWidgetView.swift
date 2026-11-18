@@ -193,16 +193,12 @@ private struct SmallWidget: View {
         let window = reading.window
         let second = showsSecond && provider.isLive && !reading.isAwaiting ? window.flatMap { provider.secondWindow(lead: $0, now: entry.date) } : nil
         VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 6) {
-                ProviderMark(provider: provider, size: 20)
-                Text(provider.shortName)
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                Spacer(minLength: 0)
-                if entry.isSample {
-                    SampleTag()
+            // The provider's full name where it fits, as in the list and the tiles.
+            ViewThatFits(in: .horizontal) {
+                if provider.name != provider.shortName {
+                    header(provider, name: provider.name)
                 }
+                header(provider, name: provider.shortName)
             }
             Spacer(minLength: 0)
             Text(ReadingText.headline(window, now: entry.date))
@@ -250,6 +246,20 @@ private struct SmallWidget: View {
             }
         }
         .widgetURL(DeepLink.provider(provider.id).url)
+    }
+
+    private func header(_ provider: RelayProvider, name: String) -> some View {
+        HStack(spacing: 6) {
+            ProviderMark(provider: provider, size: 20)
+            Text(name)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            Spacer(minLength: 0)
+            if entry.isSample {
+                SampleTag()
+            }
+        }
     }
 }
 
@@ -337,9 +347,9 @@ private struct ListRow: View {
                             .padding(.top, 2)
                             .accessibilityHidden(true)
                         // A chart this wide wants its span said.
-                        Text("\(window.displayTitle), last 7 days")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.tertiary)
+                        Text("Last 7 days")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
                 }
@@ -469,6 +479,14 @@ private struct Tile: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                        // No meter to fade, so the words say it: "Stale", or "Reset".
+                        if reading.isFaded {
+                            RowStatus(reading: reading, date: date)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .fixedSize()
+                        }
                         Spacer(minLength: 2)
                         figure(reading, size: roomy ? 20 : 15)
                     }
@@ -496,14 +514,14 @@ private struct Tile: View {
 
     private func top(_ reading: RowReading, name: String) -> some View {
         HStack(alignment: .center, spacing: 5) {
-            ProviderMark(provider: reading.provider, size: roomy ? 22 : 16)
+            ProviderMark(provider: reading.provider, size: roomy ? 20 : 16)
             Text(name)
-                .font((roomy ? Font.subheadline : .caption).weight(.semibold))
+                .font((roomy ? Font.footnote : .caption).weight(.semibold))
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
             Spacer(minLength: 2)
             if reading.window?.isMetered != false {
-                figure(reading, size: roomy ? 24 : 17)
+                figure(reading, size: roomy ? 22 : 17)
                     .layoutPriority(1)
             }
         }
@@ -792,6 +810,6 @@ private struct SampleTag: View {
 private func headlineStyle(_ window: RelayWindow?, isLive: Bool) -> Color {
     guard let window, window.isMetered else { return .primary }
     // A stale row is already faded as a whole; its figure stays readable under that.
-    guard isLive else { return .secondary }
+    guard isLive else { return Color.primary.opacity(0.75) }
     return TokenroomTokens.ink(remaining: 100 - window.used, isStale: false)
 }

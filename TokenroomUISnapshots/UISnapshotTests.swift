@@ -204,6 +204,9 @@ final class UISnapshotTests: XCTestCase {
                 app.swipeUp()
                 Thread.sleep(forTimeInterval: 0.8)
                 shoot("iphone-widgets-\(page)-end-dark")
+                app.swipeUp()
+                Thread.sleep(forTimeInterval: 0.8)
+                shoot("iphone-widgets-\(page)-last-dark")
             }
         }
         for page in ["compact", "states"] {

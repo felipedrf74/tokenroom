@@ -125,6 +125,13 @@ struct WidgetGalleryView: View {
                     let balance = WidgetArrangement(order: .manual, sequence: eventful.items.filter { !$0.provider.windows.contains(where: \.isMetered) }.map(\.id))
                     card(.systemMedium, size: homeSizes[1].size, style: .list, cache: cache, arrangement: balance)
                     card(.systemMedium, size: homeSizes[1].size, style: .tiles, cache: cache, arrangement: balance)
+                    // The same balance, not checked for two hours: no meter to fade, so it says so.
+                    var aged = cache
+                    let _ = aged.items.indices.filter { !aged.items[$0].provider.windows.contains(where: \.isMetered) }.forEach { index in
+                        aged.items[index].provider.checkedAt = date.addingTimeInterval(-2 * 3600)
+                        aged.items[index].provider.fetchedAt = date.addingTimeInterval(-2 * 3600)
+                    }
+                    card(.systemMedium, size: homeSizes[1].size, style: .tiles, cache: aged, arrangement: balance)
                     card(.systemMedium, size: homeSizes[1].size, cache: eventful, arrangement: WidgetArrangement(hidden: Set(eventful.items.map(\.id))))
                 } else {
                     let style: WidgetStyleOption = page == "tiles" ? .tiles : page == "list" ? .list : .recommended
