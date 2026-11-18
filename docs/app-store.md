@@ -6,9 +6,9 @@ A draft for App Store Connect. Provider names appear only in the description, as
 
 Prepared 18 November 2026 with build 1.3.6 (1). Not uploaded or submitted at this checkpoint. The Home Screen widgets screenshot in the listing still shows the earlier widget design.
 
-Choose which providers your widgets show, and in what order. In Settings › Widgets, Live Activity & Watch, switch a provider off or drag the list into your own order. It applies to every Tokenroom widget on this iPhone, Lock Screen included.
+Choose which providers your widgets show, and in what order. In Settings › Widgets, Live Activity & Watch, switch a provider off, or choose My Order and drag the list into place. It applies to every Tokenroom widget on this iPhone, Lock Screen included.
 
-Each Home Screen widget now has a Style: List, Tiles, or Recommended. Touch and hold a widget and tap Edit Widget. Every row names the limit its figure measures, figures and reset times line up, and Small and Large widgets can show a second limit.
+Each Home Screen widget now has a Style: List, Tiles, or Recommended. Touch and hold a widget and tap Edit Widget. Every row names the limit its figure measures, figures and reset times line up, and a widget with room shows a second limit under the first.
 
 Reset times count down by the second only in their last hour, and the header says when the readings were last checked. A widget showing OpenRouter or Vercel AI Gateway no longer stays blank.
 
