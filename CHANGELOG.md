@@ -1,5 +1,17 @@
 # Changelog
 
+## Next for iPhone — unreleased
+
+You choose which providers the iPhone's widgets show, their order, and how each widget lays them out.
+
+- Settings › Widgets, Live Activity & Watch has a switch for each provider and two orders: most urgent first, as before, or your own, set by dragging. It applies to every Tokenroom widget on the iPhone, Lock Screen included. A widget set to one provider still shows it.
+- In your own order a reached limit doesn't move a row. If it's below the last row a widget shows, the widget's header names it.
+- Each Home Screen widget has a Style: List, Tiles, or Recommended (a tile on Small, the list on Medium and Large). Touch and hold a widget and tap Edit Widget.
+- Every row names the limit its figure measures. Figures and reset times line up down the widget, and a reset in its last hour no longer sits beside the provider's name.
+- Small and Large can show a second limit under the first, as a thin meter.
+- Reset times count down by the second only in their last hour; before that they read "23h" or "2d 22h".
+- The header says when the readings shown were last checked.
+
 ## 2.6.3 for Mac and 1.3.5 for iPhone — prepared 16 November 2026
 
 Usage from a Mac reaches the iPhone, its widgets and Apple Watch in about half a second, however long Tokenroom has been syncing. [The measurement and the decision](docs/usage-direct-read-20261116.md) are recorded with it. Signing, notarization, upload, submission and installation are separate delivery steps; none is claimed here.

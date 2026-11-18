@@ -64,7 +64,8 @@ When iPhone sync is on, the signed Mac app writes the same readings as `snapshot
 
 On iPhone, Tokenroom keeps:
 
-- the latest readings and a week of history in its App Group container, so its widgets can show them, plus readings the widgets took for that history (one per provider an hour, for up to a week), when each key provider was last called and any wait it asked for, and when each widget refreshed in the last two days (by size and the provider it leads with)
+- the latest readings and a week of history in its App Group container, so its widgets can show them, plus readings the widgets took for that history (one per provider an hour, for up to a week), when each key provider was last called and any wait it asked for, and when each widget refreshed in the last two days (by size, style, and the provider it leads with)
+- which providers its widgets show and in what order, in its App Group settings (provider names only); it never leaves the iPhone
 - a sync health note in its App Group settings: for reading iCloud, handing readings to the Watch, and background refreshes, when each last ran, a one-word result (such as `ok`, `failed`, or `notPaired`), and when it last went well. Dates and those words only; it never leaves the iPhone
 - which plans signed in to on the iPhone it's leaving to your Mac for now, because the Mac read them within the last 15 minutes or so (provider names only)
 - its alert ledger, like the Mac's `alerts.json` (the last reading of each provider it reads with a key or a sign-in, alert IDs sent, and the text of alerts waiting for quiet hours), alerts it showed before it could tell iCloud, the alert choices as last shared, and the time zone it last gave them

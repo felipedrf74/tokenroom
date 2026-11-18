@@ -1,6 +1,30 @@
 import AppIntents
 import WidgetKit
 
+/// How a Home Screen widget lays out its readings. Lock Screen widgets have one layout.
+enum WidgetStyleOption: String, AppEnum {
+    /// Tiles on Small, where there's room for a second window; the list on Medium and Large.
+    case recommended
+    case list
+    case tiles
+
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Style"
+    static let caseDisplayRepresentations: [WidgetStyleOption: DisplayRepresentation] = [
+        .recommended: DisplayRepresentation(title: "Recommended", subtitle: "A list, with a second limit on Small"),
+        .list: DisplayRepresentation(title: "List", subtitle: "One row per provider"),
+        .tiles: DisplayRepresentation(title: "Tiles", subtitle: "A tile per provider, with a second limit"),
+    ]
+
+    /// Whether this style draws tiles at this size.
+    func usesTiles(isSmall: Bool) -> Bool {
+        switch self {
+        case .recommended: isSmall
+        case .list: false
+        case .tiles: true
+        }
+    }
+}
+
 /// Which provider a widget leads with.
 enum ProviderOption: String, AppEnum {
     case automatic
@@ -11,7 +35,7 @@ enum ProviderOption: String, AppEnum {
 
     static let typeDisplayRepresentation: TypeDisplayRepresentation = "Provider"
     static let caseDisplayRepresentations: [ProviderOption: DisplayRepresentation] = [
-        .automatic: "Most Urgent",
+        .automatic: "Use Widget Settings",
         .claude: "Claude",
         .openai: "OpenAI (Codex)",
         .grok: "Grok Build",
@@ -33,7 +57,7 @@ enum ProviderOption: String, AppEnum {
         .xaiOrg: "xAI API",
     ]
 
-    /// Nil for Most Urgent.
+    /// Nil when the widget follows the app's order (Settings › Widgets).
     var providerID: String? {
         self == .automatic ? nil : rawValue
     }
@@ -41,15 +65,33 @@ enum ProviderOption: String, AppEnum {
 
 struct SelectProviderIntent: WidgetConfigurationIntent {
     static let title: LocalizedStringResource = "Choose Provider"
-    static let description = IntentDescription("The provider this widget shows first.")
+    static let description = IntentDescription("The provider this widget shows first, and how it lays out its readings.")
 
     @Parameter(title: "Provider", default: .automatic)
     var provider: ProviderOption
 
+    @Parameter(title: "Style", default: .recommended)
+    var style: WidgetStyleOption
+
+    /// Lock Screen widgets have one layout, so they aren't asked for a style.
+    static var parameterSummary: some ParameterSummary {
+        When(widgetFamily: .oneOf, [.systemSmall, .systemMedium, .systemLarge]) {
+            Summary {
+                \.$provider
+                \.$style
+            }
+        } otherwise: {
+            Summary {
+                \.$provider
+            }
+        }
+    }
+
     init() {}
 
-    init(provider: ProviderOption) {
+    init(provider: ProviderOption, style: WidgetStyleOption = .recommended) {
         self.provider = provider
+        self.style = style
     }
 }
 

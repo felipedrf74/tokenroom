@@ -1002,6 +1002,32 @@ final class MobileStoreTests: XCTestCase {
         XCTAssertTrue(ReadingsEntry.make(cache, choice: .openai, date: now).items.isEmpty)
     }
 
+    func testWidgetsShowTheProvidersSwitchedOnInTheUsersOrder() {
+        func reading(_ id: String, used: Double) -> ReadingCache.Item {
+            .init(provider: RelayProvider(id: id, name: id, shortName: id, monogram: "X", tint: "#000000", state: "live", checkedAt: now, primaryWindowID: "weekly", windows: [.init(id: "weekly", kind: "weekly", title: "Weekly", used: used)]), source: "Mac")
+        }
+        let cache = ReadingCache(savedAt: now, isSample: false, items: [reading("zai", used: 100), reading("cursor", used: 90), reading("claude", used: 50), reading("openai", used: 20)])
+        func ids(_ choice: ProviderOption, _ arrangement: WidgetArrangement) -> [String] {
+            ReadingsEntry.make(cache, choice: choice, arrangement: arrangement, date: now).items.map(\.id)
+        }
+        XCTAssertEqual(ids(.automatic, WidgetArrangement()), ["zai", "cursor", "claude", "openai"], "Most urgent first until the user says otherwise")
+        XCTAssertEqual(ids(.automatic, WidgetArrangement(hidden: ["cursor"])), ["zai", "claude", "openai"])
+        let own = WidgetArrangement(order: .manual, sequence: ["openai", "claude", "cursor", "zai"], hidden: ["claude"])
+        XCTAssertEqual(ids(.automatic, own), ["openai", "cursor", "zai"], "A reached limit doesn't move a row the user placed")
+        XCTAssertEqual(ids(.claude, own), ["claude", "openai", "cursor", "zai"], "A widget set to one provider shows it, switched on or not")
+        XCTAssertEqual(ids(.cursor, own), ["cursor", "openai", "zai"])
+
+        let entry = ReadingsEntry.make(cache, choice: .automatic, arrangement: own, date: now)
+        XCTAssertEqual(entry.limitReached(beyond: 2)?.id, "zai", "Out of sight in a Medium of two rows, so the widget names it")
+        XCTAssertNil(entry.limitReached(beyond: 3))
+
+        let none = ReadingsEntry.make(cache, choice: .automatic, arrangement: WidgetArrangement(hidden: ["zai", "cursor", "claude", "openai"]), date: now)
+        XCTAssertTrue(none.items.isEmpty)
+        XCTAssertTrue(none.allHidden)
+        XCTAssertNil(none.unavailableProvider)
+        XCTAssertFalse(ReadingsEntry.make(nil, choice: .automatic, arrangement: own, date: now).allHidden, "No readings isn't everything switched off")
+    }
+
     @MainActor
     func testAccountChangePurgesRemoteCacheAndRetainsDeviceLocalReadings() throws {
         let defaults = makeDefaults()
@@ -1059,12 +1085,15 @@ final class MobileStoreTests: XCTestCase {
     }
 
     @MainActor
-    func testResetCountdownTicksWithinADay() {
+    func testResetCountdownTicksInItsLastHour() {
         XCTAssertEqual(ResetCountdown.text(resetsAt: now.addingTimeInterval(-60), date: now), Text("now"))
         XCTAssertEqual(ResetCountdown.text(resetsAt: now.addingTimeInterval(3 * 86_400 + 3600), date: now), Text(String("3d 1h")))
-        let ticking = ResetCountdown.text(resetsAt: now.addingTimeInterval(2 * 3600 + 13 * 60), date: now)
+        XCTAssertEqual(ResetCountdown.text(resetsAt: now.addingTimeInterval(2 * 3600 + 13 * 60), date: now), Text(String("2h")), "In words until the last hour")
+        XCTAssertFalse(ResetCountdown.ticks(resetsAt: now.addingTimeInterval(3600), date: now))
+        XCTAssertTrue(ResetCountdown.ticks(resetsAt: now.addingTimeInterval(3599), date: now))
+        let ticking = ResetCountdown.text(resetsAt: now.addingTimeInterval(48 * 60), date: now)
         XCTAssertNotEqual(ticking, Text("now"))
-        XCTAssertNotEqual(ticking, Text(String("2h 13m")), "Within a day the clock counts down by itself, without reloads")
+        XCTAssertNotEqual(ticking, Text(String("1h")), "In the last hour the clock counts down by itself, without reloads")
     }
 
     @MainActor

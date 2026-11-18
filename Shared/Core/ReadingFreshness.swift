@@ -53,8 +53,9 @@ extension RelayWindow {
 }
 
 extension ReadingCache {
-    /// Within this long of a reset, countdowns tick ("2:13:05") rather than read "3d 1h".
-    static let countdownTicksWithin: TimeInterval = 86_400
+    /// Within this long of a reset, countdowns tick ("48:12") rather than read "23h" or "3d 1h":
+    /// a row of seconds running all day is noise, and the last hour is when they matter.
+    static let countdownTicksWithin: TimeInterval = 3_600
 
     func presented(at date: Date) -> ReadingCache {
         var result = self
@@ -112,7 +113,7 @@ extension ReadingCache {
     }
 
     /// Timeline entries age readings even if WidgetKit postpones the next network reload. Each
-    /// reset gets one a day ahead too, as its countdown starts ticking (`countdownTicksWithin`).
+    /// reset gets one an hour ahead too, as its countdown starts ticking (`countdownTicksWithin`).
     func presentationDates(after now: Date, until horizon: Date) -> [Date] {
         let dates = items.flatMap { item -> [Date] in
             let checked = item.provider.checkedAt ?? item.provider.fetchedAt ?? savedAt
@@ -121,6 +122,20 @@ extension ReadingCache {
                 checked.addingTimeInterval(ReadingFreshness.staleAfter + 1),
                 checked.addingTimeInterval(ReadingFreshness.expiresAfter + 1)
             ]
+        }
+        return Set(dates.filter { $0 > now && $0 < horizon }).sorted()
+    }
+
+    /// Where a countdown in words moves on ("23h" to "22h"): `RelativeTime.remaining` rounds to
+    /// the nearest hour, so each reset's wording changes on the half hours before it, until it
+    /// starts ticking. Entries here keep the words right between reloads.
+    func countdownDates(after now: Date, until horizon: Date) -> [Date] {
+        let resets = Set(items.flatMap { $0.provider.windows.compactMap(\.resetsAt) })
+        let dates = resets.flatMap { reset -> [Date] in
+            let first = max(1, Int(((reset.timeIntervalSince(horizon) / 3_600) - 0.5).rounded(.down)))
+            let last = Int((reset.timeIntervalSince(now) / 3_600) - 0.5)
+            guard last >= first else { return [] }
+            return (first...last).map { reset.addingTimeInterval(1 - (Double($0) + 0.5) * 3_600) }
         }
         return Set(dates.filter { $0 > now && $0 < horizon }).sorted()
     }

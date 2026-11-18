@@ -170,6 +170,16 @@ final class MobileStore {
         didSet { defaults.set(hasOnboarded, forKey: Keys.onboarded) }
     }
 
+    /// Which providers this iPhone's widgets show, and in what order. Kept in the App Group's
+    /// defaults, where the widgets read it; a change redraws them.
+    var widgetArrangement: WidgetArrangement {
+        didSet {
+            guard widgetArrangement != oldValue else { return }
+            widgetArrangement.save(to: defaults)
+            platformEffects.reloadWidgets()
+        }
+    }
+
     /// Which alerts to send, and quiet hours. Shared through iCloud with Macs, which can change
     /// them too; the newer copy wins.
     var alertPreferences: AlertPreferences {
@@ -338,6 +348,7 @@ final class MobileStore {
         cacheURL = directory?.appendingPathComponent(ReadingCache.fileName)
         sampleMode = defaults.bool(forKey: Keys.sampleMode)
         hasOnboarded = defaults.bool(forKey: Keys.onboarded)
+        widgetArrangement = WidgetArrangement.load(from: defaults)
         #if DEBUG
         // Launch arguments (`-sampleMode YES`) land in the standard defaults, not the App Group's.
         let arguments = launchDefaults.volatileDomain(forName: UserDefaults.argumentDomain)

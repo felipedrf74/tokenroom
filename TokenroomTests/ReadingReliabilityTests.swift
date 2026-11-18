@@ -317,17 +317,60 @@ final class ReadingReliabilityTests: XCTestCase {
         }
     }
 
-    /// A countdown ticks within a day of its reset: the timeline has an entry where it starts.
-    func testWidgetTimelinesStartTheCountdownADayBeforeTheReset() {
+    /// A countdown ticks in its last hour: the timeline has an entry where it starts.
+    func testWidgetTimelinesStartTheCountdownAnHourBeforeTheReset() {
         var reading = item("one", age: 0)
-        reading.provider.windows[0].resetsAt = now.addingTimeInterval(30 * 3600)
+        reading.provider.windows[0].resetsAt = now.addingTimeInterval(7 * 3600)
         let cache = ReadingCache(savedAt: now, isSample: false, items: [reading])
         let dates = cache.presentationDates(after: now, until: now.addingTimeInterval(8 * 3600))
         let start = now.addingTimeInterval(6 * 3600 + 1)
         XCTAssertTrue(dates.contains(start), "\(dates)")
         XCTAssertLessThan(reading.provider.windows[0].resetsAt!.timeIntervalSince(start), ReadingCache.countdownTicksWithin)
-        reading.provider.windows[0].resetsAt = now.addingTimeInterval(3 * 3600)
+        reading.provider.windows[0].resetsAt = now.addingTimeInterval(1800)
         let soon = ReadingCache(savedAt: now, isSample: false, items: [reading]).presentationDates(after: now, until: now.addingTimeInterval(8 * 3600))
-        XCTAssertEqual(soon.filter { $0 < now.addingTimeInterval(3 * 3600) }, [now.addingTimeInterval(3601)], "Only the stale boundary: it already ticks")
+        XCTAssertEqual(soon.filter { $0 < now.addingTimeInterval(3600) }, [now.addingTimeInterval(1800)], "Only the reset: it already ticks")
+    }
+
+    /// Further out the countdown is in words, rounded to the hour, and the timeline has an
+    /// entry wherever those words move on.
+    func testACountdownInWordsRoundsToTheHourAndTheTimelineFollowsIt() {
+        XCTAssertEqual(RelativeTime.remaining(until: now.addingTimeInterval(2 * 86_400 + 22 * 3600), now: now), "2d 22h")
+        XCTAssertEqual(RelativeTime.remaining(until: now.addingTimeInterval(22 * 3600 + 56 * 60), now: now), "23h")
+        XCTAssertEqual(RelativeTime.remaining(until: now.addingTimeInterval(23 * 3600 + 40 * 60), now: now), "1d")
+        XCTAssertEqual(RelativeTime.remaining(until: now.addingTimeInterval(72 * 3600 + 20 * 60), now: now), "3d")
+        XCTAssertEqual(RelativeTime.remaining(until: now.addingTimeInterval(3600 + 60), now: now), "1h", "Never less than an hour: inside it, the countdown ticks")
+        XCTAssertEqual(RelativeTime.remaining(until: now.addingTimeInterval(-5), now: now), "now")
+
+        var reading = item("one", age: 0)
+        let reset = now.addingTimeInterval(4 * 3600 + 10 * 60)
+        reading.provider.windows[0].resetsAt = reset
+        let cache = ReadingCache(savedAt: now, isSample: false, items: [reading])
+        let dates = cache.countdownDates(after: now, until: now.addingTimeInterval(8 * 3600))
+        XCTAssertEqual(dates, [3.5, 2.5, 1.5].map { reset.addingTimeInterval(1 - $0 * 3600) }, "4h until 3.5 hours are left, then 3h, 2h, and 1h")
+        var shown = RelativeTime.remaining(until: reset, now: now)
+        for (date, words) in zip(dates, ["3h", "2h", "1h"]) {
+            XCTAssertEqual(RelativeTime.remaining(until: reset, now: date.addingTimeInterval(-2)), shown, "Unchanged up to the entry")
+            shown = RelativeTime.remaining(until: reset, now: date)
+            XCTAssertEqual(shown, words)
+        }
+        XCTAssertTrue(cache.countdownDates(after: now, until: now.addingTimeInterval(1800)).isEmpty)
+        reading.provider.windows[0].resetsAt = now.addingTimeInterval(40 * 60)
+        XCTAssertTrue(ReadingCache(savedAt: now, isSample: false, items: [reading]).countdownDates(after: now, until: now.addingTimeInterval(8 * 3600)).isEmpty, "Already ticking")
+    }
+
+    /// The window a widget shows under the one it leads with.
+    func testTheSecondWindowIsThePrimaryOneThenTheSession() {
+        func window(_ id: String, kind: String, used: Double, resetsIn: TimeInterval = 86_400, metered: Bool? = nil) -> RelayWindow {
+            RelayWindow(id: id, kind: kind, title: id, used: used, resetsAt: now.addingTimeInterval(resetsIn), metered: metered)
+        }
+        var provider = item("one", age: 0).provider
+        provider.windows = [window("weekly", kind: "weekly", used: 26), window("session", kind: "session", used: 18), window("model", kind: "weekly", used: 30)]
+        provider.primaryWindowID = "weekly"
+        XCTAssertEqual(provider.secondWindow(lead: provider.windows[2], now: now)?.id, "weekly", "Leading with another window, the primary one follows")
+        XCTAssertEqual(provider.secondWindow(lead: provider.windows[0], now: now)?.id, "session", "Leading with the primary one, the session")
+        provider.windows[1].resetsAt = now.addingTimeInterval(-60)
+        XCTAssertEqual(provider.secondWindow(lead: provider.windows[0], now: now)?.id, "model", "A session that has reset has nothing to show; the most used of the rest")
+        provider.windows = [window("weekly", kind: "weekly", used: 26), window("balance", kind: "pool", used: 0, metered: false)]
+        XCTAssertNil(provider.secondWindow(lead: provider.windows[0], now: now), "A balance has no meter")
     }
 }

@@ -193,6 +193,22 @@ final class UISnapshotTests: XCTestCase {
             Thread.sleep(forTimeInterval: 0.8)
             shoot("iphone-widgets-home-scrolled\(look.suffix)")
         }
+        // Each style at every size, the smallest iPhone's sizes, two providers, and the exceptions.
+        for page in ["list", "tiles", "compact", "few", "states"] {
+            let app = launch(["-onboarded", "YES", "-TokenroomGallery", page], look: .dark)
+            shoot("iphone-widgets-\(page)-dark")
+            app.swipeUp()
+            Thread.sleep(forTimeInterval: 0.8)
+            shoot("iphone-widgets-\(page)-scrolled-dark")
+        }
+        for page in ["compact", "states"] {
+            _ = launch(["-onboarded", "YES", "-TokenroomGallery", page], look: .light)
+            shoot("iphone-widgets-\(page)")
+        }
+        let settings = launch(["-onboarded", "YES", "-TokenroomOpen", "tokenroom://widgets"], look: .dark)
+        shoot("iphone-settings-widgets-dark")
+        tap(settings, "My Order")
+        shoot("iphone-settings-widgets-own-order-dark")
         let app = launch(["-onboarded", "YES", "-TokenroomGallery", "lock"])
         shoot("iphone-widgets-lock")
         app.swipeUp()

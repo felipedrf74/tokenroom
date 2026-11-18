@@ -13,6 +13,18 @@ enum RelativeTime {
         return "resets in \(max(minutes, 1))m"
     }
 
+    /// How long until `date`, short enough for a widget row and rounded to the nearest hour:
+    /// "2d 22h", "3d", "23h". Widgets show this from an hour out; inside the hour they tick.
+    /// Timeline entries land where the rounding moves (`ReadingCache.countdownDates`).
+    static func remaining(until date: Date, now: Date = .now) -> String {
+        let seconds = date.timeIntervalSince(now)
+        guard seconds > 0 else { return "now" }
+        let hours = max(1, Int((seconds / 3_600).rounded()))
+        let days = hours / 24
+        if days == 0 { return "\(hours)h" }
+        return hours % 24 == 0 ? "\(days)d" : "\(days)d \(hours % 24)h"
+    }
+
     static func ago(_ date: Date?, now: Date = .now) -> String {
         guard let date else { return "never" }
         let seconds = now.timeIntervalSince(date)
