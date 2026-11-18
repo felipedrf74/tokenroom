@@ -68,7 +68,7 @@ observed at this checkpoint.
 | Mac | Installed | Verification |
 | --- | --- | --- |
 | Maquinho Pro | 2.6.3 (1), since 16 November | Executable SHA-256 `181020e63aa3f2c65ccdc9e2814e8b88e96024139b06663ebc2ee8e8062b4433` matches the public `v2.6.3` package's; strict signature, Gatekeeper (Notarized Developer ID) and a running process |
-| MacBook Pro | Not checked | It could not be reached on 18 November; its installed version is unverified |
+| MacBook Pro | 2.6.3 (1), since 16 November per [that delivery's record](release-delivery-20261116.md) | Not rechecked: it could not be reached on 18 November |
 
 ## Not verified
 

@@ -14,7 +14,7 @@ Reset times count down by the second only in their last hour, and the header say
 
 ## What's New — 1.3.5
 
-Prepared 16 November 2026 with build 1.3.5 (1). Apple's public US and Portugal listings show it released on 17 November 2026 at 20:52 UTC.
+Submitted 16 November 2026 at 23:19 UTC with build 1.3.5 (1); Apple's public US and Portugal listings show it released on 17 November 2026 at 20:52 UTC. Version 1.3.4 was publicly released on 16 November 2026 at 17:46 UTC. [The delivery record](release-delivery-20261116.md) has the upload and the accepted submission.
 
 Usage from your Mac now reaches iPhone, widgets and Apple Watch in under a second. Tokenroom asks iCloud for each device's newest readings directly, instead of replaying its whole sync history, which had grown too long to finish in the few seconds widgets and background updates get.
 
@@ -22,7 +22,7 @@ A new iPhone, a new Apple Watch or a fresh install finds your other devices stra
 
 ## What's New — 1.3.4
 
-Prepared 15 November 2026 with build 1.3.4 (1), with automatic release after approval to all users. Version 1.3.3 was publicly released on 15 November 2026.
+Submitted 15 November 2026 at 23:21 UTC with build 1.3.4 (1) and publicly released on 16 November 2026 at 17:46 UTC. Version 1.3.3 was publicly released on 15 November 2026.
 
 Usage stays current on iPhone, widgets and Apple Watch even after a lot of history and alerts have built up in iCloud. Tokenroom now reads the newest readings from each of your devices directly, and a longer sync picks up where it left off instead of starting over.
 
@@ -122,7 +122,7 @@ Usage readings now show when each provider was last checked and flag stale data.
 | Content rights | Yes: shows third-party content (provider names, model and feed titles) it has the right to use |
 | EU trader status (DSA) | Non-trader |
 | Tracking | None |
-| Release | 1.3.6 (1) submitted 18 November 2026, Waiting for Review with automatic release to all users; 1.3.5 (1) publicly released 17 November 2026; 1.3.4 (1) uploaded 15 November 2026 with automatic release to all users; 1.3.3 (1) publicly released 15 November 2026; 1.3.2 publicly released 13 November 2026; 1.3.1 remained an unsubmitted draft and was superseded; 1.3.0 publicly released 7 November 2026; 1.2.2 publicly released 31 October 2026; 1.2.1 publicly released 30 October 2026; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
+| Release | 1.3.6 (1) submitted 18 November 2026, Waiting for Review with automatic release to all users; 1.3.5 (1) publicly released 17 November 2026; 1.3.4 (1) publicly released 16 November 2026; 1.3.3 (1) publicly released 15 November 2026; 1.3.2 publicly released 13 November 2026; 1.3.1 remained an unsubmitted draft and was superseded; 1.3.0 publicly released 7 November 2026; 1.2.2 publicly released 31 October 2026; 1.2.1 publicly released 30 October 2026; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
 
 ## App privacy
 

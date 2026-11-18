@@ -1,5 +1,11 @@
 # Changelog
 
+## Next for iPhone — unreleased
+
+Not in 1.3.6, which was submitted before this landed.
+
+- A development build on an iPhone says so in Settings, beside its version and under Needs Tokenroom on a Mac. It uses a separate iCloud from the App Store's, so it never shows a released Mac's readings; from 15 to 18 November that went unnoticed on the maintainer's iPhone and looked like a sync fault.
+
 ## 1.3.6 for iPhone — submitted 18 November 2026
 
 You choose which providers the iPhone's widgets show, their order, and how each widget lays them out (#77). Build 1.3.6 (1) was submitted on 18 November at 17:19 UTC and is Waiting for Review, with automatic release after approval to all users; [the delivery record](docs/release-delivery-20261118.md) has the package, upload and submission. Nothing in the Mac app changed, so Mac 2.6.3 stays the current release.
@@ -13,9 +19,9 @@ You choose which providers the iPhone's widgets show, their order, and how each 
 - The header says when the readings shown were last checked.
 - A widget showing OpenRouter or Vercel AI Gateway no longer stays blank: their icons were larger than WidgetKit accepts in a widget.
 
-## 2.6.3 for Mac and 1.3.5 for iPhone — prepared 16 November 2026
+## 2.6.3 for Mac — released 16 November 2026 / 1.3.5 for iPhone — released 17 November 2026
 
-Usage from a Mac reaches the iPhone, its widgets and Apple Watch in about half a second, however long Tokenroom has been syncing. [The measurement and the decision](docs/usage-direct-read-20261116.md) are recorded with it. Signing, notarization, upload, submission and installation are separate delivery steps; none is claimed here.
+Usage from a Mac reaches the iPhone, its widgets and Apple Watch in about half a second, however long Tokenroom has been syncing. [The measurement and the decision](docs/usage-direct-read-20261116.md) are recorded with it. Mac 2.6.3 is [public](https://github.com/felipedrf74/tokenroom/releases/tag/v2.6.3); iPhone 1.3.5 was submitted on 16 November and Apple's public US and Portugal listings show it released on 17 November at 20:52 UTC. [The delivery record](docs/release-delivery-20261116.md) has the packages, the upload, the submission and the installations.
 
 - Reading everything Tokenroom keeps in iCloud from the beginning took 66 requests and 20 to 25 seconds against a zone holding 33 records, and the readings came last. It grows with every save. Widgets have 5 seconds, complications 6, the Watch 10 and the iPhone app 20, so a newly started reader never finished.
 - Readers now ask iCloud which devices send readings and fetch those records by name: about half a second, whatever the history. A new install, a new Watch and a widget without a saved copy find every device straight away.
@@ -25,9 +31,7 @@ Usage from a Mac reaches the iPhone, its widgets and Apple Watch in about half a
 - Old alert records are found with a query on the Mac and the iPhone.
 - `Tokenroom -TokenroomSyncProbe YES` on a Mac times each kind of iCloud read and exits, without starting a check or writing anything.
 
-Mac 2.6.2 was released on 15 November with the earlier change (#73), and iPhone 1.3.4 was uploaded the same day; neither has an entry of its own here.
-
-Since this entry was written: Mac 2.6.3 is public as `v2.6.3` (16 November), and Apple's public US and Portugal listings show iPhone 1.3.5 released on 17 November 2026 at 20:52 UTC.
+Mac 2.6.2 was released on 15 November with the earlier change (#73), and iPhone 1.3.4 was released on 16 November; neither has an entry of its own here.
 
 ## 2.6.1 for Mac — released 14 November 2026 / 1.3.3 for iPhone — submitted 14 November 2026
 
