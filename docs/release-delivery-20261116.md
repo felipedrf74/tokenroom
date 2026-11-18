@@ -50,7 +50,7 @@ Distribution for the Production iCloud environment, with no debug entitlement.
 
 ## App Review submission
 
-Done in the maintainer's own App Store Connect session, which he signed in to himself.
+Done in the maintainer's own App Store Connect session, signed in to by the maintainer.
 
 - App Store version `70d522a0-d231-4414-80d8-1dc7b4e194aa`, 1.3.5, created after 1.3.4 was
   Ready for Sale.
