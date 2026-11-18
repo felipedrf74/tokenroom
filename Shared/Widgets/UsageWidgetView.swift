@@ -20,8 +20,8 @@ struct UsageWidgetView: View {
         [.accessoryCircular, .accessoryRectangular, .accessoryInline].contains(family)
     }
 
-    /// How many providers a widget of this size draws.
-    static func rows(in family: WidgetFamily) -> Int {
+    /// How many providers a widget of this size draws. The timeline asks too, off the main actor.
+    nonisolated static func rows(in family: WidgetFamily) -> Int {
         switch family {
         case .systemMedium: 4
         case .systemLarge: 8
