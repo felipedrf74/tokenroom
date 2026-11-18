@@ -1134,7 +1134,8 @@ final class MobileStoreTests: XCTestCase {
     @MainActor
     func testResetCountdownTicksInItsLastHour() {
         XCTAssertEqual(ResetCountdown.text(resetsAt: now.addingTimeInterval(-60), date: now), Text("now"))
-        XCTAssertEqual(ResetCountdown.text(resetsAt: now.addingTimeInterval(3 * 86_400 + 3600), date: now), Text(String("3d 1h")))
+        XCTAssertEqual(ResetCountdown.text(resetsAt: now.addingTimeInterval(3 * 86_400 + 3600), date: now), Text(String("3d")))
+        XCTAssertEqual(ResetCountdown.text(resetsAt: now.addingTimeInterval(2 * 86_400 + 3600), date: now), Text(String("2d 1h")))
         XCTAssertEqual(ResetCountdown.text(resetsAt: now.addingTimeInterval(2 * 3600 + 13 * 60), date: now), Text(String("2h")), "In words until the last hour")
         XCTAssertFalse(ResetCountdown.ticks(resetsAt: now.addingTimeInterval(3600), date: now))
         XCTAssertTrue(ResetCountdown.ticks(resetsAt: now.addingTimeInterval(3599), date: now))

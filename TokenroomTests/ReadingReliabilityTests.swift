@@ -340,6 +340,11 @@ final class ReadingReliabilityTests: XCTestCase {
         XCTAssertEqual(RelativeTime.remaining(until: now.addingTimeInterval(22 * 3600 + 56 * 60), now: now), "23h")
         XCTAssertEqual(RelativeTime.remaining(until: now.addingTimeInterval(23 * 3600 + 40 * 60), now: now), "1d")
         XCTAssertEqual(RelativeTime.remaining(until: now.addingTimeInterval(72 * 3600 + 20 * 60), now: now), "3d")
+        XCTAssertEqual(RelativeTime.remaining(until: now.addingTimeInterval(71 * 3600), now: now), "2d 23h", "Hours still count under three days")
+        XCTAssertEqual(RelativeTime.remaining(until: now.addingTimeInterval(12 * 86_400 + 10 * 3600), now: now), "12d", "Past three days, whole days")
+        XCTAssertEqual(RelativeTime.remaining(until: now.addingTimeInterval(12 * 86_400 + 14 * 3600), now: now), "13d")
+        XCTAssertEqual(RelativeTime.remaining(until: now.addingTimeInterval(83 * 3600 + 29 * 60), now: now), "3d")
+        XCTAssertEqual(RelativeTime.remaining(until: now.addingTimeInterval(83 * 3600 + 31 * 60), now: now), "4d", "It moves on a half hour, where the timeline has an entry")
         XCTAssertEqual(RelativeTime.remaining(until: now.addingTimeInterval(3600 + 60), now: now), "1h", "Never less than an hour: inside it, the countdown ticks")
         XCTAssertEqual(RelativeTime.remaining(until: now.addingTimeInterval(-5), now: now), "now")
 

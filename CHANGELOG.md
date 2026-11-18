@@ -9,7 +9,7 @@ You choose which providers the iPhone's widgets show, their order, and how each 
 - Each Home Screen widget has a Style: List, Tiles, or Recommended (a tile on Small, the list on Medium and Large). Touch and hold a widget and tap Edit Widget.
 - Every row names the limit its figure measures. Figures and reset times line up down the widget, and a reset in its last hour no longer sits beside the provider's name.
 - Small and Large can show a second limit under the first, as a thin meter.
-- Reset times count down by the second only in their last hour; before that they read "23h" or "2d 22h".
+- Reset times count down by the second only in their last hour; before that they read "23h" or "2d 22h", and "12d" past three days.
 - The header says when the readings shown were last checked.
 - A widget showing OpenRouter or Vercel AI Gateway no longer stays blank: their icons were larger than WidgetKit accepts in a widget.
 

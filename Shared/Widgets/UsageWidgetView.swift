@@ -500,7 +500,7 @@ private struct Tile: View {
             Text(name)
                 .font((roomy ? Font.subheadline : .caption).weight(.semibold))
                 .lineLimit(1)
-                .minimumScaleFactor(0.9)
+                .minimumScaleFactor(0.85)
             Spacer(minLength: 2)
             if reading.window?.isMetered != false {
                 figure(reading, size: roomy ? 24 : 17)
