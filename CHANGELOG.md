@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A development build on an iPhone says so in Settings, beside its version and under Needs Tokenroom on a Mac. It uses a separate iCloud from the App Store's, so it never shows a released Mac's readings; from 15 to 18 November that went unnoticed on the maintainer's iPhone and looked like a sync fault.
+
 ## 2.6.3 for Mac and 1.3.5 for iPhone — prepared 16 November 2026
 
 Usage from a Mac reaches the iPhone, its widgets and Apple Watch in about half a second, however long Tokenroom has been syncing. [The measurement and the decision](docs/usage-direct-read-20261116.md) are recorded with it. Signing, notarization, upload, submission and installation are separate delivery steps; none is claimed here.

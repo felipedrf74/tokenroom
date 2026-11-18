@@ -100,9 +100,14 @@ struct ConnectView: View {
                 } header: {
                     Text("Needs Tokenroom on a Mac")
                 } footer: {
-                    Text(needsMac.contains { if case .needsMac(Self.commonReason) = $0.action { true } else { false } }
-                        ? "This build of Tokenroom can't keep a sign-in on this iPhone. Install Tokenroom on a Mac with the same Apple Account, and usage shows here."
-                        : "These plans keep their login inside a tool on a Mac, and can't be read by another app on this iPhone. Install Tokenroom on a Mac with the same Apple Account, and their usage shows here.")
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(needsMac.contains { if case .needsMac(Self.commonReason) = $0.action { true } else { false } }
+                            ? "This build of Tokenroom can't keep a sign-in on this iPhone. Install Tokenroom on a Mac with the same Apple Account, and usage shows here."
+                            : "These plans keep their login inside a tool on a Mac, and can't be read by another app on this iPhone. Install Tokenroom on a Mac with the same Apple Account, and their usage shows here.")
+                        if BuildSigning.usesDevelopmentCloud {
+                            Text(BuildSigning.developmentNotice)
+                        }
+                    }
                 }
             }
             Section {

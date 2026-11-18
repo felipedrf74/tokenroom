@@ -96,7 +96,7 @@ struct MobileSettingsView: View {
                 }
 
                 Section {
-                    LabeledContent("Version", value: TokenroomIdentity.version)
+                    LabeledContent("Version", value: BuildSigning.usesDevelopmentCloud ? "\(TokenroomIdentity.version) (development)" : TokenroomIdentity.version)
                     // WidgetKit's budget is per widget, so the busiest one is what counts.
                     LabeledContent("Widget Updates", value: "\(store.widgetReloadCount) in 24 hours")
                         .accessibilityLabel("Busiest widget's updates, last 24 hours")
@@ -277,6 +277,11 @@ private struct ReadingsStatusCard: View {
                     Text(detail)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                }
+                if BuildSigning.usesDevelopmentCloud {
+                    Text(BuildSigning.developmentNotice)
+                        .font(.footnote)
+                        .foregroundStyle(TokenroomTokens.tight)
                 }
             }
             Spacer(minLength: 0)
