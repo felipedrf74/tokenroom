@@ -41,14 +41,14 @@ final class MobileStoreTests: XCTestCase {
     /// A complete store pass with no iCloud, in-memory missing credentials, isolated storage
     /// and inert device SDK effects. Refresh/cache/alert logic still executes.
     @MainActor
-    private func makeStore(defaults: UserDefaults, folder: URL) -> MobileStore {
+    private func makeStore(defaults: UserDefaults, folder: URL, platformEffects: MobilePlatformEffects = .inert) -> MobileStore {
         MobileStore(
             defaults: defaults,
             containerIdentifier: nil,
             keys: MobileFixtureKeychain().keys,
             directory: folder, connectOnIPhone: false,
             notificationScheduler: { _ in XCTFail("This fixture must not schedule a real notification") },
-            platformEffects: .inert, launchDefaults: defaults,
+            platformEffects: platformEffects, launchDefaults: defaults,
             // Never this device's real plan sign-ins.
             sessions: nil
         )
@@ -1002,6 +1002,79 @@ final class MobileStoreTests: XCTestCase {
         XCTAssertTrue(ReadingsEntry.make(cache, choice: .openai, date: now).items.isEmpty)
     }
 
+    /// WidgetKit refuses to archive a widget holding an image past its size limit, which leaves
+    /// the widget on its placeholder. A vector icon comes at the size its file declares.
+    func testEveryProviderIconIsSmallEnoughForAWidget() throws {
+        var checked = 0
+        for provider in Provider.allCases {
+            guard let name = provider.assetName, let image = UIImage(named: name) else { continue }
+            let fitted = ProviderMark.fitted(image)
+            XCTAssertLessThanOrEqual(max(fitted.size.width, fitted.size.height), ProviderMark.longestSide + 0.5, name)
+            XCTAssertEqual(fitted.size.width / fitted.size.height, image.size.width / image.size.height, accuracy: 0.02, "\(name) keeps its shape")
+            checked += 1
+        }
+        XCTAssertGreaterThan(checked, 10, "The icons are in the app's bundle")
+    }
+
+    /// The widget reloads once after a run of changes, not once for each: a reload it makes
+    /// counts toward its day's allowance. Leaving the app sends the one that's waiting.
+    @MainActor
+    func testArrangingProvidersReloadsWidgetsOnceAndLeavingTheAppDoesntLoseIt() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let reloads = Mutex(0)
+        var effects = MobilePlatformEffects.inert
+        effects.reloadWidgets = { reloads.withLock { $0 += 1 } }
+        let store = makeStore(defaults: defaults, folder: folder, platformEffects: effects)
+        store.widgetArrangement = store.widgetArrangement.setting("claude", shown: false)
+        store.widgetArrangement = store.widgetArrangement.setting("cursor", shown: false)
+        XCTAssertEqual(WidgetArrangement.load(from: defaults).hidden, ["claude", "cursor"], "Saved at once")
+        XCTAssertEqual(reloads.withLock { $0 }, 0, "Not reloaded for each")
+        store.flushWidgetArrangementReload()
+        XCTAssertEqual(reloads.withLock { $0 }, 1, "Leaving the app sends the reload that was waiting")
+        store.flushWidgetArrangementReload()
+        try await Task.sleep(for: MobileStore.widgetArrangementSettle + .milliseconds(400))
+        XCTAssertEqual(reloads.withLock { $0 }, 1, "And only that one")
+        store.widgetArrangement = store.widgetArrangement.setting("claude", shown: true)
+        try await Task.sleep(for: MobileStore.widgetArrangementSettle + .milliseconds(400))
+        XCTAssertEqual(reloads.withLock { $0 }, 2, "Left alone, it goes out by itself")
+    }
+
+    func testWidgetsShowTheProvidersSwitchedOnInTheUsersOrder() {
+        func reading(_ id: String, used: Double) -> ReadingCache.Item {
+            .init(provider: RelayProvider(id: id, name: id, shortName: id, monogram: "X", tint: "#000000", state: "live", checkedAt: now, primaryWindowID: "weekly", windows: [.init(id: "weekly", kind: "weekly", title: "Weekly", used: used)]), source: "Mac")
+        }
+        let cache = ReadingCache(savedAt: now, isSample: false, items: [reading("zai", used: 100), reading("cursor", used: 90), reading("claude", used: 50), reading("openai", used: 20)])
+        func ids(_ choice: ProviderOption, _ arrangement: WidgetArrangement) -> [String] {
+            ReadingsEntry.make(cache, choice: choice, arrangement: arrangement, date: now).items.map(\.id)
+        }
+        XCTAssertEqual(ids(.automatic, WidgetArrangement()), ["zai", "cursor", "claude", "openai"], "Most urgent first until the user says otherwise")
+        XCTAssertEqual(ids(.automatic, WidgetArrangement(hidden: ["cursor"])), ["zai", "claude", "openai"])
+        let own = WidgetArrangement(order: .manual, sequence: ["openai", "claude", "cursor", "zai"], hidden: ["claude"])
+        XCTAssertEqual(ids(.automatic, own), ["openai", "cursor", "zai"], "A reached limit doesn't move a row the user placed")
+        XCTAssertEqual(ids(.claude, own), ["claude", "openai", "cursor", "zai"], "A widget set to one provider shows it, switched on or not")
+        XCTAssertEqual(ids(.cursor, own), ["cursor", "openai", "zai"])
+
+        let entry = ReadingsEntry.make(cache, choice: .automatic, arrangement: own, date: now)
+        XCTAssertEqual(entry.limitReached(beyond: 2)?.id, "zai", "Out of sight in a Medium of two rows, so the widget names it")
+        XCTAssertNil(entry.limitReached(beyond: 3))
+
+        // Checked two hours ago, so stale: the last measurement isn't a limit reached now.
+        var old = reading("zai", used: 100)
+        old.provider.checkedAt = now.addingTimeInterval(-2 * 3600)
+        let aged = ReadingCache(savedAt: now, isSample: false, items: [old, reading("cursor", used: 90), reading("claude", used: 50), reading("openai", used: 20)])
+        let stale = ReadingsEntry.make(aged, choice: .automatic, arrangement: own, date: now)
+        XCTAssertEqual(stale.items.last?.id, "zai")
+        XCTAssertEqual(stale.items.last?.provider.isLive, false)
+        XCTAssertNil(stale.limitReached(beyond: 2), "A stale reading at its limit isn't announced as a limit reached")
+
+        let none = ReadingsEntry.make(cache, choice: .automatic, arrangement: WidgetArrangement(hidden: ["zai", "cursor", "claude", "openai"]), date: now)
+        XCTAssertTrue(none.items.isEmpty)
+        XCTAssertTrue(none.allHidden)
+        XCTAssertNil(none.unavailableProvider)
+        XCTAssertFalse(ReadingsEntry.make(nil, choice: .automatic, arrangement: own, date: now).allHidden, "No readings isn't everything switched off")
+    }
+
     @MainActor
     func testAccountChangePurgesRemoteCacheAndRetainsDeviceLocalReadings() throws {
         let defaults = makeDefaults()
@@ -1059,12 +1132,16 @@ final class MobileStoreTests: XCTestCase {
     }
 
     @MainActor
-    func testResetCountdownTicksWithinADay() {
+    func testResetCountdownTicksInItsLastHour() {
         XCTAssertEqual(ResetCountdown.text(resetsAt: now.addingTimeInterval(-60), date: now), Text("now"))
-        XCTAssertEqual(ResetCountdown.text(resetsAt: now.addingTimeInterval(3 * 86_400 + 3600), date: now), Text(String("3d 1h")))
-        let ticking = ResetCountdown.text(resetsAt: now.addingTimeInterval(2 * 3600 + 13 * 60), date: now)
+        XCTAssertEqual(ResetCountdown.text(resetsAt: now.addingTimeInterval(3 * 86_400 + 3600), date: now), Text(String("3d")))
+        XCTAssertEqual(ResetCountdown.text(resetsAt: now.addingTimeInterval(2 * 86_400 + 3600), date: now), Text(String("2d 1h")))
+        XCTAssertEqual(ResetCountdown.text(resetsAt: now.addingTimeInterval(2 * 3600 + 13 * 60), date: now), Text(String("2h")), "In words until the last hour")
+        XCTAssertFalse(ResetCountdown.ticks(resetsAt: now.addingTimeInterval(3600), date: now))
+        XCTAssertTrue(ResetCountdown.ticks(resetsAt: now.addingTimeInterval(3599), date: now))
+        let ticking = ResetCountdown.text(resetsAt: now.addingTimeInterval(48 * 60), date: now)
         XCTAssertNotEqual(ticking, Text("now"))
-        XCTAssertNotEqual(ticking, Text(String("2h 13m")), "Within a day the clock counts down by itself, without reloads")
+        XCTAssertNotEqual(ticking, Text(String("1h")), "In the last hour the clock counts down by itself, without reloads")
     }
 
     @MainActor

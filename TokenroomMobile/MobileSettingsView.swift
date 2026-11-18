@@ -128,7 +128,7 @@ struct MobileSettingsView: View {
                 case .connect: ConnectView(store: store)
                 case .keys: KeysView(store: store)
                 case .alerts: AlertsSettingsView(store: store)
-                case .widgets: WidgetsHelpView()
+                case .widgets: WidgetsHelpView(store: store)
                 }
             }
             .confirmationDialog("Delete Tokenroom data from iCloud?", isPresented: $confirmsDelete, titleVisibility: .visible) {
@@ -601,10 +601,13 @@ struct KeyEditorView: View {
 
 /// Where Tokenroom shows up outside the app, and how to add each.
 struct WidgetsHelpView: View {
+    @Bindable var store: MobileStore
+
     var body: some View {
         List {
+            WidgetProvidersSection(store: store)
             Section {
-                HelpRow(symbol: "square.grid.2x2", title: "Home Screen widgets", text: "Touch and hold the Home Screen, tap Edit, then Add Widget, and search for Tokenroom. Small shows one provider or the most urgent; Medium and Large show several, with a week of history on Large.")
+                HelpRow(symbol: "square.grid.2x2", title: "Home Screen widgets", text: "Touch and hold the Home Screen, tap Edit, then Add Widget, and search for Tokenroom. Small shows one provider; Medium and Large show several, with a week of history on Large. Touch and hold a widget and tap Edit Widget to choose its style, a list or tiles, or the one provider it leads with.")
                 HelpRow(symbol: "lock.rectangle", title: "Lock Screen widgets", text: "Touch and hold the Lock Screen, tap Customize, then Lock Screen, and add Tokenroom's ring, list, or one-line widget.")
             } header: {
                 Text("Widgets")
@@ -621,6 +624,96 @@ struct WidgetsHelpView: View {
         }
         .navigationTitle("Widgets & Watch")
         .navigationBarTitleDisplayMode(.inline)
+        // Drag handles stay out while the order is the app's own.
+        .environment(\.editMode, .constant(store.widgetArrangement.order == .manual ? .active : .inactive))
+    }
+}
+
+/// Which providers this iPhone's widgets show, and in what order: a switch for each, and, in
+/// the user's own order, a handle to drag it by.
+private struct WidgetProvidersSection: View {
+    @Bindable var store: MobileStore
+
+    private struct Row: Identifiable {
+        var id: String
+        var name: String
+        var mark: ProviderMark
+    }
+
+    /// Every provider with a reading, and the ones switched off whose reading has gone since:
+    /// without a row there'd be no way to switch them back on. In the user's order when that's
+    /// the order widgets use, else most urgent first, as the widgets show them.
+    private var rows: [Row] {
+        let present = store.readings.map { Row(id: $0.id, name: $0.provider.name, mark: ProviderMark(provider: $0.provider, size: 28)) }
+        let absent = store.widgetArrangement.hidden.subtracting(present.map(\.id)).sorted()
+            .compactMap(Provider.init(rawValue:))
+            .map { Row(id: $0.rawValue, name: $0.displayName, mark: ProviderMark(provider: $0, size: 28)) }
+        let all = present + absent
+        return store.widgetArrangement.order == .manual ? store.widgetArrangement.listed(all, id: \.id) : all
+    }
+
+    var body: some View {
+        let rows = rows
+        Section {
+            if rows.isEmpty {
+                Text("Providers show here once they have a reading.")
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Picker("Order", selection: order(rows)) {
+                        Text("Most Urgent First").tag(WidgetArrangement.Order.urgency)
+                        Text("My Order").tag(WidgetArrangement.Order.manual)
+                    }
+                    .pickerStyle(.segmented)
+                    // Beside the choice, where it can't scroll out of sight under a long list.
+                    Text(store.widgetArrangement.order == .manual ? "Drag a provider by its handle to move it." : "Limits reached come first, then the most urgent, then the most used.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .moveDisabled(true)
+                ForEach(rows) { row in
+                    Toggle(isOn: shown(row.id)) {
+                        Label {
+                            Text(row.name)
+                                .foregroundStyle(store.widgetArrangement.isShown(row.id) ? .primary : .secondary)
+                        } icon: {
+                            row.mark
+                                .opacity(store.widgetArrangement.isShown(row.id) ? 1 : 0.45)
+                        }
+                    }
+                }
+                .onMove { source, destination in
+                    store.widgetArrangement = store.widgetArrangement.moving(rows.map(\.id), from: source, to: destination)
+                }
+            }
+        } header: {
+            Text("Providers in widgets")
+        } footer: {
+            Text("Applies to every Tokenroom widget on this iPhone. A widget set to one provider still shows it.")
+        }
+    }
+
+    private func shown(_ id: String) -> Binding<Bool> {
+        Binding {
+            store.widgetArrangement.isShown(id)
+        } set: { isOn in
+            store.widgetArrangement = store.widgetArrangement.setting(id, shown: isOn)
+        }
+    }
+
+    /// An order of your own starts from the last one you set, with anything new after it in
+    /// the order on screen. A provider with no reading just now keeps the place it had.
+    private func order(_ rows: [Row]) -> Binding<WidgetArrangement.Order> {
+        Binding {
+            store.widgetArrangement.order
+        } set: { order in
+            var arrangement = store.widgetArrangement
+            if order == .manual {
+                arrangement = arrangement.placing(rows.map(\.id))
+            }
+            arrangement.order = order
+            store.widgetArrangement = arrangement
+        }
     }
 }
 
