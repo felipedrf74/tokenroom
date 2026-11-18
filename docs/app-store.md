@@ -2,9 +2,19 @@
 
 A draft for App Store Connect. Provider names appear only in the description, as facts, never in the name, subtitle, or keywords. Tokenroom isn't affiliated with any provider.
 
+## What's New — 1.3.6
+
+Prepared 18 November 2026 with build 1.3.6 (1). Not uploaded or submitted at this checkpoint. The Home Screen widgets screenshot in the listing still shows the earlier widget design.
+
+Choose which providers your widgets show, and in what order. In Settings › Widgets, Live Activity & Watch, switch a provider off, or choose My Order and drag the list into place. It applies to every Tokenroom widget on this iPhone, Lock Screen included.
+
+Each Home Screen widget now has a Style: List, Tiles, or Recommended. Touch and hold a widget and tap Edit Widget. Every row names the limit its figure measures, figures and reset times line up, and a widget with room shows a second limit under the first.
+
+Reset times count down by the second only in their last hour, and the header says when the readings were last checked. A widget showing OpenRouter or Vercel AI Gateway no longer stays blank.
+
 ## What's New — 1.3.5
 
-Prepared 16 November 2026 with build 1.3.5 (1). Not uploaded or submitted. Build 1.3.4 (1) was uploaded on 15 November; its review status wasn't rechecked for this preparation.
+Prepared 16 November 2026 with build 1.3.5 (1). Apple's public US and Portugal listings show it released on 17 November 2026 at 20:52 UTC.
 
 Usage from your Mac now reaches iPhone, widgets and Apple Watch in under a second. Tokenroom asks iCloud for each device's newest readings directly, instead of replaying its whole sync history, which had grown too long to finish in the few seconds widgets and background updates get.
 
@@ -112,7 +122,7 @@ Usage readings now show when each provider was last checked and flag stale data.
 | Content rights | Yes: shows third-party content (provider names, model and feed titles) it has the right to use |
 | EU trader status (DSA) | Non-trader |
 | Tracking | None |
-| Release | 1.3.5 (1) prepared 16 November 2026, not uploaded; 1.3.4 (1) uploaded 15 November 2026 with automatic release to all users; 1.3.3 (1) publicly released 15 November 2026; 1.3.2 publicly released 13 November 2026; 1.3.1 remained an unsubmitted draft and was superseded; 1.3.0 publicly released 7 November 2026; 1.2.2 publicly released 31 October 2026; 1.2.1 publicly released 30 October 2026; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
+| Release | 1.3.6 (1) prepared 18 November 2026, not uploaded at that checkpoint; 1.3.5 (1) publicly released 17 November 2026; 1.3.4 (1) uploaded 15 November 2026 with automatic release to all users; 1.3.3 (1) publicly released 15 November 2026; 1.3.2 publicly released 13 November 2026; 1.3.1 remained an unsubmitted draft and was superseded; 1.3.0 publicly released 7 November 2026; 1.2.2 publicly released 31 October 2026; 1.2.1 publicly released 30 October 2026; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
 
 ## App privacy
 
