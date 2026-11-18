@@ -4,7 +4,7 @@ A draft for App Store Connect. Provider names appear only in the description, as
 
 ## What's New — 1.3.6
 
-Prepared 18 November 2026 with build 1.3.6 (1). Not uploaded or submitted at this checkpoint. The Home Screen widgets screenshot in the listing still shows the earlier widget design.
+Submitted 18 November 2026 at 17:19 UTC with build 1.3.6 (1): Waiting for Review, with automatic release after approval to all users. [The delivery record](release-delivery-20261118.md) retains the package, upload and submission details. The Home Screen widgets screenshot in the listing still shows the earlier widget design, and the promotional text field in the listing is empty.
 
 Choose which providers your widgets show, and in what order. In Settings › Widgets, Live Activity & Watch, switch a provider off, or choose My Order and drag the list into place. It applies to every Tokenroom widget on this iPhone, Lock Screen included.
 
@@ -122,7 +122,7 @@ Usage readings now show when each provider was last checked and flag stale data.
 | Content rights | Yes: shows third-party content (provider names, model and feed titles) it has the right to use |
 | EU trader status (DSA) | Non-trader |
 | Tracking | None |
-| Release | 1.3.6 (1) prepared 18 November 2026, not uploaded at that checkpoint; 1.3.5 (1) publicly released 17 November 2026; 1.3.4 (1) uploaded 15 November 2026 with automatic release to all users; 1.3.3 (1) publicly released 15 November 2026; 1.3.2 publicly released 13 November 2026; 1.3.1 remained an unsubmitted draft and was superseded; 1.3.0 publicly released 7 November 2026; 1.2.2 publicly released 31 October 2026; 1.2.1 publicly released 30 October 2026; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
+| Release | 1.3.6 (1) submitted 18 November 2026, Waiting for Review with automatic release to all users; 1.3.5 (1) publicly released 17 November 2026; 1.3.4 (1) uploaded 15 November 2026 with automatic release to all users; 1.3.3 (1) publicly released 15 November 2026; 1.3.2 publicly released 13 November 2026; 1.3.1 remained an unsubmitted draft and was superseded; 1.3.0 publicly released 7 November 2026; 1.2.2 publicly released 31 October 2026; 1.2.1 publicly released 30 October 2026; 1.2.0 publicly released 22 October 2026; 1.1.1 publicly released 13 October 2026 |
 
 ## App privacy
 

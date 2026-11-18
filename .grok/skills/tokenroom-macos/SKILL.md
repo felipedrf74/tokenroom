@@ -10,7 +10,7 @@ description: >-
 
 # Tokenroom macOS
 
-**Status (18 November 2026):** Mac 2.6.3(1) is public as `v2.6.3` (16 November) and stays the current Mac release. Mobile 1.3.6(1) is prepared with the iPhone widget arrangement and styles (#77), which change nothing in the Mac app.
+**Status (18 November 2026):** Mac 2.6.3(1) is public as `v2.6.3` (16 November) and stays the current Mac release. Mobile 1.3.6(1), with the iPhone widget arrangement and styles (#77), was submitted to App Review the same day (`docs/release-delivery-20261118.md`); it changes nothing in the Mac app. Maquinho Pro runs the public 2.6.3 package; the MacBook Pro was not reachable and is unverified.
 
 **Release preparation (16 November 2026):** Mac 2.6.3(1) is prepared with the direct read (`docs/usage-direct-read-20261116.md`); nothing was notarized, published or installed. Mac 2.6.2(1) is public as `v2.6.2` (15 November) and runs on the MacBook Pro. Mobile 1.3.5(1) is prepared alongside it.
 

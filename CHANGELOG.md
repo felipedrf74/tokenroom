@@ -1,8 +1,8 @@
 # Changelog
 
-## 1.3.6 for iPhone — prepared 18 November 2026
+## 1.3.6 for iPhone — submitted 18 November 2026
 
-You choose which providers the iPhone's widgets show, their order, and how each widget lays them out (#77). Signing, upload, submission and approval are separate delivery steps; none is claimed here. Nothing in the Mac app changed, so Mac 2.6.3 stays the current release.
+You choose which providers the iPhone's widgets show, their order, and how each widget lays them out (#77). Build 1.3.6 (1) was submitted on 18 November at 17:19 UTC and is Waiting for Review, with automatic release after approval to all users; [the delivery record](docs/release-delivery-20261118.md) has the package, upload and submission. Nothing in the Mac app changed, so Mac 2.6.3 stays the current release.
 
 - Settings › Widgets, Live Activity & Watch has a switch for each provider and two orders: most urgent first, as before, or your own, set by dragging. It applies to every Tokenroom widget on the iPhone, Lock Screen included. A widget set to one provider still shows it.
 - In your own order a reached limit doesn't move a row. If it's below the last row a widget shows, the widget's header names it.
