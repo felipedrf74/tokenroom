@@ -16,11 +16,11 @@ Apple's public US and Portugal listings show the preceding mobile 1.3.5 released
 | --- | --- |
 | Behavior change | #77, merged as `2924eb5ab9ba657cf064b0a039c5805b453cd2b5` |
 | Release metadata | #78, candidate `bbb5308379ddfcb857d5ae6f7736b7411fbf2bdd` |
-| Released source | `0bb9022d6413aa49d229686e1c328c5e98d7ec5e` |
+| Submitted source | `0bb9022d6413aa49d229686e1c328c5e98d7ec5e` |
 | Identical candidate/merge tree | `9003516e4f8568d39c7520290613a394c474b3ab` |
-| Archived commit | `3659578576a3ce6536b07bd18708da1600d6e6e4`; it differs from the released source only in `docs/app-store.md`, which no target builds |
+| Archived commit | `3659578576a3ce6536b07bd18708da1600d6e6e4`; it differs from the submitted source only in `docs/app-store.md`, which no target builds |
 | Behavior tests | 1,076 Mac and 66 hosted iPhone tests passed on the candidate, with no failures |
-| Release CI | [All seven checks passed](https://github.com/felipedrf74/tokenroom/actions/runs/44350585174) on the exact candidate, on the second attempt: GitHub never assigned a runner to the Mac tests and the Shared typecheck on the first |
+| Release CI | [All six CI jobs passed](https://github.com/felipedrf74/tokenroom/actions/runs/44350585174) on the exact candidate, and the advisory review with them, on the second attempt: GitHub never assigned a runner to the Mac tests and the Shared typecheck on the first |
 | Fresh review | One fresh-context review of #78: no blocking finding, three nits, two fixed in `bbb5308`. The repository's advisory review was clean in both rounds. #77 had its own council review |
 
 What changed is in the changelog's 1.3.6 entry and in the "Widget arrangement and
