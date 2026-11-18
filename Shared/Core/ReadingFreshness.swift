@@ -112,13 +112,12 @@ extension ReadingCache {
             .filter { $0 > start && $0 <= end }).sorted()
     }
 
-    /// Timeline entries age readings even if WidgetKit postpones the next network reload. Each
-    /// reset gets one an hour ahead too, as its countdown starts ticking (`countdownTicksWithin`).
+    /// Timeline entries age readings even if WidgetKit postpones the next network reload: one
+    /// at each reset, and where each reading goes stale and then expires.
     func presentationDates(after now: Date, until horizon: Date) -> [Date] {
         let dates = items.flatMap { item -> [Date] in
             let checked = item.provider.checkedAt ?? item.provider.fetchedAt ?? savedAt
-            let resets = item.provider.windows.compactMap(\.resetsAt)
-            return resets + resets.map { $0.addingTimeInterval(1 - Self.countdownTicksWithin) } + [
+            return item.provider.windows.compactMap(\.resetsAt) + [
                 checked.addingTimeInterval(ReadingFreshness.staleAfter + 1),
                 checked.addingTimeInterval(ReadingFreshness.expiresAfter + 1)
             ]
@@ -126,16 +125,21 @@ extension ReadingCache {
         return Set(dates.filter { $0 > now && $0 < horizon }).sorted()
     }
 
-    /// Where a countdown in words moves on ("23h" to "22h"): `RelativeTime.remaining` rounds to
-    /// the nearest hour, so each reset's wording changes on the half hours before it, until it
-    /// starts ticking. Entries here keep the words right between reloads.
-    func countdownDates(after now: Date, until horizon: Date) -> [Date] {
-        let resets = Set(items.flatMap { $0.provider.windows.compactMap(\.resetsAt) })
+    /// Where an iPhone widget's countdown changes: an hour before a reset it starts ticking
+    /// (`countdownTicksWithin`), and before that it's in words that `RelativeTime.remaining`
+    /// rounds to the nearest hour, so they move on ("23h" to "22h") on the half hours. Entries
+    /// here keep the words right between reloads. They come second to `presentationDates`: a
+    /// timeline short of room keeps what a reading is before how its countdown is worded.
+    /// - Parameter providers: the providers the widget shows; nil for all of them.
+    func countdownDates(after now: Date, until horizon: Date, providers: Set<String>? = nil) -> [Date] {
+        let shown = items.filter { providers?.contains($0.id) ?? true }
+        let resets = Set(shown.flatMap { $0.provider.windows.compactMap(\.resetsAt) })
         let dates = resets.flatMap { reset -> [Date] in
+            let ticking = reset.addingTimeInterval(1 - Self.countdownTicksWithin)
             let first = max(1, Int(((reset.timeIntervalSince(horizon) / 3_600) - 0.5).rounded(.down)))
             let last = Int((reset.timeIntervalSince(now) / 3_600) - 0.5)
-            guard last >= first else { return [] }
-            return (first...last).map { reset.addingTimeInterval(1 - (Double($0) + 0.5) * 3_600) }
+            guard last >= first else { return [ticking] }
+            return [ticking] + (first...last).map { reset.addingTimeInterval(1 - (Double($0) + 0.5) * 3_600) }
         }
         return Set(dates.filter { $0 > now && $0 < horizon }).sorted()
     }

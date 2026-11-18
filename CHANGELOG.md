@@ -11,6 +11,7 @@ You choose which providers the iPhone's widgets show, their order, and how each 
 - Small and Large can show a second limit under the first, as a thin meter.
 - Reset times count down by the second only in their last hour; before that they read "23h" or "2d 22h".
 - The header says when the readings shown were last checked.
+- A widget showing OpenRouter or Vercel AI Gateway no longer stays blank: their icons were larger than WidgetKit accepts in a widget.
 
 ## 2.6.3 for Mac and 1.3.5 for iPhone — prepared 16 November 2026
 

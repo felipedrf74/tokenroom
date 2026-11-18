@@ -49,9 +49,32 @@ struct ProviderMark: View {
         #if os(macOS)
         return TokenroomImage.named(name).map { Image(nsImage: $0) }
         #else
-        return UIImage(named: name).map { Image(uiImage: $0) }
+        return UIImage(named: name).map { Image(uiImage: fitted($0)) }
         #endif
     }
+
+    #if !os(macOS)
+    /// The longest side, in points, an icon is kept at: more than any mark is drawn.
+    static let longestSide: CGFloat = 64
+
+    /// A vector icon comes at the size its file declares (OpenRouter's is 1024 by 730 points),
+    /// and WidgetKit won't archive a widget holding an image that large: the widget stays on
+    /// its placeholder. An icon past `longestSide` is drawn once at that size instead.
+    static func fitted(_ image: UIImage) -> UIImage {
+        let longest = max(image.size.width, image.size.height)
+        guard longest > longestSide else { return image }
+        let ratio = longestSide / longest
+        let size = CGSize(width: image.size.width * ratio, height: image.size.height * ratio)
+        #if os(watchOS)
+        UIGraphicsBeginImageContextWithOptions(size, false, 0)
+        defer { UIGraphicsEndImageContext() }
+        image.draw(in: CGRect(origin: .zero, size: size))
+        return UIGraphicsGetImageFromCurrentImageContext() ?? image
+        #else
+        return image.preparingThumbnail(of: size) ?? image
+        #endif
+    }
+    #endif
 }
 
 /// A provider tile sits a hair above its card, as app icons do in Apple's own lists: a faint

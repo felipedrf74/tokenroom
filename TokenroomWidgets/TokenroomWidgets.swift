@@ -47,10 +47,12 @@ struct ReadingsTimelineProvider: AppIntentTimelineProvider {
         // Reset, stale, and expiry boundaries update presentation without inventing usage.
         let horizon = now.addingTimeInterval(8 * 3600)
         let boundaries = cache?.presentationDates(after: now, until: horizon) ?? []
-        // Then where a countdown in words moves on, as far as the entries left over go.
-        let wording = cache?.countdownDates(after: now, until: horizon) ?? []
-        let dates = Array(Set([now] + boundaries.prefix(31) + wording.prefix(24))).sorted()
         let arrangement = WidgetArrangement.load(from: AppGroup.defaults)
+        // Then where the countdowns of the providers shown change, as far as the entries left
+        // over go: never in place of a reset or a reading going stale.
+        let shown = Set(ReadingsEntry.make(cache, choice: configuration.provider, arrangement: arrangement, date: now).items.map(\.id))
+        let wording = cache?.countdownDates(after: now, until: horizon, providers: shown) ?? []
+        let dates = Array(Set([now] + boundaries.prefix(31) + wording.prefix(24))).sorted()
         return Timeline(
             entries: dates.map { ReadingsEntry.make(cache, choice: configuration.provider, arrangement: arrangement, style: configuration.style, date: $0) },
             policy: .after(result.nextReload(after: now, reloads: reloads))

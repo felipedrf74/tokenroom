@@ -200,6 +200,11 @@ final class UISnapshotTests: XCTestCase {
             app.swipeUp()
             Thread.sleep(forTimeInterval: 0.8)
             shoot("iphone-widgets-\(page)-scrolled-dark")
+            if page == "states" {
+                app.swipeUp()
+                Thread.sleep(forTimeInterval: 0.8)
+                shoot("iphone-widgets-\(page)-end-dark")
+            }
         }
         for page in ["compact", "states"] {
             _ = launch(["-onboarded", "YES", "-TokenroomGallery", page], look: .light)
@@ -209,6 +214,18 @@ final class UISnapshotTests: XCTestCase {
         shoot("iphone-settings-widgets-dark")
         tap(settings, "My Order")
         shoot("iphone-settings-widgets-own-order-dark")
+        // One provider switched off, then everything back as it was for the next run. A row's
+        // switch answers at its knob, toward the trailing edge, not at the row's middle.
+        tap(settings, "Most Urgent First")
+        let first = settings.switches.firstMatch
+        if first.waitForExistence(timeout: 3) {
+            let knob = first.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5))
+            knob.tap()
+            Thread.sleep(forTimeInterval: 0.8)
+            shoot("iphone-settings-widgets-one-off-dark")
+            knob.tap()
+            Thread.sleep(forTimeInterval: 0.5)
+        }
         let app = launch(["-onboarded", "YES", "-TokenroomGallery", "lock"])
         shoot("iphone-widgets-lock")
         app.swipeUp()

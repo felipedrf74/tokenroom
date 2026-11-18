@@ -317,18 +317,20 @@ final class ReadingReliabilityTests: XCTestCase {
         }
     }
 
-    /// A countdown ticks in its last hour: the timeline has an entry where it starts.
+    /// A countdown ticks in its last hour: the iPhone widget's timeline has an entry where it
+    /// starts, apart from the entries that say what a reading is.
     func testWidgetTimelinesStartTheCountdownAnHourBeforeTheReset() {
         var reading = item("one", age: 0)
-        reading.provider.windows[0].resetsAt = now.addingTimeInterval(7 * 3600)
+        let reset = now.addingTimeInterval(7 * 3600)
+        reading.provider.windows[0].resetsAt = reset
         let cache = ReadingCache(savedAt: now, isSample: false, items: [reading])
-        let dates = cache.presentationDates(after: now, until: now.addingTimeInterval(8 * 3600))
+        let horizon = now.addingTimeInterval(8 * 3600)
         let start = now.addingTimeInterval(6 * 3600 + 1)
-        XCTAssertTrue(dates.contains(start), "\(dates)")
-        XCTAssertLessThan(reading.provider.windows[0].resetsAt!.timeIntervalSince(start), ReadingCache.countdownTicksWithin)
+        XCTAssertTrue(cache.countdownDates(after: now, until: horizon).contains(start))
+        XCTAssertLessThan(reset.timeIntervalSince(start), ReadingCache.countdownTicksWithin)
+        XCTAssertEqual(cache.presentationDates(after: now, until: horizon), [now.addingTimeInterval(3601), reset], "Stale, then the reset: nothing about how a countdown reads")
         reading.provider.windows[0].resetsAt = now.addingTimeInterval(1800)
-        let soon = ReadingCache(savedAt: now, isSample: false, items: [reading]).presentationDates(after: now, until: now.addingTimeInterval(8 * 3600))
-        XCTAssertEqual(soon.filter { $0 < now.addingTimeInterval(3600) }, [now.addingTimeInterval(1800)], "Only the reset: it already ticks")
+        XCTAssertTrue(ReadingCache(savedAt: now, isSample: false, items: [reading]).countdownDates(after: now, until: horizon).isEmpty, "It already ticks")
     }
 
     /// Further out the countdown is in words, rounded to the hour, and the timeline has an
@@ -346,7 +348,7 @@ final class ReadingReliabilityTests: XCTestCase {
         reading.provider.windows[0].resetsAt = reset
         let cache = ReadingCache(savedAt: now, isSample: false, items: [reading])
         let dates = cache.countdownDates(after: now, until: now.addingTimeInterval(8 * 3600))
-        XCTAssertEqual(dates, [3.5, 2.5, 1.5].map { reset.addingTimeInterval(1 - $0 * 3600) }, "4h until 3.5 hours are left, then 3h, 2h, and 1h")
+        XCTAssertEqual(dates, [3.5, 2.5, 1.5, 1].map { reset.addingTimeInterval(1 - $0 * 3600) }, "4h until 3.5 hours are left, then 3h, 2h, 1h, and ticking")
         var shown = RelativeTime.remaining(until: reset, now: now)
         for (date, words) in zip(dates, ["3h", "2h", "1h"]) {
             XCTAssertEqual(RelativeTime.remaining(until: reset, now: date.addingTimeInterval(-2)), shown, "Unchanged up to the entry")
@@ -354,8 +356,29 @@ final class ReadingReliabilityTests: XCTestCase {
             XCTAssertEqual(shown, words)
         }
         XCTAssertTrue(cache.countdownDates(after: now, until: now.addingTimeInterval(1800)).isEmpty)
-        reading.provider.windows[0].resetsAt = now.addingTimeInterval(40 * 60)
-        XCTAssertTrue(ReadingCache(savedAt: now, isSample: false, items: [reading]).countdownDates(after: now, until: now.addingTimeInterval(8 * 3600)).isEmpty, "Already ticking")
+    }
+
+    /// A widget builds entries only for the countdowns it draws, and its freshness entries
+    /// never give way to them: ten resets a little over two hours out, each with a countdown
+    /// start, don't cost it the reset five hours out.
+    func testCountdownEntriesFollowTheProvidersShownAndNeverCrowdOutAReset() {
+        var items: [ReadingCache.Item] = (0..<10).map { index in
+            var reading = item("near\(index)", age: Double(index) * 60)
+            reading.provider.windows[0].resetsAt = now.addingTimeInterval(2 * 3600 + Double(index) * 60 + 600)
+            return reading
+        }
+        var far = item("far", age: 0)
+        let farReset = now.addingTimeInterval(5 * 3600)
+        far.provider.windows[0].resetsAt = farReset
+        items.append(far)
+        let cache = ReadingCache(savedAt: now, isSample: false, items: items)
+        let horizon = now.addingTimeInterval(8 * 3600)
+        let boundaries = cache.presentationDates(after: now, until: horizon)
+        XCTAssertLessThanOrEqual(boundaries.count, 31)
+        XCTAssertTrue(boundaries.contains(farReset), "\(boundaries.count) boundaries")
+        let onlyFar = cache.countdownDates(after: now, until: horizon, providers: ["far"])
+        XCTAssertEqual(onlyFar, [4.5, 3.5, 2.5, 1.5, 1].map { farReset.addingTimeInterval(1 - $0 * 3600) }, "Nothing for the providers the widget doesn't show")
+        XCTAssertGreaterThan(cache.countdownDates(after: now, until: horizon).count, onlyFar.count)
     }
 
     /// The window a widget shows under the one it leads with.

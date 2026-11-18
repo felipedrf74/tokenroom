@@ -176,9 +176,19 @@ final class MobileStore {
         didSet {
             guard widgetArrangement != oldValue else { return }
             widgetArrangement.save(to: defaults)
-            platformEffects.reloadWidgets()
+            // One reload once the switching and dragging stops: each one a widget makes counts
+            // toward the day's allowance (`WidgetReloadLog`), which decides how often it reloads.
+            widgetArrangementReload?.cancel()
+            guard allowsExternalEffects else { return }
+            widgetArrangementReload = Task { [weak self] in
+                try? await Task.sleep(for: Self.widgetArrangementSettle)
+                guard !Task.isCancelled, let self else { return }
+                self.platformEffects.reloadWidgets()
+            }
         }
     }
+    static let widgetArrangementSettle: Duration = .seconds(1.5)
+    @ObservationIgnored private var widgetArrangementReload: Task<Void, Never>?
 
     /// Which alerts to send, and quiet hours. Shared through iCloud with Macs, which can change
     /// them too; the newer copy wins.

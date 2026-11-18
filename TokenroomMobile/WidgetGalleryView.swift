@@ -115,6 +115,10 @@ struct WidgetGalleryView: View {
                     card(.systemMedium, size: homeSizes[1].size, mode: .accented, style: .tiles, cache: eventful, arrangement: own)
                     card(.systemLarge, size: homeSizes[2].size, style: .list, cache: eventful, arrangement: own)
                     card(.systemLarge, size: homeSizes[2].size, style: .tiles, cache: eventful, arrangement: own)
+                    // A balance first: an amount where the others have a percentage and a meter.
+                    let balance = WidgetArrangement(order: .manual, sequence: eventful.items.filter { !$0.provider.windows.contains(where: \.isMetered) }.map(\.id))
+                    card(.systemMedium, size: homeSizes[1].size, style: .list, cache: cache, arrangement: balance)
+                    card(.systemMedium, size: homeSizes[1].size, style: .tiles, cache: cache, arrangement: balance)
                     card(.systemMedium, size: homeSizes[1].size, cache: eventful, arrangement: WidgetArrangement(hidden: Set(eventful.items.map(\.id))))
                 } else {
                     let style: WidgetStyleOption = page == "tiles" ? .tiles : page == "list" ? .list : .recommended

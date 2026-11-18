@@ -41,10 +41,11 @@ struct ReadingsEntry: TimelineEntry {
     }
 
     /// A provider past the first `count` rows whose limit is reached: an order the user chose
-    /// can put it out of sight, and the widget still has to say so.
+    /// can put it out of sight, and the widget still has to say so. Live readings only, like
+    /// every other limit warning: a stale one is the last measurement, not the present.
     func limitReached(beyond count: Int) -> ReadingCache.Item? {
         items.dropFirst(count).first { item in
-            item.provider.windows.contains { $0.isMetered && $0.used >= 100 && !$0.isAwaitingReading(at: date) }
+            item.provider.isLive && item.provider.windows.contains { $0.isMetered && $0.used >= 100 && !$0.isAwaitingReading(at: date) }
         }
     }
 }

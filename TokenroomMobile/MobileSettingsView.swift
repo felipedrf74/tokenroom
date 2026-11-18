@@ -681,7 +681,9 @@ private struct WidgetProvidersSection: View {
         } header: {
             Text("Providers in widgets")
         } footer: {
-            Text("For every Tokenroom widget on this iPhone. A widget set to show one provider still shows it. Providers you switch off still send alerts and can be followed.")
+            Text(store.widgetArrangement.order == .manual
+                ? "Drag a provider to move it. For every Tokenroom widget on this iPhone; one set to a single provider still shows it."
+                : "For every Tokenroom widget on this iPhone; one set to a single provider still shows it.")
         }
     }
 
@@ -693,14 +695,15 @@ private struct WidgetProvidersSection: View {
         }
     }
 
-    /// An order of your own starts from the last one you set, or else the one on screen.
+    /// An order of your own starts from the last one you set, with anything new after it in
+    /// the order on screen. A provider with no reading just now keeps the place it had.
     private func order(_ rows: [Row]) -> Binding<WidgetArrangement.Order> {
         Binding {
             store.widgetArrangement.order
         } set: { order in
             var arrangement = store.widgetArrangement
             if order == .manual {
-                arrangement.sequence = arrangement.listed(rows.map(\.id), id: { $0 })
+                arrangement = arrangement.placing(rows.map(\.id))
             }
             arrangement.order = order
             store.widgetArrangement = arrangement

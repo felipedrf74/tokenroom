@@ -57,16 +57,35 @@ final class WidgetArrangementTests: XCTestCase {
     }
 
     func testMovingARowSwitchesToTheUsersOrderAndKeepsAbsentProvidersPlaces() {
-        // Kimi was ordered earlier and has no reading now, so the list doesn't show it.
+        // Kimi was placed first earlier and has no reading now, so the list doesn't show it.
         let arrangement = WidgetArrangement(sequence: ["kimiCode", "openai", "claude"])
         let listed = arrangement.listed(ranked, id: { $0 })
         XCTAssertEqual(listed, ["openai", "claude", "cursor", "grok"])
         let down = arrangement.moving(listed, from: IndexSet(integer: 0), to: 3)
         XCTAssertEqual(down.order, .manual)
-        XCTAssertEqual(down.sequence, ["claude", "cursor", "openai", "grok", "kimiCode"])
-        let up = down.moving(Array(down.sequence.prefix(4)), from: IndexSet(integer: 3), to: 0)
-        XCTAssertEqual(up.sequence, ["grok", "claude", "cursor", "openai", "kimiCode"])
+        XCTAssertEqual(down.sequence, ["kimiCode", "claude", "cursor", "openai", "grok"], "Kimi keeps the first place")
+        let up = down.moving(["claude", "cursor", "openai", "grok"], from: IndexSet(integer: 3), to: 0)
+        XCTAssertEqual(up.sequence, ["kimiCode", "grok", "claude", "cursor", "openai"])
         XCTAssertEqual(arranged(up), ["grok", "claude", "cursor", "openai"])
+        XCTAssertEqual(arranged(up, ["openai", "kimiCode", "grok"]), ["kimiCode", "grok", "openai"], "Back where it was left")
+        let middle = WidgetArrangement(order: .manual, sequence: ["openai", "kimiCode", "claude"])
+            .moving(["openai", "claude"], from: IndexSet(integer: 1), to: 0)
+        XCTAssertEqual(middle.sequence, ["claude", "kimiCode", "openai"], "An absent provider stays between the two it was between")
+    }
+
+    /// Claude first, Cursor second, OpenAI third; back to most urgent first; Claude's reading
+    /// goes; then "My Order" again. Nothing was dragged, so nothing moved.
+    func testChoosingYourOwnOrderAgainKeepsAnAbsentProvidersPlace() {
+        var arrangement = WidgetArrangement(order: .urgency, sequence: ["claude", "cursor", "openai"])
+        let onScreen = arrangement.listed(["openai", "cursor"], id: { $0 })
+        arrangement = arrangement.placing(onScreen)
+        arrangement.order = .manual
+        XCTAssertEqual(arrangement.sequence, ["claude", "cursor", "openai"])
+        XCTAssertEqual(arranged(arrangement, ["openai", "claude", "cursor"]), ["claude", "cursor", "openai"])
+        // The first time, the order on screen becomes the order kept, new providers last.
+        let first = WidgetArrangement().placing(ranked)
+        XCTAssertEqual(first.sequence, ranked)
+        XCTAssertEqual(WidgetArrangement(sequence: ["grok"]).placing(ranked).sequence, ["grok", "openai", "claude", "cursor"])
     }
 
     func testTheChoiceSurvivesASaveAndTheDefaultLeavesNothingBehind() {

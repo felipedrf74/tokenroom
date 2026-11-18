@@ -94,17 +94,30 @@ struct WidgetArrangement: Codable, Equatable, Sendable {
         }.map(\.element)
     }
 
+    /// The arrangement with every provider in `listed` given a place: the ones `sequence`
+    /// already holds keep theirs, absent ones included, and the rest follow in the order given.
+    /// Choosing "My Order" starts here, so the order on screen is the order that's kept.
+    func placing(_ listed: [String]) -> WidgetArrangement {
+        var result = self
+        var seen = Set<String>()
+        result.sequence = (sequence + listed).filter { seen.insert($0).inserted }
+        return result
+    }
+
     /// The arrangement after the user moved rows in a list showing `listed` (IDs as shown).
-    /// Providers that aren't on screen now (no reading at the moment) keep their place after
-    /// the ones that are, so they come back where they were left.
+    /// A provider that isn't on screen now (no reading at the moment) keeps its place among
+    /// the others, so it comes back where it was left.
     func moving(_ listed: [String], from source: IndexSet, to destination: Int) -> WidgetArrangement {
         var visible = listed
         let moved = source.sorted().map { visible[$0] }
         let before = source.filter { $0 < destination }.count
         for index in source.sorted().reversed() { visible.remove(at: index) }
         visible.insert(contentsOf: moved, at: min(max(destination - before, 0), visible.count))
-        var result = self
-        result.sequence = visible + sequence.filter { !visible.contains($0) }
+        var result = placing(listed)
+        // The places the rows on screen hold, refilled in their new order.
+        let onScreen = Set(listed)
+        var next = visible.makeIterator()
+        result.sequence = result.sequence.map { onScreen.contains($0) ? (next.next() ?? $0) : $0 }
         result.order = .manual
         return result
     }

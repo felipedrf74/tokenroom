@@ -1002,6 +1002,20 @@ final class MobileStoreTests: XCTestCase {
         XCTAssertTrue(ReadingsEntry.make(cache, choice: .openai, date: now).items.isEmpty)
     }
 
+    /// WidgetKit refuses to archive a widget holding an image past its size limit, which leaves
+    /// the widget on its placeholder. A vector icon comes at the size its file declares.
+    func testEveryProviderIconIsSmallEnoughForAWidget() throws {
+        var checked = 0
+        for provider in Provider.allCases {
+            guard let name = provider.assetName, let image = UIImage(named: name) else { continue }
+            let fitted = ProviderMark.fitted(image)
+            XCTAssertLessThanOrEqual(max(fitted.size.width, fitted.size.height), ProviderMark.longestSide + 0.5, name)
+            XCTAssertEqual(fitted.size.width / fitted.size.height, image.size.width / image.size.height, accuracy: 0.02, "\(name) keeps its shape")
+            checked += 1
+        }
+        XCTAssertGreaterThan(checked, 10, "The icons are in the app's bundle")
+    }
+
     func testWidgetsShowTheProvidersSwitchedOnInTheUsersOrder() {
         func reading(_ id: String, used: Double) -> ReadingCache.Item {
             .init(provider: RelayProvider(id: id, name: id, shortName: id, monogram: "X", tint: "#000000", state: "live", checkedAt: now, primaryWindowID: "weekly", windows: [.init(id: "weekly", kind: "weekly", title: "Weekly", used: used)]), source: "Mac")
@@ -1020,6 +1034,15 @@ final class MobileStoreTests: XCTestCase {
         let entry = ReadingsEntry.make(cache, choice: .automatic, arrangement: own, date: now)
         XCTAssertEqual(entry.limitReached(beyond: 2)?.id, "zai", "Out of sight in a Medium of two rows, so the widget names it")
         XCTAssertNil(entry.limitReached(beyond: 3))
+
+        // Checked two hours ago, so stale: the last measurement isn't a limit reached now.
+        var old = reading("zai", used: 100)
+        old.provider.checkedAt = now.addingTimeInterval(-2 * 3600)
+        let aged = ReadingCache(savedAt: now, isSample: false, items: [old, reading("cursor", used: 90), reading("claude", used: 50), reading("openai", used: 20)])
+        let stale = ReadingsEntry.make(aged, choice: .automatic, arrangement: own, date: now)
+        XCTAssertEqual(stale.items.last?.id, "zai")
+        XCTAssertEqual(stale.items.last?.provider.isLive, false)
+        XCTAssertNil(stale.limitReached(beyond: 2), "A stale reading at its limit isn't announced as a limit reached")
 
         let none = ReadingsEntry.make(cache, choice: .automatic, arrangement: WidgetArrangement(hidden: ["zai", "cursor", "claude", "openai"]), date: now)
         XCTAssertTrue(none.items.isEmpty)
