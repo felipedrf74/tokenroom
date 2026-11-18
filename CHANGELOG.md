@@ -1,12 +1,27 @@
 # Changelog
 
-## Unreleased
+## Next for iPhone — unreleased
+
+Not in 1.3.6, which was submitted before this landed.
 
 - A development build on an iPhone says so in Settings, beside its version and under Needs Tokenroom on a Mac. It uses a separate iCloud from the App Store's, so it never shows a released Mac's readings; from 15 to 18 November that went unnoticed on the maintainer's iPhone and looked like a sync fault.
 
-## 2.6.3 for Mac and 1.3.5 for iPhone — prepared 16 November 2026
+## 1.3.6 for iPhone — submitted 18 November 2026
 
-Usage from a Mac reaches the iPhone, its widgets and Apple Watch in about half a second, however long Tokenroom has been syncing. [The measurement and the decision](docs/usage-direct-read-20261116.md) are recorded with it. Signing, notarization, upload, submission and installation are separate delivery steps; none is claimed here.
+You choose which providers the iPhone's widgets show, their order, and how each widget lays them out (#77). Build 1.3.6 (1) was submitted on 18 November at 17:19 UTC and is Waiting for Review, with automatic release after approval to all users; [the delivery record](docs/release-delivery-20261118.md) has the package, upload and submission. Nothing in the Mac app changed, so Mac 2.6.3 stays the current release.
+
+- Settings › Widgets, Live Activity & Watch has a switch for each provider and two orders: most urgent first, as before, or your own, set by dragging. It applies to every Tokenroom widget on the iPhone, Lock Screen included. A widget set to one provider still shows it.
+- In your own order a reached limit doesn't move a row. If it's below the last row a widget shows, the widget's header names it.
+- Each Home Screen widget has a Style: List, Tiles, or Recommended (a tile on Small, the list on Medium and Large). Touch and hold a widget and tap Edit Widget.
+- Every row names the limit its figure measures. Figures and reset times line up down the widget, and a reset in its last hour no longer sits beside the provider's name.
+- Small and Large can show a second limit under the first, as a thin meter.
+- Reset times count down by the second only in their last hour; before that they read "23h" or "2d 22h", and "12d" past three days.
+- The header says when the readings shown were last checked.
+- A widget showing OpenRouter or Vercel AI Gateway no longer stays blank: their icons were larger than WidgetKit accepts in a widget.
+
+## 2.6.3 for Mac — released 16 November 2026 / 1.3.5 for iPhone — released 17 November 2026
+
+Usage from a Mac reaches the iPhone, its widgets and Apple Watch in about half a second, however long Tokenroom has been syncing. [The measurement and the decision](docs/usage-direct-read-20261116.md) are recorded with it. Mac 2.6.3 is [public](https://github.com/felipedrf74/tokenroom/releases/tag/v2.6.3); iPhone 1.3.5 was submitted on 16 November and Apple's public US and Portugal listings show it released on 17 November at 20:52 UTC. [The delivery record](docs/release-delivery-20261116.md) has the packages, the upload, the submission and the installations.
 
 - Reading everything Tokenroom keeps in iCloud from the beginning took 66 requests and 20 to 25 seconds against a zone holding 33 records, and the readings came last. It grows with every save. Widgets have 5 seconds, complications 6, the Watch 10 and the iPhone app 20, so a newly started reader never finished.
 - Readers now ask iCloud which devices send readings and fetch those records by name: about half a second, whatever the history. A new install, a new Watch and a widget without a saved copy find every device straight away.
@@ -16,7 +31,7 @@ Usage from a Mac reaches the iPhone, its widgets and Apple Watch in about half a
 - Old alert records are found with a query on the Mac and the iPhone.
 - `Tokenroom -TokenroomSyncProbe YES` on a Mac times each kind of iCloud read and exits, without starting a check or writing anything.
 
-Mac 2.6.2 was released on 15 November with the earlier change (#73), and iPhone 1.3.4 was uploaded the same day; neither has an entry of its own here.
+Mac 2.6.2 was released on 15 November with the earlier change (#73), and iPhone 1.3.4 was released on 16 November; neither has an entry of its own here.
 
 ## 2.6.1 for Mac — released 14 November 2026 / 1.3.3 for iPhone — submitted 14 November 2026
 

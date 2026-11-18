@@ -49,9 +49,48 @@ struct ProviderMark: View {
         #if os(macOS)
         return TokenroomImage.named(name).map { Image(nsImage: $0) }
         #else
-        return UIImage(named: name).map { Image(uiImage: $0) }
+        return fitted(named: name).map { Image(uiImage: $0) }
         #endif
     }
+
+    #if !os(macOS)
+    /// The longest side, in points, an icon is kept at: more than any mark is drawn.
+    static let longestSide: CGFloat = 64
+    /// Icons already fitted, by asset name. `NSCache` is safe to share between threads.
+    nonisolated(unsafe) private static let fittedIcons = NSCache<NSString, UIImage>()
+
+    static func fitted(named name: String) -> UIImage? {
+        if let kept = fittedIcons.object(forKey: name as NSString) { return kept }
+        guard let image = UIImage(named: name) else { return nil }
+        let result = fitted(image)
+        fittedIcons.setObject(result, forKey: name as NSString)
+        return result
+    }
+
+    /// A vector icon comes at the size its file declares (OpenRouter's is 1024 by 730 points),
+    /// and WidgetKit won't archive a widget holding an image that large: the widget stays on
+    /// its placeholder. An icon past `longestSide` is drawn at that size instead, at three
+    /// pixels a point so it stays sharp wherever a mark is drawn.
+    static func fitted(_ image: UIImage) -> UIImage {
+        let longest = max(image.size.width, image.size.height)
+        guard longest > longestSide else { return image }
+        let ratio = longestSide / longest
+        let size = CGSize(width: image.size.width * ratio, height: image.size.height * ratio)
+        #if os(watchOS)
+        UIGraphicsBeginImageContextWithOptions(size, false, 3)
+        defer { UIGraphicsEndImageContext() }
+        image.draw(in: CGRect(origin: .zero, size: size))
+        return UIGraphicsGetImageFromCurrentImageContext() ?? image
+        #else
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 3
+        format.opaque = false
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: size))
+        }
+        #endif
+    }
+    #endif
 }
 
 /// A provider tile sits a hair above its card, as app icons do in Apple's own lists: a faint

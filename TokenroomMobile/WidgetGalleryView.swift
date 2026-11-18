@@ -3,7 +3,10 @@ import SwiftUI
 import WidgetKit
 
 /// Every widget size from the current readings, drawn in the app for screenshots and checks
-/// without a Home Screen. Debug builds only: `-TokenroomGallery home` or `lock`.
+/// without a Home Screen. Debug builds only: `-TokenroomGallery home` or `lock`, `list` or `tiles`
+/// for one style at every size, `compact` for the smallest iPhone's sizes, `few` for two
+/// providers, and `states` for the user's own order, a limit out of sight, a stale reading, a
+/// countdown in its last hour, and tinted widgets.
 struct WidgetGalleryView: View {
     var cache: ReadingCache
     var date: Date = .now
@@ -19,8 +22,42 @@ struct WidgetGalleryView: View {
         (.accessoryInline, CGSize(width: 250, height: 24)),
     ]
 
+    /// The smallest Home Screen sizes an iPhone on iOS 26 gives widgets.
+    private let compactSizes: [(family: WidgetFamily, size: CGSize)] = [
+        (.systemSmall, CGSize(width: 155, height: 155)),
+        (.systemMedium, CGSize(width: 329, height: 155)),
+        (.systemLarge, CGSize(width: 329, height: 345)),
+    ]
+
     /// `home` for the Home Screen sizes, `lock` for the Lock Screen and tinted ones.
     var page = "home"
+
+    /// The readings with what a sample day doesn't have: one provider's limit reached, one not
+    /// checked for two hours, and one resetting within the hour.
+    private var eventful: ReadingCache {
+        var result = cache
+        // The last provider with a meter: in the user's own order below, it's out of sight.
+        let limit = result.items.lastIndex { $0.provider.windows.contains(where: \.isMetered) }
+        for index in result.items.indices {
+            if index == limit, index > 2 {
+                for window in result.items[index].provider.windows.indices where result.items[index].provider.windows[window].isMetered {
+                    result.items[index].provider.windows[window].used = 100
+                }
+            } else if index == 1 {
+                result.items[index].provider.checkedAt = date.addingTimeInterval(-2 * 3600)
+                result.items[index].provider.fetchedAt = date.addingTimeInterval(-2 * 3600)
+            } else if index == 2, !result.items[index].provider.windows.isEmpty {
+                result.items[index].provider.windows[0].resetsAt = date.addingTimeInterval(48 * 60 + 12)
+            }
+        }
+        return result
+    }
+
+    private func card(_ family: WidgetFamily, size: CGSize, mode: WidgetRenderingMode = .fullColor, style: WidgetStyleOption = .recommended,
+                      cache: ReadingCache? = nil, arrangement: WidgetArrangement = WidgetArrangement()) -> some View {
+        widget(family, size: size, mode: mode, style: style, cache: cache, arrangement: arrangement)
+            .background(mode == .fullColor ? AnyShapeStyle(.background) : AnyShapeStyle(.blue.opacity(0.25)), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
 
     var body: some View {
         ScrollView {
@@ -54,10 +91,52 @@ struct WidgetGalleryView: View {
                             .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
                             .environment(\.colorScheme, .dark)
                     }
+                } else if page == "compact" {
+                    card(.systemMedium, size: compactSizes[1].size, style: .list)
+                    card(.systemMedium, size: compactSizes[1].size, style: .tiles)
+                    HStack(spacing: 14) {
+                        card(.systemSmall, size: compactSizes[0].size, style: .list)
+                        card(.systemSmall, size: compactSizes[0].size, style: .tiles)
+                    }
+                    card(.systemLarge, size: compactSizes[2].size, style: .list)
+                    card(.systemLarge, size: compactSizes[2].size, style: .tiles)
+                } else if page == "few" {
+                    var few = cache
+                    let _ = few.items = Array(cache.items.prefix(2))
+                    card(.systemMedium, size: homeSizes[1].size, style: .list, cache: few)
+                    card(.systemMedium, size: homeSizes[1].size, style: .tiles, cache: few)
+                    card(.systemLarge, size: homeSizes[2].size, style: .list, cache: few)
+                } else if page == "states" {
+                    // The user's own order, as saved: the provider at its limit is last.
+                    let own = WidgetArrangement(order: .manual, sequence: eventful.items.map(\.id), hidden: [eventful.items.first?.id ?? ""])
+                    card(.systemMedium, size: homeSizes[1].size, style: .list, cache: eventful, arrangement: own)
+                    card(.systemMedium, size: homeSizes[1].size, style: .tiles, cache: eventful, arrangement: own)
+                    card(.systemMedium, size: homeSizes[1].size, mode: .accented, style: .list, cache: eventful, arrangement: own)
+                    card(.systemMedium, size: homeSizes[1].size, mode: .accented, style: .tiles, cache: eventful, arrangement: own)
+                    card(.systemLarge, size: homeSizes[2].size, style: .list, cache: eventful, arrangement: own)
+                    card(.systemLarge, size: homeSizes[2].size, style: .tiles, cache: eventful, arrangement: own)
+                    // A provider with two windows on Small: the tile's layout, beside the list's.
+                    let twoWindows = WidgetArrangement(order: .manual, sequence: cache.items.filter { $0.provider.windows.filter(\.isMetered).count > 1 }.map(\.id))
+                    HStack(spacing: 14) {
+                        card(.systemSmall, size: homeSizes[0].size, style: .tiles, cache: cache, arrangement: twoWindows)
+                        card(.systemSmall, size: homeSizes[0].size, style: .list, cache: cache, arrangement: twoWindows)
+                    }
+                    // A balance first: an amount where the others have a percentage and a meter.
+                    let balance = WidgetArrangement(order: .manual, sequence: eventful.items.filter { !$0.provider.windows.contains(where: \.isMetered) }.map(\.id))
+                    card(.systemMedium, size: homeSizes[1].size, style: .list, cache: cache, arrangement: balance)
+                    card(.systemMedium, size: homeSizes[1].size, style: .tiles, cache: cache, arrangement: balance)
+                    // The same balance, not checked for two hours: no meter to fade, so it says so.
+                    var aged = cache
+                    let _ = aged.items.indices.filter { !aged.items[$0].provider.windows.contains(where: \.isMetered) }.forEach { index in
+                        aged.items[index].provider.checkedAt = date.addingTimeInterval(-2 * 3600)
+                        aged.items[index].provider.fetchedAt = date.addingTimeInterval(-2 * 3600)
+                    }
+                    card(.systemMedium, size: homeSizes[1].size, style: .tiles, cache: aged, arrangement: balance)
+                    card(.systemMedium, size: homeSizes[1].size, cache: eventful, arrangement: WidgetArrangement(hidden: Set(eventful.items.map(\.id))))
                 } else {
+                    let style: WidgetStyleOption = page == "tiles" ? .tiles : page == "list" ? .list : .recommended
                     ForEach(homeSizes, id: \.family) { item in
-                        widget(item.family, size: item.size, mode: .fullColor)
-                            .background(.background, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                        card(item.family, size: item.size, style: style)
                     }
                 }
             }
@@ -80,8 +159,9 @@ struct WidgetGalleryView: View {
         return nil
     }
 
-    private func widget(_ family: WidgetFamily, size: CGSize, mode: WidgetRenderingMode) -> some View {
-        UsageWidgetView(entry: ReadingsEntry.make(cache, choice: .automatic, date: date))
+    private func widget(_ family: WidgetFamily, size: CGSize, mode: WidgetRenderingMode, style: WidgetStyleOption = .recommended,
+                        cache shown: ReadingCache? = nil, arrangement: WidgetArrangement = WidgetArrangement()) -> some View {
+        UsageWidgetView(entry: ReadingsEntry.make(shown ?? cache, choice: .automatic, arrangement: arrangement, style: style, date: date))
             .environment(\.widgetPreviewStyle, WidgetPreviewStyle(family: family, renderingMode: mode))
             .padding(family == .accessoryInline || family == .accessoryCircular || family == .accessoryRectangular ? 0 : 16)
             .frame(width: size.width, height: size.height)
