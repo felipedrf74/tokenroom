@@ -666,7 +666,7 @@ private struct WidgetProvidersSection: View {
                     }
                     .pickerStyle(.segmented)
                     // Beside the choice, where it can't scroll out of sight under a long list.
-                    Text(store.widgetArrangement.order == .manual ? "Drag a provider by its handle to move it." : "A limit reached comes first, then whichever runs out soonest.")
+                    Text(store.widgetArrangement.order == .manual ? "Drag a provider by its handle to move it." : "Limits reached come first, then the most urgent, then the most used.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

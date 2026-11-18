@@ -338,7 +338,8 @@ private struct ListRow: View {
                         Spacer(minLength: 2)
                         status(reading)
                     }
-                    if isLarge, provider.isLive, let second = provider.secondWindow(lead: window, now: date) {
+                    let second = isLarge && provider.isLive ? provider.secondWindow(lead: window, now: date) : nil
+                    if let second {
                         SecondWindowLine(window: second, isStale: false)
                     }
                     if charted, let series = item.history[window.id], !series.isEmpty {
@@ -347,7 +348,8 @@ private struct ListRow: View {
                             .padding(.top, 2)
                             .accessibilityHidden(true)
                         // A chart this wide wants its span said.
-                        Text("Last 7 days")
+                        // Under a second window's meter, it says whose week this is.
+                        Text(second == nil ? "Last 7 days" : "\(window.displayTitle), last 7 days")
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -425,7 +427,8 @@ private struct TilesWidget: View {
                 HStack(spacing: 6) {
                     ForEach(row) { item in
                         Link(destination: DeepLink.provider(item.id).url) {
-                            Tile(item: item, date: entry.date, showsSecond: showsSecond, roomy: items.count <= 2)
+                            // One or two tiles have the height for what Large's tiles show under the lead window.
+                            Tile(item: item, date: entry.date, showsSecond: showsSecond || items.count <= 2, roomy: items.count <= 2)
                         }
                         .foregroundStyle(.primary)
                     }
@@ -479,14 +482,6 @@ private struct Tile: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
-                        // No meter to fade, so the words say it: "Stale", or "Reset".
-                        if reading.isFaded {
-                            RowStatus(reading: reading, date: date)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .fixedSize()
-                        }
                         Spacer(minLength: 2)
                         figure(reading, size: roomy ? 20 : 15)
                     }
@@ -507,7 +502,7 @@ private struct Tile: View {
         .padding(.horizontal, roomy ? 10 : 8)
         .padding(.vertical, roomy ? 8 : 5)
         // With a second window on some tiles and not others, every tile starts at its top.
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: showsSecond ? .topLeading : .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: showsSecond && !roomy ? .topLeading : .leading)
         .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
         .opacity(provider.isLive ? 1 : 0.8)
     }
@@ -522,6 +517,15 @@ private struct Tile: View {
             Spacer(minLength: 2)
             if reading.window?.isMetered != false {
                 figure(reading, size: roomy ? 22 : 17)
+                    .layoutPriority(1)
+            } else if reading.isFaded {
+                // A balance has no meter to fade and its amount is on the next line, so
+                // "Stale" or "Reset" sits here, where the other tiles have their figure.
+                RowStatus(reading: reading, date: date)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
                     .layoutPriority(1)
             }
         }
