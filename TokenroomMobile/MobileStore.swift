@@ -183,11 +183,22 @@ final class MobileStore {
             widgetArrangementReload = Task { [weak self] in
                 try? await Task.sleep(for: Self.widgetArrangementSettle)
                 guard !Task.isCancelled, let self else { return }
+                self.widgetArrangementReload = nil
                 self.platformEffects.reloadWidgets()
             }
         }
     }
     static let widgetArrangementSettle: Duration = .seconds(1.5)
+
+    /// Sends a reload that's still waiting, now: the app is leaving the foreground, and iOS may
+    /// not give the wait its time.
+    func flushWidgetArrangementReload() {
+        guard let pending = widgetArrangementReload else { return }
+        pending.cancel()
+        widgetArrangementReload = nil
+        guard allowsExternalEffects else { return }
+        platformEffects.reloadWidgets()
+    }
     @ObservationIgnored private var widgetArrangementReload: Task<Void, Never>?
 
     /// Which alerts to send, and quiet hours. Shared through iCloud with Macs, which can change

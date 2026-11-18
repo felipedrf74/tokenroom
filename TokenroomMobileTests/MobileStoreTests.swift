@@ -41,14 +41,14 @@ final class MobileStoreTests: XCTestCase {
     /// A complete store pass with no iCloud, in-memory missing credentials, isolated storage
     /// and inert device SDK effects. Refresh/cache/alert logic still executes.
     @MainActor
-    private func makeStore(defaults: UserDefaults, folder: URL) -> MobileStore {
+    private func makeStore(defaults: UserDefaults, folder: URL, platformEffects: MobilePlatformEffects = .inert) -> MobileStore {
         MobileStore(
             defaults: defaults,
             containerIdentifier: nil,
             keys: MobileFixtureKeychain().keys,
             directory: folder, connectOnIPhone: false,
             notificationScheduler: { _ in XCTFail("This fixture must not schedule a real notification") },
-            platformEffects: .inert, launchDefaults: defaults,
+            platformEffects: platformEffects, launchDefaults: defaults,
             // Never this device's real plan sign-ins.
             sessions: nil
         )
@@ -1014,6 +1014,30 @@ final class MobileStoreTests: XCTestCase {
             checked += 1
         }
         XCTAssertGreaterThan(checked, 10, "The icons are in the app's bundle")
+    }
+
+    /// The widget reloads once after a run of changes, not once for each: a reload it makes
+    /// counts toward its day's allowance. Leaving the app sends the one that's waiting.
+    @MainActor
+    func testArrangingProvidersReloadsWidgetsOnceAndLeavingTheAppDoesntLoseIt() async throws {
+        let defaults = makeDefaults()
+        let folder = try makeFolder()
+        let reloads = Mutex(0)
+        var effects = MobilePlatformEffects.inert
+        effects.reloadWidgets = { reloads.withLock { $0 += 1 } }
+        let store = makeStore(defaults: defaults, folder: folder, platformEffects: effects)
+        store.widgetArrangement = store.widgetArrangement.setting("claude", shown: false)
+        store.widgetArrangement = store.widgetArrangement.setting("cursor", shown: false)
+        XCTAssertEqual(WidgetArrangement.load(from: defaults).hidden, ["claude", "cursor"], "Saved at once")
+        XCTAssertEqual(reloads.withLock { $0 }, 0, "Not reloaded for each")
+        store.flushWidgetArrangementReload()
+        XCTAssertEqual(reloads.withLock { $0 }, 1, "Leaving the app sends the reload that was waiting")
+        store.flushWidgetArrangementReload()
+        try await Task.sleep(for: MobileStore.widgetArrangementSettle + .milliseconds(400))
+        XCTAssertEqual(reloads.withLock { $0 }, 1, "And only that one")
+        store.widgetArrangement = store.widgetArrangement.setting("claude", shown: true)
+        try await Task.sleep(for: MobileStore.widgetArrangementSettle + .milliseconds(400))
+        XCTAssertEqual(reloads.withLock { $0 }, 2, "Left alone, it goes out by itself")
     }
 
     func testWidgetsShowTheProvidersSwitchedOnInTheUsersOrder() {

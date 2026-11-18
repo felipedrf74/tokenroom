@@ -381,6 +381,54 @@ final class ReadingReliabilityTests: XCTestCase {
         XCTAssertGreaterThan(cache.countdownDates(after: now, until: horizon).count, onlyFar.count)
     }
 
+    /// A Small widget draws one provider. Twelve others resetting a little sooner used to take
+    /// every countdown entry, and its own "1h" stayed after its last hour had begun.
+    func testAWidgetsCountdownEntriesAreForTheRowsItDraws() {
+        var pinned = item("pinned", age: 0)
+        let reset = now.addingTimeInterval(110 * 60)
+        pinned.provider.windows[0].resetsAt = reset
+        let others: [ReadingCache.Item] = (0..<12).map { index in
+            var reading = item("other\(index)", age: 0)
+            reading.provider.windows[0].resetsAt = now.addingTimeInterval(Double(91 + index) * 60)
+            return reading
+        }
+        let horizon = now.addingTimeInterval(8 * 3600)
+        let ticking = reset.addingTimeInterval(1 - ReadingCache.countdownTicksWithin)
+        XCTAssertEqual(ticking, now.addingTimeInterval(50 * 60 + 1))
+        XCTAssertEqual(ReadingCache.countdownEntries(for: [pinned], after: now, until: horizon), [now.addingTimeInterval(20 * 60 + 1), ticking], "2h to 1h, then ticking")
+
+        // A Medium of four rows, with eight more providers below them: every row's start is kept.
+        let rows = [pinned] + others.prefix(3)
+        let entries = ReadingCache.countdownEntries(for: Array(rows), after: now, until: horizon)
+        for row in rows {
+            XCTAssertTrue(entries.contains(row.provider.windows[0].resetsAt!.addingTimeInterval(1 - ReadingCache.countdownTicksWithin)), row.id)
+        }
+        XCTAssertLessThanOrEqual(entries.count, 24)
+
+        // Eight rows resetting over the next eight hours want more than there's room for: where
+        // each starts ticking comes before where its words move on.
+        let spread: [ReadingCache.Item] = (0..<8).map { index in
+            var reading = item("row\(index)", age: 0)
+            reading.provider.windows[0].resetsAt = now.addingTimeInterval(Double(index) * 3_000 + 7_000)
+            return reading
+        }
+        let kept = ReadingCache.countdownEntries(for: spread, after: now, until: horizon)
+        XCTAssertEqual(kept.count, 24)
+        XCTAssertEqual(kept, kept.sorted())
+        for row in spread {
+            XCTAssertTrue(kept.contains(row.provider.windows[0].resetsAt!.addingTimeInterval(1 - ReadingCache.countdownTicksWithin)), row.id)
+        }
+
+        // A row's other window gets what's left, after the window it leads with.
+        var two = item("two", age: 0, used: 80)
+        two.provider.windows[0].resetsAt = now.addingTimeInterval(3 * 3600)
+        two.provider.windows.append(.init(id: "session", kind: "session", title: "5-hour", used: 10, resetsAt: now.addingTimeInterval(2 * 3600), periodSec: 5 * 3600))
+        let both = ReadingCache.countdownEntries(for: [two], after: now, until: horizon)
+        XCTAssertTrue(both.contains(now.addingTimeInterval(2 * 3600 + 1)), "The lead window's start")
+        XCTAssertTrue(both.contains(now.addingTimeInterval(3600 + 1)), "And the session's, should it come to lead")
+        XCTAssertEqual(ReadingCache.countdownEntries(for: [two], after: now, until: horizon, limit: 1), [now.addingTimeInterval(2 * 3600 + 1)])
+    }
+
     /// The window a widget shows under the one it leads with.
     func testTheSecondWindowIsThePrimaryOneThenTheSession() {
         func window(_ id: String, kind: String, used: Double, resetsIn: TimeInterval = 86_400, metered: Bool? = nil) -> RelayWindow {

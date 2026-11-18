@@ -20,28 +20,38 @@ struct UsageWidgetView: View {
         [.accessoryCircular, .accessoryRectangular, .accessoryInline].contains(family)
     }
 
+    /// How many providers a widget of this size draws.
+    static func rows(in family: WidgetFamily) -> Int {
+        switch family {
+        case .systemMedium: 4
+        case .systemLarge: 8
+        case .accessoryRectangular, .accessoryInline: 3
+        default: 1
+        }
+    }
+
     @ViewBuilder
     private var content: some View {
         if let first = entry.items.first {
             switch family {
             case .systemMedium:
                 if entry.style.usesTiles(isSmall: false) {
-                    TilesWidget(entry: entry, count: 4, showsSecond: false)
+                    TilesWidget(entry: entry, count: Self.rows(in: .systemMedium), showsSecond: false)
                 } else {
-                    ListWidget(entry: entry, count: 4, showsHistory: false)
+                    ListWidget(entry: entry, count: Self.rows(in: .systemMedium), showsHistory: false)
                 }
             case .systemLarge:
                 if entry.style.usesTiles(isSmall: false) {
-                    TilesWidget(entry: entry, count: 8, showsSecond: true)
+                    TilesWidget(entry: entry, count: Self.rows(in: .systemLarge), showsSecond: true)
                 } else {
-                    ListWidget(entry: entry, count: 8, showsHistory: true)
+                    ListWidget(entry: entry, count: Self.rows(in: .systemLarge), showsHistory: true)
                 }
             case .accessoryCircular:
                 CircularWidget(item: first, isSample: entry.isSample, date: entry.date)
             case .accessoryRectangular:
-                RectangularWidget(items: Array(entry.items.prefix(3)), date: entry.date, isSample: entry.isSample)
+                RectangularWidget(items: Array(entry.items.prefix(Self.rows(in: .accessoryRectangular))), date: entry.date, isSample: entry.isSample)
             case .accessoryInline:
-                InlineWidget(items: Array(entry.items.prefix(3)), isSample: entry.isSample, date: entry.date)
+                InlineWidget(items: Array(entry.items.prefix(Self.rows(in: .accessoryInline))), isSample: entry.isSample, date: entry.date)
                     .widgetURL(DeepLink.provider(first.id).url)
             default:
                 SmallWidget(entry: entry, item: first, showsSecond: entry.style.usesTiles(isSmall: true))
@@ -323,8 +333,14 @@ private struct ListRow: View {
                     }
                     if charted, let series = item.history[window.id], !series.isEmpty {
                         Sparkline(history: series, lineWidth: 1.5, level: reading.isFaded ? nil : TokenroomTokens.usageColor(usedPercent: window.used, isStale: false))
-                            .frame(maxWidth: .infinity, minHeight: 14, maxHeight: 40)
+                            .frame(maxWidth: .infinity, minHeight: 14, maxHeight: 84)
                             .padding(.top, 2)
+                            .accessibilityHidden(true)
+                        // A chart this wide wants its span said.
+                        Text("\(window.displayTitle), last 7 days")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
                     }
                 }
             }
@@ -337,10 +353,11 @@ private struct ListRow: View {
                         Color.clear
                     }
                 }
-                .frame(width: 56, height: 22)
+                // Narrow enough to leave a row its window's name on the smallest iPhone.
+                .frame(width: 44, height: 22)
             }
         }
-        .opacity(provider.isLive ? 1 : 0.7)
+        .opacity(provider.isLive ? 1 : 0.8)
     }
 
     private func line(_ reading: RowReading, name: String) -> some View {
@@ -423,36 +440,39 @@ private struct Tile: View {
         let reading = RowReading(item, date: date)
         let provider = reading.provider
         VStack(alignment: .leading, spacing: roomy ? 5 : 3) {
-            HStack(alignment: .center, spacing: 5) {
-                ProviderMark(provider: provider, size: roomy ? 22 : 16)
-                Text(provider.shortName)
-                    .font((roomy ? Font.subheadline : .caption).weight(.semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                Spacer(minLength: 2)
-                // A balance is too long to sit beside the name: it takes the meter's place.
-                if reading.window?.isMetered != false {
-                    figure(reading)
-                        .layoutPriority(1)
+            // The provider's full name where it fits beside the figure, else its short one.
+            ViewThatFits(in: .horizontal) {
+                if provider.name != provider.shortName {
+                    top(reading, name: provider.name)
                 }
+                top(reading, name: provider.shortName)
             }
             if let window = reading.window {
                 if window.isMetered {
                     WidgetMeter(used: window.used, isStale: reading.isFaded, pace: reading.pace, height: roomy ? 6 : 4)
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(window.displayTitle)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.9)
+                        Spacer(minLength: 2)
+                        RowStatus(reading: reading, date: date)
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
                 } else {
-                    figure(reading)
+                    // A balance is too long to sit beside the name: it takes the next line,
+                    // with what it's a balance of.
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(window.displayTitle)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer(minLength: 2)
+                        figure(reading, size: roomy ? 20 : 15)
+                    }
                 }
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(window.displayTitle)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                    Spacer(minLength: 2)
-                    RowStatus(reading: reading, date: date)
-                        .lineLimit(1)
-                        .fixedSize()
-                }
-                .font((roomy ? Font.caption : .caption2).monospacedDigit())
-                .foregroundStyle(.secondary)
                 if showsSecond {
                     // Under the lead window: a second one, or else its own week, so every tile
                     // is as full as the next.
@@ -471,12 +491,27 @@ private struct Tile: View {
         // With a second window on some tiles and not others, every tile starts at its top.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: showsSecond ? .topLeading : .leading)
         .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-        .opacity(provider.isLive ? 1 : 0.7)
+        .opacity(provider.isLive ? 1 : 0.8)
     }
 
-    private func figure(_ reading: RowReading) -> some View {
+    private func top(_ reading: RowReading, name: String) -> some View {
+        HStack(alignment: .center, spacing: 5) {
+            ProviderMark(provider: reading.provider, size: roomy ? 22 : 16)
+            Text(name)
+                .font((roomy ? Font.subheadline : .caption).weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.9)
+            Spacer(minLength: 2)
+            if reading.window?.isMetered != false {
+                figure(reading, size: roomy ? 24 : 17)
+                    .layoutPriority(1)
+            }
+        }
+    }
+
+    private func figure(_ reading: RowReading, size: CGFloat) -> some View {
         Text(ReadingText.headline(reading.window, now: date))
-            .font(.system(size: roomy ? 24 : 17, weight: .semibold, design: .rounded))
+            .font(.system(size: size, weight: .semibold, design: .rounded))
             .monospacedDigit()
             .foregroundStyle(headlineStyle(reading.window, isLive: reading.provider.isLive))
             .widgetAccentable()
@@ -659,7 +694,7 @@ private struct EmptyWidget: View {
                 Text(name ?? (allHidden ? "No providers selected" : "No readings yet"))
                     .font(.headline)
                 Text(name != nil ? "No recent reading. Open Tokenroom to refresh this provider."
-                     : allHidden ? "Every provider is switched off for widgets. Open Tokenroom to choose which ones show."
+                     : allHidden ? "Every provider is switched off for widgets. Tap to choose which ones show."
                      : "Open Tokenroom to connect your Mac, sign in to a plan, or add a key.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -756,5 +791,7 @@ private struct SampleTag: View {
 
 private func headlineStyle(_ window: RelayWindow?, isLive: Bool) -> Color {
     guard let window, window.isMetered else { return .primary }
-    return TokenroomTokens.ink(remaining: 100 - window.used, isStale: !isLive)
+    // A stale row is already faded as a whole; its figure stays readable under that.
+    guard isLive else { return .secondary }
+    return TokenroomTokens.ink(remaining: 100 - window.used, isStale: false)
 }

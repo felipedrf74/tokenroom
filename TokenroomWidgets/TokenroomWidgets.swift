@@ -48,11 +48,12 @@ struct ReadingsTimelineProvider: AppIntentTimelineProvider {
         let horizon = now.addingTimeInterval(8 * 3600)
         let boundaries = cache?.presentationDates(after: now, until: horizon) ?? []
         let arrangement = WidgetArrangement.load(from: AppGroup.defaults)
-        // Then where the countdowns of the providers shown change, as far as the entries left
-        // over go: never in place of a reset or a reading going stale.
-        let shown = Set(ReadingsEntry.make(cache, choice: configuration.provider, arrangement: arrangement, date: now).items.map(\.id))
-        let wording = cache?.countdownDates(after: now, until: horizon, providers: shown) ?? []
-        let dates = Array(Set([now] + boundaries.prefix(31) + wording.prefix(24))).sorted()
+        // Then where the countdowns of the rows this size draws change, as far as the entries
+        // left over go: never in place of a reset or a reading going stale. At most 56 entries: now,
+        // 31 of those boundaries, and 24 for countdowns.
+        let rows = ReadingsEntry.make(cache, choice: configuration.provider, arrangement: arrangement, date: now).items.prefix(UsageWidgetView.rows(in: context.family))
+        let wording = ReadingCache.countdownEntries(for: Array(rows), after: now, until: horizon)
+        let dates = Array(Set([now] + boundaries.prefix(31) + wording)).sorted()
         return Timeline(
             entries: dates.map { ReadingsEntry.make(cache, choice: configuration.provider, arrangement: arrangement, style: configuration.style, date: $0) },
             policy: .after(result.nextReload(after: now, reloads: reloads))

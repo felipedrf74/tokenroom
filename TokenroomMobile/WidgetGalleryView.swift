@@ -115,6 +115,12 @@ struct WidgetGalleryView: View {
                     card(.systemMedium, size: homeSizes[1].size, mode: .accented, style: .tiles, cache: eventful, arrangement: own)
                     card(.systemLarge, size: homeSizes[2].size, style: .list, cache: eventful, arrangement: own)
                     card(.systemLarge, size: homeSizes[2].size, style: .tiles, cache: eventful, arrangement: own)
+                    // A provider with two windows on Small: the tile's layout, beside the list's.
+                    let twoWindows = WidgetArrangement(order: .manual, sequence: cache.items.filter { $0.provider.windows.filter(\.isMetered).count > 1 }.map(\.id))
+                    HStack(spacing: 14) {
+                        card(.systemSmall, size: homeSizes[0].size, style: .tiles, cache: cache, arrangement: twoWindows)
+                        card(.systemSmall, size: homeSizes[0].size, style: .list, cache: cache, arrangement: twoWindows)
+                    }
                     // A balance first: an amount where the others have a percentage and a meter.
                     let balance = WidgetArrangement(order: .manual, sequence: eventful.items.filter { !$0.provider.windows.contains(where: \.isMetered) }.map(\.id))
                     card(.systemMedium, size: homeSizes[1].size, style: .list, cache: cache, arrangement: balance)

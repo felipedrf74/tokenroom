@@ -659,18 +659,26 @@ private struct WidgetProvidersSection: View {
                 Text("Providers show here once they have a reading.")
                     .foregroundStyle(.secondary)
             } else {
-                Picker("Order", selection: order(rows)) {
-                    Text("Most Urgent First").tag(WidgetArrangement.Order.urgency)
-                    Text("My Order").tag(WidgetArrangement.Order.manual)
+                VStack(alignment: .leading, spacing: 8) {
+                    Picker("Order", selection: order(rows)) {
+                        Text("Most Urgent First").tag(WidgetArrangement.Order.urgency)
+                        Text("My Order").tag(WidgetArrangement.Order.manual)
+                    }
+                    .pickerStyle(.segmented)
+                    // Beside the choice, where it can't scroll out of sight under a long list.
+                    Text(store.widgetArrangement.order == .manual ? "Drag a provider by its handle to move it." : "The provider closest to a limit comes first.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
-                .pickerStyle(.segmented)
                 .moveDisabled(true)
                 ForEach(rows) { row in
                     Toggle(isOn: shown(row.id)) {
                         Label {
                             Text(row.name)
+                                .foregroundStyle(store.widgetArrangement.isShown(row.id) ? .primary : .secondary)
                         } icon: {
                             row.mark
+                                .opacity(store.widgetArrangement.isShown(row.id) ? 1 : 0.45)
                         }
                     }
                 }
@@ -681,9 +689,7 @@ private struct WidgetProvidersSection: View {
         } header: {
             Text("Providers in widgets")
         } footer: {
-            Text(store.widgetArrangement.order == .manual
-                ? "Drag a provider to move it. For every Tokenroom widget on this iPhone; one set to a single provider still shows it."
-                : "For every Tokenroom widget on this iPhone; one set to a single provider still shows it.")
+            Text("Applies to every Tokenroom widget on this iPhone. A widget set to one provider still shows it.")
         }
     }
 
