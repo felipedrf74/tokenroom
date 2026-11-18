@@ -2,7 +2,8 @@ import Foundation
 
 /// Links widgets, notifications, and the Watch open in the iPhone app:
 /// `tokenroom://provider/<id>`, `tokenroom://news`, `tokenroom://settings`, `tokenroom://keys`,
-/// `tokenroom://alerts`, and `tokenroom://connect` (the plans that need a Mac). The host `oauth`
+/// `tokenroom://alerts`, `tokenroom://widgets` (which providers widgets show), and
+/// `tokenroom://connect` (the plans that need a Mac). The host `oauth`
 /// is kept for a future phone sign-in and isn't parsed.
 enum DeepLink: Equatable, Sendable {
     case provider(String)
@@ -10,6 +11,7 @@ enum DeepLink: Equatable, Sendable {
     case settings
     case keys
     case alerts
+    case widgets
     case connect
 
     static let scheme = "tokenroom"
@@ -28,6 +30,8 @@ enum DeepLink: Equatable, Sendable {
             self = .keys
         case "alerts":
             self = .alerts
+        case "widgets":
+            self = .widgets
         case "connect":
             self = .connect
         default:
@@ -47,6 +51,8 @@ enum DeepLink: Equatable, Sendable {
             URL(string: "\(Self.scheme)://keys")!
         case .alerts:
             URL(string: "\(Self.scheme)://alerts")!
+        case .widgets:
+            URL(string: "\(Self.scheme)://widgets")!
         case .connect:
             URL(string: "\(Self.scheme)://connect")!
         }

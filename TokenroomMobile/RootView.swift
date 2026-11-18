@@ -87,7 +87,10 @@ struct RootView: View {
         // Leaving the app ends a News visit too, so a check in the background doesn't count what
         // it finds as seen; coming back to News starts the next one. A passing interruption
         // (Control Center, a call) doesn't end it.
-        .onChange(of: scenePhase) { _, _ in updateVisit() }
+        .onChange(of: scenePhase) { _, phase in
+            updateVisit()
+            if phase != .active { store.flushWidgetArrangementReload() }
+        }
     }
 
     /// A News visit lasts while the News tab is selected and the app is in front.
@@ -113,6 +116,9 @@ struct RootView: View {
         case .alerts:
             tab = .settings
             settingsPath = [.alerts]
+        case .widgets:
+            tab = .settings
+            settingsPath = [.widgets]
         case .connect:
             // Only while the connect screen is on; otherwise Settings, as for an unknown screen.
             tab = .settings

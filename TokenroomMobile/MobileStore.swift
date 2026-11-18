@@ -170,6 +170,37 @@ final class MobileStore {
         didSet { defaults.set(hasOnboarded, forKey: Keys.onboarded) }
     }
 
+    /// Which providers this iPhone's widgets show, and in what order. Kept in the App Group's
+    /// defaults, where the widgets read it; a change redraws them.
+    var widgetArrangement: WidgetArrangement {
+        didSet {
+            guard widgetArrangement != oldValue else { return }
+            widgetArrangement.save(to: defaults)
+            // One reload once the switching and dragging stops: each one a widget makes counts
+            // toward the day's allowance (`WidgetReloadLog`), which decides how often it reloads.
+            widgetArrangementReload?.cancel()
+            guard allowsExternalEffects else { return }
+            widgetArrangementReload = Task { [weak self] in
+                try? await Task.sleep(for: Self.widgetArrangementSettle)
+                guard !Task.isCancelled, let self else { return }
+                self.widgetArrangementReload = nil
+                self.platformEffects.reloadWidgets()
+            }
+        }
+    }
+    static let widgetArrangementSettle: Duration = .seconds(1.5)
+
+    /// Sends a reload that's still waiting, now: the app is leaving the foreground, and iOS may
+    /// not give the wait its time.
+    func flushWidgetArrangementReload() {
+        guard let pending = widgetArrangementReload else { return }
+        pending.cancel()
+        widgetArrangementReload = nil
+        guard allowsExternalEffects else { return }
+        platformEffects.reloadWidgets()
+    }
+    @ObservationIgnored private var widgetArrangementReload: Task<Void, Never>?
+
     /// Which alerts to send, and quiet hours. Shared through iCloud with Macs, which can change
     /// them too; the newer copy wins.
     var alertPreferences: AlertPreferences {
@@ -338,6 +369,7 @@ final class MobileStore {
         cacheURL = directory?.appendingPathComponent(ReadingCache.fileName)
         sampleMode = defaults.bool(forKey: Keys.sampleMode)
         hasOnboarded = defaults.bool(forKey: Keys.onboarded)
+        widgetArrangement = WidgetArrangement.load(from: defaults)
         #if DEBUG
         // Launch arguments (`-sampleMode YES`) land in the standard defaults, not the App Group's.
         let arguments = launchDefaults.volatileDomain(forName: UserDefaults.argumentDomain)

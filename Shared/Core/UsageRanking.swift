@@ -116,6 +116,17 @@ enum UsageRanking {
 }
 
 extension RelayProvider {
+    /// The window a widget shows under the one it leads with, when there's room for two: the
+    /// primary window when the lead is another one (as `ReadingText.attention` names it), else
+    /// the session, else the most used of the rest. Only open, metered windows.
+    func secondWindow(lead: RelayWindow, now: Date = .now) -> RelayWindow? {
+        let others = windows.filter { $0.id != lead.id && $0.isMetered && !$0.isAwaitingReading(at: now) }
+        if let primary = primaryWindow, primary.id != lead.id, let match = others.first(where: { $0.id == primary.id }) {
+            return match
+        }
+        return others.first { $0.windowKind == .session } ?? others.max { $0.used < $1.used }
+    }
+
     /// Compact surfaces pass each window's pace, including a projected run-out on a stale reading.
     func leadWindow(now: Date = .now, history: [String: UsageHistory] = [:]) -> RelayWindow? {
         UsageRanking.leadWindow(for: self, now: now) { window in
