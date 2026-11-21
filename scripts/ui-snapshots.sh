@@ -48,14 +48,29 @@ for platform in "${PLATFORMS[@]}"; do
 import json, sys
 name = sys.argv[1]
 devices = [d for group in json.load(sys.stdin)["devices"].values() for d in group if d.get("name") == name and d.get("isAvailable", True)]
-booted = [d for d in devices if d.get("state") == "Booted"]
-chosen = (booted or devices)[:1]
-print(chosen[0]["udid"] if chosen else "")
+idle = [d for d in devices if d.get("state") != "Booted"]
+chosen = (idle or devices)[:1]
+print(chosen[0]["udid"], chosen[0].get("state", "")) if chosen else print("")
 ' "$IPHONE")"
+      read -r udid udid_state <<<"$udid"
       if [[ -z "$udid" ]]; then
         echo "Couldn't find an available Simulator named $IPHONE" >&2
         exit 2
       fi
+      # Put the Simulator back as it was found: its appearance, and booted only if it was.
+      xcrun simctl boot "$udid" 2>/dev/null || true
+      xcrun simctl bootstatus "$udid" -b >/dev/null
+      original_look="$(xcrun simctl ui "$udid" appearance 2>/dev/null || true)"
+      restore_iphone() {
+        if [[ "$original_look" == light || "$original_look" == dark ]]; then
+          xcrun simctl boot "$udid" 2>/dev/null || true
+          xcrun simctl bootstatus "$udid" -b >/dev/null 2>&1 || true
+          xcrun simctl ui "$udid" appearance "$original_look" 2>/dev/null || true
+        fi
+        xcrun simctl shutdown "$udid" 2>/dev/null || true
+        if [[ "$udid_state" == "Booted" ]]; then xcrun simctl boot "$udid" 2>/dev/null || true; fi
+      }
+      trap restore_iphone EXIT
       for look in light dark; do
         xcrun simctl ui "$udid" appearance "$look"
         xcrun simctl shutdown "$udid" 2>/dev/null || true
@@ -68,6 +83,8 @@ print(chosen[0]["udid"] if chosen else "")
           -destination "platform=iOS Simulator,id=$udid" -derivedDataPath "$DERIVED" \
           -resultBundlePath "$OUT/iphone-$look.xcresult" CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO TOKENROOM_CK_CONTAINER= -quiet
       done
+      restore_iphone
+      trap - EXIT
       ;;
     watch)
       rm -rf "$OUT/watch.xcresult"
