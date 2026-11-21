@@ -40,7 +40,7 @@ struct ComplicationView: View {
     private var content: some View {
         if let first = entry.items.first {
             let window = first.provider.leadWindow(now: entry.date, history: first.history)
-            let used = min(max(window?.used ?? 0, 0), 100)
+            let used = min(max(window?.meterUsed(at: entry.date) ?? 0, 0), 100)
             switch family {
             case .accessoryCorner:
                 let balance = window.flatMap { $0.isMetered ? nil : $0.amount }
@@ -80,7 +80,8 @@ struct ComplicationView: View {
                                 FlatMeter(used: row?.used ?? 0,
                                           pace: stale ? nil : row.flatMap { UsageRanking.pace(for: $0, isStale: false, history: item.history[$0.id], now: entry.date)?.elapsedFraction },
                                           // A tinted face turns colour into brightness: ink keeps a critical meter bright.
-                                          tint: renderingMode == .fullColor ? ringTint(row?.used ?? 0) : .primary)
+                                          tint: renderingMode == .fullColor ? ringTint(row?.used ?? 0) : .primary,
+                                          isAwaitingReading: row?.isAwaitingReading(at: entry.date) == true)
                             }
                             Text(ReadingText.headline(row, now: entry.date))
                                 .font(.system(size: 12).monospacedDigit())
@@ -126,6 +127,7 @@ struct ComplicationView: View {
                     Gauge(value: used, in: 0...100) {
                         if window?.isAwaitingReading(at: entry.date) == true {
                             Text("Reset")
+                                .accessibilityLabel(ReadingText.awaitingReading)
                         } else {
                             // The provider's mark in a colour face, its monogram when tinted.
                             ProviderMark(provider: first.provider, size: 13)
@@ -172,7 +174,7 @@ struct ResetSoonView: View {
     var isSample = false
 
     var body: some View {
-        if let item, let window = item.provider.windows.first(where: { $0.id == windowID }) ?? item.provider.primaryWindow {
+        if let item, let window = item.provider.window(configured: windowID) {
             let date = Date.now
             HStack(spacing: 8) {
                 ProviderMark(provider: item.provider, size: 28)
@@ -184,6 +186,8 @@ struct ResetSoonView: View {
                     Group {
                         if window.isAwaitingReading(at: date) {
                             Text("Reset · awaiting reading")
+                        } else if !item.provider.isLive, let checked = item.provider.checkedAt ?? item.provider.fetchedAt {
+                            Text(ReadingText.asOf(checked, now: date))
                         } else if let resetsAt = window.resetsAt, resetsAt > date {
                             Text("Resets in \(Text(resetsAt, style: .relative))")
                         }

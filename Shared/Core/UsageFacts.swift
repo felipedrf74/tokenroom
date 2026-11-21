@@ -44,13 +44,15 @@ enum UsageFacts {
         return facts
     }
 
-    /// "Ahead" with when it runs out, "On pace" with where an even pace would be by now.
     static func paceFact(_ pace: Pace, now: Date, timeZone: TimeZone) -> UsageFact {
         let target = "Even pace \(TokenroomFormat.percentText(min(max(pace.elapsedFraction, 0), 1) * 100))%"
+        if let runOut = pace.currentRunOut {
+            return UsageFact(label: "Pace", value: "Runs out \(Pace.shortMoment(runOut, now: now, timeZone: timeZone))",
+                             detail: pace.verdict == .ahead ? "Ahead · \(target.lowercased())" : target, severity: pace.severity)
+        }
         switch pace.verdict {
         case .ahead:
-            let detail = pace.runsOutAt.map { "Runs out \(Pace.shortMoment($0, now: now, timeZone: timeZone))" } ?? target
-            return UsageFact(label: "Pace", value: "Ahead", detail: detail, severity: pace.severity)
+            return UsageFact(label: "Pace", value: "Ahead", detail: target, severity: pace.severity)
         case .limitReached:
             return UsageFact(label: "Pace", value: "Limit reached", detail: target, severity: pace.severity)
         case .onPace:

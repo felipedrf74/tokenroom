@@ -111,8 +111,8 @@ final class PaceTests: XCTestCase {
         calendar.timeZone = berlin
         XCTAssertEqual(calendar.component(.hour, from: runsOut), 13, "12:00 UTC is 13:00 in Berlin in winter")
         let caption = pace.caption(now: now, timeZone: berlin)
-        XCTAssertTrue(caption.hasPrefix("Ahead of pace · runs out "))
-        XCTAssertTrue(caption.hasSuffix(" \(clock(runsOut, in: berlin))"))
+        XCTAssertTrue(caption.hasPrefix("Runs out "))
+        XCTAssertTrue(caption.hasSuffix(" \(clock(runsOut, in: berlin)) · ahead of pace"))
         XCTAssertNotEqual(clock(runsOut, in: berlin), clock(runsOut, in: TimeZone(secondsFromGMT: 2 * 3600)!), "Summer time's offset would be an hour off")
     }
 
@@ -123,10 +123,10 @@ final class PaceTests: XCTestCase {
         let now = utcDate(2026, 11, 1, 3) // Saturday 31 October, 23:00 in New York (EDT)
         let runsOut = utcDate(2026, 11, 1, 18) // Sunday 1 November, 13:00 in New York (EST)
         let pace = Pace(verdict: .ahead, delta: 20, elapsedFraction: 0.6, resetsAt: utcDate(2026, 11, 3), runsOutAt: runsOut, severity: .tight)
-        XCTAssertEqual(pace.caption(now: now, timeZone: TimeZone(identifier: "UTC")!), "Ahead of pace · runs out \(clock(runsOut, in: TimeZone(identifier: "UTC")!))", "Same day in UTC")
+        XCTAssertEqual(pace.caption(now: now, timeZone: TimeZone(identifier: "UTC")!), "Runs out \(clock(runsOut, in: TimeZone(identifier: "UTC")!)) · ahead of pace", "Same day in UTC")
         let local = pace.caption(now: now, timeZone: newYork)
-        XCTAssertNotEqual(local, "Ahead of pace · runs out \(clock(runsOut, in: newYork))", "Tomorrow in New York: the weekday is shown")
-        XCTAssertTrue(local.hasSuffix(" \(clock(runsOut, in: newYork))"))
+        XCTAssertNotEqual(local, "Runs out \(clock(runsOut, in: newYork)) · ahead of pace", "Tomorrow in New York: the weekday is shown")
+        XCTAssertTrue(local.hasSuffix(" \(clock(runsOut, in: newYork)) · ahead of pace"))
     }
 
     /// Calendar months are counted in UTC, so a daylight change inside one doesn't stretch it.

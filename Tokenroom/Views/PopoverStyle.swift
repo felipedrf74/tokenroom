@@ -68,11 +68,14 @@ struct PopoverMeter: View {
     var isStale: Bool
     var paceMark: Double? = nil
     var height: CGFloat = 8
+    var isAwaitingReading = false
 
     @Environment(\.colorScheme) private var scheme
 
-    private var fraction: Double { min(max(used.isFinite ? used : 0, 0), 100) / 100 }
-    private var tint: Color { TokenroomTokens.usageColor(usedPercent: used, isStale: isStale) }
+    private var shownUsed: Double { MeterLayout.shownUsed(used, isAwaitingReading: isAwaitingReading) }
+    private var shownPace: Double? { paceMark.flatMap { $0.isFinite ? MeterLayout.shownPace($0, isStale: isStale, isAwaitingReading: isAwaitingReading) : nil } }
+    private var fraction: Double { min(max(shownUsed.isFinite ? shownUsed : 0, 0), 100) / 100 }
+    private var tint: Color { TokenroomTokens.usageColor(usedPercent: shownUsed, isStale: isStale) }
 
     var body: some View {
         if style == .instrument {
@@ -120,19 +123,19 @@ struct PopoverMeter: View {
             .frame(height: height)
             .accessibilityHidden(true)
         } else {
-            MeterTrack(usedPercent: used, remaining: 100 - used, isStale: isStale, paceMark: paceMark, height: height)
+            MeterTrack(usedPercent: used, remaining: 100 - used, isStale: isStale, paceMark: paceMark, height: height, isAwaitingReading: isAwaitingReading)
         }
     }
 
     /// Where a fill runs ahead of the even pace, as a fraction of the meter.
     private var aheadStart: Double? {
-        guard let paceMark, paceMark.isFinite, !isStale, fraction > paceMark + 0.015 else { return nil }
-        return max(paceMark, 0)
+        guard let paceMark = shownPace, fraction > paceMark + 0.015 else { return nil }
+        return paceMark
     }
 
     @ViewBuilder private func paceTick(width: CGFloat) -> some View {
-        if let paceMark, paceMark.isFinite, !isStale {
-            let x = width * min(max(paceMark, 0), 1)
+        if let paceMark = shownPace {
+            let x = width * paceMark
             if style == .instrument {
                 // A gap in the segments, in the panel's own colour, with the mark in it.
                 Rectangle().fill(Color(hex: "1A2430")).frame(width: 4, height: height + 2)

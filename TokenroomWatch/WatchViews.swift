@@ -157,7 +157,8 @@ private struct WatchRow: View {
             if let window, window.isMetered {
                 // The provider's icon in the ring; the row reads its name, so the ring has no label.
                 UsageRing(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(at: date), label: "",
-                          paceMark: UsageRanking.pace(for: window, isStale: !provider.isLive, history: item.history[window.id], now: date)?.elapsedFraction)
+                          paceMark: UsageRanking.pace(for: window, isStale: !provider.isLive, history: item.history[window.id], now: date)?.elapsedFraction,
+                          isAwaitingReading: window.isAwaitingReading(at: date))
                     .frame(width: 40, height: 40)
                     .overlay { ProviderMark(provider: provider, size: 22) }
             } else {
@@ -192,7 +193,7 @@ private struct WatchRow: View {
                     Text("Checked \(RelativeTime.ago(checked, now: date))").font(.caption2).foregroundStyle(.secondary)
                 }
                 if let window {
-                    Text(ReadingText.reset(window, now: date) ?? window.displayTitle)
+                    Text(ReadingText.windowCountdown(window, now: date))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -217,7 +218,8 @@ struct WatchDetailView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
                         UsageRing(used: lead.used, isStale: !provider.isLive || lead.isAwaitingReading(at: date),
-                                  label: ReadingText.headline(lead, now: date), lineWidth: 6, paceMark: pace?.elapsedFraction)
+                                  label: ReadingText.headline(lead, now: date), lineWidth: 6, paceMark: pace?.elapsedFraction,
+                                  isAwaitingReading: lead.isAwaitingReading(at: date))
                             .frame(width: 58, height: 58)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(lead.displayTitle)
@@ -274,7 +276,8 @@ struct WatchDetailView: View {
                     paceMark: pace?.elapsedFraction,
                     caption: detail(window, pace: pace),
                     titleFont: .caption,
-                    captionFont: .caption2
+                    captionFont: .caption2,
+                    isAwaitingReading: window.isAwaitingReading(at: date)
                 )
                 .padding(.vertical, 2)
             }

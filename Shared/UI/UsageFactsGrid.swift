@@ -63,7 +63,7 @@ struct UsageFactsGrid: View {
     }
 
     private func color(_ severity: Pace.Severity?) -> Color {
-        if isStale { return Color.secondary.opacity(TokenroomTokens.staleOpacity) }
+        if isStale { return Color.secondary }
         return switch severity {
         case .critical: TokenroomTokens.criticalText
         case .tight: TokenroomTokens.accentText

@@ -95,4 +95,45 @@ enum ReadingText {
     static func caption(_ window: RelayWindow, now: Date = .now) -> String {
         [window.displayTitle, reset(window, now: now)].compactMap { $0 }.joined(separator: " · ")
     }
+
+    static let awaitingReading = "Reset, awaiting reading"
+
+    static func meterAccessibility(used: Double, paceMark: Double?, isStale: Bool, isAwaitingReading: Bool) -> String {
+        guard !isAwaitingReading else { return awaitingReading }
+        let figure = "\(TokenroomFormat.percentText(used)) percent used"
+        guard let pace = MeterLayout.shownPace(paceMark, isStale: isStale, isAwaitingReading: false) else { return figure }
+        return "\(figure), \(TokenroomFormat.percentText(pace * 100)) percent of the window has passed"
+    }
+
+    static func windowCountdown(_ window: RelayWindow, now: Date = .now) -> String {
+        if window.isAwaitingReading(at: now) { return "Reset · awaiting reading" }
+        guard let resetsAt = window.resetsAt else { return window.displayTitle }
+        if window.windowKind == .billingCycle || window.windowKind == .monthly {
+            return caption(window, now: now)
+        }
+        return "\(window.displayTitle) · \(UsageFacts.countdown(to: resetsAt, now: now))"
+    }
+
+    static func asOf(_ checked: Date, now: Date = .now, timeZone: TimeZone = .current) -> String {
+        "As of \(Pace.shortMoment(checked, now: now, timeZone: timeZone))"
+    }
+
+    static func lastChecked(_ checked: Date?, now: Date = .now) -> String {
+        "Last checked \(RelativeTime.ago(checked, now: now))"
+    }
+
+    static func remainingLabel(isLive: Bool) -> String {
+        isLive ? "left" : "left at last check"
+    }
+
+    static func historyTitle(_ window: RelayWindow, isLead: Bool) -> String {
+        isLead ? "\(window.displayTitle) usage · last 7 days" : "Last 7 days"
+    }
+}
+
+extension RelayProvider {
+    func window(configured id: String?) -> RelayWindow? {
+        guard let id else { return primaryWindow }
+        return windows.first { $0.id == id }
+    }
 }

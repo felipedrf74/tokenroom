@@ -50,6 +50,10 @@ extension RelayWindow {
     func isAwaitingReading(at date: Date = .now) -> Bool {
         resetsAt.map { $0 <= date } ?? false
     }
+
+    func meterUsed(at date: Date) -> Double {
+        MeterLayout.shownUsed(used, isAwaitingReading: isAwaitingReading(at: date))
+    }
 }
 
 extension ReadingCache {

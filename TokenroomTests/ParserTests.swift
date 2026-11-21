@@ -182,7 +182,7 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(MenuBarLayout.density(for: five), .compact)
         XCTAssertEqual(
             MenuBarLayout.tooltip(for: four),
-            "Grok Build 42%\nClaude 71%\nOpenAI 18%\nCursor 55%"
+            "Grok Build 42% used\nClaude 71% used\nOpenAI 18% used\nCursor 55% used"
         )
         XCTAssertEqual(MenuBarLayout.compactText(for: four), "Build 42%  Claude 71%  GPT 18%  Cursor 55%")
     }

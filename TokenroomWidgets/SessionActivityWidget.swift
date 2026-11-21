@@ -32,7 +32,7 @@ struct SessionActivityWidget: Widget {
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(alignment: .leading, spacing: 6) {
                         MeterTrack(usedPercent: state.used, remaining: 100 - state.used, isStale: state.isStale,
-                                   paceMark: attributes.paceMark(for: state), height: 6)
+                                   paceMark: attributes.paceMark(for: state), height: 6, isAwaitingReading: state.awaitingReading == true)
                         HStack {
                             Text(attributes.windowTitle)
                             Spacer()

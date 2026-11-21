@@ -11,9 +11,10 @@ enum PopoverInsights {
         // Short sessions do not get a misleading daily figure. Frozen readings get no allowance.
         if !isStale, let reset = window.resetsAt, reset.timeIntervalSince(now) >= 86_400 {
             let perDay = remaining * 86_400 / reset.timeIntervalSince(now)
-            result.append(UsageFact(label: "Daily allowance",
+            let quota = window.windowKind == .weekly ? "the \(WindowNames.inSentence(window.displayTitle)) quota" : "this quota"
+            result.append(UsageFact(label: "Even daily pace",
                                     value: "\(perDay.formatted(.number.precision(.fractionLength(1))))%",
-                                    detail: "of this quota / day until reset"))
+                                    detail: "of \(quota) per day until reset"))
         }
         return result
     }
