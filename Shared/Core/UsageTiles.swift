@@ -43,7 +43,7 @@ enum UsageTiles {
         guard window.isMetered else { return false }
         if window.used >= closeUse { return true }
         guard let pace else { return false }
-        return pace.verdict == .limitReached || pace.runsOutAt != nil
+        return pace.verdict == .limitReached || pace.runOutNeedsAttention
     }
 
     /// Every window still close to its limit, most urgent first: the limit reached, then the

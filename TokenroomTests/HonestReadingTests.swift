@@ -137,6 +137,19 @@ final class HonestReadingTests: XCTestCase {
         XCTAssertFalse(UsageTiles.isClose(weekly(45, resetsIn: 0.3 * week), pace: calm))
     }
 
+    func testARunOutOnlyInTheLastQuarterIsShownButNotRaised() throws {
+        let window = weekly(45, resetsIn: 0.3 * week, runsOutIn: 0.2 * week)
+        let pace = try XCTUnwrap(UsageRanking.pace(for: window, isStale: false, history: nil, now: now))
+        XCTAssertEqual(pace.verdict, .plentyLeft)
+        XCTAssertEqual(pace.severity, .watch)
+        XCTAssertEqual(pace.currentRunOut, now.addingTimeInterval(0.2 * week))
+        XCTAssertFalse(pace.runOutNeedsAttention)
+        XCTAssertFalse(pace.needsAttention)
+        XCTAssertFalse(UsageTiles.isClose(window, pace: pace))
+        let utc = TimeZone(identifier: "UTC")!
+        XCTAssertTrue(pace.caption(now: now, timeZone: utc).hasPrefix("Runs out "))
+    }
+
     func testLimitReachedAndProjectedRunOutsKeepTheirWords() {
         let limit = Pace(verdict: .limitReached, delta: 30, elapsedFraction: 0.7, resetsAt: now.addingTimeInterval(3600), runsOutAt: nil, severity: .critical)
         XCTAssertNil(limit.currentRunOut)
