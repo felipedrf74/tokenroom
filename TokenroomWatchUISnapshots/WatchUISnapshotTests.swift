@@ -50,7 +50,10 @@ final class WatchUISnapshotTests: XCTestCase {
         shoot("watch-empty")
         _ = launch(["-TokenroomGallery", "YES"])
         shoot("watch-complications")
-        _ = launch(["-TokenroomSmartStack", "YES"])
+        let stack = launch(["-TokenroomSmartStack", "YES"])
         shoot("watch-smart-stack")
+        stack.swipeUp()
+        Thread.sleep(forTimeInterval: 1)
+        shoot("watch-smart-stack-end")
     }
 }

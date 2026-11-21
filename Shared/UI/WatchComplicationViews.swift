@@ -179,20 +179,31 @@ struct ResetSoonView: View {
             HStack(spacing: 8) {
                 ProviderMark(provider: item.provider, size: 28)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("\(item.provider.shortName) \(WindowNames.inSentence(window.displayTitle)) \(ReadingText.headline(window, now: date))")
-                        .font(.headline)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(item.provider.shortName)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                        Spacer(minLength: 2)
+                        Text(ReadingText.headline(window, now: date))
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .layoutPriority(1)
+                    }
+                    .font(.headline)
                     Group {
+                        Text(isSample ? "Sample · \(window.displayTitle)" : window.displayTitle)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                         if window.isAwaitingReading(at: date) {
                             Text("Reset · awaiting reading")
                         } else if !item.provider.isLive, let checked = item.provider.checkedAt ?? item.provider.fetchedAt {
                             Text(ReadingText.asOf(checked, now: date))
                         } else if let resetsAt = window.resetsAt, resetsAt > date {
-                            Text("Resets in \(Text(resetsAt, style: .relative))")
-                        }
-                        if isSample {
-                            Text("Sample data")
+                            if window.windowKind == .billingCycle || window.windowKind == .monthly {
+                                Text("Resets \(resetsAt.formatted(.dateTime.month(.abbreviated).day()))")
+                            } else {
+                                Text("Resets in \(Text(resetsAt, style: .relative))")
+                            }
                         }
                     }
                     .font(.caption)
