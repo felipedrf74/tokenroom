@@ -48,29 +48,38 @@ for platform in "${PLATFORMS[@]}"; do
 import json, sys
 name = sys.argv[1]
 devices = [d for group in json.load(sys.stdin)["devices"].values() for d in group if d.get("name") == name and d.get("isAvailable", True)]
-idle = [d for d in devices if d.get("state") != "Booted"]
-chosen = (idle or devices)[:1]
+idle = [d for d in devices if d.get("state") == "Shutdown"]
+booted = [d for d in devices if d.get("state") == "Booted"]
+chosen = (idle or booted)[:1]
 print(chosen[0]["udid"], chosen[0].get("state", "")) if chosen else print("")
 ' "$IPHONE")"
       read -r udid udid_state <<<"$udid"
       if [[ -z "$udid" ]]; then
-        echo "Couldn't find an available Simulator named $IPHONE" >&2
+        echo "Couldn't find a shut-down or booted Simulator named $IPHONE" >&2
         exit 2
       fi
       # Put the Simulator back as it was found: its appearance, and booted only if it was.
-      xcrun simctl boot "$udid" 2>/dev/null || true
-      xcrun simctl bootstatus "$udid" -b >/dev/null
-      original_look="$(xcrun simctl ui "$udid" appearance 2>/dev/null || true)"
+      original_look=""
       restore_iphone() {
         if [[ "$original_look" == light || "$original_look" == dark ]]; then
           xcrun simctl boot "$udid" 2>/dev/null || true
           xcrun simctl bootstatus "$udid" -b >/dev/null 2>&1 || true
-          xcrun simctl ui "$udid" appearance "$original_look" 2>/dev/null || true
+          xcrun simctl ui "$udid" appearance "$original_look" ||
+            echo "Couldn't restore the $original_look appearance of Simulator $udid" >&2
         fi
         xcrun simctl shutdown "$udid" 2>/dev/null || true
-        if [[ "$udid_state" == "Booted" ]]; then xcrun simctl boot "$udid" 2>/dev/null || true; fi
+        if [[ "$udid_state" == "Booted" ]]; then
+          xcrun simctl boot "$udid" || echo "Couldn't boot Simulator $udid again" >&2
+        fi
       }
       trap restore_iphone EXIT
+      xcrun simctl boot "$udid" 2>/dev/null || true
+      xcrun simctl bootstatus "$udid" -b >/dev/null
+      original_look="$(xcrun simctl ui "$udid" appearance 2>/dev/null || true)"
+      if [[ "$original_look" != light && "$original_look" != dark ]]; then
+        echo "Couldn't read the appearance of Simulator $udid" >&2
+        exit 2
+      fi
       for look in light dark; do
         xcrun simctl ui "$udid" appearance "$look"
         xcrun simctl shutdown "$udid" 2>/dev/null || true

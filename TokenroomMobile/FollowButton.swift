@@ -18,8 +18,9 @@ struct FollowButton: View {
 
     var body: some View {
         if let window = LiveActivities.candidate(in: provider, preferring: preferring) {
+            let following = isFollowingNow
             Group {
-                if showsSampleData && !isFollowingNow {
+                if showsSampleData && !following {
                     if !isCompact {
                         Text(Self.sampleDataNote)
                             .font(.footnote)
@@ -27,11 +28,11 @@ struct FollowButton: View {
                     }
                 } else {
                     Button {
-                        toggle(window)
+                        toggle(window, stopping: following)
                     } label: {
-                        Label(isFollowingNow ? (isCompact ? "Stop" : "Stop Following") : (isCompact ? "Follow" : "Follow on Lock Screen"), systemImage: isFollowingNow ? "xmark.circle" : "timer")
+                        Label(following ? (isCompact ? "Stop" : "Stop Following") : (isCompact ? "Follow" : "Follow on Lock Screen"), systemImage: following ? "xmark.circle" : "timer")
                     }
-                    .accessibilityHint(isFollowingNow ? "Removes the countdown from the Lock Screen" : "Shows a countdown to the \(WindowNames.inSentence(window.displayTitle)) reset on the Lock Screen and in the Dynamic Island")
+                    .accessibilityHint(following ? "Removes the countdown from the Lock Screen" : "Shows a countdown to the \(WindowNames.inSentence(window.displayTitle)) reset on the Lock Screen and in the Dynamic Island")
                 }
             }
             // Again whenever the provider changes, not only on appearing: a row that now shows
@@ -47,9 +48,9 @@ struct FollowButton: View {
         isFollowing || (allowsExternalEffects && LiveActivities.activity(for: provider.id) != nil)
     }
 
-    private func toggle(_ window: RelayWindow) {
+    private func toggle(_ window: RelayWindow, stopping: Bool) {
         guard allowsExternalEffects else { return }
-        if isFollowingNow {
+        if stopping {
             Task {
                 await LiveActivities.stop(provider.id)
                 isFollowing = false
