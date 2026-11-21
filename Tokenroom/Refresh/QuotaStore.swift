@@ -737,7 +737,7 @@ final class QuotaStore {
         var count = 0
         var providers: [Provider] = []
         for provider in connectedProviders {
-            if let available = statuses[provider]?.snapshot?.banked?.available, available > 0 {
+            if let available = statuses[provider]?.snapshot?.availableBanked(at: presentationNow)?.available, available > 0 {
                 count += available
                 providers.append(provider)
             }

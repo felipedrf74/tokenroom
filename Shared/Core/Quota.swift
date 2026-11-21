@@ -106,6 +106,27 @@ struct BankedResets: Equatable, Codable, Sendable {
     func nextExpiry(after now: Date = .now) -> Date? {
         expiries.filter { $0 > now }.min()
     }
+
+    func current(at now: Date, measuredAt: Date?) -> BankedResets? {
+        let lapsed = expiries.filter { expiry in
+            expiry <= now && measuredAt.map { expiry > $0 } ?? true
+        }.count
+        let left = max(available - lapsed, 0)
+        guard left > 0 else { return nil }
+        return BankedResets(available: left, expiries: expiries.filter { $0 > now })
+    }
+}
+
+extension QuotaSnapshot {
+    func availableBanked(at now: Date) -> BankedResets? {
+        banked?.current(at: now, measuredAt: fetchedAt)
+    }
+}
+
+extension RelayProvider {
+    func availableBanked(at now: Date) -> BankedResets? {
+        banked?.current(at: now, measuredAt: fetchedAt)
+    }
 }
 
 struct ExtraUsage: Equatable, Codable, Sendable {

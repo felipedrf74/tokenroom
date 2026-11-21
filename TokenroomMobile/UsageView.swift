@@ -214,8 +214,8 @@ struct UsageView: View {
     /// Banked resets and alerts that are off. News counts live on the News tab's badge.
     private var highlights: [Highlight] {
         var items: [Highlight] = []
-        let banked = store.readings.filter { ($0.provider.banked?.available ?? 0) > 0 }
-        let bankedCount = banked.reduce(0) { $0 + ($1.provider.banked?.available ?? 0) }
+        let banked = store.readings.filter { $0.provider.availableBanked(at: .now) != nil }
+        let bankedCount = banked.reduce(0) { $0 + ($1.provider.availableBanked(at: .now)?.available ?? 0) }
         if bankedCount > 0, let first = banked.first {
             items.append(Highlight(id: "banked", title: bankedCount == 1 ? "1 banked reset" : "\(bankedCount) banked resets", symbol: "arrow.counterclockwise") {
                 path = [first.id]

@@ -47,7 +47,7 @@ struct ProviderDetailView: View {
                     }
                 }
             }
-            if let banked = provider.banked, banked.available > 0 {
+            if let banked = provider.availableBanked(at: date) {
                 Section {
                     Text(ReadingText.banked(banked, now: date))
                     ForEach(banked.expiries.filter { $0 > date }.sorted(), id: \.self) { expiry in

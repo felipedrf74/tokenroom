@@ -312,7 +312,7 @@ struct ProviderCard: View {
             if !others.isEmpty {
                 caption(others.prefix(3).map { windowSummary($0) }.joined(separator: " · "))
             }
-            if let banked = snapshot.banked, banked.available > 0 {
+            if let banked = snapshot.availableBanked(at: date) {
                 caption(Self.bankedText(banked, now: date))
             }
             // One line for what's left beyond the plan and the plan itself, neither worth two.
@@ -385,7 +385,7 @@ struct ProviderCard: View {
                     captionFont: .system(size: 11)
                 )
             }
-            if let banked = snapshot.banked, banked.available > 0 {
+            if let banked = snapshot.availableBanked(at: date) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(banked.available == 1 ? "1 banked reset" : "\(banked.available) banked resets")
                         .font(.system(size: 12, weight: .medium))

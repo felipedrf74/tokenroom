@@ -43,7 +43,8 @@ final class ProviderUpgradeTests: XCTestCase {
         let entry = OpenAIClient.ExpiryEntry(count: 2, expiries: dates, at: now)
         XCTAssertEqual(OpenAIClient.cachedExpiries(entry, count: 2, now: now.addingTimeInterval(60), ttl: 3_600), dates)
         XCTAssertNil(OpenAIClient.cachedExpiries(entry, count: 2, now: now.addingTimeInterval(3_600), ttl: 3_600), "Looked up again after the TTL")
-        XCTAssertEqual(OpenAIClient.cachedExpiries(entry, count: 2, now: now.addingTimeInterval(86_400)), dates, "A failed lookup keeps dates for the same count")
+        XCTAssertEqual(OpenAIClient.cachedExpiries(entry, count: 2, now: now.addingTimeInterval(86_400 - 60)), dates, "A failed lookup keeps dates for the same count")
+        XCTAssertNil(OpenAIClient.cachedExpiries(entry, count: 2, now: now.addingTimeInterval(86_400)), "A date that has passed is looked up again")
         XCTAssertNil(OpenAIClient.cachedExpiries(entry, count: 1, now: now.addingTimeInterval(60)), "One redeemed: the old two dates no longer fit")
         XCTAssertNil(OpenAIClient.cachedExpiries(nil, count: 0, now: now))
     }

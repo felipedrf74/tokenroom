@@ -248,7 +248,7 @@ struct PopoverProviderView: View {
                 Divider()
                 secondaryWindow(secondary)
             }
-            if let banked = snapshot.banked, banked.available > 0 {
+            if let banked = snapshot.availableBanked(at: card.date) {
                 Divider()
                 VStack(alignment: .leading, spacing: 6) {
                     Label(ReadingText.banked(banked, now: card.date), systemImage: "arrow.counterclockwise")

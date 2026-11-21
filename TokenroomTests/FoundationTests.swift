@@ -692,6 +692,49 @@ final class FoundationTests: XCTestCase {
         XCTAssertEqual(store.bankedResets.providers, [.openai])
     }
 
+    func testABankedResetPastItsExpiryIsNoLongerCounted() {
+        let measured = Date(timeIntervalSince1970: 1_790_000_000)
+        let noon = measured.addingTimeInterval(3 * 3600)
+        let later = measured.addingTimeInterval(86_400)
+        let one = BankedResets(available: 1, expiries: [noon])
+        XCTAssertEqual(one.current(at: measured, measuredAt: measured), one)
+        XCTAssertNil(one.current(at: noon, measuredAt: measured), "Gone once its expiry passes")
+
+        let mixed = BankedResets(available: 3, expiries: [noon, later])
+        XCTAssertEqual(mixed.current(at: noon.addingTimeInterval(60), measuredAt: measured), BankedResets(available: 2, expiries: [later]), "One with an unknown expiry stays")
+        XCTAssertEqual(ReadingText.banked(mixed.current(at: noon.addingTimeInterval(60), measuredAt: measured)!, now: noon.addingTimeInterval(60)).hasPrefix("2 banked resets"), true)
+        XCTAssertNil(BankedResets(available: 1, expiries: [noon, later]).current(at: later, measuredAt: measured), "Never below 0")
+        XCTAssertEqual(BankedResets(available: 1, expiries: [noon]).current(at: later, measuredAt: noon.addingTimeInterval(60))?.available, 1, "An expiry the count already left out isn't taken off again")
+        XCTAssertEqual(BankedResets(available: 2).current(at: later, measuredAt: measured)?.available, 2)
+
+        var reading = QuotaSnapshot(provider: .openai, usedPercent: 10, resetsAt: nil, fetchedAt: measured, primaryTitle: "Weekly", windows: [])
+        reading.banked = one
+        XCTAssertEqual(reading.availableBanked(at: measured)?.available, 1)
+        XCTAssertNil(reading.availableBanked(at: noon))
+        let relayed = RelayProvider(provider: .openai, status: .live(reading), checkedAt: measured)
+        XCTAssertEqual(relayed.availableBanked(at: measured)?.available, 1)
+        XCTAssertNil(relayed.availableBanked(at: noon), "The iPhone and Watch count it the same way")
+    }
+
+    @MainActor
+    func testTheBankedPillDropsAResetOnceItExpires() async throws {
+        let defaults = makeDefaults()
+        defaults.set(["openai"], forKey: "enabledProviders")
+        var codex = snapshot(.openai)
+        codex.banked = BankedResets(available: 1, expiries: [codex.fetchedAt.addingTimeInterval(3600)])
+        let store = QuotaStore(
+            settings: AppSettings(defaults: defaults),
+            clients: [ScriptedClient(provider: .openai, results: [.success(codex)])],
+            cache: SnapshotCache(directory: try makeFolder())
+        )
+        await store.refresh(force: true)
+        store.ageReadings(at: codex.fetchedAt.addingTimeInterval(60))
+        XCTAssertEqual(store.bankedResets.count, 1)
+        store.ageReadings(at: codex.fetchedAt.addingTimeInterval(3600))
+        XCTAssertEqual(store.bankedResets.count, 0)
+        XCTAssertEqual(store.bankedResets.providers, [])
+    }
+
     @MainActor
     func testAlertChoicesMadeOnTheMacAreStampedAndKept() throws {
         let defaults = makeDefaults()
