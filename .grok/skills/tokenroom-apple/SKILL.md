@@ -9,6 +9,8 @@ description: >-
 
 # Tokenroom for iPhone and Apple Watch
 
+**Release preparation (21 November 2026):** iPhone, widgets and Watch 1.3.7(1) is prepared with the polish overhaul (#80), and Mac 2.6.4(1) alongside it. Mobile 1.3.6(1) has been ready for distribution since 18 November. Signing, upload, submission and installation are separate delivery steps; this paragraph does not claim them.
+
 **Delivery status (14 November 2026):** Mobile 1.3.3(1) was uploaded, processed and submitted at 16:59 UTC: **Waiting for Review**, with automatic release after approval to all users. Approval and public availability remain pending; do not reupload this consumed build. Mac 2.6.1(1) is public and installed on both Macs. Mobile 1.3.2 was confirmed public on 13 November. `docs/release-delivery-20261114.md` binds the signed packages, upload, submission and installations.
 
 **Delivery status (18 November 2026):** Mobile 1.3.6(1) was uploaded at 17:08 UTC, processed and submitted at 17:19 UTC: **Waiting for Review**, with automatic release after approval to all users. Approval and public availability remain pending; do not reupload this consumed build. There was no Mac release: Mac 2.6.3(1) stays current and is verified on Maquinho Pro; the MacBook Pro, which got 2.6.3 on 16 November, could not be reached to recheck. `docs/release-delivery-20261118.md` binds the source, package, upload and submission. The T3 Code preview browser couldn't take typed input on Apple's sign-in page that day, so the App Store Connect steps went through an automated browser window on Maquinho Pro.

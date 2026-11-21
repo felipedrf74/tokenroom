@@ -2,6 +2,16 @@
 
 A draft for App Store Connect. Provider names appear only in the description, as facts, never in the name, subtitle, or keywords. Tokenroom isn't affiliated with any provider.
 
+## What's New — 1.3.7
+
+Prepared 21 November 2026 for build 1.3.7 (1), with the polish overhaul (#80). Version 1.3.6 has been ready for distribution since 18 November. Upload and submission are recorded when they happen.
+
+Readings say what they know. After a limit resets, its meter stays empty until a new reading arrives, and a reading that has gone stale says how old it is, in the app, in widgets, in the Live Activity and on Apple Watch. A provider that answers with a missing or unreadable number keeps its last reading instead of showing 0% or $0.
+
+Tokenroom always tells you when a limit would run out before it resets, and raises it only when you're ahead of pace or the run-out is close. Apple Watch rows and the Smart Stack name the limit they show and keep the percentage on screen.
+
+News tells apart a briefing that's waiting for its first check, sources that couldn't be checked, and a briefing that's simply quiet, and source pages use the publisher's own dates. Welcome starts with what works on this iPhone, and an iCloud problem gets the same explanation on every screen.
+
 ## What's New — 1.3.6
 
 Submitted 18 November 2026 at 17:19 UTC with build 1.3.6 (1): Waiting for Review, with automatic release after approval to all users. [The delivery record](release-delivery-20261118.md) retains the package, upload and submission details. The Home Screen widgets screenshot in the listing still shows the earlier widget design, and the promotional text field in the listing is empty.
