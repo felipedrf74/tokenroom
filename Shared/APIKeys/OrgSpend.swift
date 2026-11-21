@@ -41,7 +41,10 @@ enum OrgSpend {
     }
 
     static func nextPage(_ root: [String: Any]) throws -> String? {
-        guard let raw = root["has_more"], !(raw is NSNull) else { return nil }
+        guard let raw = root["has_more"], !(raw is NSNull) else {
+            if let cursor = JSONFlex.string(root["next_page"]), !cursor.isEmpty { throw ProviderError.parse }
+            return nil
+        }
         guard let flag = raw as? NSNumber, CFGetTypeID(flag) == CFBooleanGetTypeID() else { throw ProviderError.parse }
         guard flag.boolValue else { return nil }
         guard let next = JSONFlex.string(root["next_page"]), !next.isEmpty else { throw ProviderError.parse }

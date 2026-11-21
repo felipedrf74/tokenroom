@@ -53,8 +53,8 @@ struct NewsSourceFreshness {
 
     func briefing(isChecking: Bool, modelsCheckedAt: Date?, modelsFailed: Bool) -> NewsEmptyBriefing {
         guard totalCount > 0 else {
-            if modelsCheckedAt != nil { return .quiet }
-            return !isChecking && modelsFailed ? .couldNotCheck : .waiting
+            if modelsFailed { return isChecking ? .waiting : .couldNotCheck }
+            return modelsCheckedAt != nil ? .quiet : .waiting
         }
         if answeredCount > 0 { return .quiet }
         return !isChecking && !failedIDs.isEmpty ? .couldNotCheck : .waiting

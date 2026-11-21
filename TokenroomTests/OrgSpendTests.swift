@@ -43,7 +43,7 @@ final class OrgSpendTests: XCTestCase {
     }
 
     func testMalformedPagingFlagsAndNonFiniteAmountsAreNotATotal() throws {
-        for body in [#"{"has_more":"true","next_page":"p2","data":[]}"#, #"{"has_more":1,"next_page":"p2","data":[]}"#] {
+        for body in [#"{"has_more":"true","next_page":"p2","data":[]}"#, #"{"has_more":1,"next_page":"p2","data":[]}"#, #"{"next_page":"p2","data":[]}"#, #"{"has_more":null,"next_page":"p2","data":[]}"#] {
             XCTAssertThrowsError(try OpenAICostsParser.page(from: Data(body.utf8)), body) { XCTAssertEqual($0 as? ProviderError, .parse) }
             XCTAssertThrowsError(try AnthropicCostParser.page(from: Data(body.utf8)), body) { XCTAssertEqual($0 as? ProviderError, .parse) }
         }

@@ -108,6 +108,7 @@ final class MacNewsPresentationTests: XCTestCase {
         XCTAssertEqual(summary.briefing(isChecking: false, modelsCheckedAt: nil, modelsFailed: false), .waiting)
         XCTAssertEqual(summary.briefing(isChecking: false, modelsCheckedAt: nil, modelsFailed: true), .couldNotCheck)
         XCTAssertEqual(summary.briefing(isChecking: false, modelsCheckedAt: now, modelsFailed: false), .quiet)
+        XCTAssertEqual(summary.briefing(isChecking: false, modelsCheckedAt: now, modelsFailed: true), .couldNotCheck, "An earlier model list doesn't hide a failed one")
     }
 
     @MainActor
