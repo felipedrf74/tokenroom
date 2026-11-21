@@ -197,9 +197,9 @@ enum KimiCodeParser {
         guard let wallet = JSONFlex.dictionary(value),
               let balance = JSONFlex.dictionary(wallet["balance"]),
               JSONFlex.string(balance["type"]) == "BOOSTER",
-              let total = JSONFlex.number(balance["amount"]), total > 0
+              let total = JSONFlex.number(balance["amount"]), total > 0,
+              let left = JSONFlex.number(balance["amountLeft"])
         else { return nil }
-        let left = JSONFlex.number(balance["amountLeft"]) ?? 0
         let limit = JSONFlex.dictionary(wallet["monthlyChargeLimit"])
         let used = JSONFlex.dictionary(wallet["monthlyUsed"])
         let currency = [limit, used].lazy.compactMap { JSONFlex.string($0?["currency"]) }.first { !$0.isEmpty } ?? "USD"
@@ -230,9 +230,13 @@ enum MiniMaxParser {
         }
         var primary: [QuotaWindow] = []
         var others: [QuotaWindow] = []
+        var unmeasured = false
         for item in lanes {
             guard let lane = JSONFlex.dictionary(item) else { continue }
             let name = JSONFlex.string(lane["model_name"]) ?? "general"
+            if isUnmeasured(lane, prefix: "current_interval") || isUnmeasured(lane, prefix: "current_weekly") {
+                unmeasured = true
+            }
             let isGeneral = name == "general"
             let interval = window(lane, prefix: "current_interval", start: "start_time", end: "end_time", legacy: legacy, now: fetchedAt)
             let weekly = window(lane, prefix: "current_weekly", start: "weekly_start_time", end: "weekly_end_time", legacy: legacy, now: fetchedAt)
@@ -257,6 +261,7 @@ enum MiniMaxParser {
         }
         let windows = primary + others
         guard !windows.isEmpty else {
+            if unmeasured { throw ProviderError.parse }
             throw ProviderError.notEntitled("This MiniMax key has no Coding or Token Plan limits.")
         }
         return try .headlined(by: windows, provider: .minimax, fetchedAt: fetchedAt, planLabel: planLabel(body, root: root))
@@ -280,20 +285,26 @@ enum MiniMaxParser {
 
     typealias Lane = (used: Double, reset: Date?, length: Double?)
 
+    static func isUnmeasured(_ lane: [String: Any], prefix: String) -> Bool {
+        (JSONFlex.number(lane["\(prefix)_total_count"]) ?? 0) > 0
+            && JSONFlex.number(lane["\(prefix)_usage_count"]) == nil
+            && JSONFlex.number(lane["\(prefix)_remaining_percent"]) == nil
+    }
+
     /// One lane window, or nil when the plan doesn't include it (status 3 with nothing to count)
     /// or it's unlimited.
     static func window(_ lane: [String: Any], prefix: String, start: String, end: String, legacy: Bool, now: Date) -> Lane? {
         let total = JSONFlex.number(lane["\(prefix)_total_count"]) ?? 0
-        let count = JSONFlex.number(lane["\(prefix)_usage_count"]) ?? 0
+        let count = JSONFlex.number(lane["\(prefix)_usage_count"])
         let remainingPercent = JSONFlex.number(lane["\(prefix)_remaining_percent"])
         let status = JSONFlex.number(lane["\(prefix)_status"]).map { Int($0) }
-        if status == 3, total == 0, count == 0, (remainingPercent ?? 100) >= 100 {
+        if status == 3, total == 0, (count ?? 0) == 0, (remainingPercent ?? 100) >= 100 {
             return nil
         }
         let used: Double
         if let remainingPercent {
             used = 100 - remainingPercent
-        } else if total > 0 {
+        } else if total > 0, let count {
             // The Coding Plan endpoint's "usage" count is what's left, despite its name.
             used = (legacy ? total - count : count) / total * 100
         } else {

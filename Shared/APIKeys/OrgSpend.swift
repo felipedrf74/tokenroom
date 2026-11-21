@@ -24,6 +24,27 @@ enum OrgSpend {
         )
     }
 
+    static func sum(_ root: [String: Any], amount: ([String: Any]) -> Double?) throws -> Double {
+        guard let buckets = JSONFlex.array(root["data"]) else { throw ProviderError.parse }
+        var total = 0.0
+        for item in buckets {
+            guard let bucket = JSONFlex.dictionary(item) else { throw ProviderError.parse }
+            guard let results = bucket["results"], !(results is NSNull) else { continue }
+            guard let rows = JSONFlex.array(results) else { throw ProviderError.parse }
+            for row in rows {
+                guard let result = JSONFlex.dictionary(row), let value = amount(result) else { throw ProviderError.parse }
+                total += value
+            }
+        }
+        return total
+    }
+
+    static func nextPage(_ root: [String: Any]) throws -> String? {
+        guard (root["has_more"] as? Bool) == true else { return nil }
+        guard let next = JSONFlex.string(root["next_page"]), !next.isEmpty else { throw ProviderError.parse }
+        return next
+    }
+
     static func snapshot(_ provider: Provider, window: QuotaWindow, extra: ExtraUsage? = nil, fetchedAt: Date) -> QuotaSnapshot {
         QuotaSnapshot(
             provider: provider,
@@ -46,15 +67,10 @@ enum OpenAICostsParser {
 
     static func page(from data: Data) throws -> Page {
         let root = try JSONFlex.object(from: data)
-        guard let buckets = JSONFlex.array(root["data"]) else { throw ProviderError.parse }
-        var total = 0.0
-        for bucket in buckets {
-            for result in JSONFlex.array(JSONFlex.dictionary(bucket)?["results"]) ?? [] {
-                total += JSONFlex.number(JSONFlex.dictionary(JSONFlex.dictionary(result)?["amount"])?["value"]) ?? 0
-            }
+        let total = try OrgSpend.sum(root) { result in
+            JSONFlex.number(JSONFlex.dictionary(result["amount"])?["value"])
         }
-        let more = (root["has_more"] as? Bool) == true
-        return Page(total: total, nextPage: more ? JSONFlex.string(root["next_page"]) : nil)
+        return Page(total: total, nextPage: try OrgSpend.nextPage(root))
     }
 }
 
@@ -67,15 +83,10 @@ enum AnthropicCostParser {
 
     static func page(from data: Data) throws -> Page {
         let root = try JSONFlex.object(from: data)
-        guard let buckets = JSONFlex.array(root["data"]) else { throw ProviderError.parse }
-        var cents = 0.0
-        for bucket in buckets {
-            for result in JSONFlex.array(JSONFlex.dictionary(bucket)?["results"]) ?? [] {
-                cents += JSONFlex.number(JSONFlex.dictionary(result)?["amount"]) ?? 0
-            }
+        let cents = try OrgSpend.sum(root) { result in
+            JSONFlex.number(result["amount"])
         }
-        let more = (root["has_more"] as? Bool) == true
-        return Page(total: cents / 100, nextPage: more ? JSONFlex.string(root["next_page"]) : nil)
+        return Page(total: cents / 100, nextPage: try OrgSpend.nextPage(root))
     }
 }
 
@@ -139,6 +150,7 @@ extension APIKeyClient {
                 page = parsed.nextPage
                 if page == nil { break }
             }
+            guard page == nil else { throw ProviderError.parse }
             return OrgSpend.snapshot(provider, window: OrgSpend.spendWindow(total, now: now), fetchedAt: now)
 
         case .anthropicOrg:
@@ -163,6 +175,7 @@ extension APIKeyClient {
                 page = parsed.nextPage
                 if page == nil { break }
             }
+            guard page == nil else { throw ProviderError.parse }
             return OrgSpend.snapshot(provider, window: OrgSpend.spendWindow(total, now: now), fetchedAt: now)
 
         case .xaiOrg:

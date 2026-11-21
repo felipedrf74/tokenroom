@@ -9,10 +9,12 @@ enum ClaudeParser {
 
     static func snapshot(from data: Data, fetchedAt: Date = .now) throws -> QuotaSnapshot {
         let root = try JSONFlex.object(from: data)
-        guard let weekly = JSONFlex.dictionary(root["seven_day"]) else {
+        guard let weekly = JSONFlex.dictionary(root["seven_day"]),
+              let weeklyUsed = JSONFlex.number(weekly["utilization"])
+        else {
             throw ProviderError.parse
         }
-        let used = JSONFlex.clampPercent(JSONFlex.number(weekly["utilization"]) ?? 0)
+        let used = JSONFlex.clampPercent(weeklyUsed)
         let resetsAt = JSONFlex.date(weekly["resets_at"])
         let weekStart = JSONFlex.date(JSONFlex.dictionary(root["seven_day_breakdown"])?["window_started_at"])
 
@@ -94,10 +96,11 @@ enum ClaudeParser {
     /// Paid usage past the plan. Amounts arrive in minor units (`decimal_places`).
     private static func extraUsage(from object: [String: Any]?) -> ExtraUsage? {
         guard let object, (object["is_enabled"] as? Bool) == true,
-              let rawLimit = JSONFlex.number(object["monthly_limit"]), rawLimit > 0
+              let rawLimit = JSONFlex.number(object["monthly_limit"]), rawLimit > 0,
+              let rawUsed = JSONFlex.number(object["used_credits"])
         else { return nil }
         let scale = pow(10, JSONFlex.number(object["decimal_places"]) ?? 0)
-        let used = (JSONFlex.number(object["used_credits"]) ?? 0) / scale
+        let used = rawUsed / scale
         let limit = rawLimit / scale
         return ExtraUsage(
             title: "Extra usage",
@@ -303,8 +306,8 @@ enum GrokParser {
             ),
         ]
 
-        if let cap = JSONFlex.cent(config["onDemandCap"]), cap > 0 {
-            let used = JSONFlex.cent(config["onDemandUsed"]) ?? 0
+        if let cap = JSONFlex.cent(config["onDemandCap"]), cap > 0,
+           let used = JSONFlex.cent(config["onDemandUsed"]) {
             let extraPercent = JSONFlex.clampPercent(used / cap * 100)
             windows.append(
                 QuotaWindow(
@@ -336,16 +339,22 @@ enum CursorParser {
         let api = JSONFlex.number(plan["apiPercentUsed"])
         let total = JSONFlex.number(plan["totalPercentUsed"])
 
+        let spendPercent = JSONFlex.number(plan["limit"]).flatMap { limit -> Double? in
+            guard limit > 0, let spend = JSONFlex.number(plan["includedSpend"]) ?? JSONFlex.number(plan["totalSpend"]) else { return nil }
+            return spend / limit * 100
+        }
+        guard auto != nil || api != nil || total != nil || spendPercent != nil else {
+            throw ProviderError.parse
+        }
+
         let autoPercent = JSONFlex.clampPercent(auto ?? 0)
         let apiPercent = JSONFlex.clampPercent(api ?? 0)
         var used = max(autoPercent, apiPercent)
         if used == 0, let total {
             used = JSONFlex.clampPercent(total)
         }
-        if used == 0,
-           let limit = JSONFlex.number(plan["limit"]), limit > 0,
-           let spend = JSONFlex.number(plan["includedSpend"]) ?? JSONFlex.number(plan["totalSpend"]) {
-            used = JSONFlex.clampPercent(spend / limit * 100)
+        if used == 0, let spendPercent {
+            used = JSONFlex.clampPercent(spendPercent)
         }
 
         let resetsAt = JSONFlex.date(root["billingCycleEnd"])

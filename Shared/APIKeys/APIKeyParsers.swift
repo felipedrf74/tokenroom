@@ -7,9 +7,9 @@ enum OpenRouterParser {
         let root = try JSONFlex.object(from: data)
         let key = JSONFlex.dictionary(root["data"]) ?? root
         let window: QuotaWindow
-        if let limit = JSONFlex.number(key["limit"]), limit > 0 {
+        if let limit = JSONFlex.number(key["limit"]), limit > 0, let reported = JSONFlex.number(key["limit_remaining"]) {
             // A key with a spending limit is a real meter.
-            let remaining = min(max(JSONFlex.number(key["limit_remaining"]) ?? limit, 0), limit)
+            let remaining = min(max(reported, 0), limit)
             let used = limit - remaining
             let period = Self.period(JSONFlex.string(key["limit_reset"]), now: fetchedAt, calendar: calendar)
             window = QuotaWindow(
@@ -21,7 +21,7 @@ enum OpenRouterParser {
                 startsAt: period.start,
                 amount: QuotaAmount(used: used, limit: limit, remaining: remaining, unit: "usd")
             )
-        } else {
+        } else if let monthly = JSONFlex.number(key["usage_monthly"]) {
             let month = Self.period("monthly", now: fetchedAt, calendar: calendar)
             window = QuotaWindow(
                 id: "usage-month",
@@ -30,9 +30,21 @@ enum OpenRouterParser {
                 usedPercent: 0,
                 resetsAt: month.end,
                 startsAt: month.start,
-                amount: QuotaAmount(used: JSONFlex.number(key["usage_monthly"]) ?? JSONFlex.number(key["usage"]) ?? 0, unit: "usd"),
+                amount: QuotaAmount(used: monthly, unit: "usd"),
                 metered: false
             )
+        } else if let total = JSONFlex.number(key["usage"]) {
+            window = QuotaWindow(
+                id: "usage-total",
+                kind: .pool,
+                title: "All time",
+                usedPercent: 0,
+                resetsAt: nil,
+                amount: QuotaAmount(used: total, unit: "usd"),
+                metered: false
+            )
+        } else {
+            throw ProviderError.parse
         }
         return QuotaSnapshot(
             provider: .openrouter,
