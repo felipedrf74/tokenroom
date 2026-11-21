@@ -16,16 +16,25 @@ final class UISnapshotTests: XCTestCase {
         output = URL(fileURLWithPath: path, isDirectory: true)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         fixture = environment["TOKENROOM_SNAPSHOT_FIXTURE"] ?? ""
+        requestedLook = environment["TOKENROOM_SNAPSHOT_LOOK"].flatMap(Look.init(rawValue:))
     }
 
     private enum Look: String, CaseIterable {
         case light, dark
         var suffix: String { self == .dark ? "-dark" : "" }
         var appearance: XCUIDevice.Appearance { self == .dark ? .dark : .light }
+        var marker: String { "tokenroom.appearance.\(rawValue)" }
     }
 
+    private var requestedLook: Look?
+    private var currentLook: Look = .light
+    private var looks: [Look] { requestedLook.map { [$0] } ?? Look.allCases }
+
     private func launch(_ arguments: [String], look: Look = .light, sample: Bool = true) -> XCUIApplication {
-        XCUIDevice.shared.appearance = look.appearance
+        if requestedLook == nil {
+            XCUIDevice.shared.appearance = look.appearance
+        }
+        currentLook = look
         let app = XCUIApplication()
         app.terminate()
         app.launchArguments = ["-TokenroomSnapshotNews", fixture, "-TokenroomSnapshotConnect", "YES", "-AppleLocale", "en_US", "-AppleLanguages", "(en)"]
@@ -42,6 +51,13 @@ final class UISnapshotTests: XCTestCase {
     private func shoot(_ name: String) {
         guard let app = current, app.state == .runningForeground else {
             XCTFail("Tokenroom was not in the foreground for \(name); nothing saved")
+            return
+        }
+        if let requestedLook, requestedLook != currentLook { return }
+        let other: Look = currentLook == .dark ? .light : .dark
+        guard app.descendants(matching: .any)[currentLook.marker].waitForExistence(timeout: 3),
+              !app.descendants(matching: .any)[other.marker].exists else {
+            XCTFail("Tokenroom isn't in its \(currentLook.rawValue) appearance for \(name); nothing saved")
             return
         }
         let data = app.screenshot().pngRepresentation
@@ -69,7 +85,7 @@ final class UISnapshotTests: XCTestCase {
     }
 
     func testUsage() {
-        for look in Look.allCases {
+        for look in looks {
             let app = launch(["-onboarded", "YES"], look: look)
             shoot("iphone-usage\(look.suffix)")
             app.swipeUp()
@@ -80,7 +96,7 @@ final class UISnapshotTests: XCTestCase {
 
     func testProviderDetails() {
         for (id, name) in [("claude", "claude"), ("openai", "openai"), ("deepseek", "balance"), ("anthropicOrg", "org")] {
-            for look in Look.allCases {
+            for look in looks {
                 let app = launch(["-onboarded", "YES", "-TokenroomOpen", "tokenroom://provider/\(id)"], look: look)
                 shoot("iphone-detail-\(name)\(look.suffix)")
                 if name == "claude" {
@@ -93,7 +109,7 @@ final class UISnapshotTests: XCTestCase {
     }
 
     func testNews() {
-        for look in Look.allCases {
+        for look in looks {
             let app = launch(["-onboarded", "YES", "-TokenroomOpen", "tokenroom://news"], look: look)
             shoot("iphone-news-today\(look.suffix)")
             app.swipeUp()
@@ -140,7 +156,7 @@ final class UISnapshotTests: XCTestCase {
             Thread.sleep(forTimeInterval: 1)
             return true
         }
-        for look in Look.allCases {
+        for look in looks {
             for state in ["quiet", "pending", "unreachable"] {
                 fixture = folder.appendingPathComponent("\(state)/news.json").path
                 _ = launch(["-onboarded", "YES", "-TokenroomOpen", "tokenroom://news"], look: look)
@@ -163,7 +179,7 @@ final class UISnapshotTests: XCTestCase {
         fixture = normal
         for (name, path) in [("", normal), ("-failed", folder.appendingPathComponent("failed/news.json").path)] {
             fixture = path
-            for look in Look.allCases {
+            for look in looks {
                 let app = launch(["-onboarded", "YES", "-TokenroomOpen", "tokenroom://news", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityL"], look: look)
                 if name.isEmpty { shoot("iphone-news-large-text\(look.suffix)") }
                 for _ in 0..<6 {
@@ -179,7 +195,7 @@ final class UISnapshotTests: XCTestCase {
     }
 
     func testSettings() {
-        for look in Look.allCases {
+        for look in looks {
             let app = launch(["-onboarded", "YES", "-TokenroomOpen", "tokenroom://settings"], look: look)
             shoot("iphone-settings\(look.suffix)")
             app.swipeUp()
@@ -195,7 +211,7 @@ final class UISnapshotTests: XCTestCase {
     }
 
     func testFirstRun() {
-        for look in Look.allCases {
+        for look in looks {
             _ = launch(["-onboarded", "NO"], look: look, sample: false)
             shoot("iphone-onboarding\(look.suffix)")
             _ = launch(["-onboarded", "YES"], look: look, sample: false)
@@ -204,7 +220,7 @@ final class UISnapshotTests: XCTestCase {
     }
 
     func testWidgets() {
-        for look in Look.allCases {
+        for look in looks {
             let app = launch(["-onboarded", "YES", "-TokenroomGallery", "home"], look: look)
             shoot("iphone-widgets-home\(look.suffix)")
             app.swipeUp()

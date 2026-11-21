@@ -46,3 +46,26 @@ extension EnvironmentValues {
 }
 
 private struct MobileSampleDataKey: EnvironmentKey { static let defaultValue = false }
+
+struct SnapshotAppearanceMarker: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        #if DEBUG
+        if UserDefaults.standard.string(forKey: "TokenroomSnapshotNews") != nil {
+            content.overlay(alignment: .topLeading) {
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .allowsHitTesting(false)
+                    .accessibilityElement()
+                    .accessibilityLabel("Appearance")
+                    .accessibilityIdentifier("tokenroom.appearance.\(colorScheme == .dark ? "dark" : "light")")
+            }
+        } else {
+            content
+        }
+        #else
+        content
+        #endif
+    }
+}

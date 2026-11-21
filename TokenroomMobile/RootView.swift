@@ -18,15 +18,18 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        #if DEBUG
-        if let page = UserDefaults.standard.string(forKey: "TokenroomGallery") {
-            WidgetGalleryView(cache: store.allowsExternalEffects ? (PhoneCacheAccess.load(at: ReadingCache.defaultURL, defaults: AppGroup.defaults) ?? SampleData.cache()) : SampleData.cache(), page: page)
-        } else {
+        Group {
+            #if DEBUG
+            if let page = UserDefaults.standard.string(forKey: "TokenroomGallery") {
+                WidgetGalleryView(cache: store.allowsExternalEffects ? (PhoneCacheAccess.load(at: ReadingCache.defaultURL, defaults: AppGroup.defaults) ?? SampleData.cache()) : SampleData.cache(), page: page)
+            } else {
+                tabs
+            }
+            #else
             tabs
+            #endif
         }
-        #else
-        tabs
-        #endif
+        .modifier(SnapshotAppearanceMarker())
     }
 
     private var tabs: some View {

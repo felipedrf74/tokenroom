@@ -36,17 +36,38 @@ for platform in "${PLATFORMS[@]}"; do
         -TokenroomSnapshots "$OUT/mac" -TokenroomSnapshotNews "$FIXTURE/news.json" -AppleLocale en_US
       ;;
     iphone)
-      rm -rf "$OUT/iphone.xcresult"
+      rm -rf "$OUT/iphone.xcresult" "$OUT/iphone-light.xcresult" "$OUT/iphone-dark.xcresult"
       only=()
       [[ -n "${TOKENROOM_SNAPSHOT_ONLY:-}" ]] && only=("-only-testing:TokenroomUISnapshots/UISnapshotTests/$TOKENROOM_SNAPSHOT_ONLY")
       xcodebuild build-for-testing -project "$ROOT/Tokenroom.xcodeproj" -scheme TokenroomUISnapshots \
         -destination "platform=iOS Simulator,name=$IPHONE" -derivedDataPath "$DERIVED" \
         CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO TOKENROOM_CK_CONTAINER= -quiet
-      fixture
-      TEST_RUNNER_TOKENROOM_SNAPSHOT_DIR="$OUT/iphone" TEST_RUNNER_TOKENROOM_SNAPSHOT_FIXTURE="$FIXTURE/news.json" \
-        xcodebuild test-without-building -project "$ROOT/Tokenroom.xcodeproj" -scheme TokenroomUISnapshots "${only[@]}" \
-        -destination "platform=iOS Simulator,name=$IPHONE" -derivedDataPath "$DERIVED" \
-        -resultBundlePath "$OUT/iphone.xcresult" CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO TOKENROOM_CK_CONTAINER= -quiet
+      # The iOS 27 Simulator applies a new appearance only after it boots again, so each look gets
+      # its own boot and its own run, and the test keeps only the captures of the look it was given.
+      udid="$(xcrun simctl list devices available -j | python3 -c '
+import json, sys
+name = sys.argv[1]
+devices = [d for group in json.load(sys.stdin)["devices"].values() for d in group if d.get("name") == name and d.get("isAvailable", True)]
+booted = [d for d in devices if d.get("state") == "Booted"]
+chosen = (booted or devices)[:1]
+print(chosen[0]["udid"] if chosen else "")
+' "$IPHONE")"
+      if [[ -z "$udid" ]]; then
+        echo "Couldn't find an available Simulator named $IPHONE" >&2
+        exit 2
+      fi
+      for look in light dark; do
+        xcrun simctl ui "$udid" appearance "$look"
+        xcrun simctl shutdown "$udid" 2>/dev/null || true
+        xcrun simctl boot "$udid"
+        xcrun simctl bootstatus "$udid" -b >/dev/null
+        fixture
+        TEST_RUNNER_TOKENROOM_SNAPSHOT_DIR="$OUT/iphone" TEST_RUNNER_TOKENROOM_SNAPSHOT_FIXTURE="$FIXTURE/news.json" \
+          TEST_RUNNER_TOKENROOM_SNAPSHOT_LOOK="$look" \
+          xcodebuild test-without-building -project "$ROOT/Tokenroom.xcodeproj" -scheme TokenroomUISnapshots "${only[@]}" \
+          -destination "platform=iOS Simulator,id=$udid" -derivedDataPath "$DERIVED" \
+          -resultBundlePath "$OUT/iphone-$look.xcresult" CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO TOKENROOM_CK_CONTAINER= -quiet
+      done
       ;;
     watch)
       rm -rf "$OUT/watch.xcresult"
