@@ -250,6 +250,23 @@ final class APIKeyTests: XCTestCase {
     }
 
     @MainActor
+    func testTheMenuBarResetCapturesShowAnEmptyMeterAndItsLiveFallback() throws {
+        let defaults = makeDefaults()
+        defaults.set(["openai"], forKey: "enabledProviders")
+        let store = QuotaStore(settings: AppSettings(defaults: defaults), clients: [], cache: SnapshotCache(directory: makeFolder()))
+        let now = Date.now
+        let openai = try XCTUnwrap(SampleData.snapshots(now: now).first { $0.provider == .openai })
+        store.statuses[.openai] = .live(DebugSnapshots.resetFixture(openai, now: now, everyWindow: true))
+        let empty = try XCTUnwrap(store.menuMeters.first { $0.provider == .openai })
+        XCTAssertTrue(empty.isAwaitingReading)
+        XCTAssertEqual(empty.drawnUsedPercent, 0)
+        store.statuses[.openai] = .live(DebugSnapshots.resetFixture(openai, now: now, everyWindow: false))
+        let fallback = try XCTUnwrap(store.menuMeters.first { $0.provider == .openai })
+        XCTAssertFalse(fallback.isAwaitingReading)
+        XCTAssertNotNil(fallback.windowLabel)
+    }
+
+    @MainActor
     func testMacPresentationClockCrossesResetAndStaleBoundariesWithoutFetching() throws {
         let defaults = makeDefaults()
         defaults.set(["claude", "cursor"], forKey: "enabledProviders")
