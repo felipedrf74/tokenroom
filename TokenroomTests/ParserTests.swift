@@ -637,4 +637,15 @@ extension ParserTests {
         XCTAssertEqual(zero.windows.map(\.id), ["primary", "on-demand"])
         XCTAssertEqual(zero.windows[1].usedPercent, 0)
     }
+
+    func testGrokOnDemandSpendThatCantBeReadIsLeftOut() throws {
+        let period = #""currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","end":"2026-09-09T06:37:39+00:00"}"#
+        for used in [#"{"val":"unknown"}"#, #"{}"#, #""NaN""#, #"{"val":"Infinity"}"#] {
+            let snapshot = try GrokParser.snapshot(from: json(#"{"config":{"creditUsagePercent":10,\#(period),"onDemandCap":{"val":5000},"onDemandUsed":\#(used)}}"#))
+            XCTAssertEqual(snapshot.windows.map(\.id), ["primary"], used)
+        }
+        let stringZero = try GrokParser.snapshot(from: json(#"{"config":{"creditUsagePercent":10,\#(period),"onDemandCap":{"val":5000},"onDemandUsed":{"val":"0"}}}"#))
+        XCTAssertEqual(stringZero.windows.map(\.id), ["primary", "on-demand"])
+        XCTAssertEqual(stringZero.windows[1].usedPercent, 0)
+    }
 }

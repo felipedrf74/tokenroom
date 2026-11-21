@@ -166,6 +166,25 @@ final class HonestReadingTests: XCTestCase {
         XCTAssertNil(ReadingText.watchPaceNote(nil, now: now))
     }
 
+    func testGoingStaleDoesNotRaiseALastQuarterRunOut() throws {
+        let later = now.addingTimeInterval(3600)
+        let mild = weekly(45, resetsIn: 0.3 * week, runsOutIn: 0.2 * week)
+        XCTAssertTrue(UsageTiles.closeWindows([(provider([mild]), [:])], now: now).isEmpty)
+
+        let projected = try XCTUnwrap(UsageRanking.pace(for: mild, isStale: true, history: nil, now: later))
+        XCTAssertTrue(projected.isProjected)
+        XCTAssertEqual(projected.severity, .watch)
+        XCTAssertFalse(projected.runOutNeedsAttention)
+        XCTAssertFalse(UsageTiles.isClose(mild, pace: projected))
+        XCTAssertTrue(UsageTiles.closeWindows([(provider(state: "stale", checkedAt: now, [mild]), [:])], now: later).isEmpty)
+
+        let critical = weekly(45, resetsIn: 0.3 * week, runsOutIn: 5400)
+        let soon = try XCTUnwrap(UsageRanking.pace(for: critical, isStale: true, history: nil, now: later))
+        XCTAssertEqual(soon.severity, .critical)
+        XCTAssertTrue(soon.runOutNeedsAttention)
+        XCTAssertEqual(UsageTiles.closeWindows([(provider(state: "stale", checkedAt: now, [critical]), [:])], now: later).map(\.window.id), ["weekly"])
+    }
+
     func testLimitReachedAndProjectedRunOutsKeepTheirWords() {
         let limit = Pace(verdict: .limitReached, delta: 30, elapsedFraction: 0.7, resetsAt: now.addingTimeInterval(3600), runsOutAt: nil, severity: .critical)
         XCTAssertNil(limit.currentRunOut)

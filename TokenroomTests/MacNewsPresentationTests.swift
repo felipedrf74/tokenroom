@@ -91,6 +91,13 @@ final class MacNewsPresentationTests: XCTestCase {
         XCTAssertEqual(failed.briefing(isChecking: true, modelsCheckedAt: now, modelsFailed: false), .waiting)
         XCTAssertEqual(NewsEmptyBriefing.couldNotCheck.title, "Couldn't check your sources")
         XCTAssertEqual(NewsEmptyBriefing.couldNotCheck.actionTitle, "Retry")
+        XCTAssertEqual(failed.caption, "No sources checked successfully yet")
+
+        cache.sourceChecks = ["delayed": .init(failedAt: now)]
+        let mixed = NewsSourceFreshness(cache: cache, sources: sources, now: now)
+        XCTAssertEqual(mixed.uncheckedIDs, ["healthy", "delayed"])
+        XCTAssertEqual(mixed.caption, "No sources checked successfully yet")
+        XCTAssertEqual(NewsSourceFreshness(cache: cache, sources: [sources[0]], now: now).caption, "1 source not checked yet")
 
         cache.sourceChecks = ["healthy": .init(succeededAt: now.addingTimeInterval(-60)), "delayed": .init(failedAt: now)]
         let answered = NewsSourceFreshness(cache: cache, sources: sources, now: now)
@@ -148,8 +155,9 @@ final class MacNewsPresentationTests: XCTestCase {
         var cache = NewsCache()
         cache.sourceChecks = [source.id: .init(succeededAt: today.addingTimeInterval(-120))]
         cache.items[source.id] = [
-            FeedItem(id: "older", title: "Older", published: lastPost.addingTimeInterval(-86_400 * 7), source: source.name),
-            FeedItem(id: "newest", title: "Newest", published: lastPost, source: source.name),
+            FeedItem(id: "older", title: "Older", published: lastPost.addingTimeInterval(-86_400 * 7), source: source.name,
+                     publisherPublishedAt: lastPost.addingTimeInterval(-86_400 * 7)),
+            FeedItem(id: "newest", title: "Newest", published: lastPost, source: source.name, publisherPublishedAt: lastPost),
         ]
         let news = NewsStore(defaults: suite.defaults, directory: nil, now: today, initialCache: cache,
                              fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
@@ -159,6 +167,33 @@ final class MacNewsPresentationTests: XCTestCase {
         XCTAssertEqual(health.detailCaption(now: today.addingTimeInterval(86_400 * 60), calendar: calendar), health.caption + " · Latest update Sep 15, 2026")
         let empty = NewsCollectionHealth(checkedAt: today, uncheckedCount: 0, sourceCount: 1, problem: nil, retryIDs: [], sourceIDs: [source.id])
         XCTAssertEqual(empty.detailCaption(now: today, calendar: calendar), empty.caption)
+    }
+
+    @MainActor
+    func testSourceDetailDoesNotDateAnUndatedArticleByItsArrival() throws {
+        let suite = TestDefaults.make(owner: "MacNewsPresentation", index: 3)
+        defer { TestDefaults.remove(suite.name) }
+        let today = Date(timeIntervalSince1970: 1_800_000_000)
+        let source = try XCTUnwrap(FeedSource.catalog.first { $0.id == "claude-code-whats-new" })
+        let previous = [FeedItem(id: "dated", title: "Dated", published: today.addingTimeInterval(-86_400 * 30), source: source.name,
+                                 publisherPublishedAt: today.addingTimeInterval(-86_400 * 30))]
+        let incoming = [FeedItem(id: "undated", title: "Undated", published: nil, source: source.name)]
+        let arrived = NewsFetcher.firstSeen(incoming, previous: previous, now: today)
+        XCTAssertEqual(arrived.first?.published, today)
+
+        var cache = NewsCache()
+        cache.sourceChecks = [source.id: .init(succeededAt: today.addingTimeInterval(-120))]
+        cache.items[source.id] = arrived
+        let undated = NewsStore(defaults: suite.defaults, directory: nil, now: today, initialCache: cache,
+                                fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
+        let health = undated.sourceHealth(for: source)
+        XCTAssertNil(health.latestItemAt)
+        XCTAssertEqual(health.detailCaption(now: today), health.caption)
+
+        cache.items[source.id] = arrived + previous
+        let mixed = NewsStore(defaults: suite.defaults, directory: nil, now: today, initialCache: cache,
+                              fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
+        XCTAssertEqual(mixed.sourceHealth(for: source).latestItemAt, previous[0].publisherPublishedAt)
     }
 
     @MainActor

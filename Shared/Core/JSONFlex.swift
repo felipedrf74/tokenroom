@@ -76,11 +76,10 @@ enum JSONFlex {
     }
 
     static func cent(_ value: Any?) -> Double? {
-        if let number = number(value) { return number }
-        if let object = dictionary(value) {
-            return number(object["val"]) ?? 0
-        }
-        return nil
+        guard let decoded = number(value) ?? dictionary(value).flatMap({ number($0["val"]) }),
+              decoded.isFinite
+        else { return nil }
+        return decoded
     }
 
     static func date(_ value: Any?) -> Date? {

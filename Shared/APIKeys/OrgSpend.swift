@@ -29,7 +29,8 @@ enum OrgSpend {
         var total = 0.0
         for item in buckets {
             guard let bucket = JSONFlex.dictionary(item) else { throw ProviderError.parse }
-            guard let results = bucket["results"], !(results is NSNull) else { continue }
+            guard let results = bucket["results"] else { throw ProviderError.parse }
+            if results is NSNull { continue }
             guard let rows = JSONFlex.array(results) else { throw ProviderError.parse }
             for row in rows {
                 guard let result = JSONFlex.dictionary(row), let value = amount(result), value.isFinite else { throw ProviderError.parse }

@@ -223,7 +223,7 @@ extension Pace {
     }
 
     var runOutNeedsAttention: Bool {
-        runsOutAt != nil && (verdict == .ahead || severity == .tight || severity == .critical)
+        runsOutAt != nil && ((!isProjected && verdict == .ahead) || severity == .tight || severity == .critical)
     }
 
     var currentRunOut: Date? {

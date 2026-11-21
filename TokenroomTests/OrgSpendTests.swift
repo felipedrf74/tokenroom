@@ -35,6 +35,24 @@ final class OrgSpendTests: XCTestCase {
         XCTAssertThrowsError(try OpenAICostsParser.page(from: Data(#"{"has_more":false,"data":["bucket"]}"#.utf8))) { XCTAssertEqual($0 as? ProviderError, .parse) }
     }
 
+    func testACostBucketWithoutResultsIsNotATotal() throws {
+        for body in [#"{"data":[{}],"has_more":false}"#, #"{"has_more":false,"data":[{"results":[{"amount":{"value":12.5}}]},{"start_time":1}]}"#] {
+            XCTAssertThrowsError(try OpenAICostsParser.page(from: Data(body.utf8)), body) { XCTAssertEqual($0 as? ProviderError, .parse) }
+        }
+        for body in [#"{"data":[{}],"has_more":false}"#, #"{"has_more":false,"data":[{"results":[{"amount":"100"}]},{"starting_at":"a"}]}"#] {
+            XCTAssertThrowsError(try AnthropicCostParser.page(from: Data(body.utf8)), body) { XCTAssertEqual($0 as? ProviderError, .parse) }
+        }
+    }
+
+    func testXAIAmountsThatCantBeReadAreNotZero() throws {
+        XCTAssertThrowsError(try XAIBillingParser.prepaidCredits(from: Data(#"{"total":{"val":"unknown"}}"#.utf8))) { XCTAssertEqual($0 as? ProviderError, .parse) }
+        XCTAssertThrowsError(try XAIBillingParser.invoice(from: Data(#"{"coreInvoice":{"amountAfterVat":{"val":"unknown"}}}"#.utf8))) { XCTAssertEqual($0 as? ProviderError, .parse) }
+        let fallback = try XAIBillingParser.invoice(from: Data(#"{"coreInvoice":{"amountAfterVat":{"val":"unknown"},"amountBeforeVat":"30000"}}"#.utf8))
+        XCTAssertEqual(fallback.spend, 300, accuracy: 0.001)
+        XCTAssertEqual(try XAIBillingParser.prepaidCredits(from: Data(#"{"total":{"val":"0"}}"#.utf8)), 0)
+        XCTAssertEqual(try XAIBillingParser.invoice(from: Data(#"{"coreInvoice":{"amountAfterVat":{"val":0}}}"#.utf8)).spend, 0)
+    }
+
     func testMoreCostPagesWithoutACursorAreNotATotal() throws {
         for body in [#"{"has_more":true,"data":[]}"#, #"{"has_more":true,"next_page":null,"data":[]}"#, #"{"has_more":true,"next_page":"","data":[]}"#] {
             XCTAssertThrowsError(try OpenAICostsParser.page(from: Data(body.utf8)), body) { XCTAssertEqual($0 as? ProviderError, .parse) }

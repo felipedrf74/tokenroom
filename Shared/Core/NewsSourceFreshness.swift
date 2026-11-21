@@ -46,7 +46,9 @@ struct NewsSourceFreshness {
     var caption: String {
         guard totalCount > 0 else { return "No sources followed" }
         let noun = totalCount == 1 ? "source" : "sources"
-        if checkedCount == 0 { return "\(totalCount) \(noun) not checked yet" }
+        if checkedCount == 0 {
+            return failedIDs.isEmpty ? "\(totalCount) \(noun) not checked yet" : "No sources checked successfully yet"
+        }
         if currentCount == totalCount { return totalCount == 1 ? "1 source checked recently" : "All \(totalCount) sources checked recently" }
         return "\(currentCount) of \(totalCount) \(noun) checked recently"
     }
