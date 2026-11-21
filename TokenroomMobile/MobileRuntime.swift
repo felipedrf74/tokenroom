@@ -38,4 +38,11 @@ extension EnvironmentValues {
         get { self[MobileExternalEffectsKey.self] }
         set { self[MobileExternalEffectsKey.self] = newValue }
     }
+
+    var mobileShowsSampleData: Bool {
+        get { self[MobileSampleDataKey.self] }
+        set { self[MobileSampleDataKey.self] = newValue }
+    }
 }
+
+private struct MobileSampleDataKey: EnvironmentKey { static let defaultValue = false }

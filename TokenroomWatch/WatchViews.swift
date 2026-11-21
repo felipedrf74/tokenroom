@@ -278,7 +278,7 @@ struct WatchDetailView: View {
                 )
                 .padding(.vertical, 2)
             }
-            if let banked = provider.banked, banked.available > 0 {
+            if let banked = provider.availableBanked(at: date) {
                 Text(ReadingText.banked(banked, now: date))
                     .font(.footnote)
             }

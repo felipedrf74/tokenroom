@@ -65,6 +65,32 @@ final class APIKeyTests: XCTestCase {
         XCTAssertEqual(ReadingText.amountHeadline(window.amount!)?.hasSuffix("spent"), true)
     }
 
+    func testOpenRouterLimitWithoutWhatsLeftIsNotAFullKey() throws {
+        let now = Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 25, hour: 12))!
+        let snapshot = try OpenRouterParser.snapshot(from: Data(#"{"data":{"limit":100,"limit_reset":"monthly","usage":310.2,"usage_monthly":25.5}}"#.utf8), fetchedAt: now)
+        XCTAssertEqual(snapshot.windows.map(\.id), ["usage-month"])
+        XCTAssertFalse(snapshot.windows[0].isMetered)
+        XCTAssertEqual(snapshot.windows[0].amount?.used ?? 0, 25.5, accuracy: 0.001)
+        XCTAssertNil(snapshot.windows[0].amount?.remaining)
+        let spent = try OpenRouterParser.snapshot(from: Data(#"{"data":{"limit":100,"limit_remaining":0,"limit_reset":"monthly"}}"#.utf8), fetchedAt: now)
+        XCTAssertEqual(spent.usedPercent, 100, accuracy: 0.001, "An explicit 0 left is a spent key")
+    }
+
+    func testOpenRouterLifetimeUsageIsNeverThisMonth() throws {
+        let now = Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 25, hour: 12))!
+        let snapshot = try OpenRouterParser.snapshot(from: Data(#"{"data":{"limit":null,"usage":310.2}}"#.utf8), fetchedAt: now)
+        let window = try XCTUnwrap(snapshot.windows.first)
+        XCTAssertEqual(window.id, "usage-total")
+        XCTAssertEqual(window.title, "All time")
+        XCTAssertNil(window.resetsAt)
+        XCTAssertNil(window.startsAt)
+        XCTAssertEqual(window.amount?.used ?? 0, 310.2, accuracy: 0.001)
+        XCTAssertNil(Forecast.text(for: window, history: nil, checkedAt: now, now: now), "No projected month from a lifetime total")
+        XCTAssertThrowsError(try OpenRouterParser.snapshot(from: Data(#"{"data":{"limit":null}}"#.utf8), fetchedAt: now)) {
+            XCTAssertEqual($0 as? ProviderError, .parse)
+        }
+    }
+
     func testOpenRouterPeriodsResetAtUTCMidnight() {
         let now = Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 24, hour: 15))! // Thursday
         let daily = OpenRouterParser.period("daily", now: now, calendar: .gregorianUTC)

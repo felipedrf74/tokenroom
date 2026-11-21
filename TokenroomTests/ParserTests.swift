@@ -595,3 +595,46 @@ final class ParserTests: XCTestCase {
         return try! Data(contentsOf: fallback)
     }
 }
+
+extension ParserTests {
+    private func json(_ text: String) -> Data {
+        Data(text.utf8)
+    }
+
+    func testCursorCycleWithoutUsageNumbersIsNotZeroPercent() throws {
+        let cycleOnly = json(#"{"billingCycleStart":"1787510035047","billingCycleEnd":"1790188435047","planUsage":{}}"#)
+        XCTAssertThrowsError(try CursorParser.snapshot(from: cycleOnly)) { XCTAssertEqual($0 as? ProviderError, .parse) }
+        XCTAssertThrowsError(try CursorParser.snapshot(from: json(#"{"billingCycleEnd":"1790188435047"}"#))) { XCTAssertEqual($0 as? ProviderError, .parse) }
+
+        let explicitZero = try CursorParser.snapshot(from: json(#"{"billingCycleEnd":"1790188435047","planUsage":{"autoPercentUsed":0,"apiPercentUsed":0}}"#))
+        XCTAssertEqual(explicitZero.usedPercent, 0)
+        XCTAssertEqual(explicitZero.windows.map(\.id), ["cycle", "cursor-models", "other-models"])
+        let spendOnly = try CursorParser.snapshot(from: json(#"{"billingCycleEnd":"1790188435047","planUsage":{"limit":2000,"includedSpend":500}}"#))
+        XCTAssertEqual(spendOnly.usedPercent, 25, accuracy: 0.001)
+    }
+
+    func testClaudeWeekWithoutUtilizationIsNotZeroPercent() throws {
+        let missing = json(#"{"seven_day":{"resets_at":"2026-09-05T19:00:00+00:00"},"five_hour":{"utilization":18,"resets_at":"2026-09-03T23:12:00+00:00"}}"#)
+        XCTAssertThrowsError(try ClaudeParser.snapshot(from: missing)) { XCTAssertEqual($0 as? ProviderError, .parse) }
+        let zero = try ClaudeParser.snapshot(from: json(#"{"seven_day":{"utilization":0,"resets_at":"2026-09-05T19:00:00+00:00"}}"#))
+        XCTAssertEqual(zero.usedPercent, 0)
+        XCTAssertEqual(zero.windows.map(\.id), ["weekly"])
+    }
+
+    func testClaudeExtraUsageWithoutUsedCreditsIsLeftOut() throws {
+        let missing = try ClaudeParser.snapshot(from: json(#"{"seven_day":{"utilization":10},"extra_usage":{"is_enabled":true,"currency":"USD","decimal_places":2,"monthly_limit":5000}}"#))
+        XCTAssertNil(missing.extra)
+        let zero = try ClaudeParser.snapshot(from: json(#"{"seven_day":{"utilization":10},"extra_usage":{"is_enabled":true,"currency":"USD","decimal_places":2,"monthly_limit":5000,"used_credits":0}}"#))
+        XCTAssertEqual(zero.extra?.amount.used, 0)
+        XCTAssertEqual(zero.extra?.amount.remaining ?? 0, 50, accuracy: 0.001)
+    }
+
+    func testGrokOnDemandCapWithoutSpendIsLeftOut() throws {
+        let period = #""currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","end":"2026-09-09T06:37:39+00:00"}"#
+        let missing = try GrokParser.snapshot(from: json(#"{"config":{"creditUsagePercent":10,\#(period),"onDemandCap":{"val":5000}}}"#))
+        XCTAssertEqual(missing.windows.map(\.id), ["primary"])
+        let zero = try GrokParser.snapshot(from: json(#"{"config":{"creditUsagePercent":10,\#(period),"onDemandCap":{"val":5000},"onDemandUsed":{"val":0}}}"#))
+        XCTAssertEqual(zero.windows.map(\.id), ["primary", "on-demand"])
+        XCTAssertEqual(zero.windows[1].usedPercent, 0)
+    }
+}

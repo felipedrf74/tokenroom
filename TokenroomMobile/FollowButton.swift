@@ -11,6 +11,7 @@ struct FollowButton: View {
     /// Reports why following failed, for a caption next to the button.
     var onError: (String?) -> Void = { _ in }
     @Environment(\.mobileAllowsExternalEffects) private var allowsExternalEffects
+    @Environment(\.mobileShowsSampleData) private var showsSampleData
     @State private var isFollowing = false
 
     var body: some View {
@@ -37,6 +38,10 @@ struct FollowButton: View {
                 await LiveActivities.stop(provider.id)
                 isFollowing = false
             }
+            return
+        }
+        guard !showsSampleData else {
+            onError(LiveActivities.sampleDataMessage)
             return
         }
         guard LiveActivities.isEnabled else {

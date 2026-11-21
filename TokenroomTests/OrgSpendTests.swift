@@ -23,6 +23,25 @@ final class OrgSpendTests: XCTestCase {
         XCTAssertNil(page.nextPage)
     }
 
+    func testCostRowsThatCantBeReadFailTheTotal() throws {
+        let empty = #"{"has_more":false,"data":[{"start_time":1,"end_time":2,"results":[]},{"starting_at":"a","results":null}]}"#
+        XCTAssertEqual(try OpenAICostsParser.page(from: Data(empty.utf8)).total, 0)
+        XCTAssertEqual(try AnthropicCostParser.page(from: Data(empty.utf8)).total, 0)
+
+        let openAIRow = #"{"has_more":false,"data":[{"results":[{"amount":{"value":12.5}},{"amount":{"currency":"usd"}}]}]}"#
+        XCTAssertThrowsError(try OpenAICostsParser.page(from: Data(openAIRow.utf8))) { XCTAssertEqual($0 as? ProviderError, .parse) }
+        let anthropicRow = #"{"has_more":false,"data":[{"results":[{"amount":"100"},{"currency":"USD"}]}]}"#
+        XCTAssertThrowsError(try AnthropicCostParser.page(from: Data(anthropicRow.utf8))) { XCTAssertEqual($0 as? ProviderError, .parse) }
+        XCTAssertThrowsError(try OpenAICostsParser.page(from: Data(#"{"has_more":false,"data":["bucket"]}"#.utf8))) { XCTAssertEqual($0 as? ProviderError, .parse) }
+    }
+
+    func testMoreCostPagesWithoutACursorAreNotATotal() throws {
+        for body in [#"{"has_more":true,"data":[]}"#, #"{"has_more":true,"next_page":null,"data":[]}"#, #"{"has_more":true,"next_page":"","data":[]}"#] {
+            XCTAssertThrowsError(try OpenAICostsParser.page(from: Data(body.utf8)), body) { XCTAssertEqual($0 as? ProviderError, .parse) }
+            XCTAssertThrowsError(try AnthropicCostParser.page(from: Data(body.utf8)), body) { XCTAssertEqual($0 as? ProviderError, .parse) }
+        }
+    }
+
     func testXAITeamCreditsAndInvoice() throws {
         XCTAssertEqual(try XAIBillingParser.teamID(fromValidation: fixture("xai-validation")), "team-placeholder", "scopeId wins over the deprecated teamId")
         XCTAssertFalse(XAIBillingParser.canWrite(fromValidation: fixture("xai-validation")))

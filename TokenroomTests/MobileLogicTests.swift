@@ -410,6 +410,17 @@ final class MobileLogicTests: XCTestCase {
         XCTAssertEqual(nearlySpent.windowToFollow(now: now)?.id, "weekly", "The last hours of a nearly spent week")
     }
 
+    func testSampleReadingsNeverStartALiveActivity() throws {
+        let sample = SampleData.cache(now: now)
+        XCTAssertTrue(sample.items.contains { $0.provider.windowToFollow(now: now) != nil }, "The gallery still has a sample to preview")
+        XCTAssertNil(sample.mostUrgentToFollow(at: now))
+
+        var real = sample
+        real.isSample = false
+        let next = try XCTUnwrap(real.mostUrgentToFollow(at: now))
+        XCTAssertEqual(next.window.id, next.provider.windowToFollow(now: now)?.id)
+    }
+
     // MARK: Deep links and text
 
     func testDeepLinksRoundTrip() {
