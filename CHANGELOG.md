@@ -1,9 +1,18 @@
 # Changelog
 
-## Next for iPhone — unreleased
+## 2.6.4 for Mac / 1.3.7 for iPhone — prepared 21 November 2026
 
-Not in 1.3.6, which was submitted before this landed.
+Readings and News say what they know, on every device (#80). Mac 2.6.4 (1) and iPhone, widgets and Watch 1.3.7 (1) are prepared; signing, publication, upload and submission are recorded separately when they happen. Mobile 1.3.6 is ready for distribution.
 
+- After a reset with no new reading, every meter, ring and gauge is empty, with no pace tick, and VoiceOver says "Reset, awaiting reading".
+- A stale reading says how old it is: the menu bar's hover and VoiceOver text, Close to a limit, the iPhone detail ("22% left at last check") and the Watch Smart Stack ("As of 3:10 PM").
+- A missing or unreadable number no longer becomes 0% or $0. Where it carries the whole reading (Cursor, Claude weekly, OpenRouter, xAI billing), the last reading is kept and shown as stale; where it is one part of an answer (Claude extra usage, Grok on-demand, the Kimi booster, a MiniMax lane), that part is left out. OpenRouter's lifetime spend is "All time". Organization spend fails the read on a malformed row, a bucket without results, a non-finite amount or paging it can't follow.
+- A run-out before the reset shows in captions, the Pace fact and on the Watch (on Classic's collapsed card only when it needs attention). It is coloured, warned about and listed in Close to a limit only when the window is ahead of pace or the run-out is tight or critical.
+- A banked reset stops counting once it expires. Sample data can't start a Live Activity, and a visible Follow or Stop does what it says.
+- The Smart Stack never swaps in another window and keeps the percentage on screen; Watch rows name their window. A Lock Screen balance has no percentage meter.
+- News tells apart waiting for the first check, sources that couldn't be checked, and a quiet briefing. Dedupe uses a version only from a release tag or a release-name title. Source detail dates come from the publisher; a status source shows its latest incident update.
+- "Even daily pace" and "Most urgent only" replace "Daily allowance" and "Highest only" (the stored value is unchanged). Classic's collapsed card keeps one actionable warning, and Close to a limit has "Show N more".
+- When iCloud can't be used, iPhone onboarding leads with adding a key or signing in on the iPhone. Plan sign-in is offered only where the iPhone can keep a session, and an unusable iCloud gets one explanation on every screen.
 - A development build on an iPhone says so in Settings, beside its version and under Needs Tokenroom on a Mac. It uses a separate iCloud from the App Store's, so it never shows a released Mac's readings; from 15 to 18 November that went unnoticed on the maintainer's iPhone and looked like a sync fault.
 
 ## 1.3.6 for iPhone — submitted 18 November 2026
