@@ -102,7 +102,8 @@ final class HonestReadingTests: XCTestCase {
         XCTAssertEqual(ReadingText.windowCountdown(session(55, resetsIn: 2 * 3600 + 9 * 60), now: now), "5-hour · 2h 9m")
         XCTAssertEqual(ReadingText.windowCountdown(weekly(78, resetsIn: -60), now: now), "Reset · awaiting reading")
         let cycle = RelayWindow(id: "cycle", kind: "billingCycle", title: "This cycle", used: 40, resetsAt: now.addingTimeInterval(10 * 86_400))
-        XCTAssertEqual(ReadingText.windowCountdown(cycle, now: now), ReadingText.caption(cycle, now: now))
+        XCTAssertEqual(ReadingText.windowCountdown(cycle, now: now), ReadingText.reset(cycle, now: now)?.capitalizedFirst, "A month or cycle has one window, so the row keeps room for its date")
+        XCTAssertTrue(ReadingText.windowCountdown(cycle, now: now).hasPrefix("Resets "))
         let open = RelayWindow(id: "premium", kind: "monthly", title: "Premium requests", used: 40, resetsAt: nil)
         XCTAssertEqual(ReadingText.windowCountdown(open, now: now), "Premium requests")
     }

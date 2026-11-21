@@ -109,7 +109,7 @@ enum ReadingText {
         if window.isAwaitingReading(at: now) { return "Reset · awaiting reading" }
         guard let resetsAt = window.resetsAt else { return window.displayTitle }
         if window.windowKind == .billingCycle || window.windowKind == .monthly {
-            return caption(window, now: now)
+            return reset(window, now: now)?.capitalizedFirst ?? window.displayTitle
         }
         return "\(window.displayTitle) · \(UsageFacts.countdown(to: resetsAt, now: now))"
     }
