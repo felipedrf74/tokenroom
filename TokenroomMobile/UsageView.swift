@@ -363,6 +363,7 @@ private struct SampleBanner: View {
 struct UsageEmptyState: View {
     @Bindable var store: MobileStore
     @State private var addsKey = false
+    @State private var signsIn = false
 
     var body: some View {
         Group {
@@ -378,13 +379,29 @@ struct UsageEmptyState: View {
                         Button("Refresh") { Task { await store.refresh(force: true) } }
                             .disabled(store.isRefreshing)
                     }
-                    Button("Add an API Key") { addsKey = true }
-                        .buttonStyle(.borderedProminent)
+                    if store.canSignInOnIPhone {
+                        Button("Sign In to a Plan") { signsIn = true }
+                            .buttonStyle(.borderedProminent)
+                        Button("Add an API Key") { addsKey = true }
+                    } else {
+                        Button("Add an API Key") { addsKey = true }
+                            .buttonStyle(.borderedProminent)
+                    }
                     Button("Try Sample Data") {
                         store.hasOnboarded = true
                         store.sampleMode = true
                     }
                 }
+            }
+        }
+        .sheet(isPresented: $signsIn) {
+            NavigationStack {
+                ConnectView(store: store)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { signsIn = false }
+                        }
+                    }
             }
         }
         .sheet(isPresented: $addsKey) {
@@ -401,7 +418,7 @@ struct UsageEmptyState: View {
 
     /// What this iPhone can read by itself: plans it signs in to, when the Plans screen is on.
     private var onThisIPhone: String {
-        store.connectOnIPhone ? "sign in to a plan or add an API key in Settings" : "add an API key"
+        store.canSignInOnIPhone ? "sign in to a plan or add an API key" : "add an API key"
     }
 
     private var content: (title: String, symbol: String, description: String) {

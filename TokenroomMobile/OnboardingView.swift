@@ -79,7 +79,7 @@ struct OnboardingView: View {
                         }
                     }
                     Divider().padding(.leading, 56)
-                    if store.connectOnIPhone {
+                    if store.canSignInOnIPhone {
                         NavigationLink {
                             ConnectView(store: store)
                         } label: {

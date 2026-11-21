@@ -158,7 +158,7 @@ struct SettingsPage: Identifiable {
                          text: "Coding plans, balances, and organization spend, read with keys that stay in this Mac's Keychain.",
                          keywords: Provider.allCases.filter(\.readsWithKey).map(\.displayName) + ["token", "budget", "reference"]),
             SettingsPage(tab: .alerts, title: "Alerts", symbol: "bell.badge.fill", tint: .red,
-                         text: "When to hear about a limit, a reset, or a balance. Shared with your iPhone.", keywords: ["notifications", "quiet hours", "threshold"]),
+                         text: "When to hear about a limit, a reset, or a balance.", keywords: ["notifications", "quiet hours", "threshold"]),
         ]),
         ("More", [
             SettingsPage(tab: .news, title: "News", symbol: "newspaper.fill", tint: .pink,

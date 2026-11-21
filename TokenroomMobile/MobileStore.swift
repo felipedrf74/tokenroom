@@ -159,6 +159,10 @@ final class MobileStore {
     /// onboarding, Usage, Settings, and the Watch as they were.
     let connectOnIPhone: Bool
 
+    var canSignInOnIPhone: Bool {
+        connectOnIPhone && sessions != nil
+    }
+
     var sampleMode: Bool {
         didSet {
             defaults.set(sampleMode, forKey: Keys.sampleMode)

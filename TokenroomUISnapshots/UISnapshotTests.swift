@@ -31,13 +31,25 @@ final class UISnapshotTests: XCTestCase {
         app.launchArguments = ["-TokenroomSnapshotNews", fixture, "-TokenroomSnapshotConnect", "YES", "-AppleLocale", "en_US", "-AppleLanguages", "(en)"]
             + (sample ? ["-sampleMode", "YES"] : []) + arguments
         app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10), "Tokenroom did not come to the foreground")
         Thread.sleep(forTimeInterval: 1.6)
+        current = app
         return app
     }
 
+    private var current: XCUIApplication?
+
     private func shoot(_ name: String) {
-        let data = XCUIScreen.main.screenshot().pngRepresentation
-        try? data.write(to: output.appendingPathComponent("\(name).png"))
+        guard let app = current, app.state == .runningForeground else {
+            XCTFail("Tokenroom was not in the foreground for \(name); nothing saved")
+            return
+        }
+        let data = app.screenshot().pngRepresentation
+        do {
+            try data.write(to: output.appendingPathComponent("\(name).png"))
+        } catch {
+            XCTFail("Couldn't save \(name): \(error)")
+        }
     }
 
     private func tab(_ app: XCUIApplication, _ title: String) {
@@ -48,7 +60,11 @@ final class UISnapshotTests: XCTestCase {
 
     private func tap(_ app: XCUIApplication, _ title: String) {
         let button = app.buttons[title].firstMatch
-        if button.waitForExistence(timeout: 3) { button.tap() } else { XCTContext.runActivity(named: "No button \(title)") { _ in } }
+        guard button.waitForExistence(timeout: 3) else {
+            XCTFail("No button \(title)")
+            return
+        }
+        button.tap()
         Thread.sleep(forTimeInterval: 1)
     }
 
