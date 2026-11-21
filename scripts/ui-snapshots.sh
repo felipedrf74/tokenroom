@@ -22,7 +22,8 @@ DERIVED="${DERIVED_DATA_PATH:-$HOME/Library/Developer/Xcode/DerivedData/Tokenroo
 IPHONE="${TOKENROOM_SNAPSHOT_IPHONE:-iPhone 18 Pro}"
 WATCH="${TOKENROOM_SNAPSHOT_WATCH:-Apple Watch Series 12 (46mm)}"
 FIXTURE="$OUT/fixture"
-python3 "$ROOT/scripts/ui-snapshot-fixture.py" "$FIXTURE" >/dev/null
+fixture() { python3 "$ROOT/scripts/ui-snapshot-fixture.py" "$FIXTURE" >/dev/null; }
+fixture
 
 for platform in "${PLATFORMS[@]}"; do
   case "$platform" in
@@ -30,6 +31,7 @@ for platform in "${PLATFORMS[@]}"; do
       mkdir -p "$OUT/mac"
       xcodebuild build -project "$ROOT/Tokenroom.xcodeproj" -scheme Tokenroom -configuration Debug \
         -destination 'platform=macOS' -derivedDataPath "$DERIVED" CODE_SIGNING_ALLOWED=NO -quiet
+      fixture
       "$DERIVED/Build/Products/Debug/Tokenroom.app/Contents/MacOS/Tokenroom" \
         -TokenroomSnapshots "$OUT/mac" -TokenroomSnapshotNews "$FIXTURE/news.json" -AppleLocale en_US
       ;;
@@ -37,8 +39,12 @@ for platform in "${PLATFORMS[@]}"; do
       rm -rf "$OUT/iphone.xcresult"
       only=()
       [[ -n "${TOKENROOM_SNAPSHOT_ONLY:-}" ]] && only=("-only-testing:TokenroomUISnapshots/UISnapshotTests/$TOKENROOM_SNAPSHOT_ONLY")
+      xcodebuild build-for-testing -project "$ROOT/Tokenroom.xcodeproj" -scheme TokenroomUISnapshots \
+        -destination "platform=iOS Simulator,name=$IPHONE" -derivedDataPath "$DERIVED" \
+        CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO TOKENROOM_CK_CONTAINER= -quiet
+      fixture
       TEST_RUNNER_TOKENROOM_SNAPSHOT_DIR="$OUT/iphone" TEST_RUNNER_TOKENROOM_SNAPSHOT_FIXTURE="$FIXTURE/news.json" \
-        xcodebuild test -project "$ROOT/Tokenroom.xcodeproj" -scheme TokenroomUISnapshots "${only[@]}" \
+        xcodebuild test-without-building -project "$ROOT/Tokenroom.xcodeproj" -scheme TokenroomUISnapshots "${only[@]}" \
         -destination "platform=iOS Simulator,name=$IPHONE" -derivedDataPath "$DERIVED" \
         -resultBundlePath "$OUT/iphone.xcresult" CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO TOKENROOM_CK_CONTAINER= -quiet
       ;;

@@ -72,7 +72,8 @@ models = [
      "contextLength": 128_000, "promptPrice": 1.0, "completionPrice": 2.0, "expires": now + 12 * day},
 ]
 
-checks = {feed: {"succeededAt": now - 120} for feed in items}
+catalog = re.findall(r'FeedSource\(id: "([^"]+)"', (ROOT / "Shared/Core/Feeds.swift").read_text())
+checks = {feed: {"succeededAt": now - 120} for feed in sorted(set(catalog) | set(items))}
 cache = {
     "sourceChecks": checks, "models": models, "modelsFetchedAt": now - 120, "modelState": {"seenIDs": []},
     "items": items, "announcementsFetchedAt": now - 120, "validators": {},
@@ -82,7 +83,6 @@ cache = {
 # The same News for the exception states: a source that failed; every followed feed checked with
 # no stories (quiet); no feed checked yet (pending); and every feed's first check failed
 # (unreachable). A fixture store follows the whole catalog, read here from the Swift source.
-catalog = re.findall(r'FeedSource\(id: "([^"]+)"', (ROOT / "Shared/Core/Feeds.swift").read_text())
 variants = {
     "failed": dict(cache, unreadable=["openai-news"], sourceChecks=dict(checks, **{"openai-news": {"failedAt": now - 300, "failures": 2}})),
     "quiet": dict(cache, items={}, models=[], sourceChecks={feed: {"succeededAt": now - 120} for feed in catalog}),
