@@ -9,7 +9,7 @@ description: >-
 
 # Tokenroom for iPhone and Apple Watch
 
-**Release preparation (21 November 2026):** iPhone, widgets and Watch 1.3.7(1) is prepared with the polish overhaul (#80), and Mac 2.6.4(1) alongside it. Mobile 1.3.6(1) is ready for distribution. Signing, upload, submission and installation are separate delivery steps; this paragraph does not claim them.
+**Delivery status (21 November 2026):** Mobile 1.3.7(1), with the polish overhaul (#80), was uploaded, processed and submitted at 10:42 UTC: **Waiting for Review**, with automatic release after approval to all users. Do not upload 1.3.7(1) again. Mac 2.6.4(1) is public as `v2.6.4` and installed on the MacBook Pro. `docs/release-delivery-20261121.md` has the receipts.
 
 **Delivery status (14 November 2026):** Mobile 1.3.3(1) was uploaded, processed and submitted at 16:59 UTC: **Waiting for Review**, with automatic release after approval to all users. Approval and public availability remain pending; do not reupload this consumed build. Mac 2.6.1(1) is public and installed on both Macs. Mobile 1.3.2 was confirmed public on 13 November. `docs/release-delivery-20261114.md` binds the signed packages, upload, submission and installations.
 
