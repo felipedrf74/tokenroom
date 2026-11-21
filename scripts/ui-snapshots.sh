@@ -61,6 +61,7 @@ print(chosen[0]["udid"], chosen[0].get("state", "")) if chosen else print("")
       # Put the Simulator back as it was found: its appearance, and booted only if it was.
       original_look=""
       restore_iphone() {
+        if [[ "$udid_state" == "Booted" && "$original_look" != light && "$original_look" != dark ]]; then return; fi
         if [[ "$original_look" == light || "$original_look" == dark ]]; then
           xcrun simctl boot "$udid" 2>/dev/null || true
           xcrun simctl bootstatus "$udid" -b >/dev/null 2>&1 || true
