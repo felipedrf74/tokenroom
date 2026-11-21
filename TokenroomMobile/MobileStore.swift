@@ -163,6 +163,10 @@ final class MobileStore {
         relay != nil || relayReads != nil
     }
 
+    var relayUnavailableText: String {
+        relayIsInThisBuild ? "Tokenroom can't access iCloud." : "This build can't use iCloud."
+    }
+
     var canSignInOnIPhone: Bool {
         connectOnIPhone && sessions != nil
     }
@@ -1947,7 +1951,7 @@ final class MobileStore {
         switch relayPhase {
         case .idle, .loading: "Checking…"
         case .ready: "Connected"
-        case .unavailable: "Not available in this build"
+        case .unavailable: relayIsInThisBuild ? "Can't access iCloud" : "Not available in this build"
         case .noAccount: "Sign in to iCloud in Settings"
         case .failed(let message): message
         }

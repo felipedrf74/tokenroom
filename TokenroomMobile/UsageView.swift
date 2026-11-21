@@ -304,7 +304,7 @@ private struct RelayStatusNotice: View {
         case .noAccount:
             return ("Sign in to iCloud", "Use the same Apple Account on your devices to sync usage. Providers added with keys can still check on this iPhone.", true)
         case .unavailable:
-            return ("iCloud isn't available in this build", "Readings can't sync to your other devices. Providers added with keys can still check on this iPhone.", false)
+            return (store.relayIsInThisBuild ? "Tokenroom can't access iCloud" : "iCloud isn't available in this build", "Readings can't sync to your other devices. Providers added with keys can still check on this iPhone.", false)
         case .ready where store.needsNewerApp:
             return ("Update Tokenroom", "Some readings from your other devices need a newer version of this app. Available readings stay below.", false)
         default:
@@ -425,7 +425,7 @@ struct UsageEmptyState: View {
     private var content: (title: String, symbol: String, description: String) {
         switch store.relayPhase {
         case .unavailable:
-            ("No readings yet", "key", "This build can't use iCloud. \(onThisIPhone.capitalizedFirst) to read providers on this iPhone.")
+            ("No readings yet", "key", "\(store.relayUnavailableText) \(onThisIPhone.capitalizedFirst) to read providers on this iPhone.")
         case .noAccount:
             ("Sign in to iCloud", "icloud.slash", "Use the same Apple Account as your Mac to see its readings, or \(onThisIPhone).")
         case .failed(let message):

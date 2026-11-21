@@ -97,7 +97,7 @@ struct OnboardingView: View {
                     if relayIsUnavailable {
                         Divider().padding(.leading, 56)
                         OptionRow(symbol: "laptopcomputer", title: "Connect your Mac",
-                                  text: store.relayIsInThisBuild ? "iCloud is unavailable right now." : "Not in this build: it can't use iCloud.",
+                                  text: store.relayUnavailableText,
                                   showsChevron: false)
                             .accessibilityElement(children: .combine)
                     }
