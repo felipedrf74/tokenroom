@@ -191,7 +191,7 @@ struct ResetSoonView: View {
                     }
                     .font(.headline)
                     Group {
-                        Text(isSample ? "Sample · \(window.displayTitle)" : window.displayTitle)
+                        Text(isSample ? "Sample data" : window.displayTitle)
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
                         if window.isAwaitingReading(at: date) {
