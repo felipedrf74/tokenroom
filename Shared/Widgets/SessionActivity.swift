@@ -76,14 +76,15 @@ enum LiveActivities {
 
     /// Follows the most urgent window that qualifies, from the readings saved for widgets.
     static func startMostUrgent(now: Date = .now) async throws -> Bool {
-        let items = PhoneCacheAccess.load(at: ReadingCache.defaultURL, defaults: AppGroup.defaults)?.presented(at: now).items ?? []
-        for item in items {
-            if let window = candidate(in: item.provider, now: now) {
-                return try await start(item.provider, window: window)
-            }
-        }
-        return false
+        guard let next = savedReadings?.mostUrgentToFollow(at: now) else { return false }
+        return try await start(next.provider, window: next.window)
     }
+
+    static var savedReadings: ReadingCache? {
+        PhoneCacheAccess.load(at: ReadingCache.defaultURL, defaults: AppGroup.defaults)
+    }
+
+    static let sampleDataMessage = "Couldn't follow sample data. Turn off Sample Data in Settings to follow your own usage."
 
     /// Moves each activity to the latest reading, with an alert as it crosses 80% and 95% (when
     /// those alerts are on, and outside quiet hours but for 95%), and ends the ones whose window
@@ -162,6 +163,9 @@ struct FollowUsageIntent: LiveActivityIntent {
         // As the Follow button says it: otherwise this would read as nothing to follow.
         guard LiveActivities.isEnabled else {
             return .result(dialog: "Live Activities are off for Tokenroom. Turn them on in Settings › Tokenroom.")
+        }
+        if LiveActivities.savedReadings?.isSample == true {
+            return .result(dialog: "\(LiveActivities.sampleDataMessage)")
         }
         let started = try await LiveActivities.startMostUrgent()
         // What `windowToFollow` takes: a 5-hour limit, or another limit at 80% or more.
