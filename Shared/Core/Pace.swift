@@ -219,7 +219,7 @@ extension Calendar {
 
 extension Pace {
     var needsAttention: Bool {
-        verdict == .ahead || verdict == .limitReached || runOutNeedsAttention
+        (!isProjected && verdict == .ahead) || verdict == .limitReached || runOutNeedsAttention
     }
 
     var runOutNeedsAttention: Bool {

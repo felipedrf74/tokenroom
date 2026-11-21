@@ -175,6 +175,7 @@ final class HonestReadingTests: XCTestCase {
         XCTAssertTrue(projected.isProjected)
         XCTAssertEqual(projected.severity, .watch)
         XCTAssertFalse(projected.runOutNeedsAttention)
+        XCTAssertFalse(projected.needsAttention)
         XCTAssertFalse(UsageTiles.isClose(mild, pace: projected))
         XCTAssertTrue(UsageTiles.closeWindows([(provider(state: "stale", checkedAt: now, [mild]), [:])], now: later).isEmpty)
 
@@ -182,6 +183,7 @@ final class HonestReadingTests: XCTestCase {
         let soon = try XCTUnwrap(UsageRanking.pace(for: critical, isStale: true, history: nil, now: later))
         XCTAssertEqual(soon.severity, .critical)
         XCTAssertTrue(soon.runOutNeedsAttention)
+        XCTAssertTrue(soon.needsAttention)
         XCTAssertEqual(UsageTiles.closeWindows([(provider(state: "stale", checkedAt: now, [critical]), [:])], now: later).map(\.window.id), ["weekly"])
     }
 
