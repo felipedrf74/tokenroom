@@ -17,7 +17,9 @@ struct OpenAIClient: ProviderClient {
     /// The cached expiries while they are for `count` banked resets and younger than `ttl`. A
     /// redeemed or newly banked reset changes the count, so the old dates no longer fit.
     static func cachedExpiries(_ entry: ExpiryEntry?, count: Int, now: Date, ttl: TimeInterval = .infinity) -> [Date]? {
-        guard let entry, entry.count == count, now.timeIntervalSince(entry.at) < ttl else { return nil }
+        guard let entry, entry.count == count, now.timeIntervalSince(entry.at) < ttl,
+              !entry.expiries.contains(where: { $0 <= now })
+        else { return nil }
         return entry.expiries
     }
 

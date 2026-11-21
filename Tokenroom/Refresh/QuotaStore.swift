@@ -737,7 +737,7 @@ final class QuotaStore {
         var count = 0
         var providers: [Provider] = []
         for provider in connectedProviders {
-            if let available = statuses[provider]?.snapshot?.banked?.available, available > 0 {
+            if let available = statuses[provider]?.snapshot?.availableBanked(at: presentationNow)?.available, available > 0 {
                 count += available
                 providers.append(provider)
             }
@@ -820,7 +820,8 @@ final class QuotaStore {
                     attention: ReadingText.attention(relay, now: now, lead: shown),
                     windowLabel: namesTheWindow ? shown.displayTitle : nil,
                     urgency: awaiting ? 0 : UsageRanking.urgency(of: shown, pace: pace),
-                    runsOutAt: awaiting ? nil : pace?.runsOutAt
+                    runsOutAt: awaiting ? nil : pace?.runsOutAt,
+                    lastReading: status.isStale ? RelativeTime.ago(lastChecked(provider) ?? snapshot.fetchedAt, now: now) : nil
                 )
             }
         }

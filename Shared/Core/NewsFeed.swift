@@ -100,8 +100,8 @@ struct NewsCache: Codable, Equatable, Sendable {
             item.kind = feeds[feed]?.kind ?? .officialAnnouncement
             item.firstSeenAt = item.firstSeenAt ?? item.published ?? item.updatedAt
             let paired = sources.contains { $0.partOf == product }
-            if paired, let range = item.duplicateKey.range(of: #"\d+(\.\d+)+([-+.][0-9a-z.]+)?"#, options: .regularExpression) {
-                item.canonicalID = "release|\(product)|\(item.duplicateKey[range])"
+            if paired, let version = Self.releaseVersion(of: item) {
+                item.canonicalID = "release|\(product)|\(version)"
             }
             let keys: [String]
             if item.kind == .officialAnnouncement {
@@ -137,6 +137,17 @@ struct NewsCache: Codable, Equatable, Sendable {
             keptFeeds.append(feed)
         }
         return Array(kept.compactMap { $0 }.sorted(by: newestFirst).prefix(limit))
+    }
+
+    static let versionPattern = #"\d+(\.\d+)+([-+.][0-9a-z.]+)?"#
+
+    static func releaseVersion(of item: FeedItem) -> String? {
+        let name = NSRegularExpression.escapedPattern(for: item.source.lowercased())
+        let title = #"^(?:"# + name + #"\s+)?(?:(?:release|version)\s+)?v?("# + versionPattern + #")$"#
+        if let version = item.duplicateKey.trimmingCharacters(in: .whitespaces).firstCapture(title) { return version }
+        guard let link = item.link, let marker = link.pathComponents.firstIndex(of: "tag"), marker > 0,
+              link.pathComponents[marker - 1] == "releases", marker + 1 < link.pathComponents.count else { return nil }
+        return link.pathComponents[marker + 1].lowercased().firstCapture(#"^(?:[a-z0-9_.-]*?[-@])?v?("# + versionPattern + #")$"#)
     }
 
     /// A link as the same page however it's written: host case and `www.`, a trailing slash, and
@@ -798,5 +809,14 @@ extension ModelRelease {
 
     var link: URL? {
         URL(string: "https://openrouter.ai/\(id)")
+    }
+}
+
+private extension String {
+    func firstCapture(_ pattern: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: self, range: NSRange(startIndex..., in: self)),
+              let range = Range(match.range(at: 1), in: self) else { return nil }
+        return String(self[range])
     }
 }

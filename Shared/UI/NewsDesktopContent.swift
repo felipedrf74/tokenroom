@@ -83,7 +83,16 @@ struct MacNewsReaderContent: View {
             }
         }
         if latest == nil, edition.topStory == nil, models.isEmpty, updates.isEmpty, voices.isEmpty, status.isEmpty, retiring.isEmpty {
-            ContentUnavailableView("Your briefing is quiet", systemImage: "newspaper", description: Text("Follow tools and voices, browse the model archive, or check again."))
+            let summary = NewsSourceFreshness(cache: news.cache, sources: news.sources)
+            let briefing = news.emptyBriefing(summary)
+            ContentUnavailableView(briefing.title, systemImage: briefing.systemImage, description: Text(briefing.message(isChecking: news.isRefreshing)))
+            if let action = briefing.actionTitle {
+                Button {
+                    let ids = news.firstCheckIDs(summary)
+                    Task { await news.retrySources(ids, waitsForFollowUp: true) }
+                } label: { NewsLinkLabel(title: action, symbol: "arrow.clockwise") }
+                    .buttonStyle(.plain).disabled(news.isRefreshing)
+            }
             NewsNavigationLink { ScrollView { MacNewsFollowing(news: news, library: library, suggestedProviders: suggestedProviders).padding(24) }.navigationTitle("Following") } label: { NewsLinkLabel(title: "Choose what to follow") }
                 .buttonStyle(.plain)
         }

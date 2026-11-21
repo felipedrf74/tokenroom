@@ -302,6 +302,8 @@ private struct ReadingsStatusCard: View {
     private var detail: String? {
         guard !store.readings.isEmpty else { return nil }
         let count = store.readings.count == 1 ? "1 provider" : "\(store.readings.count) providers"
+        if store.sampleMode { return "Sample data · \(count)" }
+        guard case .ready = store.relayPhase else { return nil }
         guard let checked = store.lastChecked else { return count }
         return "\(count) · checked \(RelativeTime.ago(checked))"
     }

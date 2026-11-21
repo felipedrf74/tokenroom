@@ -4,7 +4,6 @@ import ServiceManagement
 enum MenuBarStyle: String, CaseIterable, Identifiable {
     case percents
     case meters
-    /// One glyph and the percent of the most used provider.
     case highest
 
     var id: String { rawValue }
@@ -13,7 +12,7 @@ enum MenuBarStyle: String, CaseIterable, Identifiable {
         switch self {
         case .percents: "Percents"
         case .meters: "Meters"
-        case .highest: "Highest only"
+        case .highest: "Most urgent only"
         }
     }
 }

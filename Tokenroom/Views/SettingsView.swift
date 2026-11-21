@@ -158,7 +158,7 @@ struct SettingsPage: Identifiable {
                          text: "Coding plans, balances, and organization spend, read with keys that stay in this Mac's Keychain.",
                          keywords: Provider.allCases.filter(\.readsWithKey).map(\.displayName) + ["token", "budget", "reference"]),
             SettingsPage(tab: .alerts, title: "Alerts", symbol: "bell.badge.fill", tint: .red,
-                         text: "When to hear about a limit, a reset, or a balance. Shared with your iPhone.", keywords: ["notifications", "quiet hours", "threshold"]),
+                         text: "When to hear about a limit, a reset, or a balance.", keywords: ["notifications", "quiet hours", "threshold"]),
         ]),
         ("More", [
             SettingsPage(tab: .news, title: "News", symbol: "newspaper.fill", tint: .pink,
@@ -1350,7 +1350,7 @@ private struct MenuBarSettings: View {
                 SettingsSectionTitle("Menu bar")
             } footer: {
                 if store.menuMeters.count > 6, store.settings.menuStyle != .highest {
-                    Text("Many providers are showing. Highest only keeps the menu bar narrow so macOS doesn't hide it.")
+                    Text("Many providers are showing. Most urgent only keeps the menu bar narrow so macOS doesn't hide it.")
                 }
             }
             Section {

@@ -218,17 +218,25 @@ extension Calendar {
 }
 
 extension Pace {
-    /// Ahead of an even pace, or out: worth color and weight.
     var needsAttention: Bool {
-        verdict == .ahead || verdict == .limitReached
+        (!isProjected && verdict == .ahead) || verdict == .limitReached || runOutNeedsAttention
     }
 
-    /// One short line for captions: "On pace", "Plenty left",
-    /// "Ahead of pace · runs out Thu 14:00", "Limit reached · resets in 2h 10m".
+    var runOutNeedsAttention: Bool {
+        runsOutAt != nil && ((!isProjected && verdict == .ahead) || severity == .tight || severity == .critical)
+    }
+
+    var currentRunOut: Date? {
+        isProjected || verdict == .limitReached ? nil : runsOutAt
+    }
+
     func caption(now: Date = .now, timeZone: TimeZone = .current) -> String {
         if isProjected {
             guard let runsOutAt, runsOutAt > now else { return "Projected to have run out" }
             return "Projected · runs out \(Self.shortMoment(runsOutAt, now: now, timeZone: timeZone))"
+        }
+        if let runOut = currentRunOut {
+            return "Runs out \(Self.shortMoment(runOut, now: now, timeZone: timeZone)) · \(comparison)"
         }
         switch verdict {
         case .onPace:
@@ -238,8 +246,16 @@ extension Pace {
         case .limitReached:
             return RelativeTime.resets(resetsAt, now: now).map { "Limit reached · \($0)" } ?? "Limit reached"
         case .ahead:
-            guard let runsOutAt else { return "Ahead of pace" }
-            return "Ahead of pace · runs out \(Self.shortMoment(runsOutAt, now: now, timeZone: timeZone))"
+            return "Ahead of pace"
+        }
+    }
+
+    private var comparison: String {
+        switch verdict {
+        case .ahead: "ahead of pace"
+        case .onPace: "on pace so far"
+        case .plentyLeft: "below pace so far"
+        case .limitReached: "limit reached"
         }
     }
 

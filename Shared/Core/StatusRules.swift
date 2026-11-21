@@ -141,6 +141,18 @@ extension RelayProvider {
     }
 }
 
+extension ReadingCache {
+    func mostUrgentToFollow(at now: Date) -> (provider: RelayProvider, window: RelayWindow)? {
+        guard !isSample else { return nil }
+        for item in presented(at: now).items {
+            if let window = item.provider.windowToFollow(now: now) {
+                return (item.provider, window)
+            }
+        }
+        return nil
+    }
+}
+
 extension RelayWindow {
     init(_ window: QuotaWindow) {
         self.init(

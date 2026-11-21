@@ -210,7 +210,7 @@ private struct SmallWidget: View {
                 .widgetAccentable()
             if let window {
                 if window.isMetered {
-                    WidgetMeter(used: window.used, isStale: reading.isFaded, pace: reading.pace)
+                    WidgetMeter(used: window.used, isStale: reading.isFaded, pace: reading.pace, isAwaitingReading: reading.isAwaiting)
                 }
                 if let second {
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -327,7 +327,7 @@ private struct ListRow: View {
                     line(reading, name: provider.shortName)
                 }
                 if let window = reading.window, window.isMetered {
-                    WidgetMeter(used: window.used, isStale: reading.isFaded, pace: reading.pace, height: roomy ? 6 : 5)
+                    WidgetMeter(used: window.used, isStale: reading.isFaded, pace: reading.pace, height: roomy ? 6 : 5, isAwaitingReading: reading.isAwaiting)
                 }
                 if roomy, let window = reading.window {
                     HStack(alignment: .firstTextBaseline, spacing: 5) {
@@ -462,7 +462,7 @@ private struct Tile: View {
             }
             if let window = reading.window {
                 if window.isMetered {
-                    WidgetMeter(used: window.used, isStale: reading.isFaded, pace: reading.pace, height: roomy ? 6 : 4)
+                    WidgetMeter(used: window.used, isStale: reading.isFaded, pace: reading.pace, height: roomy ? 6 : 4, isAwaitingReading: reading.isAwaiting)
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
                         Text(window.displayTitle)
                             .lineLimit(1)
@@ -569,7 +569,7 @@ private struct CircularWidget: View {
                     .widgetAccentable()
                 }
             } else {
-                Gauge(value: min(max(window?.used ?? 0, 0), 100), in: 0...100) {
+                Gauge(value: min(max(window?.meterUsed(at: date) ?? 0, 0), 100), in: 0...100) {
                     Text(window?.isAwaitingReading(at: date) == true ? "Reset" : item.provider.monogram)
                 } currentValueLabel: {
                     // Samples say so where the number goes; the ring still shows the level.
@@ -648,12 +648,17 @@ private struct RectangularWidget: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                     .frame(width: 58, alignment: .leading)
-                // The reading's level where colour shows. The Lock Screen flattens colour to
-                // brightness, where a critical red would read dimmer than a healthy blue.
-                WidgetMeter(used: used,
-                            isStale: !item.provider.isLive || window?.isAwaitingReading(at: date) == true,
-                            pace: window.flatMap { UsageRanking.pace(for: $0, isStale: !item.provider.isLive, history: item.history[$0.id], now: date)?.elapsedFraction },
-                            height: 4)
+                if window?.isMetered == false {
+                    Spacer(minLength: 0)
+                } else {
+                    // The reading's level where colour shows. The Lock Screen flattens colour to
+                    // brightness, where a critical red would read dimmer than a healthy blue.
+                    WidgetMeter(used: used,
+                                isStale: !item.provider.isLive || window?.isAwaitingReading(at: date) == true,
+                                pace: window.flatMap { UsageRanking.pace(for: $0, isStale: !item.provider.isLive, history: item.history[$0.id], now: date)?.elapsedFraction },
+                                height: 4,
+                                isAwaitingReading: window?.isAwaitingReading(at: date) == true)
+                }
                 Text(ReadingText.headline(window, now: date))
                     .font(.caption2.monospacedDigit())
                     .lineLimit(1)
@@ -734,14 +739,15 @@ private struct WidgetMeter: View {
     /// The even pace, 0–1 of the window, as on the app's meters.
     var pace: Double? = nil
     var height: CGFloat = 6
+    var isAwaitingReading = false
     @Environment(\.widgetRenderingMode) private var systemRenderingMode
     @Environment(\.widgetPreviewStyle) private var preview
 
     var body: some View {
         if (preview?.renderingMode ?? systemRenderingMode) == .fullColor {
-            MeterTrack(usedPercent: used, remaining: 100 - used, isStale: isStale, paceMark: pace, height: height)
+            MeterTrack(usedPercent: used, remaining: 100 - used, isStale: isStale, paceMark: pace, height: height, isAwaitingReading: isAwaitingReading)
         } else {
-            FlatMeter(used: used, pace: isStale ? nil : pace, tint: .primary, height: height)
+            FlatMeter(used: used, pace: isStale ? nil : pace, tint: .primary, height: height, isAwaitingReading: isAwaitingReading)
         }
     }
 }

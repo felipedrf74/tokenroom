@@ -98,7 +98,8 @@ struct UsageTileView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 7) {
                 // The stroke straddles the frame: this keeps it on the tile's text edge.
-                UsageRing(used: ring.used, isStale: isStale || ring.isAwaitingReading(at: date), label: ReadingText.headline(ring, now: date), lineWidth: 5.5, paceMark: pace(ring)?.elapsedFraction)
+                UsageRing(used: ring.used, isStale: isStale || ring.isAwaitingReading(at: date), label: ReadingText.headline(ring, now: date), lineWidth: 5.5, paceMark: pace(ring)?.elapsedFraction,
+                          isAwaitingReading: ring.isAwaitingReading(at: date))
                     .frame(width: 52, height: 52)
                     .padding(.leading, 2.75)
                 Text(ring.displayTitle)
@@ -121,7 +122,8 @@ struct UsageTileView: View {
                 HeadlineValue(ReadingText.headline(bar, now: date), style: .subheadline, signStyle: .caption2)
                     .foregroundStyle(TokenroomTokens.ink(remaining: 100 - bar.used, isStale: isStale))
             }
-            MeterTrack(usedPercent: bar.used, remaining: 100 - bar.used, isStale: isStale || bar.isAwaitingReading(at: date), paceMark: pace(bar)?.elapsedFraction, height: 5)
+            MeterTrack(usedPercent: bar.used, remaining: 100 - bar.used, isStale: isStale || bar.isAwaitingReading(at: date), paceMark: pace(bar)?.elapsedFraction, height: 5,
+                       isAwaitingReading: bar.isAwaitingReading(at: date))
             WindowStatus(window: bar, pace: warnedWindows.contains(bar.id) ? nil : pace(bar), isStale: isStale, date: date)
         }
     }
@@ -175,7 +177,7 @@ struct WindowStatus: View {
                 .foregroundStyle(PaceStyle.color(pace.severity))
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
-        } else if !isStale, let pace, pace.verdict == .ahead, let runsOut = pace.runsOutAt {
+        } else if !isStale, let pace, let runsOut = pace.currentRunOut {
             Text("Runs out \(Pace.shortMoment(runsOut, now: date, timeZone: .current))")
                 .font(.caption.weight(.medium))
                 .foregroundStyle(PaceStyle.color(pace.severity))
@@ -197,6 +199,7 @@ struct WindowStatus: View {
 struct CloseToLimitCard: View {
     var windows: [CloseWindow]
     var date: Date = .now
+    @Binding var showsAll: Bool
     var open: (String) -> Void
     /// The rows it shows. Tiles keep their own warning for any window past these.
     static let rowLimit = 4
@@ -220,12 +223,29 @@ struct CloseToLimitCard: View {
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isHeader)
 
-            ForEach(Array(windows.prefix(Self.rowLimit).enumerated()), id: \.element.id) { index, item in
+            ForEach(Array(windows.prefix(showsAll ? windows.count : Self.rowLimit).enumerated()), id: \.element.id) { index, item in
                 if index > 0 {
                     Divider()
                         .padding(.leading, 52)
                 }
                 row(item, isFirst: index == 0)
+            }
+            if windows.count > Self.rowLimit, !showsAll {
+                Divider()
+                    .padding(.leading, 52)
+                Button {
+                    showsAll = true
+                } label: {
+                    Label("Show \(windows.count - Self.rowLimit) more", systemImage: "chevron.down")
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.leading, 52)
+                .padding(.trailing, 16)
+                .padding(.vertical, 10)
             }
             if let followError {
                 Text(followError)
@@ -241,6 +261,7 @@ struct CloseToLimitCard: View {
 
     private func row(_ item: CloseWindow, isFirst: Bool) -> some View {
         let window = item.window
+        let stale = !item.provider.isLive
         let followable = isFirst && LiveActivities.candidate(in: item.provider, preferring: window.id, now: date)?.id == window.id
         return HStack(spacing: 12) {
             Button {
@@ -265,9 +286,9 @@ struct CloseToLimitCard: View {
                             }
                             Spacer(minLength: 4)
                             HeadlineValue(ReadingText.headline(window, now: date), style: .body, signStyle: .caption)
-                                .foregroundStyle(TokenroomTokens.ink(remaining: 100 - window.used, isStale: false))
+                                .foregroundStyle(TokenroomTokens.ink(remaining: 100 - window.used, isStale: stale))
                         }
-                        MeterTrack(usedPercent: window.used, remaining: 100 - window.used, isStale: false, paceMark: item.pace?.elapsedFraction, height: 5)
+                        MeterTrack(usedPercent: window.used, remaining: 100 - window.used, isStale: stale, paceMark: item.pace?.elapsedFraction, height: 5)
                         caption(item)
                             .font(.caption)
                             .lineLimit(typeSize.isAccessibilitySize ? 4 : 2)
@@ -290,6 +311,16 @@ struct CloseToLimitCard: View {
     /// "Runs out 10:18 AM · 35 min before it resets", "Limit reached · resets in 2h 10m",
     /// "Past 80% · resets Oct 1".
     private func caption(_ item: CloseWindow) -> Text {
+        guard item.provider.isLive else {
+            let checked = Text(ReadingText.lastChecked(item.provider.checkedAt ?? item.provider.fetchedAt, now: date))
+                .fontWeight(.medium)
+                .foregroundStyle(.primary)
+            return Text("\(checked) · \(liveCaption(item))").foregroundStyle(.secondary)
+        }
+        return liveCaption(item)
+    }
+
+    private func liveCaption(_ item: CloseWindow) -> Text {
         if let pace = item.pace, pace.isProjected {
             return Text(pace.caption(now: date))
                 .fontWeight(.medium)
@@ -300,7 +331,7 @@ struct CloseToLimitCard: View {
                 .fontWeight(.medium)
                 .foregroundStyle(PaceStyle.color(pace.severity))
         }
-        if let pace = item.pace, pace.verdict == .ahead, let runsOut = pace.runsOutAt {
+        if let pace = item.pace, let runsOut = pace.currentRunOut {
             let moment = Text("Runs out \(Pace.shortMoment(runsOut, now: date, timeZone: .current))")
                 .fontWeight(.medium)
                 .foregroundStyle(PaceStyle.color(pace.severity))

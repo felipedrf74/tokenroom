@@ -138,9 +138,13 @@ final class RequestTests: XCTestCase {
     func testCostPagingStopsAfterThreePages() async throws {
         let endless = fixture("openai-costs-page1") // always says there's more
         stub { _ in (200, endless) }
-        let snapshot = try await APIKeyClient.orgSnapshot(for: .openaiOrg, key: "placeholder", now: now)
+        do {
+            _ = try await APIKeyClient.orgSnapshot(for: .openaiOrg, key: "placeholder", now: now)
+            XCTFail("Three pages of a longer report aren't the month's total")
+        } catch {
+            XCTAssertEqual(error as? ProviderError, .parse)
+        }
         XCTAssertEqual(StubURLProtocol.requests.count, 3)
-        XCTAssertEqual(snapshot.windows.first?.amount?.used ?? 0, 48, accuracy: 0.0001, "What the three pages said")
     }
 
     func testAnthropicCostReportSendsTheKeyInItsOwnHeader() async throws {

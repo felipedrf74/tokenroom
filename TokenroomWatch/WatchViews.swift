@@ -9,7 +9,9 @@ struct WatchRootView: View {
 
     var body: some View {
         #if DEBUG
-        if UserDefaults.standard.bool(forKey: "TokenroomGallery") {
+        if UserDefaults.standard.bool(forKey: "TokenroomSmartStack") {
+            WatchSmartStackGallery(date: date)
+        } else if UserDefaults.standard.bool(forKey: "TokenroomGallery") {
             WatchComplicationGallery(date: date)
         } else {
             list
@@ -157,7 +159,8 @@ private struct WatchRow: View {
             if let window, window.isMetered {
                 // The provider's icon in the ring; the row reads its name, so the ring has no label.
                 UsageRing(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(at: date), label: "",
-                          paceMark: UsageRanking.pace(for: window, isStale: !provider.isLive, history: item.history[window.id], now: date)?.elapsedFraction)
+                          paceMark: UsageRanking.pace(for: window, isStale: !provider.isLive, history: item.history[window.id], now: date)?.elapsedFraction,
+                          isAwaitingReading: window.isAwaitingReading(at: date))
                     .frame(width: 40, height: 40)
                     .overlay { ProviderMark(provider: provider, size: 22) }
             } else {
@@ -192,10 +195,10 @@ private struct WatchRow: View {
                     Text("Checked \(RelativeTime.ago(checked, now: date))").font(.caption2).foregroundStyle(.secondary)
                 }
                 if let window {
-                    Text(ReadingText.reset(window, now: date) ?? window.displayTitle)
+                    Text(ReadingText.windowCountdown(window, now: date))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(2)
                 }
             }
         }
@@ -217,7 +220,8 @@ struct WatchDetailView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
                         UsageRing(used: lead.used, isStale: !provider.isLive || lead.isAwaitingReading(at: date),
-                                  label: ReadingText.headline(lead, now: date), lineWidth: 6, paceMark: pace?.elapsedFraction)
+                                  label: ReadingText.headline(lead, now: date), lineWidth: 6, paceMark: pace?.elapsedFraction,
+                                  isAwaitingReading: lead.isAwaitingReading(at: date))
                             .frame(width: 58, height: 58)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(lead.displayTitle)
@@ -231,8 +235,8 @@ struct WatchDetailView: View {
                         }
                     }
                     // The whole row's width, so what matters stays on two lines at most.
-                    if let pace, pace.needsAttention || pace.isProjected {
-                        Text(pace.caption(now: date))
+                    if let pace, let note = ReadingText.watchPaceNote(pace, now: date) {
+                        Text(note)
                             .font(.caption2)
                             .foregroundStyle(pace.needsAttention ? TokenroomTokens.accentText : .secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -274,11 +278,12 @@ struct WatchDetailView: View {
                     paceMark: pace?.elapsedFraction,
                     caption: detail(window, pace: pace),
                     titleFont: .caption,
-                    captionFont: .caption2
+                    captionFont: .caption2,
+                    isAwaitingReading: window.isAwaitingReading(at: date)
                 )
                 .padding(.vertical, 2)
             }
-            if let banked = provider.banked, banked.available > 0 {
+            if let banked = provider.availableBanked(at: date) {
                 Text(ReadingText.banked(banked, now: date))
                     .font(.footnote)
             }
@@ -306,8 +311,8 @@ struct WatchDetailView: View {
         if let reset = ReadingText.reset(window, now: date) {
             parts.append(reset)
         }
-        if let pace, pace.needsAttention || pace.isProjected {
-            parts.append(pace.caption(now: date))
+        if let note = ReadingText.watchPaceNote(pace, now: date) {
+            parts.append(note)
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
@@ -340,6 +345,38 @@ private struct WatchComplicationGallery: View {
             }
             .padding(.horizontal, 6)
         }
+    }
+}
+
+private struct WatchSmartStackGallery: View {
+    var date: Date
+
+    private var live: ReadingCache.Item? { SampleData.cache(now: date).items.first }
+
+    private var stale: ReadingCache.Item? {
+        guard var item = live else { return nil }
+        item.provider.state = "stale"
+        item.provider.checkedAt = date.addingTimeInterval(-2 * 3600)
+        return item
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                card(ResetSoonView(item: live, windowID: live?.provider.primaryWindow?.id))
+                card(ResetSoonView(item: live, windowID: live?.provider.primaryWindow?.id, isSample: true))
+                card(ResetSoonView(item: stale, windowID: stale?.provider.primaryWindow?.id))
+                card(ResetSoonView(item: live, windowID: "missing"))
+            }
+            .padding(.horizontal, 6)
+        }
+    }
+
+    private func card(_ view: ResetSoonView) -> some View {
+        view
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .padding(8)
+            .background(.gray.opacity(0.25), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 #endif

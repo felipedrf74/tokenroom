@@ -10,8 +10,6 @@ enum MenuBarLayout {
         .compact
     }
 
-    /// What the extra draws. "Highest only" keeps the provider whose open window needs
-    /// attention soonest, then the most used. The tooltip still lists all.
     static func displayed(_ meters: [MenuMeter], style: MenuBarStyle) -> [MenuMeter] {
         guard style == .highest else { return meters }
         let readings = meters.filter { !$0.isPlaceholder && !$0.isAwaitingReading }
@@ -36,10 +34,7 @@ enum MenuBarLayout {
         if meters.isEmpty {
             return "Tokenroom"
         }
-        return meters.map { meter in
-            let figure = [meter.windowLabel, meter.displayValue].compactMap { $0 }.joined(separator: " ")
-            return "\(meter.provider.displayName) \(figure)" + (meter.attention.map { " · \($0)" } ?? "")
-        }.joined(separator: "\n")
+        return meters.map(\.accessibilityText).joined(separator: "\n")
     }
 }
 
@@ -104,7 +99,7 @@ struct MenuBarLabel: View {
             ProviderGlyph(provider: meter.provider, size: TokenroomTokens.menuIconSize)
                 .opacity(0.92 * faded)
             MenuUsageBar(
-                usedPercent: meter.isPlaceholder ? 0 : meter.usedPercent,
+                usedPercent: meter.drawnUsedPercent,
                 remaining: meter.remaining,
                 isStale: meter.isStale
             )

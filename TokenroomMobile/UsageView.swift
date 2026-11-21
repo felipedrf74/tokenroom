@@ -9,6 +9,7 @@ struct UsageView: View {
     var openAlerts: () -> Void = {}
     @State private var showsDisconnected = false
     @State private var notificationsOff = false
+    @State private var showsAllClose = false
     /// Why following a tile's window failed, from its context menu.
     @State private var followError: String?
     /// Tile order as of the last look: tiles re-rank by urgency when the tab appears, the app
@@ -44,7 +45,7 @@ struct UsageView: View {
                     }
                     let close = closeWindows(at: date)
                     if !close.isEmpty {
-                        CloseToLimitCard(windows: close, date: date) { id in path = [id] }
+                        CloseToLimitCard(windows: close, date: date, showsAll: $showsAllClose) { id in path = [id] }
                     }
                     if !highlights.isEmpty, !store.readings.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -146,7 +147,7 @@ struct UsageView: View {
                     ForEach(row) { reading in
                         NavigationLink(value: reading.id) {
                             UsageTileView(reading: reading, date: date, showsOrigin: showsOrigin(reading),
-                                          warnedWindows: Set(closeWindows(at: date).prefix(CloseToLimitCard.rowLimit).filter { $0.provider.id == reading.id }.map(\.window.id)))
+                                          warnedWindows: Set(closeWindows(at: date).prefix(showsAllClose ? .max : CloseToLimitCard.rowLimit).filter { $0.provider.id == reading.id }.map(\.window.id)))
                         }
                         .buttonStyle(.plain)
                         .contextMenu {
@@ -214,8 +215,8 @@ struct UsageView: View {
     /// Banked resets and alerts that are off. News counts live on the News tab's badge.
     private var highlights: [Highlight] {
         var items: [Highlight] = []
-        let banked = store.readings.filter { ($0.provider.banked?.available ?? 0) > 0 }
-        let bankedCount = banked.reduce(0) { $0 + ($1.provider.banked?.available ?? 0) }
+        let banked = store.readings.filter { $0.provider.availableBanked(at: .now) != nil }
+        let bankedCount = banked.reduce(0) { $0 + ($1.provider.availableBanked(at: .now)?.available ?? 0) }
         if bankedCount > 0, let first = banked.first {
             items.append(Highlight(id: "banked", title: bankedCount == 1 ? "1 banked reset" : "\(bankedCount) banked resets", symbol: "arrow.counterclockwise") {
                 path = [first.id]
@@ -303,7 +304,7 @@ private struct RelayStatusNotice: View {
         case .noAccount:
             return ("Sign in to iCloud", "Use the same Apple Account on your devices to sync usage. Providers added with keys can still check on this iPhone.", true)
         case .unavailable:
-            return ("iCloud isn't available in this build", "Readings can't sync to your other devices. Providers added with keys can still check on this iPhone.", false)
+            return (store.relayIsInThisBuild ? "Tokenroom can't access iCloud" : "iCloud isn't available in this build", "Readings can't sync to your other devices. Providers added with keys can still check on this iPhone.", false)
         case .ready where store.needsNewerApp:
             return ("Update Tokenroom", "Some readings from your other devices need a newer version of this app. Available readings stay below.", false)
         default:
@@ -363,6 +364,7 @@ private struct SampleBanner: View {
 struct UsageEmptyState: View {
     @Bindable var store: MobileStore
     @State private var addsKey = false
+    @State private var signsIn = false
 
     var body: some View {
         Group {
@@ -378,13 +380,29 @@ struct UsageEmptyState: View {
                         Button("Refresh") { Task { await store.refresh(force: true) } }
                             .disabled(store.isRefreshing)
                     }
-                    Button("Add an API Key") { addsKey = true }
-                        .buttonStyle(.borderedProminent)
+                    if store.canSignInOnIPhone {
+                        Button("Sign In to a Plan") { signsIn = true }
+                            .buttonStyle(.borderedProminent)
+                        Button("Add an API Key") { addsKey = true }
+                    } else {
+                        Button("Add an API Key") { addsKey = true }
+                            .buttonStyle(.borderedProminent)
+                    }
                     Button("Try Sample Data") {
                         store.hasOnboarded = true
                         store.sampleMode = true
                     }
                 }
+            }
+        }
+        .sheet(isPresented: $signsIn) {
+            NavigationStack {
+                ConnectView(store: store)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { signsIn = false }
+                        }
+                    }
             }
         }
         .sheet(isPresented: $addsKey) {
@@ -401,13 +419,13 @@ struct UsageEmptyState: View {
 
     /// What this iPhone can read by itself: plans it signs in to, when the Plans screen is on.
     private var onThisIPhone: String {
-        store.connectOnIPhone ? "sign in to a plan or add an API key in Settings" : "add an API key"
+        store.canSignInOnIPhone ? "sign in to a plan or add an API key" : "add an API key"
     }
 
     private var content: (title: String, symbol: String, description: String) {
         switch store.relayPhase {
         case .unavailable:
-            ("No readings yet", "key", "This build can't use iCloud. \(onThisIPhone.capitalizedFirst) to read providers on this iPhone.")
+            ("No readings yet", "key", "\(store.relayUnavailableText) \(onThisIPhone.capitalizedFirst) to read providers on this iPhone.")
         case .noAccount:
             ("Sign in to iCloud", "icloud.slash", "Use the same Apple Account as your Mac to see its readings, or \(onThisIPhone).")
         case .failed(let message):

@@ -11,12 +11,13 @@ struct UsageRing: View {
     var lineWidth: CGFloat? = nil
     /// Where an even pace would be now, 0–1 of the window; drawn as a notch across the ring.
     var paceMark: Double? = nil
+    var isAwaitingReading = false
 
     var body: some View {
         GeometryReader { geometry in
             let side = min(geometry.size.width, geometry.size.height)
             let width = lineWidth ?? max(3, side * 0.11)
-            let pace = paceMark.map { min(max($0, 0), 1) }.flatMap { isStale ? nil : $0 }
+            let pace = MeterLayout.shownPace(paceMark, isStale: isStale, isAwaitingReading: isAwaitingReading)
             ZStack {
                 // A little wider than the ring: the stroke straddles its frame.
                 Canvas { context, size in
@@ -74,13 +75,11 @@ struct UsageRing: View {
     }
 
     private var accessibilityValue: String {
-        let used = "\(TokenroomFormat.percentText(used)) percent used"
-        guard let paceMark, !isStale else { return used }
-        return "\(used), \(TokenroomFormat.percentText(min(max(paceMark, 0), 1) * 100)) percent of the window has passed"
+        ReadingText.meterAccessibility(used: used, paceMark: paceMark, isStale: isStale, isAwaitingReading: isAwaitingReading)
     }
 
     private var fraction: CGFloat {
-        CGFloat(min(max(used, 0), 100) / 100)
+        MeterLayout.usedFraction(MeterLayout.shownUsed(used, isAwaitingReading: isAwaitingReading))
     }
 
     /// From a slightly lighter tint of the level's colour to the colour itself at the tip. The

@@ -11,13 +11,15 @@ struct MeterTrack: View {
     /// Where an even pace would be now, 0–1 of the window; drawn as a notch and marker.
     var paceMark: Double? = nil
     var height: CGFloat = TokenroomTokens.meterHeight
+    var isAwaitingReading = false
 
     /// How far the pace marker reaches past the track, above and below.
     private var overhang: CGFloat { max(1, height * 0.2) }
 
     var body: some View {
+        let usedPercent = MeterLayout.shownUsed(self.usedPercent, isAwaitingReading: isAwaitingReading)
         let used = MeterLayout.usedFraction(usedPercent)
-        let pace = (paceMark.map { CGFloat(min(max($0, 0), 1)) }).flatMap { isStale ? nil : $0 }
+        let pace = MeterLayout.shownPace(paceMark, isStale: isStale, isAwaitingReading: isAwaitingReading).map { CGFloat($0) }
         Canvas { context, size in
             let trackRect = CGRect(x: 0, y: overhang, width: size.width, height: height)
             let radius = height / 2
@@ -32,7 +34,7 @@ struct MeterTrack: View {
                 bar.clip(to: track)
                 let fillRect = CGRect(x: -radius, y: overhang, width: width + radius, height: height)
                 let fill = Path(roundedRect: fillRect, cornerRadius: min(radius, (width + radius) / 2), style: .continuous)
-                bar.fill(fill, with: shading(fillEnd: width))
+                bar.fill(fill, with: shading(usedPercent: usedPercent, fillEnd: width))
 
                 if let pace, used > pace + 0.015 {
                     // Past the even pace: the same colour, a step lighter.
@@ -59,12 +61,12 @@ struct MeterTrack: View {
         .opacity(isStale ? 0.85 : 1)
         // The fill repeats the percent next to it; only the pace mark adds something to hear.
         .accessibilityElement()
-        .accessibilityHidden(paceMark == nil || isStale)
+        .accessibilityHidden(paceMark == nil || isStale || isAwaitingReading)
         .accessibilityLabel("Even pace")
         .accessibilityValue(paceMark.map { "\(TokenroomFormat.percentText(min(max($0, 0), 1) * 100)) percent of the window has passed" } ?? "")
     }
 
-    private func shading(fillEnd: CGFloat) -> GraphicsContext.Shading {
+    private func shading(usedPercent: Double, fillEnd: CGFloat) -> GraphicsContext.Shading {
         if isStale {
             return .color(Color.secondary.opacity(0.72))
         }
@@ -84,6 +86,7 @@ struct FlatMeter: View {
     var pace: Double? = nil
     var tint: Color
     var height: CGFloat = 4
+    var isAwaitingReading = false
 
     /// Where the fill runs, in points of `width`: up to the even pace, and on from it when use has
     /// passed the pace. Exactly the reading, so a meter at 0% draws nothing, as `MeterLayout` says.
@@ -108,7 +111,8 @@ struct FlatMeter: View {
     var body: some View {
         GeometryReader { geometry in
             let width = geometry.size.width
-            let runs = Self.runs(used: used, pace: pace, width: width)
+            let pace = isAwaitingReading ? nil : self.pace
+            let runs = Self.runs(used: MeterLayout.shownUsed(used, isAwaitingReading: isAwaitingReading), pace: pace, width: width)
             ZStack(alignment: .leading) {
                 ZStack(alignment: .leading) {
                     Capsule().fill(.primary.opacity(0.18))

@@ -153,12 +153,30 @@ enum DebugSnapshots {
             store.statuses[.openai] = .rateLimited(until: now.addingTimeInterval(600), cached: openai)
             render(PopoverView(store: store, onSettings: { _ in }, expanded: [.openai]), width: PopoverStyle.orbit.width, appearance: .aqua,
                    to: output.appendingPathComponent("popover-orbit-stale.png"))
-            var elapsed = openai
-            elapsed.resetsAt = now.addingTimeInterval(-1)
-            elapsed.windows[0].resetsAt = elapsed.resetsAt
-            store.statuses[.openai] = .live(elapsed)
+            store.statuses[.openai] = .live(resetFixture(openai, now: now, everyWindow: true))
+            renderResetBar(store, to: output.appendingPathComponent("menubar-meters-reset.png"))
+            store.statuses[.openai] = .live(resetFixture(openai, now: now, everyWindow: false))
             render(PopoverView(store: store, onSettings: { _ in }), width: PopoverStyle.orbit.width, appearance: .aqua,
                    to: output.appendingPathComponent("popover-orbit-reset.png"))
+            render(PopoverView(store: store, onSettings: { _ in }, expanded: [.openai]), width: PopoverStyle.orbit.width, appearance: .aqua,
+                   to: output.appendingPathComponent("popover-orbit-reset-detail.png"))
+            settings.popoverStyle = .instrument
+            render(PopoverView(store: store, onSettings: { _ in }), width: PopoverStyle.instrument.width, appearance: .aqua,
+                   to: output.appendingPathComponent("popover-instrument-reset.png"))
+            settings.popoverStyle = .classic
+            render(PopoverView(store: store, onSettings: { _ in }), width: PopoverStyle.classic.width, appearance: .aqua,
+                   to: output.appendingPathComponent("popover-classic-reset.png"))
+            settings.popoverStyle = .orbit
+            renderResetBar(store, to: output.appendingPathComponent("menubar-meters-reset-fallback.png"))
+            var secondaryReset = openai
+            secondaryReset.windows[1].resetsAt = now.addingTimeInterval(-1)
+            store.statuses[.openai] = .live(secondaryReset)
+            render(PopoverView(store: store, onSettings: { _ in }, expanded: [.openai]), width: PopoverStyle.orbit.width, appearance: .aqua,
+                   to: output.appendingPathComponent("popover-orbit-secondary-reset.png"))
+            settings.popoverStyle = .classic
+            render(PopoverView(store: store, onSettings: { _ in }, expanded: [.openai]), width: PopoverStyle.classic.width, appearance: .aqua,
+                   to: output.appendingPathComponent("popover-classic-secondary-reset.png"))
+            settings.popoverStyle = .orbit
             var nearly = openai
             nearly.windows[0].usedPercent = 97
             store.statuses[.openai] = .live(nearly)
@@ -282,6 +300,24 @@ enum DebugSnapshots {
             }
             .padding(16)
         }
+    }
+
+    static func resetFixture(_ snapshot: QuotaSnapshot, now: Date, everyWindow: Bool) -> QuotaSnapshot {
+        var elapsed = snapshot
+        let past = now.addingTimeInterval(-1)
+        elapsed.resetsAt = past
+        for index in elapsed.windows.indices where index == 0 || (everyWindow && elapsed.windows[index].isMetered) {
+            elapsed.windows[index].resetsAt = past
+        }
+        return elapsed
+    }
+
+    private static func renderResetBar(_ store: QuotaStore, to url: URL) {
+        let bar = MenuBarLabel(meters: store.menuMeters.filter { [.claude, .openai, .grok].contains($0.provider) }, style: .meters)
+            .padding(.horizontal, 10)
+            .frame(height: 24)
+            .background(Color(white: 0.93))
+        render(bar, width: nil, height: 24, appearance: .aqua, to: url)
     }
 
     /// A view in a real titled window with a unified toolbar, as Settings opens: a split view's

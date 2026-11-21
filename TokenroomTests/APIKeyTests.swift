@@ -65,6 +65,29 @@ final class APIKeyTests: XCTestCase {
         XCTAssertEqual(ReadingText.amountHeadline(window.amount!)?.hasSuffix("spent"), true)
     }
 
+    func testOpenRouterLimitWithoutWhatsLeftIsNotAFullKey() throws {
+        let now = Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 25, hour: 12))!
+        XCTAssertThrowsError(try OpenRouterParser.snapshot(from: Data(#"{"data":{"limit":100,"limit_reset":"monthly","usage":310.2,"usage_monthly":25.5}}"#.utf8), fetchedAt: now),
+                             "A capped key without what's left keeps its last reading rather than becoming spend only")
+        let spent = try OpenRouterParser.snapshot(from: Data(#"{"data":{"limit":100,"limit_remaining":0,"limit_reset":"monthly"}}"#.utf8), fetchedAt: now)
+        XCTAssertEqual(spent.usedPercent, 100, accuracy: 0.001, "An explicit 0 left is a spent key")
+    }
+
+    func testOpenRouterLifetimeUsageIsNeverThisMonth() throws {
+        let now = Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 25, hour: 12))!
+        let snapshot = try OpenRouterParser.snapshot(from: Data(#"{"data":{"limit":null,"usage":310.2}}"#.utf8), fetchedAt: now)
+        let window = try XCTUnwrap(snapshot.windows.first)
+        XCTAssertEqual(window.id, "usage-total")
+        XCTAssertEqual(window.title, "All time")
+        XCTAssertNil(window.resetsAt)
+        XCTAssertNil(window.startsAt)
+        XCTAssertEqual(window.amount?.used ?? 0, 310.2, accuracy: 0.001)
+        XCTAssertNil(Forecast.text(for: window, history: nil, checkedAt: now, now: now), "No projected month from a lifetime total")
+        XCTAssertThrowsError(try OpenRouterParser.snapshot(from: Data(#"{"data":{"limit":null}}"#.utf8), fetchedAt: now)) {
+            XCTAssertEqual($0 as? ProviderError, .parse)
+        }
+    }
+
     func testOpenRouterPeriodsResetAtUTCMidnight() {
         let now = Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 24, hour: 15))! // Thursday
         let daily = OpenRouterParser.period("daily", now: now, calendar: .gregorianUTC)
@@ -224,6 +247,23 @@ final class APIKeyTests: XCTestCase {
         XCTAssertTrue(MenuBarLayout.tooltip(for: [meter]).contains("Reset · awaiting reading"))
         XCTAssertTrue(meter.accessibilityText.contains("Reset · awaiting reading"))
         XCTAssertEqual(MenuBarLayout.displayed(store.menuMeters, style: .highest).first?.provider, .cursor)
+    }
+
+    @MainActor
+    func testTheMenuBarResetCapturesShowAnEmptyMeterAndItsLiveFallback() throws {
+        let defaults = makeDefaults()
+        defaults.set(["openai"], forKey: "enabledProviders")
+        let store = QuotaStore(settings: AppSettings(defaults: defaults), clients: [], cache: SnapshotCache(directory: makeFolder()))
+        let now = Date.now
+        let openai = try XCTUnwrap(SampleData.snapshots(now: now).first { $0.provider == .openai })
+        store.statuses[.openai] = .live(DebugSnapshots.resetFixture(openai, now: now, everyWindow: true))
+        let empty = try XCTUnwrap(store.menuMeters.first { $0.provider == .openai })
+        XCTAssertTrue(empty.isAwaitingReading)
+        XCTAssertEqual(empty.drawnUsedPercent, 0)
+        store.statuses[.openai] = .live(DebugSnapshots.resetFixture(openai, now: now, everyWindow: false))
+        let fallback = try XCTUnwrap(store.menuMeters.first { $0.provider == .openai })
+        XCTAssertFalse(fallback.isAwaitingReading)
+        XCTAssertNotNil(fallback.windowLabel)
     }
 
     @MainActor

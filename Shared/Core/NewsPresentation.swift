@@ -76,6 +76,8 @@ struct NewsCollectionHealth {
     var retryIDs: Set<String>
     var sourceIDs: Set<String>
     var isModelList = false
+    var latestItemAt: Date? = nil
+    var isVoice = false
 
     var caption: String {
         if isModelList { return checkedAt.map { "Models checked \(RelativeTime.ago($0))" } ?? "Models not checked yet" }
@@ -86,6 +88,17 @@ struct NewsCollectionHealth {
 }
 
 extension NewsCollectionHealth {
+    func detailCaption(now: Date = .now, calendar: Calendar = .current) -> String {
+        guard !isModelList, let latest = latestItemAt else { return caption }
+        let sameYear = calendar.component(.year, from: latest) == calendar.component(.year, from: now)
+        var format = Date.FormatStyle.dateTime.month(.abbreviated).day()
+        if !sameYear { format = format.year() }
+        format.calendar = calendar
+        format.timeZone = calendar.timeZone
+        format.locale = calendar.locale ?? .current
+        return caption + " · " + (isVoice ? "Latest article " : "Latest update ") + latest.formatted(format)
+    }
+
     /// A source's line in Following: quiet when it's fine, saying so when it isn't. Every row here
     /// is an official source, so its kind says nothing; a problem or a source awaiting its first
     /// read does.
@@ -115,8 +128,24 @@ extension NewsStore {
         let checks = selected.map { cache.check(for: $0) }
         let failed = selected.filter { cache.check(for: $0).failedAt != nil || cache.unreadable?.contains($0.id) == true }
         let problem = failed.isEmpty ? nil : "Couldn't read " + failed.map(\.name).joined(separator: ", ") + "."
+        let latest = selected.flatMap { cache.items[$0.id] ?? [] }.compactMap {
+            kind == .officialStatus ? $0.updatedAt ?? $0.publisherPublishedAt : $0.publisherPublishedAt ?? $0.updatedAt
+        }.max()
         return .init(checkedAt: checks.compactMap(\.succeededAt).min(), uncheckedCount: checks.filter { $0.succeededAt == nil }.count,
-                     sourceCount: selected.count, problem: problem, retryIDs: Set(failed.map(\.id)), sourceIDs: Set(selected.map(\.id)))
+                     sourceCount: selected.count, problem: problem, retryIDs: Set(failed.map(\.id)), sourceIDs: Set(selected.map(\.id)),
+                     latestItemAt: latest, isVoice: kind == .commentary)
+    }
+
+    func emptyBriefing(_ summary: NewsSourceFreshness) -> NewsEmptyBriefing {
+        summary.briefing(isChecking: isRefreshing, modelsCheckedAt: cache.modelsFetchedAt, modelsFailed: modelListFailed)
+    }
+
+    func firstCheckIDs(_ summary: NewsSourceFreshness) -> Set<String> {
+        summary.uncheckedIDs.union(summary.failedIDs).union(cache.modelsFetchedAt == nil || modelListFailed ? [ModelFeed.id] : [])
+    }
+
+    private var modelListFailed: Bool {
+        cache.modelsFailedAt != nil || cache.unreadable?.contains(ModelFeed.id) == true
     }
 
     func sourceHealth(for source: FeedSource) -> NewsCollectionHealth {

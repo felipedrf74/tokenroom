@@ -69,7 +69,31 @@ final class CodingPlanTests: XCTestCase {
         XCTAssertNil(snapshot.extra)
     }
 
+    func testKimiBoosterWithoutABalanceLeftIsLeftOut() throws {
+        let pools = #""usages":{"limit_7d":{"used_ratio":0.25,"reset_time":"2026-09-29T12:00:00Z"}}"#
+        let missing = try KimiCodeParser.snapshot(from: Data(#"{\#(pools),"boosterWallet":{"balance":{"type":"BOOSTER","amount":"2000000000"}}}"#.utf8), fetchedAt: now)
+        XCTAssertEqual(missing.windows.map(\.id), ["weekly"])
+        XCTAssertNil(missing.extra)
+        let spent = try KimiCodeParser.snapshot(from: Data(#"{\#(pools),"boosterWallet":{"balance":{"type":"BOOSTER","amount":"2000000000","amountLeft":"0"}}}"#.utf8), fetchedAt: now)
+        XCTAssertEqual(spent.extra?.amount.remaining, 0)
+    }
+
     // MARK: MiniMax
+
+    func testMiniMaxTotalsWithoutAUsageCountAreNotAReading() throws {
+        let partial = #"{"base_resp":{"status_code":0},"model_remains":[{"model_name":"general","current_interval_total_count":1000,"current_interval_remaining_percent":60,"current_weekly_total_count":5000}]}"#
+        for legacy in [false, true] {
+            let snapshot = try MiniMaxParser.snapshot(from: Data(partial.utf8), legacy: legacy, fetchedAt: now)
+            XCTAssertEqual(snapshot.windows.map(\.id), ["session"], "legacy \(legacy)")
+            XCTAssertEqual(snapshot.usedPercent, 40, accuracy: 0.001)
+        }
+        let unmeasured = #"{"base_resp":{"status_code":0},"model_remains":[{"model_name":"general","current_interval_total_count":1000,"current_weekly_total_count":5000}]}"#
+        for legacy in [false, true] {
+            XCTAssertThrowsError(try MiniMaxParser.snapshot(from: Data(unmeasured.utf8), legacy: legacy, fetchedAt: now)) { error in
+                XCTAssertEqual(error as? ProviderError, .parse, "legacy \(legacy)")
+            }
+        }
+    }
 
     func testMiniMaxTokenPlanReadsRemainingPercents() throws {
         let snapshot = try MiniMaxParser.snapshot(from: fixture("minimax-token-plan"), fetchedAt: now)

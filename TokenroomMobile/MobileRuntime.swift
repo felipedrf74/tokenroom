@@ -38,4 +38,34 @@ extension EnvironmentValues {
         get { self[MobileExternalEffectsKey.self] }
         set { self[MobileExternalEffectsKey.self] = newValue }
     }
+
+    var mobileShowsSampleData: Bool {
+        get { self[MobileSampleDataKey.self] }
+        set { self[MobileSampleDataKey.self] = newValue }
+    }
+}
+
+private struct MobileSampleDataKey: EnvironmentKey { static let defaultValue = false }
+
+struct SnapshotAppearanceMarker: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        #if DEBUG
+        if UserDefaults.standard.string(forKey: "TokenroomSnapshotNews") != nil {
+            content.overlay(alignment: .topLeading) {
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .allowsHitTesting(false)
+                    .accessibilityElement()
+                    .accessibilityLabel("Appearance")
+                    .accessibilityIdentifier("tokenroom.appearance.\(colorScheme == .dark ? "dark" : "light")")
+            }
+        } else {
+            content
+        }
+        #else
+        content
+        #endif
+    }
 }

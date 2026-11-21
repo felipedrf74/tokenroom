@@ -45,7 +45,16 @@ struct MobileNewsReaderContent: View {
             }
         }
         if latest == nil, edition.topStory == nil, models.isEmpty, updates.isEmpty, voices.isEmpty, status.isEmpty, edition.retiring.isEmpty {
-            ContentUnavailableView("Your briefing is quiet", systemImage: "newspaper", description: Text("Follow tools and voices, browse the model archive, or check again."))
+            let summary = NewsSourceFreshness(cache: news.cache, sources: news.sources)
+            let briefing = news.emptyBriefing(summary)
+            ContentUnavailableView(briefing.title, systemImage: briefing.systemImage, description: Text(briefing.message(isChecking: news.isRefreshing)))
+            if let action = briefing.actionTitle {
+                Button {
+                    let ids = news.firstCheckIDs(summary)
+                    Task { await news.retrySources(ids, waitsForFollowUp: true) }
+                } label: { NewsLinkLabel(title: action, symbol: "arrow.clockwise") }
+                    .buttonStyle(.plain).disabled(news.isRefreshing)
+            }
             NewsNavigationLink {
                 ScrollView { MobileNewsFollowing(news: news, library: library, suggestedProviders: suggestedProviders).padding(20) }.newsReaderCanvas().navigationTitle("Following").navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
             } label: { NewsLinkLabel(title: "Choose what to follow") }
@@ -99,12 +108,12 @@ struct MobileNewsFreshnessView: View {
                 MobileNewsSourceHealthDetail(news: news, library: library)
             } label: {
                 let layout = typeSize >= .xxLarge ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout(alignment: .center, spacing: 10))
-                let needsAttention = problem != nil || summary.delayedCount > 0
+                let needsAttention = problem != nil
                 layout {
                     HStack(spacing: 8) {
                         if news.isRefreshing { ProgressView().controlSize(.small).accessibilityLabel("Checking sources") }
                         else if problem != nil { Image(systemName: "exclamationmark.circle").font(.footnote) }
-                        Text(problem != nil ? "Some sources need attention" : (summary.delayedCount > 0 ? "Some feeds delayed" : articleCaption))
+                        Text(problem != nil ? "Some sources need attention" : articleCaption)
                             .font(.footnote).fixedSize(horizontal: false, vertical: true)
                     }.foregroundStyle(needsAttention ? Color.primary : MobileNewsPalette.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)

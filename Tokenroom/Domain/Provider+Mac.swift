@@ -115,11 +115,14 @@ struct MenuMeter: Equatable, Identifiable, Sendable {
     var urgency: Int = 0
     /// When the shown window was measured to run out, if it does before the reset.
     var runsOutAt: Date? = nil
+    var lastReading: String? = nil
 
     var displayValue: String { isAwaitingReading ? "—" : isPlaceholder ? "–%" : "\(valueText)%" }
+    var drawnUsedPercent: Double { isPlaceholder ? 0 : MeterLayout.shownUsed(usedPercent, isAwaitingReading: isAwaitingReading) }
     var accessibilityText: String {
         let name = windowLabel.map { "\(provider.displayName) \($0)" } ?? provider.displayName
-        return "\(name) \(displayValue)\(isAwaitingReading || isPlaceholder ? "" : " used")" + (attention.map { ", \($0)" } ?? "")
+        let figure = isAwaitingReading ? name : "\(name) \(displayValue)\(isPlaceholder ? "" : " used")"
+        return ([figure, attention, lastReading.map { "last reading \($0)" }] as [String?]).compactMap { $0 }.joined(separator: ", ")
     }
 
     var id: Provider { provider }

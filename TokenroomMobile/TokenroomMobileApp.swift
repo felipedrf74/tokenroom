@@ -40,6 +40,7 @@ private struct MobileWindowScene: Scene {
             RootView(store: store, news: news)
                 .defaultAppStorage(store.allowsExternalEffects ? .standard : store.preferencesDefaults)
                 .environment(\.mobileAllowsExternalEffects, store.allowsExternalEffects)
+                .environment(\.mobileShowsSampleData, store.sampleMode)
                 .task {
                     // Also saves the push subscriptions, once iCloud answers. Not forced: when
                     // coming forward already started one, this is that refresh.

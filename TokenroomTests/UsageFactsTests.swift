@@ -30,8 +30,8 @@ final class UsageFactsTests: XCTestCase {
     func testAheadOfPaceSaysWhenItRunsOutAndNeedsAttention() {
         let runsOut = now.addingTimeInterval(7_200)
         let fact = UsageFacts.paceFact(pace(.ahead, severity: .tight, runsOut: runsOut), now: now, timeZone: utc)
-        XCTAssertEqual(fact.value, "Ahead")
-        XCTAssertEqual(fact.detail, "Runs out \(Pace.shortMoment(runsOut, now: now, timeZone: utc))")
+        XCTAssertEqual(fact.value, "Runs out \(Pace.shortMoment(runsOut, now: now, timeZone: utc))")
+        XCTAssertEqual(fact.detail, "Ahead · even pace 54%")
         XCTAssertEqual(fact.severity, .tight)
     }
 
