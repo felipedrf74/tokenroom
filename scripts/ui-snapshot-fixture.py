@@ -5,10 +5,12 @@ Everything here is made up for layout review: no live feed, account, or person's
     scripts/ui-snapshot-fixture.py <folder>
 """
 import json
+import re
 import sys
 import time
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parent.parent
 folder = Path(sys.argv[1])
 folder.mkdir(parents=True, exist_ok=True)
 now = time.time()
@@ -77,13 +79,21 @@ cache = {
 }
 (folder / "news.json").write_text(json.dumps(cache))
 
-# The same News with a source that failed, and with no stories at all, for the exception states.
-failed = dict(cache, unreadable=["openai-news"], sourceChecks=dict(checks, **{"openai-news": {"failedAt": now - 300, "failures": 2}}))
-(folder / "failed").mkdir(exist_ok=True)
-(folder / "failed" / "news.json").write_text(json.dumps(failed))
-quiet = dict(cache, items={}, models=[], sourceChecks={})
-(folder / "quiet").mkdir(exist_ok=True)
-(folder / "quiet" / "news.json").write_text(json.dumps(quiet))
+# The same News for the exception states: a source that failed; every followed feed checked with
+# no stories (quiet); no feed checked yet (pending); and every feed's first check failed
+# (unreachable). A fixture store follows the whole catalog, read here from the Swift source.
+catalog = re.findall(r'FeedSource\(id: "([^"]+)"', (ROOT / "Shared/Core/Feeds.swift").read_text())
+variants = {
+    "failed": dict(cache, unreadable=["openai-news"], sourceChecks=dict(checks, **{"openai-news": {"failedAt": now - 300, "failures": 2}})),
+    "quiet": dict(cache, items={}, models=[], sourceChecks={feed: {"succeededAt": now - 120} for feed in catalog}),
+    "pending": dict(cache, items={}, models=[], sourceChecks={}, modelsFetchedAt=None, announcementsFetchedAt=None),
+    "unreachable": dict(cache, items={}, models=[], modelsFetchedAt=None, announcementsFetchedAt=None,
+                        modelsFailedAt=now - 300, modelsFailures=1, unreadable=catalog + ["openrouter-models"],
+                        sourceChecks={feed: {"failedAt": now - 300, "failures": 1, "firstFailedAt": now - 300} for feed in catalog}),
+}
+for name, variant in variants.items():
+    (folder / name).mkdir(exist_ok=True)
+    (folder / name / "news.json").write_text(json.dumps({key: value for key, value in variant.items() if value is not None}))
 
 skills = [
     ("sample-labs", "repo-map", "Repo map", "Draws a map of an unfamiliar repository before you change it.", 1240),

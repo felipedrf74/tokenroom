@@ -77,6 +77,84 @@ final class MacNewsPresentationTests: XCTestCase {
         XCTAssertTrue(summary.failedIDs.isEmpty)
     }
 
+    func testEmptyBriefingWaitsUntilASourceHasAnswered() {
+        var cache = NewsCache()
+        let unchecked = NewsSourceFreshness(cache: cache, sources: sources, now: now)
+        XCTAssertEqual(unchecked.briefing(isChecking: false, modelsCheckedAt: now, modelsFailed: false), .waiting)
+        XCTAssertEqual(unchecked.briefing(isChecking: true, modelsCheckedAt: now, modelsFailed: false), .waiting)
+        XCTAssertEqual(unchecked.uncheckedIDs, ["healthy", "delayed"])
+        XCTAssertEqual(unchecked.caption, "2 sources not checked yet")
+
+        cache.sourceChecks = ["healthy": .init(failedAt: now), "delayed": .init(failedAt: now)]
+        let failed = NewsSourceFreshness(cache: cache, sources: sources, now: now)
+        XCTAssertEqual(failed.briefing(isChecking: false, modelsCheckedAt: now, modelsFailed: false), .couldNotCheck)
+        XCTAssertEqual(failed.briefing(isChecking: true, modelsCheckedAt: now, modelsFailed: false), .waiting)
+        XCTAssertEqual(NewsEmptyBriefing.couldNotCheck.title, "Couldn't check your sources")
+        XCTAssertEqual(NewsEmptyBriefing.couldNotCheck.actionTitle, "Retry")
+
+        cache.sourceChecks = ["healthy": .init(succeededAt: now.addingTimeInterval(-60)), "delayed": .init(failedAt: now)]
+        let answered = NewsSourceFreshness(cache: cache, sources: sources, now: now)
+        XCTAssertEqual(answered.briefing(isChecking: false, modelsCheckedAt: nil, modelsFailed: true), .quiet)
+        XCTAssertNil(NewsEmptyBriefing.quiet.actionTitle)
+    }
+
+    func testEmptyBriefingWithNoFeedsFollowedFollowsTheModelList() {
+        let summary = NewsSourceFreshness(cache: NewsCache(), sources: [], now: now)
+        XCTAssertEqual(summary.briefing(isChecking: false, modelsCheckedAt: nil, modelsFailed: false), .waiting)
+        XCTAssertEqual(summary.briefing(isChecking: false, modelsCheckedAt: nil, modelsFailed: true), .couldNotCheck)
+        XCTAssertEqual(summary.briefing(isChecking: false, modelsCheckedAt: now, modelsFailed: false), .quiet)
+    }
+
+    @MainActor
+    func testStoreOffersAFirstCheckOfEverySourceNotYetRead() {
+        let suite = TestDefaults.make(owner: "MacNewsPresentation", index: 1)
+        defer { TestDefaults.remove(suite.name) }
+        var cache = NewsCache()
+        cache.sourceChecks = ["claude-code": .init(failedAt: now)]
+        let news = NewsStore(defaults: suite.defaults, directory: nil, now: now, initialCache: cache,
+                             fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
+        let summary = NewsSourceFreshness(cache: news.cache, sources: news.sources, now: now)
+        XCTAssertEqual(news.emptyBriefing(summary), .couldNotCheck)
+        XCTAssertEqual(news.firstCheckIDs(summary), Set(news.sources.map(\.id)).union([ModelFeed.id]))
+    }
+
+    func testCaptionSaysHowManySourcesWereCheckedRecently() {
+        var cache = NewsCache()
+        cache.sourceChecks = ["healthy": .init(succeededAt: now.addingTimeInterval(-60)),
+                              "delayed": .init(succeededAt: now.addingTimeInterval(-36_000))]
+        XCTAssertEqual(NewsSourceFreshness(cache: cache, sources: sources, now: now).caption, "1 of 2 sources checked recently")
+        cache.sourceChecks?["delayed"] = .init(succeededAt: now)
+        XCTAssertEqual(NewsSourceFreshness(cache: cache, sources: sources, now: now).caption, "All 2 sources checked recently")
+        XCTAssertEqual(NewsSourceFreshness(cache: cache, sources: [sources[0]], now: now).caption, "1 source checked recently")
+        XCTAssertEqual(NewsSourceFreshness(cache: NewsCache(), sources: [], now: now).caption, "No sources followed")
+    }
+
+    @MainActor
+    func testSourceDetailShowsWhenTheSourceLastPublished() throws {
+        let suite = TestDefaults.make(owner: "MacNewsPresentation", index: 2)
+        defer { TestDefaults.remove(suite.name) }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        calendar.locale = Locale(identifier: "en_US")
+        let today = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 11, day: 21, hour: 12)))
+        let lastPost = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 9, day: 15, hour: 8)))
+        let source = try XCTUnwrap(FeedSource.catalog.first { $0.id == "claude-code-whats-new" })
+        var cache = NewsCache()
+        cache.sourceChecks = [source.id: .init(succeededAt: today.addingTimeInterval(-120))]
+        cache.items[source.id] = [
+            FeedItem(id: "older", title: "Older", published: lastPost.addingTimeInterval(-86_400 * 7), source: source.name),
+            FeedItem(id: "newest", title: "Newest", published: lastPost, source: source.name),
+        ]
+        let news = NewsStore(defaults: suite.defaults, directory: nil, now: today, initialCache: cache,
+                             fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
+        let health = news.sourceHealth(for: source)
+        XCTAssertEqual(health.latestItemAt, lastPost)
+        XCTAssertEqual(health.detailCaption(now: today, calendar: calendar), health.caption + " · Latest update Sep 15")
+        XCTAssertEqual(health.detailCaption(now: today.addingTimeInterval(86_400 * 60), calendar: calendar), health.caption + " · Latest update Sep 15, 2026")
+        let empty = NewsCollectionHealth(checkedAt: today, uncheckedCount: 0, sourceCount: 1, problem: nil, retryIDs: [], sourceIDs: [source.id])
+        XCTAssertEqual(empty.detailCaption(now: today, calendar: calendar), empty.caption)
+    }
+
     @MainActor
     func testDesktopPreviewFlagIsInertWithoutOtherFixtureArguments() {
         let name = "tokenroom.tests.news-preview.\(UUID().uuidString)"

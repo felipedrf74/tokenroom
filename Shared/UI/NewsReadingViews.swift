@@ -382,7 +382,7 @@ struct NewsSourceHealth: View {
         let isEmpty = health.sourceCount > 0 && health.uncheckedCount == 0 && health.sourceIDs.allSatisfy { news.cache.items[$0]?.isEmpty == true }
         if showsCaption || health.problem != nil || isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                if showsCaption { Text(health.caption) }
+                if showsCaption { Text(health.detailCaption()) }
                 if let problem = health.problem {
                     let hasPreviousArticles = health.sourceIDs.contains { !(news.cache.items[$0] ?? []).isEmpty }
                     Text(problem + (hasPreviousArticles ? " Previous articles remain available." : ""))

@@ -125,9 +125,11 @@ final class UISnapshotTests: XCTestCase {
             return true
         }
         for look in Look.allCases {
-            fixture = folder.appendingPathComponent("quiet/news.json").path
-            _ = launch(["-onboarded", "YES", "-TokenroomOpen", "tokenroom://news"], look: look)
-            shoot("iphone-news-quiet\(look.suffix)")
+            for state in ["quiet", "pending", "unreachable"] {
+                fixture = folder.appendingPathComponent("\(state)/news.json").path
+                _ = launch(["-onboarded", "YES", "-TokenroomOpen", "tokenroom://news"], look: look)
+                shoot("iphone-news-\(state)\(look.suffix)")
+            }
             fixture = folder.appendingPathComponent("failed/news.json").path
             let app = launch(["-onboarded", "YES", "-TokenroomOpen", "tokenroom://news"], look: look)
             if openCollection(app) {

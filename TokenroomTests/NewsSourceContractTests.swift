@@ -163,4 +163,32 @@ final class NewsSourceContractTests: XCTestCase {
         XCTAssertTrue(second.aliasIDs.contains("claude-code|changelog"))
         XCTAssertTrue(second.aliasIDs.contains("claude-code-releases|github"))
     }
+
+    func testPairedProductKeepsTwoEntriesThatOnlyMentionTheSameVersion() {
+        let sources = FeedSource.catalog.filter { $0.id == "claude-code" || $0.partOf == "claude-code" }
+        var cache = NewsCache()
+        cache.items["claude-code"] = [FeedItem(id: "support", title: "Support for Python 3.12", link: URL(string: "https://example.com/support"), published: Date(timeIntervalSince1970: 10), source: "Claude Code")]
+        cache.items["claude-code-releases"] = [FeedItem(id: "fix", title: "Fix Python 3.12 startup", link: URL(string: "https://example.com/fix"), published: Date(timeIntervalSince1970: 20), source: "Claude Code")]
+        let shown = cache.announcements(from: sources)
+        XCTAssertEqual(Set(shown.map(\.title)), ["Support for Python 3.12", "Fix Python 3.12 startup"])
+        XCTAssertTrue(shown.allSatisfy { $0.canonicalID == nil })
+    }
+
+    func testPairedReleaseVersionComesFromItsTagOrReleaseTitle() {
+        let sources = FeedSource.catalog.filter { $0.id == "claude-code" || $0.partOf == "claude-code" }
+        var cache = NewsCache()
+        cache.items["claude-code"] = [
+            FeedItem(id: "c1", title: "Release 2.14", published: Date(timeIntervalSince1970: 10), source: "Claude Code"),
+            FeedItem(id: "c2", title: "2.15.0", published: Date(timeIntervalSince1970: 30), source: "Claude Code"),
+        ]
+        cache.items["claude-code-releases"] = [
+            FeedItem(id: "g1", title: "v2.14", published: Date(timeIntervalSince1970: 20), source: "Claude Code"),
+            FeedItem(id: "g2", title: "Faster startup", link: URL(string: "https://github.com/anthropics/claude-code/releases/tag/v2.15.0"), published: Date(timeIntervalSince1970: 40), source: "Claude Code"),
+        ]
+        let shown = cache.announcements(from: sources)
+        XCTAssertEqual(shown.map(\.stableID), ["release|claude-code|2.15.0", "release|claude-code|2.14"])
+        XCTAssertEqual(NewsCache.releaseVersion(of: FeedItem(id: "x", title: "Codex 2.14", source: "Codex")), "2.14")
+        XCTAssertEqual(NewsCache.releaseVersion(of: FeedItem(id: "x", title: "v2.14.0-beta.1", source: "Codex")), "2.14.0-beta.1")
+        XCTAssertNil(NewsCache.releaseVersion(of: FeedItem(id: "x", title: "Codex 2.14 adds reviews", source: "Codex")))
+    }
 }
