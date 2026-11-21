@@ -9,6 +9,7 @@ struct UsageView: View {
     var openAlerts: () -> Void = {}
     @State private var showsDisconnected = false
     @State private var notificationsOff = false
+    @State private var showsAllClose = false
     /// Why following a tile's window failed, from its context menu.
     @State private var followError: String?
     /// Tile order as of the last look: tiles re-rank by urgency when the tab appears, the app
@@ -44,7 +45,7 @@ struct UsageView: View {
                     }
                     let close = closeWindows(at: date)
                     if !close.isEmpty {
-                        CloseToLimitCard(windows: close, date: date) { id in path = [id] }
+                        CloseToLimitCard(windows: close, date: date, showsAll: $showsAllClose) { id in path = [id] }
                     }
                     if !highlights.isEmpty, !store.readings.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -146,7 +147,7 @@ struct UsageView: View {
                     ForEach(row) { reading in
                         NavigationLink(value: reading.id) {
                             UsageTileView(reading: reading, date: date, showsOrigin: showsOrigin(reading),
-                                          warnedWindows: Set(closeWindows(at: date).prefix(CloseToLimitCard.rowLimit).filter { $0.provider.id == reading.id }.map(\.window.id)))
+                                          warnedWindows: Set(closeWindows(at: date).prefix(showsAllClose ? .max : CloseToLimitCard.rowLimit).filter { $0.provider.id == reading.id }.map(\.window.id)))
                         }
                         .buttonStyle(.plain)
                         .contextMenu {

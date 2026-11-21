@@ -13,6 +13,7 @@ struct WindowRow: View {
     var caption: String? = nil
     var titleFont: Font = .caption
     var captionFont: Font = .caption2
+    var isAwaitingReading = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -25,7 +26,7 @@ struct WindowRow: View {
                     .foregroundStyle(ink)
             }
             if let usedPercent {
-                MeterTrack(usedPercent: usedPercent, remaining: 100 - usedPercent, isStale: isStale, paceMark: paceMark, height: 5)
+                MeterTrack(usedPercent: usedPercent, remaining: 100 - usedPercent, isStale: isStale, paceMark: paceMark, height: 5, isAwaitingReading: isAwaitingReading)
             }
             if let caption {
                 Text(caption)

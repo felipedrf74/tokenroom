@@ -146,7 +146,8 @@ struct ProviderCard: View {
                         remaining: snapshot.remainingPercent,
                         isStale: meterStale,
                         paceMark: awaiting ? nil : pace?.elapsedFraction,
-                        height: 6
+                        height: 6,
+                        isAwaitingReading: awaiting
                     )
                 } else {
                     Spacer(minLength: 0)
@@ -155,7 +156,7 @@ struct ProviderCard: View {
                 Color.clear
                     .frame(width: 10, height: 10)
                     .overlay {
-                        if !meterStale, let pace, pace.verdict == .ahead || pace.verdict == .limitReached {
+                        if !meterStale, let pace, pace.needsAttention {
                             Image(systemName: "arrow.up.right")
                                 .font(.system(size: 9, weight: .bold))
                                 .foregroundStyle(paceColor(pace))
@@ -169,7 +170,7 @@ struct ProviderCard: View {
                         .help(note.text)
                 }
                 HeadlineValue(value, size: 13.5, weight: .semibold)
-                    .foregroundStyle(TokenroomTokens.ink(remaining: metered ? snapshot.remainingPercent : 100, isStale: meterStale))
+                    .foregroundStyle(meterStale ? Color.secondary : TokenroomTokens.ink(remaining: metered ? snapshot.remainingPercent : 100, isStale: false))
                     .lineLimit(1)
                     .frame(minWidth: 44, alignment: .trailing)
             }
@@ -285,7 +286,8 @@ struct ProviderCard: View {
                         usedPercent: snapshot.usedPercent,
                         remaining: snapshot.remainingPercent,
                         isStale: stale || awaiting,
-                        paceMark: awaiting ? nil : pace?.elapsedFraction
+                        paceMark: awaiting ? nil : pace?.elapsedFraction,
+                        isAwaitingReading: awaiting
                     )
                 }
             }
@@ -295,7 +297,7 @@ struct ProviderCard: View {
                 caption(forecast)
             }
         }
-        if !isExpanded, !stale, !awaiting, let pace {
+        if !isExpanded, !stale, !awaiting, let pace, isPlain || Self.classicShowsPace(pace, limitWarning: limitWarning) {
             Text(pace.caption())
                 .font(.system(size: TokenroomTokens.captionSize, weight: pace.needsAttention ? .medium : .regular))
                 .foregroundStyle(paceColor(pace))
@@ -307,7 +309,7 @@ struct ProviderCard: View {
         }
         if isExpanded {
             expandedDetails(snapshot, stale: stale)
-        } else {
+        } else if isPlain {
             let others = extraWindows(snapshot)
             if !others.isEmpty {
                 caption(others.prefix(3).map { windowSummary($0) }.joined(separator: " · "))
@@ -328,6 +330,10 @@ struct ProviderCard: View {
         if stale {
             caption(Self.lastGoodText(checkedAt ?? snapshot.fetchedAt, now: date))
         }
+    }
+
+    static func classicShowsPace(_ pace: Pace, limitWarning: String?) -> Bool {
+        pace.needsAttention && limitWarning == nil
     }
 
     /// Where a reading came from when it isn't the provider's own usage call. No time: a status
@@ -382,7 +388,8 @@ struct ProviderCard: View {
                     paceMark: RelayWindow(window).isAwaitingReading(at: date) ? nil : windowPaces[window.id]?.elapsedFraction,
                     caption: windowDetail(window, stale: stale),
                     titleFont: .system(size: 12),
-                    captionFont: .system(size: 11)
+                    captionFont: .system(size: 11),
+                    isAwaitingReading: RelayWindow(window).isAwaitingReading(at: date)
                 )
             }
             if let banked = snapshot.availableBanked(at: date) {
@@ -456,10 +463,10 @@ struct ProviderCard: View {
             ProviderIcon(provider: provider, size: 28)
             Text(provider.displayName)
                 .font(.system(size: TokenroomTokens.popoverNameSize, weight: .semibold))
-                .foregroundStyle(stale ? Color.secondary.opacity(TokenroomTokens.staleOpacity) : Color.primary)
+                .foregroundStyle(stale ? Color.secondary : Color.primary)
             Spacer(minLength: 8)
             HeadlineValue(value ?? "—", size: TokenroomTokens.popoverPercentSize, weight: .medium)
-                .foregroundStyle(TokenroomTokens.ink(remaining: remaining, isStale: stale))
+                .foregroundStyle(stale ? Color.secondary : TokenroomTokens.ink(remaining: remaining, isStale: false))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             if onToggleExpanded != nil {

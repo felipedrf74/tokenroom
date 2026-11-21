@@ -159,6 +159,29 @@ enum DebugSnapshots {
             store.statuses[.openai] = .live(elapsed)
             render(PopoverView(store: store, onSettings: { _ in }), width: PopoverStyle.orbit.width, appearance: .aqua,
                    to: output.appendingPathComponent("popover-orbit-reset.png"))
+            render(PopoverView(store: store, onSettings: { _ in }, expanded: [.openai]), width: PopoverStyle.orbit.width, appearance: .aqua,
+                   to: output.appendingPathComponent("popover-orbit-reset-detail.png"))
+            settings.popoverStyle = .instrument
+            render(PopoverView(store: store, onSettings: { _ in }), width: PopoverStyle.instrument.width, appearance: .aqua,
+                   to: output.appendingPathComponent("popover-instrument-reset.png"))
+            settings.popoverStyle = .classic
+            render(PopoverView(store: store, onSettings: { _ in }), width: PopoverStyle.classic.width, appearance: .aqua,
+                   to: output.appendingPathComponent("popover-classic-reset.png"))
+            settings.popoverStyle = .orbit
+            let resetBar = MenuBarLabel(meters: store.menuMeters.filter { [.claude, .openai, .grok].contains($0.provider) }, style: .meters)
+                .padding(.horizontal, 10)
+                .frame(height: 24)
+                .background(Color(white: 0.93))
+            render(resetBar, width: nil, height: 24, appearance: .aqua, to: output.appendingPathComponent("menubar-meters-reset.png"))
+            var secondaryReset = openai
+            secondaryReset.windows[1].resetsAt = now.addingTimeInterval(-1)
+            store.statuses[.openai] = .live(secondaryReset)
+            render(PopoverView(store: store, onSettings: { _ in }, expanded: [.openai]), width: PopoverStyle.orbit.width, appearance: .aqua,
+                   to: output.appendingPathComponent("popover-orbit-secondary-reset.png"))
+            settings.popoverStyle = .classic
+            render(PopoverView(store: store, onSettings: { _ in }, expanded: [.openai]), width: PopoverStyle.classic.width, appearance: .aqua,
+                   to: output.appendingPathComponent("popover-classic-secondary-reset.png"))
+            settings.popoverStyle = .orbit
             var nearly = openai
             nearly.windows[0].usedPercent = 97
             store.statuses[.openai] = .live(nearly)

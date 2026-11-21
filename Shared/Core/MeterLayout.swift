@@ -16,4 +16,13 @@ enum MeterLayout {
     static func drawnFillEnd(usedPercent: Double, total: CGFloat, height: CGFloat) -> CGFloat {
         fillLength(usedPercent: usedPercent, total: total)
     }
+
+    static func shownUsed(_ usedPercent: Double, isAwaitingReading: Bool) -> Double {
+        isAwaitingReading ? 0 : usedPercent
+    }
+
+    static func shownPace(_ pace: Double?, isStale: Bool, isAwaitingReading: Bool) -> Double? {
+        guard !isStale, !isAwaitingReading, let pace else { return nil }
+        return min(max(pace, 0), 1)
+    }
 }

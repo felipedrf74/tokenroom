@@ -39,7 +39,7 @@ struct SessionLockScreenView: View {
                             .monospacedDigit()
                             .foregroundStyle(TokenroomTokens.ink(remaining: 100 - state.used, isStale: state.isStale))
                     }
-                    MeterTrack(usedPercent: state.used, remaining: 100 - state.used, isStale: state.isStale, paceMark: attributes.paceMark(for: state), height: 6)
+                    MeterTrack(usedPercent: state.used, remaining: 100 - state.used, isStale: state.isStale, paceMark: attributes.paceMark(for: state), height: 6, isAwaitingReading: state.awaitingReading == true)
                     HStack {
                         Text(attributes.windowTitle)
                         Spacer()

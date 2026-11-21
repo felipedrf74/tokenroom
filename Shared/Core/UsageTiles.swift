@@ -39,13 +39,11 @@ enum UsageTiles {
         return UsageTile(ring: ring, bar: bar, balance: balance)
     }
 
-    /// 80% or more used, the limit reached, or running ahead of pace toward a run-out before
-    /// the reset.
     static func isClose(_ window: RelayWindow, pace: Pace?) -> Bool {
         guard window.isMetered else { return false }
         if window.used >= closeUse { return true }
         guard let pace else { return false }
-        return pace.verdict == .limitReached || (pace.verdict == .ahead && pace.runsOutAt != nil)
+        return pace.verdict == .limitReached || pace.runsOutAt != nil
     }
 
     /// Every window still close to its limit, most urgent first: the limit reached, then the

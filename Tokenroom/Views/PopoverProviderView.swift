@@ -74,7 +74,6 @@ struct PopoverProviderView: View {
                     if let window, style != .orbit || !window.isMetered {
                         PopoverValue(text: ReadingText.headline(window, now: card.date), size: window.isMetered ? 24 : 18, monospaced: style == .instrument)
                             .foregroundStyle(.secondary)
-                            .opacity(TokenroomTokens.staleOpacity)
                     }
                     chevron
                 }
@@ -97,14 +96,17 @@ struct PopoverProviderView: View {
     }
 
     func summaryAccessibility(_ window: RelayWindow) -> String {
-        [card.provider.displayName, ReadingText.headline(window, now: card.date),
-         window.isMetered ? "used" : nil, ReadingText.caption(window, now: card.date),
+        let awaiting = window.isAwaitingReading(at: card.date)
+        return [card.provider.displayName, awaiting ? nil : ReadingText.headline(window, now: card.date),
+         window.isMetered && !awaiting ? "used" : nil, ReadingText.caption(window, now: card.date),
          attention, primaryPaceWarning(window), statusNote].compactMap { $0 }.joined(separator: ", ")
     }
 
     private func primaryPaceWarning(_ window: RelayWindow) -> String? {
         guard attention == nil, !isDimmed(window), let pace = card.pace, !pace.isProjected, pace.needsAttention else { return nil }
-        return pace.verdict == .limitReached ? "Limit reached" : "Ahead of pace"
+        if pace.verdict == .limitReached { return "Limit reached" }
+        if let runOut = pace.currentRunOut { return "May run out at \(Pace.shortMoment(runOut, now: card.date, timeZone: .current))" }
+        return "Ahead of pace"
     }
 
     private var attention: String? {
@@ -120,7 +122,7 @@ struct PopoverProviderView: View {
     }
 
     private func tint(_ window: RelayWindow) -> Color {
-        TokenroomTokens.ink(remaining: window.isMetered ? 100 - window.used : 100, isStale: isDimmed(window))
+        isDimmed(window) ? Color.secondary : TokenroomTokens.ink(remaining: window.isMetered ? 100 - window.used : 100, isStale: false)
     }
 
     @ViewBuilder private func summary(_ window: RelayWindow) -> some View {
@@ -150,7 +152,8 @@ struct PopoverProviderView: View {
                     chevron
                 }
                 if window.isMetered {
-                    PopoverMeter(style: style, used: window.used, isStale: isDimmed(window), paceMark: listPace(window), height: style == .strata ? 10 : 7)
+                    PopoverMeter(style: style, used: window.used, isStale: isDimmed(window), paceMark: listPace(window), height: style == .strata ? 10 : 7,
+                                 isAwaitingReading: window.isAwaitingReading(at: card.date))
                 }
                 Text(ReadingText.caption(window, now: card.date))
                     .font(.system(size: 12)).foregroundStyle(.secondary)
@@ -202,17 +205,18 @@ struct PopoverProviderView: View {
 
     private func ring(_ window: RelayWindow, side: CGFloat, dimmed: Bool = false, paceMark: Double? = nil) -> some View {
         let dimmed = dimmed || isDimmed(window)
+        let awaiting = window.isAwaitingReading(at: card.date)
         // UsageRing's stroke straddles its frame; leave room for its cap on every side.
         let inset = max(3, side * 0.05)
-        return UsageRing(used: window.used, isStale: dimmed, label: "", lineWidth: side * 0.095, paceMark: paceMark)
+        return UsageRing(used: window.used, isStale: dimmed, label: "", lineWidth: side * 0.095, paceMark: paceMark, isAwaitingReading: awaiting)
             .frame(width: side - inset * 2, height: side - inset * 2).padding(inset)
+            .opacity(dimmed ? TokenroomTokens.staleOpacity : 1)
             .overlay {
                 PopoverValue(text: ReadingText.headline(window, now: card.date), size: side * 0.3)
                     .foregroundStyle(dimmed ? Color.secondary : TokenroomTokens.ink(remaining: 100 - window.used, isStale: false))
             }
-            .opacity(dimmed ? TokenroomTokens.staleOpacity : 1)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(ReadingText.headline(window, now: card.date)) used")
+            .accessibilityLabel(awaiting ? ReadingText.awaitingReading : "\(ReadingText.headline(window, now: card.date)) used")
     }
 
     private func detail(_ snapshot: QuotaSnapshot, window: RelayWindow) -> some View {
@@ -289,7 +293,8 @@ struct PopoverProviderView: View {
             VStack(alignment: .leading, spacing: 10) {
                 headline(window, size: window.isMetered ? 44 : 30)
                 if window.isMetered {
-                    PopoverMeter(style: style, used: window.used, isStale: isDimmed(window), paceMark: listPace(window), height: style == .strata ? 14 : 9)
+                    PopoverMeter(style: style, used: window.used, isStale: isDimmed(window), paceMark: listPace(window), height: style == .strata ? 14 : 9,
+                                 isAwaitingReading: window.isAwaitingReading(at: card.date))
                 }
                 Text(ReadingText.caption(window, now: card.date)).font(.system(size: 13)).foregroundStyle(.secondary)
             }
@@ -312,12 +317,7 @@ struct PopoverProviderView: View {
                 Text(PopoverInsights.paceSummary(pace))
                     .font(.system(size: 12)).foregroundStyle(.secondary)
                     .help(PopoverInsights.paceDetail(pace))
-                if let runOut = pace.runsOutAt {
-                    // Ahead of pace says when in the caption above; on pace it doesn't.
-                    if !pace.needsAttention {
-                        Text("Projected limit: \(Pace.shortMoment(runOut, now: card.date, timeZone: .current))")
-                            .font(.system(size: 12, weight: .medium)).foregroundStyle(TokenroomTokens.accentText)
-                    }
+                if pace.runsOutAt != nil {
                     Text("Estimated at this pace; usage may change.")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
@@ -363,7 +363,8 @@ struct PopoverProviderView: View {
             }
             if window.isMetered {
                 PopoverMeter(style: style, used: window.used, isStale: isDimmed(window),
-                             paceMark: isDimmed(window) ? nil : card.windowPaces[window.id]?.elapsedFraction, height: style == .strata ? 10 : 7)
+                             paceMark: isDimmed(window) ? nil : card.windowPaces[window.id]?.elapsedFraction, height: style == .strata ? 10 : 7,
+                             isAwaitingReading: window.isAwaitingReading(at: card.date))
             }
             if let reset = ReadingText.reset(window, now: card.date) {
                 Text(reset.capitalizedFirst).font(.system(size: 12)).foregroundStyle(.secondary)

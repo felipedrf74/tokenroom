@@ -25,7 +25,8 @@ struct ProviderDetailView: View {
                 }
             }
             ForEach(Array(orderedWindows.enumerated()), id: \.element.id) { index, window in
-                Section(window.displayTitle) {
+                let isLead = index == 0 && heroWindow?.id == window.id
+                Section {
                     if heroWindow == nil, index == 0 {
                         header
                     }
@@ -36,8 +37,12 @@ struct ProviderDetailView: View {
                         isStale: !provider.isLive || window.isAwaitingReading(at: date),
                         date: date,
                         // The hero above already shows the first metered window's number and facts.
-                        isLead: index == 0 && heroWindow?.id == window.id
+                        isLead: isLead
                     )
+                } header: {
+                    if !isLead {
+                        Text(window.displayTitle)
+                    }
                 }
                 if index == 0, let candidate = LiveActivities.candidate(in: provider, now: date) {
                     Section {
@@ -66,7 +71,7 @@ struct ProviderDetailView: View {
             }
             Section {
                 LabeledContent("From", value: reading.source)
-                if let checked = provider.checkedAt ?? provider.fetchedAt {
+                if provider.isLive, let checked = provider.checkedAt ?? provider.fetchedAt {
                     LabeledContent("Last successful check", value: RelativeTime.ago(checked, now: date))
                 }
             } footer: {
@@ -98,7 +103,8 @@ struct ProviderDetailView: View {
                 let stale = !provider.isLive || window.isAwaitingReading(at: date)
                 HStack(spacing: 11.5) {
                     // The stroke straddles the frame: this keeps it on the card's text edge.
-                    UsageRing(used: window.used, isStale: stale, label: ReadingText.headline(window, now: date), lineWidth: 9, paceMark: heroPace?.elapsedFraction)
+                    UsageRing(used: window.used, isStale: stale, label: ReadingText.headline(window, now: date), lineWidth: 9, paceMark: heroPace?.elapsedFraction,
+                              isAwaitingReading: window.isAwaitingReading(at: date))
                         .frame(width: 100, height: 100)
                         .padding(.leading, 4.5)
                     VStack(alignment: .leading, spacing: 3) {
@@ -113,7 +119,7 @@ struct ProviderDetailView: View {
                             // What's left: the ring's used figure and this add up.
                             HStack(alignment: .firstTextBaseline, spacing: 4) {
                                 HeadlineValue("\(TokenroomFormat.percentText(100 - window.used))%", style: .title3, signStyle: .footnote, weight: .medium)
-                                Text("left")
+                                Text(ReadingText.remainingLabel(isLive: provider.isLive))
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
                             }
@@ -123,7 +129,6 @@ struct ProviderDetailView: View {
                 .accessibilityElement(children: .combine)
                 amountLines(window, isStale: stale)
             }
-            // The last check is at the bottom, with where the reading came from.
             let facts = UsageFacts.facts(for: heroWindow, pace: heroPace, plan: provider.plan, checkedAt: nil, isStale: !provider.isLive, now: date)
             if !facts.isEmpty {
                 Divider()
@@ -170,10 +175,16 @@ struct ProviderDetailView: View {
     private var sourceRow: some View {
         HStack(spacing: 10) {
             ProviderMark(provider: provider, size: 28)
-            if !provider.isLive, let message = provider.message {
-                Text(message)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+            if !provider.isLive {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(ReadingText.lastChecked(provider.checkedAt ?? provider.fetchedAt, now: date))
+                        .font(.footnote.weight(.medium))
+                    if let message = provider.message, !message.hasPrefix(ReadingFreshness.staleMessagePrefix) {
+                        Text(message)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             } else if let category = categoryLine {
                 Text(category)
                     .font(.footnote)
@@ -212,11 +223,15 @@ private struct WindowDetail: View {
         }
         if let history, !history.isEmpty, window.isMetered {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Last 7 days")
+                Text(ReadingText.historyTitle(window, isLead: isLead))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 HistoryChart(history: history, level: isStale ? nil : history.points.last.map { TokenroomTokens.usageColor(usedPercent: $0.used, isStale: false) })
                     .frame(height: 110)
+                Text(Sparkline.summary(history))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
             }
             .padding(.vertical, 4)
         } else if isLead {
@@ -246,7 +261,8 @@ private struct WindowDetail: View {
                 }
             }
             if window.isMetered {
-                MeterTrack(usedPercent: window.used, remaining: 100 - window.used, isStale: isStale || window.isAwaitingReading(at: date), paceMark: pace?.elapsedFraction, height: 7)
+                MeterTrack(usedPercent: window.used, remaining: 100 - window.used, isStale: isStale || window.isAwaitingReading(at: date), paceMark: pace?.elapsedFraction, height: 7,
+                           isAwaitingReading: window.isAwaitingReading(at: date))
             }
             if let pace {
                 Text(pace.caption(now: date))
@@ -333,5 +349,6 @@ private struct HistoryChart: View {
             }
         }
         .accessibilityLabel("Usage over the last 7 days")
+        .accessibilityValue(Sparkline.summary(history))
     }
 }

@@ -25,10 +25,10 @@ final class PopoverStyleTests: XCTestCase {
     func testAllowanceUsesRemainingQuotaAndTimeUntilReset() {
         let window = RelayWindow(id: "weekly", kind: "weekly", title: "Weekly", used: 78, resetsAt: now.addingTimeInterval(2 * 86_400))
         let facts = PopoverInsights.facts(window: window, isStale: false, now: now)
-        XCTAssertEqual(facts.map(\.label), ["Remaining", "Daily allowance"])
+        XCTAssertEqual(facts.map(\.label), ["Remaining", "Even daily pace"])
         XCTAssertEqual(facts[0].value, "22%")
         XCTAssertEqual(facts[1].value, "\(11.0.formatted(.number.precision(.fractionLength(1))))%")
-        XCTAssertEqual(facts[1].detail, "of this quota / day until reset")
+        XCTAssertEqual(facts[1].detail, "of the weekly quota per day until reset")
     }
 
     func testStaleReadingsKeepLabeledRemainderButDoNotInventAnAllowance() {
