@@ -10,7 +10,7 @@ description: >-
 
 # Tokenroom macOS
 
-**Release preparation (21 November 2026):** Mac 2.6.4(1) is prepared with the polish overhaul (#80); nothing was notarized, published or installed. Mac 2.6.3(1) is public as `v2.6.3`. Mobile 1.3.7(1) is prepared alongside it.
+**Delivery status (21 November 2026):** Mac 2.6.4(1), with the polish overhaul (#80), is public as `v2.6.4`, notarized and stapled, and installed from the public package on the MacBook Pro (over 2.6.3); Maquinho Pro wasn't reached. Mobile 1.3.7(1) was submitted at 10:42 UTC: Waiting for Review. `docs/release-delivery-20261121.md` has the receipts.
 
 **Status (18 November 2026):** Mac 2.6.3(1) is public as `v2.6.3` (16 November) and stays the current Mac release. Mobile 1.3.6(1), with the iPhone widget arrangement and styles (#77), was submitted to App Review on 18 November (`docs/release-delivery-20261118.md`); it changes nothing in the Mac app. Maquinho Pro runs the public 2.6.3 package; the MacBook Pro, which got it on 16 November, could not be reached to recheck.
 

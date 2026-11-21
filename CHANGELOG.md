@@ -1,8 +1,8 @@
 # Changelog
 
-## 2.6.4 for Mac / 1.3.7 for iPhone — prepared 21 November 2026
+## 2.6.4 for Mac — released 21 November 2026 / 1.3.7 for iPhone — submitted 21 November 2026
 
-Readings and News say what they know, on every device (#80). Mac 2.6.4 (1) and iPhone, widgets and Watch 1.3.7 (1) are prepared; signing, publication, upload and submission are recorded separately when they happen. Mobile 1.3.6 is ready for distribution.
+Readings and News say what they know, on every device (#80). Mac 2.6.4 is [public](https://github.com/felipedrf74/tokenroom/releases/tag/v2.6.4); iPhone, widgets and Watch 1.3.7 (1) was submitted on 21 November at 10:42 UTC and is Waiting for Review, with automatic release after approval to all users. [The delivery record](docs/release-delivery-20261121.md) has the packages, the upload and the submission.
 
 - After a reset with no new reading, every meter, ring and gauge is empty, with no pace tick, and VoiceOver says "Reset, awaiting reading".
 - A stale reading says how old it is: the menu bar's hover and VoiceOver text, Close to a limit, the iPhone detail ("22% left at last check") and the Watch Smart Stack ("As of 3:10 PM").
