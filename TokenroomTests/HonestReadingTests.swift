@@ -102,8 +102,10 @@ final class HonestReadingTests: XCTestCase {
         XCTAssertEqual(ReadingText.windowCountdown(session(55, resetsIn: 2 * 3600 + 9 * 60), now: now), "5-hour · 2h 9m")
         XCTAssertEqual(ReadingText.windowCountdown(weekly(78, resetsIn: -60), now: now), "Reset · awaiting reading")
         let cycle = RelayWindow(id: "cycle", kind: "billingCycle", title: "This cycle", used: 40, resetsAt: now.addingTimeInterval(10 * 86_400))
-        XCTAssertEqual(ReadingText.windowCountdown(cycle, now: now), ReadingText.reset(cycle, now: now)?.capitalizedFirst, "A month or cycle has one window, so the row keeps room for its date")
-        XCTAssertTrue(ReadingText.windowCountdown(cycle, now: now).hasPrefix("Resets "))
+        let day = now.addingTimeInterval(10 * 86_400).formatted(.dateTime.month(.abbreviated).day())
+        XCTAssertEqual(ReadingText.windowCountdown(cycle, now: now), "This cycle · \(day)")
+        let premium = RelayWindow(id: "premium", kind: "monthly", title: "Premium requests", used: 83, resetsAt: now.addingTimeInterval(10 * 86_400))
+        XCTAssertEqual(ReadingText.windowCountdown(premium, now: now), "Premium requests · \(day)")
         let open = RelayWindow(id: "premium", kind: "monthly", title: "Premium requests", used: 40, resetsAt: nil)
         XCTAssertEqual(ReadingText.windowCountdown(open, now: now), "Premium requests")
     }
@@ -149,6 +151,19 @@ final class HonestReadingTests: XCTestCase {
         XCTAssertFalse(UsageTiles.isClose(window, pace: pace))
         let utc = TimeZone(identifier: "UTC")!
         XCTAssertTrue(pace.caption(now: now, timeZone: utc).hasPrefix("Runs out "))
+    }
+
+    func testTheWatchNamesAMildRunOutBesideItsReset() throws {
+        let utc = TimeZone(identifier: "UTC")!
+        let mild = try XCTUnwrap(UsageRanking.pace(for: weekly(45, resetsIn: 0.3 * week, runsOutIn: 0.2 * week), isStale: false, history: nil, now: now))
+        XCTAssertFalse(mild.needsAttention)
+        XCTAssertEqual(ReadingText.watchPaceNote(mild, now: now, timeZone: utc),
+                       "Runs out \(Pace.shortMoment(now.addingTimeInterval(0.2 * week), now: now, timeZone: utc))")
+        let burst = try XCTUnwrap(UsageRanking.pace(for: weekly(45, resetsIn: 0.3 * week, runsOutIn: 1800), isStale: false, history: nil, now: now))
+        XCTAssertEqual(ReadingText.watchPaceNote(burst, now: now, timeZone: utc), burst.caption(now: now, timeZone: utc))
+        let calm = try XCTUnwrap(UsageRanking.pace(for: weekly(45, resetsIn: 0.3 * week, runsOutIn: nil), isStale: false, history: nil, now: now))
+        XCTAssertNil(ReadingText.watchPaceNote(calm, now: now, timeZone: utc))
+        XCTAssertNil(ReadingText.watchPaceNote(nil, now: now))
     }
 
     func testLimitReachedAndProjectedRunOutsKeepTheirWords() {

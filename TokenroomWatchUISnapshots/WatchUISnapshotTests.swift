@@ -50,5 +50,7 @@ final class WatchUISnapshotTests: XCTestCase {
         shoot("watch-empty")
         _ = launch(["-TokenroomGallery", "YES"])
         shoot("watch-complications")
+        _ = launch(["-TokenroomSmartStack", "YES"])
+        shoot("watch-smart-stack")
     }
 }

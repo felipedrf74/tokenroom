@@ -9,7 +9,9 @@ struct WatchRootView: View {
 
     var body: some View {
         #if DEBUG
-        if UserDefaults.standard.bool(forKey: "TokenroomGallery") {
+        if UserDefaults.standard.bool(forKey: "TokenroomSmartStack") {
+            WatchSmartStackGallery(date: date)
+        } else if UserDefaults.standard.bool(forKey: "TokenroomGallery") {
             WatchComplicationGallery(date: date)
         } else {
             list
@@ -196,7 +198,7 @@ private struct WatchRow: View {
                     Text(ReadingText.windowCountdown(window, now: date))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(2)
                 }
             }
         }
@@ -233,8 +235,8 @@ struct WatchDetailView: View {
                         }
                     }
                     // The whole row's width, so what matters stays on two lines at most.
-                    if let pace, pace.needsAttention || pace.isProjected {
-                        Text(pace.caption(now: date))
+                    if let pace, let note = ReadingText.watchPaceNote(pace, now: date) {
+                        Text(note)
                             .font(.caption2)
                             .foregroundStyle(pace.needsAttention ? TokenroomTokens.accentText : .secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -309,8 +311,8 @@ struct WatchDetailView: View {
         if let reset = ReadingText.reset(window, now: date) {
             parts.append(reset)
         }
-        if let pace, pace.needsAttention || pace.isProjected {
-            parts.append(pace.caption(now: date))
+        if let note = ReadingText.watchPaceNote(pace, now: date) {
+            parts.append(note)
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
@@ -343,6 +345,37 @@ private struct WatchComplicationGallery: View {
             }
             .padding(.horizontal, 6)
         }
+    }
+}
+
+private struct WatchSmartStackGallery: View {
+    var date: Date
+
+    private var live: ReadingCache.Item? { SampleData.cache(now: date).items.first }
+
+    private var stale: ReadingCache.Item? {
+        guard var item = live else { return nil }
+        item.provider.state = "stale"
+        item.provider.checkedAt = date.addingTimeInterval(-2 * 3600)
+        return item
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                card(ResetSoonView(item: live, windowID: live?.provider.primaryWindow?.id))
+                card(ResetSoonView(item: stale, windowID: stale?.provider.primaryWindow?.id))
+                card(ResetSoonView(item: live, windowID: "missing"))
+            }
+            .padding(.horizontal, 6)
+        }
+    }
+
+    private func card(_ view: ResetSoonView) -> some View {
+        view
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .padding(8)
+            .background(.gray.opacity(0.25), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 #endif

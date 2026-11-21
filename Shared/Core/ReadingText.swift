@@ -109,9 +109,17 @@ enum ReadingText {
         if window.isAwaitingReading(at: now) { return "Reset · awaiting reading" }
         guard let resetsAt = window.resetsAt else { return window.displayTitle }
         if window.windowKind == .billingCycle || window.windowKind == .monthly {
-            return reset(window, now: now)?.capitalizedFirst ?? window.displayTitle
+            let day = resetsAt > now ? resetsAt.formatted(.dateTime.month(.abbreviated).day()) : "reset due"
+            return "\(window.displayTitle) · \(day)"
         }
         return "\(window.displayTitle) · \(UsageFacts.countdown(to: resetsAt, now: now))"
+    }
+
+    static func watchPaceNote(_ pace: Pace?, now: Date = .now, timeZone: TimeZone = .current) -> String? {
+        guard let pace else { return nil }
+        if pace.needsAttention || pace.isProjected { return pace.caption(now: now, timeZone: timeZone) }
+        guard let runOut = pace.currentRunOut else { return nil }
+        return "Runs out \(Pace.shortMoment(runOut, now: now, timeZone: timeZone))"
     }
 
     static func asOf(_ checked: Date, now: Date = .now, timeZone: TimeZone = .current) -> String {
