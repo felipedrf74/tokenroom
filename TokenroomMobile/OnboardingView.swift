@@ -21,6 +21,7 @@ struct OnboardingView: View {
                 }
             }
         }
+        .modifier(SnapshotAppearanceMarker())
     }
 
     private var content: some View {
@@ -49,37 +50,37 @@ struct OnboardingView: View {
             Spacer(minLength: 24)
 
             VStack(alignment: .leading, spacing: 16) {
-                // The one primary action: a Mac reads the most plans.
-                VStack(alignment: .leading, spacing: 8) {
-                    NavigationLink {
-                        ConnectMacView(store: store) { dismiss() }
-                    } label: {
-                        Text("Connect your Mac")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
+                if relayIsUnavailable {
+                    localPrimary
+                } else {
+                    // The one primary action: a Mac reads the most plans.
+                    VStack(alignment: .leading, spacing: 8) {
+                        NavigationLink {
+                            ConnectMacView(store: store) { dismiss() }
+                        } label: {
+                            Text("Connect your Mac")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        Text("Claude, Codex, Cursor, Copilot, and more, from Tokenroom on your Mac through your iCloud.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    Text("Claude, Codex, Cursor, Copilot, and more, from Tokenroom on your Mac through your iCloud.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 VStack(spacing: 0) {
-                    NavigationLink {
-                        KeysView(store: store)
-                    } label: {
-                        if store.connectOnIPhone {
-                            // The path someone without a Mac can finish. Copilot is named: it's the
-                            // subscription people expect to sign in to, and its token works here.
-                            OptionRow(symbol: "key", title: "Add a key on this iPhone", text: "Copilot, OpenRouter, and more.")
-                        } else {
-                            OptionRow(symbol: "key", title: "Add an API key", text: "OpenRouter, DeepSeek, and more.")
+                    if !relayIsUnavailable || store.canSignInOnIPhone {
+                        NavigationLink {
+                            KeysView(store: store)
+                        } label: {
+                            keyRow
                         }
+                        Divider().padding(.leading, 56)
                     }
-                    Divider().padding(.leading, 56)
-                    if store.canSignInOnIPhone {
+                    if store.canSignInOnIPhone && !relayIsUnavailable {
                         NavigationLink {
                             ConnectView(store: store)
                         } label: {
@@ -92,6 +93,14 @@ struct OnboardingView: View {
                         dismiss()
                     } label: {
                         OptionRow(symbol: "sparkles", title: "Try sample data", text: "Turn it off any time in Settings.")
+                    }
+                    if relayIsUnavailable {
+                        Divider().padding(.leading, 56)
+                        NavigationLink {
+                            ConnectMacView(store: store) { dismiss() }
+                        } label: {
+                            OptionRow(symbol: "laptopcomputer", title: "Connect your Mac", text: "Not in this build: it can't use iCloud.")
+                        }
                     }
                 }
                 .background(.background.secondary, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -106,6 +115,53 @@ struct OnboardingView: View {
         .padding(.horizontal, 20)
         .padding(.top, 12)
         .padding(.bottom, 16)
+    }
+
+    private var relayIsUnavailable: Bool { store.relayPhase == .unavailable }
+
+    @ViewBuilder
+    private var keyRow: some View {
+        if store.connectOnIPhone {
+            // The path someone without a Mac can finish. Copilot is named: it's the
+            // subscription people expect to sign in to, and its token works here.
+            OptionRow(symbol: "key", title: "Add a key on this iPhone", text: "Copilot, OpenRouter, and more.")
+        } else {
+            OptionRow(symbol: "key", title: "Add an API key", text: "OpenRouter, DeepSeek, and more.")
+        }
+    }
+
+    private var localPrimary: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if store.canSignInOnIPhone {
+                NavigationLink {
+                    ConnectView(store: store)
+                } label: {
+                    Text("Sign in to a plan")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                Text("Codex, Grok Build, Cursor, and more, read on this iPhone.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                NavigationLink {
+                    KeysView(store: store)
+                } label: {
+                    Text(store.connectOnIPhone ? "Add a key on this iPhone" : "Add an API key")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                Text(store.connectOnIPhone ? "Copilot, OpenRouter, and more, read on this iPhone." : "OpenRouter, DeepSeek, and more, read on this iPhone.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }
 

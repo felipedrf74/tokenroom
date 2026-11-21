@@ -14,12 +14,25 @@ struct FollowButton: View {
     @Environment(\.mobileShowsSampleData) private var showsSampleData
     @State private var isFollowing = false
 
+    private static let sampleDataNote = "Turn off Sample Data to follow your own usage."
+
     var body: some View {
         if let window = LiveActivities.candidate(in: provider, preferring: preferring) {
-            Button {
-                toggle(window)
-            } label: {
-                Label(isFollowing ? (isCompact ? "Stop" : "Stop Following") : (isCompact ? "Follow" : "Follow on Lock Screen"), systemImage: isFollowing ? "xmark.circle" : "timer")
+            Group {
+                if showsSampleData && !isFollowing && !followsActivity {
+                    if !isCompact {
+                        Text(Self.sampleDataNote)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Button {
+                        toggle(window)
+                    } label: {
+                        Label(isFollowing ? (isCompact ? "Stop" : "Stop Following") : (isCompact ? "Follow" : "Follow on Lock Screen"), systemImage: isFollowing ? "xmark.circle" : "timer")
+                    }
+                    .accessibilityHint(isFollowing ? "Removes the countdown from the Lock Screen" : "Shows a countdown to the \(WindowNames.inSentence(window.displayTitle)) reset on the Lock Screen and in the Dynamic Island")
+                }
             }
             // Again whenever the provider changes, not only on appearing: a row that now shows
             // another provider doesn't keep the last one's "Stop".
@@ -27,8 +40,11 @@ struct FollowButton: View {
                 guard allowsExternalEffects else { return }
                 isFollowing = LiveActivities.activity(for: provider.id) != nil
             }
-            .accessibilityHint(isFollowing ? "Removes the countdown from the Lock Screen" : "Shows a countdown to the \(WindowNames.inSentence(window.displayTitle)) reset on the Lock Screen and in the Dynamic Island")
         }
+    }
+
+    private var followsActivity: Bool {
+        allowsExternalEffects && LiveActivities.activity(for: provider.id) != nil
     }
 
     private func toggle(_ window: RelayWindow) {

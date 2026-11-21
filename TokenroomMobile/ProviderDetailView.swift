@@ -6,6 +6,7 @@ struct ProviderDetailView: View {
     var date: Date = .now
     @State private var followError: String?
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.mobileShowsSampleData) private var showsSampleData
 
     private var provider: RelayProvider { reading.provider }
 
@@ -48,7 +49,9 @@ struct ProviderDetailView: View {
                     Section {
                         FollowButton(provider: provider) { followError = $0 }
                     } footer: {
-                        Text(followError ?? "Shows a countdown to the \(WindowNames.inSentence(candidate.displayTitle)) reset on the Lock Screen and in the Dynamic Island until it resets.")
+                        if let footer = followError ?? (showsSampleData ? nil : "Shows a countdown to the \(WindowNames.inSentence(candidate.displayTitle)) reset on the Lock Screen and in the Dynamic Island until it resets.") {
+                            Text(footer)
+                        }
                     }
                 }
             }
