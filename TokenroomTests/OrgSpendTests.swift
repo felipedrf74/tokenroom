@@ -42,6 +42,16 @@ final class OrgSpendTests: XCTestCase {
         }
     }
 
+    func testMalformedPagingFlagsAndNonFiniteAmountsAreNotATotal() throws {
+        for body in [#"{"has_more":"true","next_page":"p2","data":[]}"#, #"{"has_more":1,"next_page":"p2","data":[]}"#] {
+            XCTAssertThrowsError(try OpenAICostsParser.page(from: Data(body.utf8)), body) { XCTAssertEqual($0 as? ProviderError, .parse) }
+            XCTAssertThrowsError(try AnthropicCostParser.page(from: Data(body.utf8)), body) { XCTAssertEqual($0 as? ProviderError, .parse) }
+        }
+        XCTAssertNil(try OpenAICostsParser.page(from: Data(#"{"has_more":false,"data":[]}"#.utf8)).nextPage)
+        XCTAssertThrowsError(try OpenAICostsParser.page(from: Data(#"{"data":[{"results":[{"amount":{"value":"NaN"}}]}]}"#.utf8)))
+        XCTAssertThrowsError(try AnthropicCostParser.page(from: Data(#"{"data":[{"results":[{"amount":"Infinity"}]}]}"#.utf8)))
+    }
+
     func testXAITeamCreditsAndInvoice() throws {
         XCTAssertEqual(try XAIBillingParser.teamID(fromValidation: fixture("xai-validation")), "team-placeholder", "scopeId wins over the deprecated teamId")
         XCTAssertFalse(XAIBillingParser.canWrite(fromValidation: fixture("xai-validation")))

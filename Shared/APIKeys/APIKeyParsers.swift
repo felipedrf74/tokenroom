@@ -7,8 +7,8 @@ enum OpenRouterParser {
         let root = try JSONFlex.object(from: data)
         let key = JSONFlex.dictionary(root["data"]) ?? root
         let window: QuotaWindow
-        if let limit = JSONFlex.number(key["limit"]), limit > 0, let reported = JSONFlex.number(key["limit_remaining"]) {
-            // A key with a spending limit is a real meter.
+        if let limit = JSONFlex.number(key["limit"]), limit > 0 {
+            guard let reported = JSONFlex.number(key["limit_remaining"]), reported.isFinite else { throw ProviderError.parse }
             let remaining = min(max(reported, 0), limit)
             let used = limit - remaining
             let period = Self.period(JSONFlex.string(key["limit_reset"]), now: fetchedAt, calendar: calendar)

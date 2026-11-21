@@ -67,11 +67,8 @@ final class APIKeyTests: XCTestCase {
 
     func testOpenRouterLimitWithoutWhatsLeftIsNotAFullKey() throws {
         let now = Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 25, hour: 12))!
-        let snapshot = try OpenRouterParser.snapshot(from: Data(#"{"data":{"limit":100,"limit_reset":"monthly","usage":310.2,"usage_monthly":25.5}}"#.utf8), fetchedAt: now)
-        XCTAssertEqual(snapshot.windows.map(\.id), ["usage-month"])
-        XCTAssertFalse(snapshot.windows[0].isMetered)
-        XCTAssertEqual(snapshot.windows[0].amount?.used ?? 0, 25.5, accuracy: 0.001)
-        XCTAssertNil(snapshot.windows[0].amount?.remaining)
+        XCTAssertThrowsError(try OpenRouterParser.snapshot(from: Data(#"{"data":{"limit":100,"limit_reset":"monthly","usage":310.2,"usage_monthly":25.5}}"#.utf8), fetchedAt: now),
+                             "A capped key without what's left keeps its last reading rather than becoming spend only")
         let spent = try OpenRouterParser.snapshot(from: Data(#"{"data":{"limit":100,"limit_remaining":0,"limit_reset":"monthly"}}"#.utf8), fetchedAt: now)
         XCTAssertEqual(spent.usedPercent, 100, accuracy: 0.001, "An explicit 0 left is a spent key")
     }

@@ -32,15 +32,18 @@ enum OrgSpend {
             guard let results = bucket["results"], !(results is NSNull) else { continue }
             guard let rows = JSONFlex.array(results) else { throw ProviderError.parse }
             for row in rows {
-                guard let result = JSONFlex.dictionary(row), let value = amount(result) else { throw ProviderError.parse }
+                guard let result = JSONFlex.dictionary(row), let value = amount(result), value.isFinite else { throw ProviderError.parse }
                 total += value
             }
         }
+        guard total.isFinite else { throw ProviderError.parse }
         return total
     }
 
     static func nextPage(_ root: [String: Any]) throws -> String? {
-        guard (root["has_more"] as? Bool) == true else { return nil }
+        guard let raw = root["has_more"], !(raw is NSNull) else { return nil }
+        guard let flag = raw as? NSNumber, CFGetTypeID(flag) == CFBooleanGetTypeID() else { throw ProviderError.parse }
+        guard flag.boolValue else { return nil }
         guard let next = JSONFlex.string(root["next_page"]), !next.isEmpty else { throw ProviderError.parse }
         return next
     }

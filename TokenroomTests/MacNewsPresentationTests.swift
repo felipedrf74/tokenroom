@@ -96,6 +96,11 @@ final class MacNewsPresentationTests: XCTestCase {
         let answered = NewsSourceFreshness(cache: cache, sources: sources, now: now)
         XCTAssertEqual(answered.briefing(isChecking: false, modelsCheckedAt: nil, modelsFailed: true), .quiet)
         XCTAssertNil(NewsEmptyBriefing.quiet.actionTitle)
+
+        cache.sourceChecks = ["healthy": .init(succeededAt: now.addingTimeInterval(-7200), failedAt: now), "delayed": .init(succeededAt: now.addingTimeInterval(-7200), failedAt: now)]
+        let outage = NewsSourceFreshness(cache: cache, sources: sources, now: now)
+        XCTAssertEqual(outage.briefing(isChecking: false, modelsCheckedAt: now, modelsFailed: false), .couldNotCheck, "Answered once is not answering now")
+        XCTAssertEqual(outage.failedIDs, ["healthy", "delayed"])
     }
 
     func testEmptyBriefingWithNoFeedsFollowedFollowsTheModelList() {

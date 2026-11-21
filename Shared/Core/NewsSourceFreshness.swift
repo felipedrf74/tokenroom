@@ -8,6 +8,7 @@ struct NewsSourceFreshness {
     var unloadedCount = 0
     var failedIDs = Set<String>()
     var uncheckedIDs = Set<String>()
+    var answeredCount = 0
     /// Read, but only up to their size limit (`NewsCache.SourceCheck.truncatedAt`).
     var truncatedIDs = Set<String>()
     var totalCount: Int { currentCount + delayedCount + unloadedCount }
@@ -34,6 +35,7 @@ struct NewsSourceFreshness {
                 uncheckedIDs.insert(source.id)
                 continue
             }
+            if !failed { answeredCount += 1 }
             let age = now.timeIntervalSince(succeeded)
             let current = currentInterval ?? NewsCadence.currentInterval(for: source)
             if !failed, age >= 0, age <= current { currentCount += 1 }
@@ -54,7 +56,7 @@ struct NewsSourceFreshness {
             if modelsCheckedAt != nil { return .quiet }
             return !isChecking && modelsFailed ? .couldNotCheck : .waiting
         }
-        if checkedCount > 0 { return .quiet }
+        if answeredCount > 0 { return .quiet }
         return !isChecking && !failedIDs.isEmpty ? .couldNotCheck : .waiting
     }
 }

@@ -139,7 +139,7 @@ extension NewsStore {
     }
 
     func firstCheckIDs(_ summary: NewsSourceFreshness) -> Set<String> {
-        summary.uncheckedIDs.union(cache.modelsFetchedAt == nil || modelListFailed ? [ModelFeed.id] : [])
+        summary.uncheckedIDs.union(summary.failedIDs).union(cache.modelsFetchedAt == nil || modelListFailed ? [ModelFeed.id] : [])
     }
 
     private var modelListFailed: Bool {
