@@ -128,7 +128,9 @@ extension NewsStore {
         let checks = selected.map { cache.check(for: $0) }
         let failed = selected.filter { cache.check(for: $0).failedAt != nil || cache.unreadable?.contains($0.id) == true }
         let problem = failed.isEmpty ? nil : "Couldn't read " + failed.map(\.name).joined(separator: ", ") + "."
-        let latest = selected.flatMap { cache.items[$0.id] ?? [] }.compactMap { $0.publisherPublishedAt ?? $0.updatedAt }.max()
+        let latest = selected.flatMap { cache.items[$0.id] ?? [] }.compactMap {
+            kind == .officialStatus ? $0.updatedAt ?? $0.publisherPublishedAt : $0.publisherPublishedAt ?? $0.updatedAt
+        }.max()
         return .init(checkedAt: checks.compactMap(\.succeededAt).min(), uncheckedCount: checks.filter { $0.succeededAt == nil }.count,
                      sourceCount: selected.count, problem: problem, retryIDs: Set(failed.map(\.id)), sourceIDs: Set(selected.map(\.id)),
                      latestItemAt: latest, isVoice: kind == .commentary)

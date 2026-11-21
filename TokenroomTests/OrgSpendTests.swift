@@ -47,8 +47,9 @@ final class OrgSpendTests: XCTestCase {
     func testXAIAmountsThatCantBeReadAreNotZero() throws {
         XCTAssertThrowsError(try XAIBillingParser.prepaidCredits(from: Data(#"{"total":{"val":"unknown"}}"#.utf8))) { XCTAssertEqual($0 as? ProviderError, .parse) }
         XCTAssertThrowsError(try XAIBillingParser.invoice(from: Data(#"{"coreInvoice":{"amountAfterVat":{"val":"unknown"}}}"#.utf8))) { XCTAssertEqual($0 as? ProviderError, .parse) }
-        let fallback = try XAIBillingParser.invoice(from: Data(#"{"coreInvoice":{"amountAfterVat":{"val":"unknown"},"amountBeforeVat":"30000"}}"#.utf8))
-        XCTAssertEqual(fallback.spend, 300, accuracy: 0.001)
+        XCTAssertThrowsError(try XAIBillingParser.invoice(from: Data(#"{"coreInvoice":{"amountAfterVat":{"val":"unknown"},"amountBeforeVat":"30000","vatCost":"1250"}}"#.utf8))) { XCTAssertEqual($0 as? ProviderError, .parse) }
+        let untaxed = try XAIBillingParser.invoice(from: Data(#"{"coreInvoice":{"amountBeforeVat":"30000"}}"#.utf8))
+        XCTAssertEqual(untaxed.spend, 300, accuracy: 0.001)
         XCTAssertEqual(try XAIBillingParser.prepaidCredits(from: Data(#"{"total":{"val":"0"}}"#.utf8)), 0)
         XCTAssertEqual(try XAIBillingParser.invoice(from: Data(#"{"coreInvoice":{"amountAfterVat":{"val":0}}}"#.utf8)).spend, 0)
     }

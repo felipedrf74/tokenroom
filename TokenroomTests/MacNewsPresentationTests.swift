@@ -197,6 +197,24 @@ final class MacNewsPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testAStatusSourceIsDatedByItsLatestIncidentUpdate() throws {
+        let suite = TestDefaults.make(owner: "MacNewsPresentation", index: 4)
+        defer { TestDefaults.remove(suite.name) }
+        let today = Date(timeIntervalSince1970: 1_800_000_000)
+        let opened = today.addingTimeInterval(-86_400 * 2)
+        let updated = today.addingTimeInterval(-86_400)
+        let source = try XCTUnwrap(NewsStatusSource.catalog.first { $0.id == "status-claude" })
+        var cache = NewsCache()
+        cache.sourceChecks = [source.id: .init(succeededAt: today.addingTimeInterval(-120))]
+        cache.items[source.id] = [FeedItem(id: "incident", title: "Incident", published: opened, source: source.name,
+                                           publisherPublishedAt: opened, updatedAt: updated)]
+        let news = NewsStore(defaults: suite.defaults, directory: nil, now: today, initialCache: cache,
+                             fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
+        news.setFollowing(source, true)
+        XCTAssertEqual(news.sourceHealth(for: source).latestItemAt, updated)
+    }
+
+    @MainActor
     func testDesktopPreviewFlagIsInertWithoutOtherFixtureArguments() {
         let name = "tokenroom.tests.news-preview.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: name)!

@@ -121,8 +121,9 @@ enum XAIBillingParser {
     /// `coreInvoice.amountAfterVat` (this month so far) and `effectiveSpendingLimit`, in dollars.
     static func invoice(from data: Data) throws -> (spend: Double, limit: Double?) {
         let root = try JSONFlex.object(from: data)
-        guard let core = JSONFlex.dictionary(root["coreInvoice"]),
-              let cents = JSONFlex.cent(core["amountAfterVat"]) ?? JSONFlex.cent(core["amountBeforeVat"])
+        guard let core = JSONFlex.dictionary(root["coreInvoice"]) else { throw ProviderError.parse }
+        let hasAfterVat = core["amountAfterVat"].map { !($0 is NSNull) } ?? false
+        guard let cents = hasAfterVat ? JSONFlex.cent(core["amountAfterVat"]) : JSONFlex.cent(core["amountBeforeVat"])
         else { throw ProviderError.parse }
         let limit = JSONFlex.cent(root["effectiveSpendingLimit"]).flatMap { $0 > 0 ? $0 / 100 : nil }
         return (cents / 100, limit)

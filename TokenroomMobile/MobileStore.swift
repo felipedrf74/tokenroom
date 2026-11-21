@@ -159,6 +159,10 @@ final class MobileStore {
     /// onboarding, Usage, Settings, and the Watch as they were.
     let connectOnIPhone: Bool
 
+    var relayIsInThisBuild: Bool {
+        relay != nil || relayReads != nil
+    }
+
     var canSignInOnIPhone: Bool {
         connectOnIPhone && sessions != nil
     }

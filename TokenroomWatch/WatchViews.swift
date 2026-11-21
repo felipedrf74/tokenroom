@@ -364,6 +364,7 @@ private struct WatchSmartStackGallery: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
                 card(ResetSoonView(item: live, windowID: live?.provider.primaryWindow?.id))
+                card(ResetSoonView(item: live, windowID: live?.provider.primaryWindow?.id, isSample: true))
                 card(ResetSoonView(item: stale, windowID: stale?.provider.primaryWindow?.id))
                 card(ResetSoonView(item: live, windowID: "missing"))
             }

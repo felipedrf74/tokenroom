@@ -96,11 +96,10 @@ struct OnboardingView: View {
                     }
                     if relayIsUnavailable {
                         Divider().padding(.leading, 56)
-                        NavigationLink {
-                            ConnectMacView(store: store) { dismiss() }
-                        } label: {
-                            OptionRow(symbol: "laptopcomputer", title: "Connect your Mac", text: "Not in this build: it can't use iCloud.")
-                        }
+                        OptionRow(symbol: "laptopcomputer", title: "Connect your Mac",
+                                  text: store.relayIsInThisBuild ? "iCloud is unavailable right now." : "Not in this build: it can't use iCloud.",
+                                  showsChevron: false)
+                            .accessibilityElement(children: .combine)
                     }
                 }
                 .background(.background.secondary, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -189,6 +188,7 @@ private struct OptionRow: View {
     var symbol: String
     var title: String
     var text: String
+    var showsChevron = true
     @ScaledMetric(relativeTo: .title3) private var iconWidth = 30
 
     var body: some View {
@@ -207,10 +207,12 @@ private struct OptionRow: View {
                     .multilineTextAlignment(.leading)
             }
             Spacer(minLength: 0)
-            Image(systemName: "chevron.right")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(.tertiary)
-                .accessibilityHidden(true)
+            if showsChevron {
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
