@@ -2,14 +2,10 @@ import Foundation
 import LocalAuthentication
 import Security
 
-/// Antigravity's Gemini and other-model windows, from `agy -p /usage --output-format json`.
-/// agy 1.1.11 added `/usage` as a local command; older versions send it to the model as a prompt,
-/// which spends quota, so they're never run with it. Mac only.
 struct AntigravityClient: ProviderClient {
     let provider = Provider.antigravity
     static let minimumVersion = [1, 1, 11]
 
-    /// agy starts its own services before answering, so it gets longer than an HTTP call.
     var fetchBudget: TimeInterval { 35 }
 
     func fetch() async -> Result<QuotaSnapshot, ProviderError> {
@@ -46,7 +42,6 @@ struct AntigravityClient: ProviderClient {
         }
     }
 
-    /// The login Antigravity and agy share. Only its attributes are read, never the token.
     static func loginAttributes() -> [String: Any]? {
         let context = LAContext()
         context.interactionNotAllowed = true
@@ -67,7 +62,6 @@ struct AntigravityClient: ProviderClient {
         loginAttributes() != nil
     }
 
-    /// Changes when Antigravity signs in again: the item's modification date.
     static func sessionStamp() -> String? {
         guard let attributes = loginAttributes() else { return nil }
         let modified = (attributes[kSecAttrModificationDate as String] as? Date)?.timeIntervalSince1970 ?? 0
@@ -75,7 +69,6 @@ struct AntigravityClient: ProviderClient {
     }
 }
 
-/// Reads agy's `/usage` JSON, and the same groups as Antigravity's own servers spell them.
 enum AntigravityParser {
     static let known: [String: (kind: WindowKind, title: String, seconds: Double)] = [
         "gemini-weekly": (.weekly, "Gemini weekly", 7 * 86_400),
@@ -90,7 +83,6 @@ enum AntigravityParser {
         if let status = JSONFlex.string(root["status"]), status != "SUCCESS" {
             throw failure(root)
         }
-        // agy wraps the groups in `command.data`; the local server in `response`.
         let body = JSONFlex.dictionary(JSONFlex.dictionary(root["command"])?["data"])
             ?? JSONFlex.dictionary(root["response"])
             ?? root
@@ -102,7 +94,7 @@ enum AntigravityParser {
             let groupName = JSONFlex.string(group["name"]) ?? JSONFlex.string(group["displayName"])
             for bucket in (JSONFlex.array(group["buckets"]) ?? []).compactMap(JSONFlex.dictionary) {
                 guard (bucket["disabled"] as? Bool) != true,
-                      let fraction = remainingFraction(bucket)  // Unknown stays unknown: never 0% or 100%.
+                      let fraction = remainingFraction(bucket)
                 else { continue }
                 let id = JSONFlex.string(bucket["id"]) ?? JSONFlex.string(bucket["bucketId"]) ?? ""
                 let used = JSONFlex.clampPercent((1 - fraction) * 100)
@@ -123,13 +115,11 @@ enum AntigravityParser {
                 }
             }
         }
-        // Accounts that report per-model buckets instead of the known groups still show something.
         let windows = order.compactMap { byID[$0] }.nilIfEmpty ?? others
         guard !windows.isEmpty else { throw ProviderError.parse }
         return try .headlined(by: windows, provider: .antigravity, fetchedAt: fetchedAt)
     }
 
-    /// `remaining_fraction` (agy), `remainingFraction` (servers), or nested under `remaining`.
     static func remainingFraction(_ bucket: [String: Any]) -> Double? {
         if let value = JSONFlex.number(bucket["remaining_fraction"]) ?? JSONFlex.number(bucket["remainingFraction"]) {
             return value

@@ -1,19 +1,13 @@
 import SwiftUI
 
-/// A usage meter: a rounded track, the used fill in its level's colour (a slightly lighter tint
-/// where it starts, the full colour at its tip), and the even pace as a notch with a slim marker.
-/// When use runs ahead of that pace, the stretch past the notch is a little lighter, so "ahead"
-/// reads without a caption and without pattern.
 struct MeterTrack: View {
     var usedPercent: Double
     var remaining: Double
     var isStale: Bool
-    /// Where an even pace would be now, 0–1 of the window; drawn as a notch and marker.
     var paceMark: Double? = nil
     var height: CGFloat = TokenroomTokens.meterHeight
     var isAwaitingReading = false
 
-    /// How far the pace marker reaches past the track, above and below.
     private var overhang: CGFloat { max(1, height * 0.2) }
 
     var body: some View {
@@ -28,8 +22,6 @@ struct MeterTrack: View {
 
             let width = MeterLayout.drawnFillEnd(usedPercent: usedPercent, total: size.width, height: height)
             if width > 0 {
-                // Ends at the fraction. It starts under the track's left cap, which clips it, so a
-                // sliver shows as a rounded end without being drawn wider than it is.
                 var bar = context
                 bar.clip(to: track)
                 let fillRect = CGRect(x: -radius, y: overhang, width: width + radius, height: height)
@@ -37,7 +29,6 @@ struct MeterTrack: View {
                 bar.fill(fill, with: shading(usedPercent: usedPercent, fillEnd: width))
 
                 if let pace, used > pace + 0.015 {
-                    // Past the even pace: the same colour, a step lighter.
                     var ahead = bar
                     ahead.clip(to: fill)
                     ahead.fill(Path(CGRect(x: size.width * pace, y: overhang, width: width - size.width * pace, height: height)),
@@ -47,7 +38,6 @@ struct MeterTrack: View {
 
             if let pace {
                 let x = size.width * pace
-                // The notch: a gap through track and fill, so the marker never sits on colour.
                 var notch = context
                 notch.blendMode = .destinationOut
                 notch.fill(Path(CGRect(x: x - 1.5, y: overhang - 1, width: 3, height: height + 2)), with: .color(.black))
@@ -56,10 +46,8 @@ struct MeterTrack: View {
             }
         }
         .frame(height: height + overhang * 2)
-        // Lays out at the track's height; the marker reaches past it.
         .padding(.vertical, -overhang)
         .opacity(isStale ? 0.85 : 1)
-        // The fill repeats the percent next to it; only the pace mark adds something to hear.
         .accessibilityElement()
         .accessibilityHidden(paceMark == nil || isStale || isAwaitingReading)
         .accessibilityLabel("Even pace")
@@ -70,7 +58,6 @@ struct MeterTrack: View {
         if isStale {
             return .color(Color.secondary.opacity(0.72))
         }
-        // One colour by level, the menu bar's rule, from a lighter tint up to the tip.
         let tones = TokenroomTokens.usageTones(usedPercent: usedPercent)
         return .linearGradient(Gradient(colors: [tones.start, tones.end]),
                                startPoint: CGPoint(x: 0, y: 0),
@@ -78,9 +65,6 @@ struct MeterTrack: View {
     }
 }
 
-/// A meter of plain shapes, for surfaces the system tints or that can't blend: a watch face, the
-/// Lock Screen, a tinted widget. The same reading as `MeterTrack`: one capsule, the fill, and past
-/// the even pace the same fill a step lighter, with a slim mark on the join.
 struct FlatMeter: View {
     var used: Double
     var pace: Double? = nil
@@ -88,8 +72,6 @@ struct FlatMeter: View {
     var height: CGFloat = 4
     var isAwaitingReading = false
 
-    /// Where the fill runs, in points of `width`: up to the even pace, and on from it when use has
-    /// passed the pace. Exactly the reading, so a meter at 0% draws nothing, as `MeterLayout` says.
     static func runs(used: Double, pace: Double?, width: CGFloat) -> (fill: ClosedRange<CGFloat>?, ahead: ClosedRange<CGFloat>?) {
         let end = MeterLayout.fillLength(usedPercent: used, total: width)
         guard end > 0 else { return (nil, nil) }
@@ -98,7 +80,6 @@ struct FlatMeter: View {
         return (mark > 0 ? 0...min(end, mark) : nil, end > mark ? mark...end : nil)
     }
 
-    /// A stretch of the bar, square at both ends: the capsule around them rounds the bar's own.
     private struct Run: Shape {
         var span: ClosedRange<CGFloat>?
 

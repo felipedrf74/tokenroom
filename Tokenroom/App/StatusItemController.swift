@@ -124,8 +124,6 @@ final class StatusItemController: NSObject {
     func showPopover() {
         guard item.button != nil else { return }
         NSApp.activate()
-        // The mouse-up that opened the extra must finish first, or AppKit
-        // treats it as a click outside and closes the popover immediately.
         DispatchQueue.main.async { [weak self] in
             guard let self, let button = self.item.button else { return }
             self.popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)

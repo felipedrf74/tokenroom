@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""Check whitespace and Swift syntax in the commits being pushed, not the worktree.
-
-Module typechecking remains in CI: parsing an isolated file cannot establish
-Swift's cross-file types. No compiler diagnostic or timeout is treated as a pass.
-"""
 import os
 from pathlib import Path
 import re
@@ -34,7 +29,6 @@ def check_updates(lines, remote):
             previous = base.stdout.decode().strip() if base.returncode == 0 else ""
         available = subprocess.run(["git", "cat-file", "-e", previous + "^{commit}"], capture_output=True) if previous else None
         if available is None or available.returncode:
-            # A missing remote object must expand the check, never hide files.
             previous = subprocess.check_output(["git", "hash-object", "-t", "tree", "--stdin"], input=b"").decode().strip()
         subprocess.run(["git", "diff", "--no-ext-diff", "--check", previous, head, "--"], check=True)
         names = git("diff", "--no-ext-diff", "--no-renames", "--name-only", "--diff-filter=ACMRT", "-z", previous, head, "--")
@@ -49,8 +43,6 @@ def check_updates(lines, remote):
 
 
 if __name__ == "__main__":
-    # The hook runs from the repository root. Do not let inherited git overrides
-    # redirect validation to an unrelated index, worktree or object store.
     for key in list(os.environ):
         if key.startswith("GIT_"):
             del os.environ[key]

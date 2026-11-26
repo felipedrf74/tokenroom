@@ -2,7 +2,6 @@ import XCTest
 @testable import Tokenroom
 
 final class NewsDiscoveryTests: XCTestCase {
-    /// Treating a profile-only follow as a feed would fetch or badge an invented timeline.
     @MainActor func testProfileOnlyFollowDoesNotFetchBadgeOrNotify() async throws {
         let suite = "tokenroom.tests.profile-only." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -13,8 +12,6 @@ final class NewsDiscoveryTests: XCTestCase {
             requests.value.append(request)
             return .init(cache: request.cache, newModels: [])
         }, notify: { _, _, _ in notifications.value += 1 })
-        // The catalog's one profile-only voice was removed in November 2026; a follow it left
-        // behind, or a profile-only voice added later, is the same case.
         XCTAssertTrue(NewsVoice.catalog.allSatisfy { $0.feed != nil })
         let voiceID = "voice-embirico"
         let cache = news.cache
@@ -29,7 +26,6 @@ final class NewsDiscoveryTests: XCTestCase {
         XCTAssertEqual(notifications.value, 0)
     }
 
-    /// A catalog re-ranking must update Skills without changing News or scheduling its alerts.
     @MainActor func testSkillRankMovementDoesNotFetchBadgeOrNotifyNews() async throws {
         let suite = "tokenroom.tests.skill-news-isolation." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

@@ -2,7 +2,6 @@ import CloudKit
 import XCTest
 @testable import Tokenroom
 
-/// The shared logic the iPhone app, widgets, and Watch run, tested on the Mac.
 final class MobileLogicTests: XCTestCase {
     private let now = Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 25, hour: 12))!
     private var suites: [String] = []
@@ -15,9 +14,7 @@ final class MobileLogicTests: XCTestCase {
         super.tearDown()
     }
 
-    /// A throwaway stand-in for the App Group's defaults.
     private func makeDefaults() -> UserDefaults {
-        // Named by the class and a count: macOS keeps an empty preferences file for every name.
         let name = "tokenroom.tests.\(Self.self).\(suites.count)"
         suites.append(name)
         let defaults = UserDefaults(suiteName: name)!
@@ -29,8 +26,6 @@ final class MobileLogicTests: XCTestCase {
         let window = QuotaWindow(id: "weekly", kind: .weekly, title: "Weekly", usedPercent: used, resetsAt: now.addingTimeInterval(3 * 86_400), windowSeconds: 7 * 86_400)
         return try! QuotaSnapshot.headlined(by: [window], provider: provider, fetchedAt: fetchedAt ?? now)
     }
-
-    // MARK: Status rules
 
     func testFailuresKeepTheLastReadingWhereItHelps() {
         let cached = snapshot(fetchedAt: now.addingTimeInterval(-3601))
@@ -75,8 +70,6 @@ final class MobileLogicTests: XCTestCase {
         XCTAssertTrue(signedOut.isDisconnected)
         XCTAssertFalse(RelayProvider(provider: .claude, status: .expired("x", cached: snapshot()), checkedAt: nil).isDisconnected, "An expired session with a recent reading still shows it")
     }
-
-    // MARK: Publishing
 
     func testPublishPolicy() {
         var policy = RelayPublishPolicy()
@@ -149,7 +142,6 @@ final class MobileLogicTests: XCTestCase {
         off.isEnabled = false
         XCTAssertNotEqual(envelope([balance(12.4)], extra: off).materialHash, envelope([balance(12.4)], extra: extra).materialHash)
 
-        // Still at most every five minutes, like any other change.
         var policy = RelayPublishPolicy()
         policy.didSend(envelope([balance(12.4)]), at: now)
         XCTAssertFalse(policy.isDue(envelope([balance(12.39)]), now: now.addingTimeInterval(4 * 60)))
@@ -173,7 +165,6 @@ final class MobileLogicTests: XCTestCase {
         XCTAssertTrue(policy.isDue(envelope([weekly(RelayPace(runsOutAt: nil))]), now: now.addingTimeInterval(5 * 60)), "Running out, or not")
         XCTAssertTrue(policy.isDue(envelope([weekly(nil)]), now: now.addingTimeInterval(5 * 60)), "No longer measured")
 
-        // Wobbling across an hour boundary, or around the reset, doesn't go out every 5 minutes.
         policy.didSend(runsOut(in: 175), at: now)
         XCTAssertFalse(policy.isDue(runsOut(in: 185), now: now.addingTimeInterval(8 * 60)))
         XCTAssertFalse(policy.isDue(runsOut(in: 165), now: now.addingTimeInterval(8 * 60)))
@@ -181,8 +172,6 @@ final class MobileLogicTests: XCTestCase {
         XCTAssertFalse(policy.isDue(runsOut(in: 140, resetsIn: 3 * 3600), now: now.addingTimeInterval(8 * 60)), "Forty minutes before the reset is as good as lasting")
         XCTAssertTrue(policy.isDue(runsOut(in: 100, resetsIn: 3 * 3600), now: now.addingTimeInterval(8 * 60)))
     }
-
-    // MARK: Ranking
 
     func testRankingPutsUrgentMeteredReadingsFirst() {
         func provider(_ name: String, used: Double, metered: Bool = true) -> RelayProvider {
@@ -205,7 +194,6 @@ final class MobileLogicTests: XCTestCase {
         }
         let keyLimit = RelayWindow(id: "key", kind: "pool", title: "Key limit", used: 100)
         let spent = provider("Spent", keyLimit)
-        // Halfway through its week at 55%: runs out in the last quarter.
         let weekly = provider("Weekly", RelayWindow(id: "weekly", kind: "weekly", title: "Weekly", used: 55, resetsAt: now.addingTimeInterval(3.5 * 86_400), periodSec: 7 * 86_400))
         let pace = { (reading: RelayProvider) in UsageRanking.pace(for: reading, history: nil, now: self.now) }
         XCTAssertEqual(pace(weekly)?.severity, .watch)
@@ -214,8 +202,6 @@ final class MobileLogicTests: XCTestCase {
         let stale = provider("Spent", keyLimit, state: "stale")
         XCTAssertEqual(UsageRanking.sorted([stale, weekly], provider: { $0 }, now: now, pace: pace).map(\.name), ["Weekly", "Spent"], "Like any stale reading, it has no urgency")
     }
-
-    // MARK: Sample data
 
     func testSampleDataIsCompleteAndRanked() throws {
         let cache = SampleData.cache(now: now)
@@ -231,8 +217,6 @@ final class MobileLogicTests: XCTestCase {
         XCTAssertNil(claude.history["session"], "Sessions are too short for a week's chart")
         XCTAssertEqual(SampleData.cache(now: now), cache, "The same moment gives the same samples")
     }
-
-    // MARK: Widget cache
 
     func testReadingCacheRoundTripsAndIgnoresCheckTimes() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -259,8 +243,6 @@ final class MobileLogicTests: XCTestCase {
         XCTAssertNil(ReadingCache.load(from: url), "A cache from a newer version isn't misread")
     }
 
-    // MARK: Assembling readings for the app and widgets
-
     func testAssemblerMergesSourcesWithTheirOwnHistory() {
         let macProvider = RelayProvider(provider: .claude, status: .live(snapshot(.claude, used: 70)), checkedAt: now)
         let phoneProvider = RelayProvider(provider: .openrouter, status: .live(snapshot(.openrouter, used: 20)), checkedAt: now)
@@ -282,8 +264,6 @@ final class MobileLogicTests: XCTestCase {
         XCTAssertEqual(output.disconnected.map(\.id), ["cursor"])
     }
 
-    /// Mac A is signed in to Claude and asleep for two hours; Mac B isn't, and says so now. Claude
-    /// stays, faded, on the iPhone, its widgets, and the Watch, rather than moving to Not connected.
     func testACollectorThatIsntSignedInDoesntHideAnotherCollectorsReading() {
         let asleep = now.addingTimeInterval(-2 * 3600)
         let reading = RelayProvider(provider: .claude, status: .live(snapshot(.claude, used: 70, fetchedAt: asleep)), checkedAt: asleep)
@@ -303,7 +283,6 @@ final class MobileLogicTests: XCTestCase {
             XCTAssertEqual(watch.items.map(\.id), ["claude"], "The Watch keeps it too")
         }
 
-        // A live reading still beats it, and among readings with nothing to show the newest wins.
         let fresh = RelayProvider(provider: .claude, status: .live(snapshot(.claude, used: 75)), checkedAt: now.addingTimeInterval(-60))
         let live = RelayMerge.Source(id: "mac-b", label: "Laptop", envelope: RelayEnvelope(producer: "mac", appVersion: "1", checkedAt: now, providers: [fresh]))
         XCTAssertEqual(ReadingAssembler.assemble(sources: [macA, live], histories: [:], now: now).connected.first?.source, "Laptop")
@@ -315,7 +294,6 @@ final class MobileLogicTests: XCTestCase {
         ]))
         XCTAssertEqual(ReadingAssembler.assemble(sources: [older, newer], histories: [:], now: now).disconnected.map(\.provider.message), ["Newer"])
 
-        // One dated ahead of the clock (a collector's clock running fast) is as new as anything.
         let ahead = RelayProvider(provider: .claude, status: .stale(snapshot(.claude, used: 10, fetchedAt: now.addingTimeInterval(360))), checkedAt: now.addingTimeInterval(360))
         let real = RelayProvider(provider: .claude, status: .stale(snapshot(.claude, used: 55, fetchedAt: asleep)), checkedAt: asleep)
         let entries = RelayMerge.entries(from: [
@@ -325,9 +303,6 @@ final class MobileLogicTests: XCTestCase {
         XCTAssertEqual(entries.first?.sourceLabel, "A")
     }
 
-    /// Mac A's reading is two hours old; Mac B has just found Claude signed out. The faded reading
-    /// stays, and says what Mac B found, so "sign in" isn't lost for a week. Mac B's status from
-    /// before Mac A's reading says nothing new.
     func testANewerSignInStatusShowsOnAnotherCollectorsFadedReading() {
         let asleep = now.addingTimeInterval(-2 * 3600)
         let reading = RelayProvider(provider: .claude, status: .live(snapshot(.claude, used: 70, fetchedAt: asleep)), checkedAt: asleep)
@@ -348,8 +323,6 @@ final class MobileLogicTests: XCTestCase {
                        "Last successful check 2h ago.", "Signed out before Mac A's reading: nothing new")
     }
 
-    /// A key provider this launch hasn't checked, with nothing saved for it, isn't listed as not
-    /// connected without a reason, and doesn't hide another collector's reason.
     func testAProviderWaitingForItsFirstCheckIsNeitherConnectedNorNot() {
         let waiting = RelayProvider(provider: .openrouter, status: .loading, checkedAt: nil)
         XCTAssertTrue(waiting.isAwaitingFirstReading)
@@ -421,8 +394,6 @@ final class MobileLogicTests: XCTestCase {
         XCTAssertEqual(next.window.id, next.provider.windowToFollow(now: now)?.id)
     }
 
-    // MARK: Deep links and text
-
     func testDeepLinksRoundTrip() {
         for link in [DeepLink.provider("claude"), .provider("kimiCode"), .news, .settings, .keys, .alerts, .widgets, .connect] {
             XCTAssertEqual(DeepLink(link.url), link)
@@ -440,8 +411,6 @@ final class MobileLogicTests: XCTestCase {
         XCTAssertEqual(ReadingText.amountDetail(QuotaAmount(used: 249, limit: 300, remaining: 51, unit: "requests")), "249 of 300 requests")
         XCTAssertEqual(ReadingText.amountDetail(QuotaAmount(used: 312.5, unit: "usd")), "\(312.5.formatted(.currency(code: "USD"))) spent")
     }
-
-    // MARK: State shared with the widgets
 
     func testKeyFetchGateSpacesCallsFromTheLastAttempt() {
         let defaults = makeDefaults()
@@ -487,9 +456,6 @@ final class MobileLogicTests: XCTestCase {
             return ReadingCache.Item(provider: RelayProvider(provider: .claude, status: live ? .live(snapshot) : .stale(snapshot), checkedAt: now), source: "Mac")
         }
         let hourly = now.addingTimeInterval(3600)
-        // Hourly, but a live reading checked just now would go stale on the hour, so the reload
-        // comes five minutes before that (`ReadingFreshness.staleLead`, the 7 November 2026
-        // sync decision; it came a second after the hour before).
         let calm = now.addingTimeInterval(ReadingFreshness.staleAfter - ReadingFreshness.staleLead)
         XCTAssertEqual(WidgetSchedule.nextReload(after: now, items: [item(used: 40, resetsIn: 3)]), calm, "Calm readings reload hourly, before a live one goes stale")
         XCTAssertEqual(WidgetSchedule.nextReload(after: now, items: [item(used: 85, resetsIn: 3)]), now.addingTimeInterval(1800), "At 80% or more and resetting within 12 hours, every half hour")
@@ -500,8 +466,6 @@ final class MobileLogicTests: XCTestCase {
         XCTAssertLessThan(24 * 3600 / WidgetSchedule.calmInterval, 40, "A calm day stays under WidgetKit's budget")
     }
 
-    /// A reading saved live, from a Mac that stopped checking three hours ago: stale as shown, so
-    /// widgets don't reload half-hourly for it, on the iPhone as on the Watch.
     func testWidgetsJudgeTheReloadByTheReadingAsShownNow() throws {
         let checked = now.addingTimeInterval(-3 * 3600)
         let window = QuotaWindow(id: "session", kind: .session, title: "Session", usedPercent: 85, resetsAt: now.addingTimeInterval(2 * 3600), windowSeconds: 5 * 3600)
@@ -512,8 +476,6 @@ final class MobileLogicTests: XCTestCase {
         XCTAssertGreaterThan(cache.nextReload(after: now, reloads: 0), now.addingTimeInterval(1800))
     }
 
-    /// The note under a widget's rows names the window its row doesn't lead with: picked with
-    /// the reading's history, as the row picks it.
     func testAWidgetsNoteDoesntRepeatItsRow() throws {
         let weeklyWindow = QuotaWindow(id: "weekly", kind: .weekly, title: "Weekly", usedPercent: 50, resetsAt: now.addingTimeInterval(36 * 3600), windowSeconds: 7 * 86_400)
         let session = QuotaWindow(id: "session", kind: .session, title: "Session", usedPercent: 55, resetsAt: now.addingTimeInterval(2 * 3600), windowSeconds: 5 * 3600)
@@ -527,8 +489,6 @@ final class MobileLogicTests: XCTestCase {
         XCTAssertEqual(ReadingText.attention(provider, now: now), "Weekly 50%", "Without the history, it would repeat the row")
         XCTAssertNil(item.attention(now: now))
     }
-
-    // MARK: iCloud failures
 
     func testRelayErrorPolicy() {
         func outcome(_ error: Error) -> RelayErrorPolicy.Outcome {
@@ -557,8 +517,6 @@ final class MobileLogicTests: XCTestCase {
         XCTAssertTrue(RelayErrorPolicy.Outcome.noAccount.stopsBatch)
     }
 
-    /// Signed in, but iCloud can't be used now: that's said as it is, and only a missing account
-    /// asks the user to sign in.
     func testAnICloudAccountThatCantBeUsedNowIsntSignedOut() {
         XCTAssertNil(RelayErrorPolicy.unusableAccount(.available))
         XCTAssertNil(RelayErrorPolicy.unusableAccount(.noAccount), "Signed out starts afresh")
@@ -570,8 +528,6 @@ final class MobileLogicTests: XCTestCase {
         }
         XCTAssertNotEqual(RelayErrorPolicy.unusableAccount(.temporarilyUnavailable), RelayErrorPolicy.unusableAccount(.restricted))
     }
-
-    // MARK: Nothing secret leaves the device
 
     func testNoKeyMaterialReachesAnyRecord() async throws {
         let secret = "tr-test-QXJ7ZKP9WM"
@@ -595,7 +551,6 @@ final class MobileLogicTests: XCTestCase {
         let provider = RelayProvider(provider: .openrouter, status: .live(snapshot), checkedAt: now)
         let envelope = RelayEnvelope(producer: "iphone", appVersion: "1", checkedAt: now, providers: [provider])
         let cache = ReadingCache(savedAt: now, isSample: false, items: [ReadingCache.Item(provider: provider, source: "This iPhone", history: history.series)])
-        // An alert from the same reading, as its Event record carries it, and the shared choices.
         var calm = provider, busy = provider
         calm.windows[0].used = 10
         busy.windows[0].used = 85

@@ -4,11 +4,9 @@ import os
 struct GrokClient: ProviderClient {
     var provider: Provider { .grok }
 
-    /// The plan name rarely changes; look it up at most every six hours.
     private static let planCache = OSAllocatedUnfairLock<(label: String?, at: Date)?>(initialState: nil)
     private static let planTTL: TimeInterval = 6 * 3_600
 
-    /// Another account may be on another plan.
     func credentialsChanged() {
         Self.planCache.withLock { $0 = nil }
     }
@@ -25,7 +23,6 @@ struct GrokClient: ProviderClient {
         }
     }
 
-    /// One retry when the server refuses the access token and a renewal can replace it.
     private func billing(_ auth: CredentialReaders.GrokAuth) async throws -> QuotaSnapshot {
         let url = URL(string: "https://cli-chat-proxy.grok.com/v1/billing?format=credits")!
         do {
@@ -50,7 +47,6 @@ struct GrokClient: ProviderClient {
         return snapshot
     }
 
-    /// `subscription_tier_display` from the CLI's settings. Best effort: never fails the reading.
     private func planLabel(token: String, headers: [String: String]) async -> String? {
         if let cached = Self.planCache.withLock({ $0 }), Date().timeIntervalSince(cached.at) < Self.planTTL {
             return cached.label

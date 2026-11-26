@@ -2,9 +2,6 @@
 import SwiftUI
 import WidgetKit
 
-// The complications' and Smart Stack's views. They're here rather than in the widget target so the
-// Watch app's debug gallery draws the same views, for screenshots without a watch face.
-
 struct ComplicationEntry: TimelineEntry {
     var date: Date
     var items: [ReadingCache.Item]
@@ -13,7 +10,6 @@ struct ComplicationEntry: TimelineEntry {
 
 struct ComplicationView: View {
     var entry: ComplicationEntry
-    /// The family to draw when it isn't on a watch face: the debug gallery's.
     var preview: WidgetFamily? = nil
     @Environment(\.widgetFamily) private var systemFamily
     @Environment(\.widgetRenderingMode) private var renderingMode
@@ -27,13 +23,11 @@ struct ComplicationView: View {
             .accessibilityValue(entry.items.first.map { "Last successful check \(RelativeTime.ago($0.provider.checkedAt ?? $0.provider.fetchedAt, now: entry.date))\($0.provider.isLive ? "" : ", stale")" + (ReadingText.attention($0.provider, now: entry.date, lead: $0.provider.leadWindow(now: entry.date, history: $0.history)).map { ", \($0)" } ?? "") } ?? "No readings")
     }
 
-    /// Circular and corner complications show one provider and open it; the rest open the list.
     private var link: URL? {
         guard let first = entry.items.first, family == .accessoryCircular || family == .accessoryCorner else { return Self.listURL }
         return DeepLink.provider(first.id).url
     }
 
-    /// Not a provider's link, so the Watch app opens on its list rather than where it was left.
     private static let listURL = URL(string: "\(DeepLink.scheme)://usage")
 
     @ViewBuilder
@@ -44,7 +38,6 @@ struct ComplicationView: View {
             switch family {
             case .accessoryCorner:
                 let balance = window.flatMap { $0.isMetered ? nil : $0.amount }
-                // A balance has nothing to fill: its amount, and the provider's name for a label.
                 Text(window?.isAwaitingReading(at: entry.date) == true ? "—" : (balance.map(ReadingText.circleAmount) ?? ReadingText.headline(window, now: entry.date)))
                     .font(.system(size: 14, weight: .semibold, design: .rounded))
                     .widgetCurvesContent()
@@ -64,7 +57,6 @@ struct ComplicationView: View {
                     }
             case .accessoryRectangular:
                 VStack(alignment: .leading, spacing: 2) {
-                    // Samples give up a row to say so.
                     ForEach(entry.items.prefix(entry.isSample ? 2 : 3)) { item in
                         let row = item.provider.leadWindow(now: entry.date, history: item.history)
                         HStack(spacing: 4) {
@@ -73,13 +65,11 @@ struct ComplicationView: View {
                                 .frame(width: 72, alignment: .leading)
                                 .lineLimit(1)
                             if row?.isMetered == false, row?.amount != nil {
-                                // A balance: its amount, with no empty bar beside it.
                                 Spacer(minLength: 0)
                             } else {
                                 let stale = !item.provider.isLive || row?.isAwaitingReading(at: entry.date) == true
                                 FlatMeter(used: row?.used ?? 0,
                                           pace: stale ? nil : row.flatMap { UsageRanking.pace(for: $0, isStale: false, history: item.history[$0.id], now: entry.date)?.elapsedFraction },
-                                          // A tinted face turns colour into brightness: ink keeps a critical meter bright.
                                           tint: renderingMode == .fullColor ? ringTint(row?.used ?? 0) : .primary,
                                           isAwaitingReading: row?.isAwaitingReading(at: entry.date) == true)
                             }
@@ -109,7 +99,6 @@ struct ComplicationView: View {
                 Text(inlineText)
             default:
                 if let window, !window.isMetered, let amount = window.amount {
-                    // A balance has nothing to fill: its amount, rather than a ring reading 0.
                     ZStack {
                         AccessoryWidgetBackground()
                         VStack(spacing: 0) {
@@ -129,11 +118,9 @@ struct ComplicationView: View {
                             Text("Reset")
                                 .accessibilityLabel(ReadingText.awaitingReading)
                         } else {
-                            // The provider's mark in a colour face, its monogram when tinted.
                             ProviderMark(provider: first.provider, size: 13)
                         }
                     } currentValueLabel: {
-                        // Samples say so where the number goes; the ring still shows the level.
                         if entry.isSample {
                             Text("Sample")
                                 .font(.system(size: 9, weight: .semibold))
@@ -153,7 +140,6 @@ struct ComplicationView: View {
         }
     }
 
-    /// "Codex 78% · Claude 64%", after "Sample" for samples.
     private var inlineText: String {
         let readings = entry.items.prefix(2).map { item in
             let window = item.provider.leadWindow(now: entry.date, history: item.history)
@@ -162,7 +148,6 @@ struct ComplicationView: View {
         return ((entry.isSample ? ["Sample"] : []) + readings).joined(separator: " · ")
     }
 
-    /// The reading's one level colour, as a meter's, rather than every level at once.
     private func ringTint(_ used: Double) -> Color {
         TokenroomTokens.usageColor(usedPercent: used, isStale: false)
     }

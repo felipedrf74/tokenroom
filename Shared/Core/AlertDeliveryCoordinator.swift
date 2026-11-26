@@ -1,9 +1,6 @@
 import CryptoKit
 import Foundation
 
-/// Updated collectors coordinate through one stable private record per alert key. The reset
-/// bucket remains a legacy Event name, not the cross-device lock. A winning reset anchor never
-/// moves: repeated jitter cannot walk ownership into a genuinely new window.
 enum AlertDeliveryCoordinator {
     enum Mode: String, Codable, Sendable { case pushed, shown }
     struct Receipt: Equatable, Sendable {
@@ -28,7 +25,6 @@ enum AlertDeliveryCoordinator {
         var recordName: String
         var reset: Date
         var kind: String?
-        /// The window's length, for how far its reset can move and still be the same window.
         var length: TimeInterval = 0
     }
     private struct Entry: Codable {
@@ -45,8 +41,6 @@ enum AlertDeliveryCoordinator {
 
     static func scope(for alert: UsageAlert) -> Scope? {
         guard [.threshold, .runsOut, .reset, .lowBalance].contains(alert.kind), let window = alert.window else { return nil }
-        // A queued reset from an old build has only its rounded ended-reset instance. Never
-        // use its displayed resetsAt, which describes the new window.
         let reset: Date?
         if alert.kind == .reset {
             reset = alert.identityResetAt ?? legacyReset(alert.instanceName, kind: alert.windowKind)
@@ -60,8 +54,6 @@ enum AlertDeliveryCoordinator {
                      length: alert.identityPeriodSec ?? AlertRules.typicalLength(kind: alert.windowKind ?? ""))
     }
 
-    /// `write` must atomically compare the revision and create the Event (if non-nil). An
-    /// adopted legacy Event is left untouched, so older unfiltered subscriptions see no alias.
     static func deliver<Revision: Sendable>(
         _ alert: UsageAlert, scope: Scope, mode: Mode, now: Date = .now,
         read: @Sendable () async throws -> Versioned<Revision>,
@@ -84,7 +76,6 @@ enum AlertDeliveryCoordinator {
             let receipt = Receipt(eventID: adopted?.id ?? alert.id,
                                   mode: adopted.map { $0.key.hasPrefix("shown:") ? .shown : .pushed } ?? mode,
                                   created: adopted == nil)
-            // Bound the payload without discarding still-owned future/monthly windows.
             guard document.entries.count < 256 else { throw Failure.capacity }
             let expiry = max(now.addingTimeInterval(AlertLedger.memory), scope.reset.addingTimeInterval(AlertLedger.pendingLifetime))
             document.entries.append(Entry(reset: scope.reset, kind: scope.kind, eventID: receipt.eventID,
@@ -112,10 +103,6 @@ enum AlertDeliveryCoordinator {
         }) else { throw Failure.damaged }
         return document
     }
-    /// The same window, as `AlertRules.isSameInstance` sees it: the same reset give or take the
-    /// jitter, or one the provider moved while the window went on (the owned reset still ahead,
-    /// the move within a quarter of the window). No usage is kept here, so a move counts as the
-    /// same window whatever the use did.
     private static func matches(_ entry: Entry, _ scope: Scope, now: Date) -> Bool {
         guard entry.kind == nil || scope.kind == nil || entry.kind == scope.kind else { return false }
         return AlertRules.isSameInstance(entry.reset, scope.reset)
@@ -125,11 +112,8 @@ enum AlertDeliveryCoordinator {
     static func legacyIDs(for alert: UsageAlert) -> [String] {
         guard let value = Double(alert.instanceName), value.isFinite,
               alert.id.hasSuffix("-" + alert.instanceName) else { return [alert.id] }
-        // Legacy IDs always count 600-second units, even when rounded to an hour (multiples
-        // of six). Enumerating those units also handles a provider's custom period length.
-        let radius = 7 // 30-minute jitter plus at most 30-minute rounding error, and an edge.
+        let radius = 7
         let prefix = String(alert.id.dropLast(alert.instanceName.count))
-        // Exact first, then a finite neighborhood; never query every historical Event.
         return [alert.id] + (-radius...radius).filter { $0 != 0 }.map { prefix + String(format: "%.0f", value + Double($0)) }
     }
     private static func matchesLegacy(_ event: LegacyEvent, alert: UsageAlert, scope: Scope) -> Bool {
@@ -139,8 +123,6 @@ enum AlertDeliveryCoordinator {
             ? legacyReset(event.id.components(separatedBy: "-").last ?? "", kind: alert.windowKind)
             : event.resetsAt
         guard let reset else { return false }
-        // Old reset events store only the rounded ended reset. Allow the rounding error;
-        // all new ownership uses the exact immutable identityResetAt.
         let bucket = (alert.identityPeriodSec ?? AlertRules.typicalLength(kind: alert.windowKind ?? "")) >= 86_400 ? 3600.0 : 600.0
         let tolerance = AlertRules.resetJitter + (alert.kind == .reset ? bucket / 2 : 0)
         return abs(reset.timeIntervalSince(scope.reset)) < tolerance

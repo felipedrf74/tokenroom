@@ -4,10 +4,8 @@ import Synchronization
 enum TokenroomHTTP {
     static let timeout: TimeInterval = 12
     static let fetchBudget: TimeInterval = 20
-    /// Wait used when a 429 carries no usable Retry-After.
     static let defaultRetryAfter: TimeInterval = 15 * 60
 
-    /// The session requests go through. Tests swap in one with a stub protocol.
     static var session: URLSession {
         sessionOverride.withLock { $0 } ?? defaultSession
     }
@@ -35,9 +33,6 @@ enum TokenroomHTTP {
 
     private static let redirectDelegate = TokenroomRedirectDelegate()
 
-    /// Counted since launch: answers of any status, and calls that couldn't reach a network at
-    /// all. Every failure is `.unreachable` to a provider; the Mac compares these before and after
-    /// a check to tell waking before the Wi-Fi from a server's errors or a slow answer.
     struct NetworkTally: Sendable, Equatable {
         var answers = 0
         var offline = 0
@@ -49,8 +44,6 @@ enum TokenroomHTTP {
 
     private static let tally = Mutex(NetworkTally())
 
-    /// No network to send on: no connection, no route or DNS, the link dropped, or cellular data
-    /// off. A timeout, or a server that answered, isn't this.
     static func meansOffline(_ error: URLError) -> Bool {
         switch error.code {
         case .notConnectedToInternet, .networkConnectionLost, .cannotFindHost, .cannotConnectToHost,
@@ -63,14 +56,10 @@ enum TokenroomHTTP {
 
     static func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         var request = request
-        // Secrets may be in a custom header or the body, not only Authorization. Never start
-        // a provider or token request over cleartext, or accept credentials embedded in a URL.
         guard TokenroomRedirectPolicy.isSecureEndpoint(request.url) else { throw ProviderError.unreachable }
         request.timeoutInterval = timeout
         request.cachePolicy = .reloadIgnoringLocalCacheData
         do {
-            // A task delegate also protects calls through a test/injected session. The default
-            // session's delegate applies the same rules to streamed, unauthenticated news feeds.
             let (data, response) = try await session.data(for: request, delegate: redirectDelegate)
             guard let http = response as? HTTPURLResponse else {
                 throw ProviderError.unreachable
@@ -102,7 +91,6 @@ enum TokenroomHTTP {
         }
     }
 
-    /// Retry-After as delta-seconds or an HTTP date.
     static func retryDate(_ value: String?, now: Date = .now) -> Date? {
         guard let value = value?.trimmingCharacters(in: .whitespaces), !value.isEmpty else { return nil }
         if let seconds = TimeInterval(value), seconds >= 0 {
@@ -115,8 +103,6 @@ enum TokenroomHTTP {
         return formatter.date(from: value)
     }
 
-    /// A JSON request. `token` is sent as `Authorization: Bearer`; pass nil for APIs that take
-    /// the key in another header (Anthropic's `x-api-key`) or in the body.
     static func request(_ url: URL, method: String = "GET", token: String?, headers: [String: String] = [:], body: Data? = nil) -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = method
@@ -142,7 +128,6 @@ enum TokenroomHTTP {
         try await send(request(url, method: "POST", token: token, headers: headers, body: body), provider: provider)
     }
 
-    /// Throws the mapped error for a non-2xx status.
     static func check(_ response: HTTPURLResponse, provider: Provider) throws {
         if let error = mapStatus(
             response.statusCode,
@@ -160,8 +145,6 @@ enum TokenroomHTTP {
     }
 }
 
-/// A redirect can't choose where a credential is sent. Check the original request too: URLSession
-/// can remove Authorization or turn a POST into GET before handing the delegate the next request.
 enum TokenroomRedirectPolicy {
     static func isSecureEndpoint(_ url: URL?) -> Bool {
         guard let url, url.scheme?.lowercased() == "https",
@@ -174,8 +157,6 @@ enum TokenroomRedirectPolicy {
     static func allows(original: URLRequest?, current: URLRequest?, redirected: URLRequest) -> Bool {
         guard let original, isSecureEndpoint(original.url), isSecureEndpoint(redirected.url) else { return false }
         if sameOrigin(original.url, redirected.url) { return true }
-        // Public feeds may move to another HTTPS host. Provider calls carrying a bearer, an
-        // API key, cookies, or any POST/body stay on their original origin, including 307/308.
         return [original, current, redirected].compactMap { $0 }.allSatisfy { !mayCarryCredentials($0) }
     }
 
@@ -208,22 +189,15 @@ private final class TokenroomRedirectDelegate: NSObject, URLSessionTaskDelegate 
 
 protocol ProviderClient: Sendable {
     var provider: Provider { get }
-    /// How long a check may take before it counts as unreachable.
     var fetchBudget: TimeInterval { get }
     func fetch() async -> Result<QuotaSnapshot, ProviderError>
-    /// A cheap local reading while the provider's own endpoint is resting between checks, or nil.
     func fetchBetweenCalls(previous: QuotaSnapshot?) async -> QuotaSnapshot?
-    /// A sign-in finished or a key changed: forget anything kept from the old credentials.
     func credentialsChanged()
 }
 
 extension ProviderClient {
     var fetchBudget: TimeInterval { TokenroomHTTP.fetchBudget }
 
-    /// This check, given up on after its `fetchBudget` (or `budget`, when less time is left), so
-    /// one slow provider never holds up the rest. The Mac's refresh, the iPhone's key providers,
-    /// and widgets all read through it. A check cut short, by the time or by the caller, is
-    /// unreachable.
     func fetchWithinBudget(_ budget: TimeInterval? = nil, onWorkFinished: (@Sendable (Result<QuotaSnapshot, ProviderError>) -> Void)? = nil) async -> Result<QuotaSnapshot, ProviderError> {
         let limit = min(budget ?? fetchBudget, fetchBudget)
         return await TimeLimit.run(limit, otherwise: .failure(.unreachable)) {
@@ -240,19 +214,10 @@ extension ProviderClient {
     func credentialsChanged() {}
 }
 
-/// Work that has to give way at a set time: a provider check, or a widget's few seconds.
 enum TimeLimit {
-    /// `work`'s answer, or `fallback` once `seconds` pass or the caller is cancelled. `work` is
-    /// then cancelled but not waited for: a task group would wait, and some calls (iCloud's
-    /// account status) carry on regardless.
-    ///
-    /// The deadline is queued on the main thread. A stuck legacy keychain call blocks the
-    /// dispatch workers Swift's `Task.sleep` uses, so a timer on that pool would never fire
-    /// and the menu would stay on "Updating…". The main thread keeps running.
     static func run<T: Sendable>(_ seconds: TimeInterval, otherwise fallback: T, _ work: @escaping @Sendable () async -> T) async -> T {
         let answer = FirstAnswer<T>()
         let worker = Task.detached(priority: .userInitiated) { answer.give(await work()) }
-        // A late fire is ignored. Cancelling the block would capture a non-Sendable work item.
         DispatchQueue.main.asyncAfter(deadline: .now() + max(0, seconds)) {
             answer.give(fallback)
         }
@@ -266,7 +231,6 @@ enum TimeLimit {
     }
 }
 
-/// The first answer given, for the one caller waiting on it; later ones are dropped.
 private final class FirstAnswer<T: Sendable>: Sendable {
     private struct State {
         var answer: T?
@@ -281,7 +245,6 @@ private final class FirstAnswer<T: Sendable>: Sendable {
             guard !state.isGiven else { return nil }
             state.isGiven = true
             guard let waiting = state.waiting else {
-                // Given before anyone waits (a caller cancelled on arrival): kept for `wait`.
                 state.answer = answer
                 return nil
             }

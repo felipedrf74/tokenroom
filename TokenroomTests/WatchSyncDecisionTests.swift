@@ -1,9 +1,6 @@
 import XCTest
 @testable import Tokenroom
 
-/// The Watch, widget, and iPhone sign-in sync decision of 7 November 2026
-/// (`docs/watch-sync-council-20261107.md`): the rules as pure functions, since the Watch app's
-/// store isn't in a test target.
 final class WatchSyncDecisionTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
     private var suites: [String] = []
@@ -38,8 +35,6 @@ final class WatchSyncDecisionTests: XCTestCase {
         ReadingCache(savedAt: savedAt, isSample: false, items: providers.map { ReadingCache.Item(provider: $0, source: "Mac") })
     }
 
-    // MARK: 1. Handover acceptance
-
     func testAColdWatchHoldsAHandoverUntilItKnowsItsAccount() {
         let handover = cache(savedAt: now, [provider("claude", checked: now)])
         XCTAssertEqual(WatchHandoffAcceptance.decide(handover, validated: false, account: .unknown, signedOutAt: nil), .hold,
@@ -49,8 +44,6 @@ final class WatchSyncDecisionTests: XCTestCase {
         XCTAssertEqual(WatchHandoffAcceptance.decide(handover, validated: true, account: .unknown, signedOutAt: nil), .apply)
     }
 
-    /// A Watch with iCloud off from the start: its first no-account closes the gate just before
-    /// the iPhone handover it holds, so that handover is shown; a later sign-out closes at once.
     func testTheFirstNoAccountKeepsTheIPhonesHeldHandover() {
         let held = cache(savedAt: now.addingTimeInterval(-60), [provider("claude", checked: now)])
         let first = WatchHandoffAcceptance.signOutCutoff(now: now, recordedCutoff: nil, held: held)
@@ -67,7 +60,6 @@ final class WatchSyncDecisionTests: XCTestCase {
         XCTAssertEqual(WatchHandoffAcceptance.signOutCutoff(now: now, recordedCutoff: nil, held: sample), now, "Sample readings never move it")
     }
 
-    /// Records from two queues at once each keep their entry.
     func testSyncHealthRecordsFromTwoQueuesKeepBoth() {
         let suite = "tokenroom.tests.synchealth.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -132,34 +124,27 @@ final class WatchSyncDecisionTests: XCTestCase {
         let defaults = makeDefaults()
         let folder = try makeFolder()
         let url = folder.appendingPathComponent(ReadingCache.fileName)
-        // Signed in before: the first no-account read is a sign-out and empties everything.
         try cache(savedAt: now, [provider("claude", checked: now)]).save(to: url)
         let signedOut = await RelayReadings.cache(at: url, maxAge: 0, budget: 1, now: now.addingTimeInterval(10), defaults: defaults, readOutcome: { .noAccount })
         XCTAssertEqual(signedOut?.items.isEmpty, true)
         let cutoff = try XCTUnwrap(defaults.object(forKey: WatchCacheAccess.cutoffKey) as? Date)
         XCTAssertTrue(WatchCacheAccess.isStillSignedOut(in: defaults))
-        // The Watch app takes the iPhone's handover since then and saves it for complications.
         let fromPhone = cache(savedAt: cutoff.addingTimeInterval(30), [provider("codex", checked: cutoff.addingTimeInterval(30))])
         try WatchCacheAccess.saveValidated(fromPhone, at: url, defaults: defaults, cutoff: cutoff)
-        // Still no account later: not another sign-out, so the handover stays.
         let later = await RelayReadings.cache(at: url, maxAge: 0, budget: 1, now: cutoff.addingTimeInterval(60), defaults: defaults, readOutcome: { .noAccount })
         XCTAssertEqual(later?.items.map(\.id), ["codex"])
         XCTAssertEqual(defaults.object(forKey: WatchCacheAccess.cutoffKey) as? Date, cutoff, "The cutoff doesn't move")
-        // An account answered in between: the next no-account is a sign-out again.
         let signedIn = cache(savedAt: cutoff.addingTimeInterval(90), [provider("claude", checked: cutoff.addingTimeInterval(90))])
         _ = await RelayReadings.cache(at: url, maxAge: 0, budget: 1, now: cutoff.addingTimeInterval(90), defaults: defaults, readOutcome: { .readings(signedIn) })
         XCTAssertFalse(WatchCacheAccess.isStillSignedOut(in: defaults))
         let again = await RelayReadings.cache(at: url, maxAge: 0, budget: 1, now: cutoff.addingTimeInterval(120), defaults: defaults, readOutcome: { .noAccount })
         XCTAssertEqual(again?.items.isEmpty, true)
         XCTAssertNil(WatchCacheAccess.load(at: url, defaults: defaults))
-        // An account change clears the marker too.
         WatchCacheAccess.confirmNoAccount(in: defaults, at: cutoff.addingTimeInterval(150))
         WatchCacheAccess.invalidate(in: defaults, at: cutoff.addingTimeInterval(160))
         XCTAssertFalse(WatchCacheAccess.isStillSignedOut(in: defaults))
     }
 
-    /// Review fix: an account that only `accountStatus()` saw (a cold launch taking a handover)
-    /// ends "still signed out", so the next no-account is a sign-out that hides the handover.
     func testAnAccountOnlyTheAccountCheckSawEndsStillSignedOut() async throws {
         let defaults = makeDefaults()
         let folder = try makeFolder()
@@ -167,26 +152,20 @@ final class WatchSyncDecisionTests: XCTestCase {
         let t1 = now
         WatchCacheAccess.confirmNoAccount(in: defaults, at: t1)
         XCTAssertTrue(WatchCacheAccess.isStillSignedOut(in: defaults))
-        // Signed in again; a cold background launch checks the account and takes a handover.
         WatchCacheAccess.note(.available, in: defaults)
         let t2 = t1.addingTimeInterval(600)
         let handover = cache(savedAt: t2, [provider("claude", checked: t2)])
         try WatchCacheAccess.saveValidated(handover, at: url, defaults: defaults, cutoff: t1)
         XCTAssertEqual(WatchCacheAccess.load(at: url, defaults: defaults), handover)
-        // Complications skip iCloud while the cache is recent. Signed out at T3, once it isn't:
-        // a complication's read is a sign-out, not the same one as at T1.
         let t3 = t2.addingTimeInterval(20 * 60)
         let shown = await RelayReadings.cache(at: url, maxAge: 15 * 60, budget: 1, now: t3, defaults: defaults, readOutcome: { .noAccount })
         XCTAssertEqual(shown?.items.isEmpty, true, "The handover from while signed in isn't shown")
         XCTAssertEqual(defaults.object(forKey: WatchCacheAccess.cutoffKey) as? Date, t3, "A new cutoff")
         XCTAssertNil(WatchCacheAccess.load(at: url, defaults: defaults))
-        // Checks that found nothing, or no account, leave the marker as it was.
         WatchCacheAccess.note(.failed, in: defaults)
         WatchCacheAccess.note(.noAccount, in: defaults)
         XCTAssertTrue(WatchCacheAccess.isStillSignedOut(in: defaults))
     }
-
-    // MARK: 2. iCloud first
 
     @MainActor
     func testTheWatchAppliesICloudBeforeTheIPhonesReplyComes() async {
@@ -234,8 +213,6 @@ final class WatchSyncDecisionTests: XCTestCase {
         XCTAssertEqual(WatchProblem.noAccount.afterPhoneData(), .noAccount)
     }
 
-    // MARK: 3. Re-confirmed readings reach the Watch
-
     func testAReadingCheckedAgainHalfAnHourLaterIsHandedOverWithTheSameNumbers() {
         let handedOver = WatchHandoffSchedule.checks(in: cache(savedAt: now, [provider("claude", checked: now), provider("codex", checked: now)]))
         let fiveLater = cache(savedAt: now.addingTimeInterval(300), [provider("claude", checked: now.addingTimeInterval(300)), provider("codex", checked: now)])
@@ -256,8 +233,6 @@ final class WatchSyncDecisionTests: XCTestCase {
                        "A provider new to the Watch is a change of what's drawn, handed over for that")
     }
 
-    // MARK: 4. Reloads before the stale boundary
-
     func testWidgetsAndComplicationsReloadFiveMinutesBeforeAReadingGoesStale() {
         let checked = now.addingTimeInterval(-50 * 60)
         let item = ReadingCache.Item(provider: provider("claude", checked: checked), source: "Mac")
@@ -272,8 +247,6 @@ final class WatchSyncDecisionTests: XCTestCase {
                        "Saved minutes ago, but its reading is about to fade: read iCloud again")
         XCTAssertFalse(fresh.nearsStale(at: checked.addingTimeInterval(61 * 60)), "Already stale: not read on every reload")
     }
-
-    // MARK: 5. Live Activity
 
     func testALiveActivityStateSavedByAnEarlierVersionStillDecodes() throws {
         struct Earlier: Codable {
@@ -336,10 +309,6 @@ final class WatchSyncDecisionTests: XCTestCase {
         XCTAssertTrue(LiveActivityFreshness.needsUpdate(from: earlier, to: old), "An earlier activity gets its check")
     }
 
-    // MARK: 6. Watch payload
-
-    /// Every provider Tokenroom reads, each with a session, a week, and a model's week, a
-    /// week of hourly history for each, as a Mac would send them, plus the paired phone's own.
     private func nineteenProviders() -> ReadingCache {
         let hourStart = UsageHistory.hourStart(now)
         let items = Provider.allCases.map { key -> ReadingCache.Item in
@@ -358,7 +327,6 @@ final class WatchSyncDecisionTests: XCTestCase {
                 for hour in 0..<UsageHistory.capacity {
                     let date = week.start.addingTimeInterval(Double(hour) * UsageHistory.step)
                     week.record(Double((hour * 7 + window.id.count) % 100), at: date)
-                    // Balances keep the amount left each hour too.
                     if key.category == .apiBalance, window.id == "weekly" {
                         week.recordAmount(Double(10_000 - hour * 13) / 100, unit: "usd", at: date)
                     }
@@ -400,7 +368,6 @@ final class WatchSyncDecisionTests: XCTestCase {
         }
         let context = WatchHandoff.context(readings: encoded.data, connectAvailable: true)
         XCTAssertEqual(WatchHandoff.payload(in: context)?.cache.items.count, 19, "The Watch reads it")
-        // A small cache goes whole.
         let small = cache.trimmingHistory(toLast: 0)
         XCTAssertNil(WatchHandoff.encodedReadings(small)?.historyHours)
     }
@@ -417,8 +384,6 @@ final class WatchSyncDecisionTests: XCTestCase {
         XCTAssertEqual(short?.points.first?.used, 30)
         XCTAssertNil(week.trimmed(toLast: 0))
     }
-
-    // MARK: 10. Sync health
 
     func testSyncHealthHoldsOnlyDatesAndCodes() throws {
         let defaults = makeDefaults()

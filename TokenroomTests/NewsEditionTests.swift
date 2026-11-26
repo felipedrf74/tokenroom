@@ -1,7 +1,6 @@
 import XCTest
 @testable import Tokenroom
 
-/// The News edition the iPhone's Today view and the Mac's News window show.
 final class NewsEditionTests: XCTestCase {
     private let now = Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 26, hour: 12))!
 

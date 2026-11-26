@@ -1,53 +1,33 @@
 import Foundation
 
-// MARK: Model releases
-
-/// A model as OpenRouter lists it: a public, key-free catalog of models from every lab.
 struct ModelRelease: Codable, Equatable, Sendable, Identifiable {
-    /// OpenRouter's canonical slug, e.g. `anthropic/claude-opus-5.5`.
     var id: String
     var name: String
-    /// The lab, from the slug prefix, e.g. `anthropic`.
     var vendor: String
     var created: Date
     var contextLength: Int?
-    /// Dollars per million tokens.
     var promptPrice: Double?
     var completionPrice: Double?
-    /// When OpenRouter will retire it, if announced.
     var expires: Date?
-    /// When this device first saw it in the list, so a model listed after the last visit though
-    /// created before it is still new. Nil in caches from earlier releases.
     var firstSeenAt: Date? = nil
 
-    /// What decides whether it's new: when it arrived, else when it was created.
     var newsDate: Date { firstSeenAt ?? created }
 }
 
 enum ModelFeed {
-    /// The whole list, since retirements are announced for models of any age, not only the
-    /// newest. No key and no Anthropic-style headers: an `anthropic-version` header changes the
-    /// response shape. About 790 KB in October 2026, read with the usual `FeedParser.sizeLimit`.
     static let url = URL(string: "https://openrouter.ai/api/v1/models")!
 
-    /// How many of the newest models are kept; older ones stay only while they have a retirement date.
     static let newestLimit = 50
 
-    /// The model list's entry in `NewsCache.unreadable`.
     static let id = "openrouter-models"
 
-    /// Labs followed by default: the ones behind Tokenroom's providers.
     static let defaultVendors: Set<String> = ["anthropic", "openai", "x-ai", "google", "z-ai", "moonshotai", "minimax", "deepseek"]
 
-    /// Names for OpenRouter's lab IDs, for labs not in the latest list.
     static let vendorNames: [String: String] = [
         "anthropic": "Anthropic", "openai": "OpenAI", "x-ai": "xAI", "google": "Google", "z-ai": "Z.ai",
         "moonshotai": "Moonshot AI", "minimax": "MiniMax", "deepseek": "DeepSeek",
     ]
 
-    /// Releases newest first: the newest `newestLimit`, then older ones OpenRouter will retire.
-    /// Skips aliases (`~vendor/…`, `…-latest`), routers (`openrouter/…`), and stealth models;
-    /// folds variants (`:free`, `:batch`, …) into their base model.
     static func releases(from data: Data) throws -> [ModelRelease] {
         let root = try JSONFlex.object(from: data)
         guard let items = JSONFlex.array(root["data"]) else { throw ProviderError.parse }
@@ -83,13 +63,10 @@ enum ModelFeed {
                 completionPrice: pricePerMillion(pricing?["completion"]),
                 expires: catalogDate(model["expiration_date"])
             )
-            // The base model's prices win over a variant's.
             if byID[id] == nil || (variant == nil && byID[id]?.isBase == false) {
                 byID[id] = (release, variant == nil)
             }
         }
-        // A malformed nonempty catalog must not replace a previously usable list with [];
-        // an explicitly empty list, or a list of intentionally excluded aliases, remains valid.
         guard hasValidRecord else { throw ProviderError.parse }
         let newestFirst = byID.values.map(\.release).sorted { $0.created > $1.created }
         return Array(newestFirst.prefix(newestLimit)) + newestFirst.dropFirst(newestLimit).filter { $0.expires != nil }
@@ -109,23 +86,18 @@ enum ModelFeed {
     private static func pricePerMillion(_ raw: Any?) -> Double? {
         guard let value = JSONFlex.number(raw), value.isFinite, value >= 0 else { return nil }
         let scaled = value * 1_000_000
-        // Price labels round at three decimal places; keep that multiplication finite too.
         guard scaled.isFinite, scaled <= Double.greatestFiniteMagnitude / 1000 else { return nil }
         return scaled
     }
 }
 
-/// What the device has already seen, so only new releases are announced.
 struct ModelFeedState: Codable, Equatable, Sendable {
     var newestSeen: Date?
     var seenIDs: [String] = []
 
     static let memory = 500
 
-    /// New releases from followed labs since the last check, newest first. The first check
-    /// only remembers what's there, so installing Tokenroom doesn't announce the whole catalog.
     mutating func takeNew(from releases: [ModelRelease], following vendors: Set<String>) -> [ModelRelease] {
-        // An empty answer says nothing about the catalog, so it doesn't count as the first check.
         guard !releases.isEmpty else { return [] }
         let seen = Set(seenIDs)
         defer {
@@ -139,18 +111,12 @@ struct ModelFeedState: Codable, Equatable, Sendable {
     }
 }
 
-// MARK: Announcements
-
 struct FeedItem: Codable, Equatable, Sendable, Identifiable {
-    /// The item's guid or id, else its link.
     var id: String
     var title: String
     var link: URL?
     var published: Date?
-    /// Which feed it came from, e.g. "Claude Code".
     var source: String
-    /// Another feed that had the same entry and was folded into this one, e.g. "Claude Code
-    /// releases". Set by `NewsCache.announcements`, never stored.
     var alsoIn: String? = nil
 
     var sourceID: String? = nil
@@ -159,8 +125,6 @@ struct FeedItem: Codable, Equatable, Sendable, Identifiable {
     var updatedAt: Date? = nil
     var firstSeenAt: Date? = nil
     var excerpt: String? = nil
-    /// Parsed once at the feed boundary. Older caches revalidate their source body
-    /// on its next due check; display must not reinterpret literal code as HTML.
     var excerptIsPlainText: Bool? = nil
     var canonicalID: String? = nil
     var aliases: Set<String>? = nil
@@ -174,9 +138,6 @@ struct FeedItem: Codable, Equatable, Sendable, Identifiable {
     var newsDate: Date? { firstSeenAt ?? published }
     var sortDate: Date { publisherPublishedAt ?? updatedAt ?? published ?? .distantPast }
 
-    /// Release feeds title entries with a bare version; "Codex 0.157.0" reads better in a list.
-    /// A commit's trailing pull request number ("Add discernment-nudge skill (#1553)") is left
-    /// off; it stays in `title`, so two commits with the same message stay two.
     var displayTitle: String {
         namedTitle.replacingOccurrences(of: #"\s*\(#\d+\)$"#, with: "", options: .regularExpression)
     }
@@ -187,74 +148,43 @@ struct FeedItem: Codable, Equatable, Sendable, Identifiable {
             : title
     }
 
-    /// The same post or release in two of a product's feeds: the same title, or the same version
-    /// under the same name ("Claude Code 2.1.282" from the changelog, "Claude Code v2.1.282" from
-    /// GitHub). `NewsCache.announcements` compares it within a product only.
     var duplicateKey: String {
         namedTitle.lowercased().replacingOccurrences(of: #"\sv(?=\d)"#, with: " ", options: .regularExpression)
     }
 }
 
-/// An official news or changelog feed. Only RSS and Atom, never scraped pages.
 struct FeedSource: Sendable, Identifiable, Equatable {
     var id: String
     var name: String
     var url: URL
-    /// The provider it belongs to, for following.
     var provider: Provider?
-    /// Drops pre-release entries (alpha, beta, rc, nightly, preview, …: `FeedParser.isPrerelease`)
-    /// from release feeds.
     var skipsPrereleases = false
-    /// Keeps only entries whose link contains this, e.g. a blog's announcements.
     var linkContains: String? = nil
-    /// Leaves out entries whose title starts with one of these (ignoring case), e.g. a
-    /// repository's releases of another product it also ships.
     var skipsTitlePrefixes: [String] = []
-    /// The most read from the feed, in bytes: a longer one stops there, and shows what it got.
     var sizeLimit = FeedParser.sizeLimit
-    /// The feed it belongs to: a second source for the same product, shown under that feed's
-    /// name and turned on and off with it.
     var partOf: String? = nil
-    /// A repository's commit log (Claude Skills). Its entries can share a message ("Update pdf
-    /// skill"), so they're told apart by link and ID, never folded or dropped by title; GitHub
-    /// cuts a long message mid-word, so the cut word goes and the "…" stays; and a day's commits
-    /// updating one thing ("Update claude-api skill: …") show as one row, the newest.
     var isCommitLog = false
-    /// Feeds in one group carry some of the same posts under different links and slugs (Google's
-    /// Keyword blog and DeepMind's): the same title within a couple of days is one post.
     var titleFoldGroup: String? = nil
 
-    /// Whether an install that saved its choices before this feed was in the catalog starts
-    /// following it. Feeds added before November 2026 did; later ones are offered in Following's
-    /// "New sources" instead (`NewsStore.newSources`), so an update never follows anything on its own.
     var startsOnForUpgraders = true
 
     var kind: NewsSourceKind = .officialAnnouncement
-    /// Legacy tool changelogs suppress repeated titles; people, incidents, and commits never do.
     var suppressesRepeatedTitles: Bool { kind == .officialAnnouncement && !isCommitLog }
-    /// GitHub's release and commit feeds date an entry only by `<updated>`: when it was released
-    /// or committed, so that's its date, shown like any other's rather than as an update.
     var datesEntriesByUpdate: Bool { url.path.hasSuffix("/releases.atom") || isCommitLog }
 
-    /// The name its items show, and fold duplicates under.
     var itemSource: String {
         partOf.flatMap { id in Self.catalog.first { $0.id == id }?.name } ?? name
     }
 
-    /// Feeds people turn on and off; the ones `partOf` another follow it.
     static var toggles: [FeedSource] {
         catalog.filter { $0.partOf == nil }
     }
 
     static let catalog: [FeedSource] = [
         FeedSource(id: "claude-code", name: "Claude Code", url: URL(string: "https://code.claude.com/docs/en/changelog/rss.xml")!, provider: .claude),
-        // The same versions as the changelog, often sooner; one shows when both have it.
         FeedSource(id: "claude-code-releases", name: "Claude Code releases", url: URL(string: "https://github.com/anthropics/claude-code/releases.atom")!, provider: .claude, skipsPrereleases: true, partOf: "claude-code"),
-        // A weekly digest of the changelog, so its own toggle rather than part of it.
         FeedSource(id: "claude-code-whats-new", name: "Claude Code what's new", url: URL(string: "https://code.claude.com/docs/en/whats-new/rss.xml")!, provider: .claude),
         FeedSource(id: "claude-agent-sdk", name: "Claude Agent SDK", url: URL(string: "https://github.com/anthropics/claude-agent-sdk-python/releases.atom")!, provider: .claude, skipsPrereleases: true),
-        // The skills repository's commits: each entry is a skill added or updated. Not releases, so
-        // nothing is skipped as a pre-release.
         FeedSource(id: "claude-skills", name: "Claude Skills", url: URL(string: "https://github.com/anthropics/skills/commits/main.atom")!, provider: .claude, isCommitLog: true),
         FeedSource(id: "openai-news", name: "OpenAI", url: URL(string: "https://openai.com/news/rss.xml")!, provider: .openai),
         FeedSource(id: "codex-releases", name: "Codex", url: URL(string: "https://github.com/openai/codex/releases.atom")!, provider: .openai, skipsPrereleases: true),
@@ -267,49 +197,30 @@ struct FeedSource: Sendable, Identifiable, Equatable {
         FeedSource(id: "devin", name: "Devin", url: URL(string: "https://docs.devin.ai/desktop/changelog/rss.xml")!, provider: .devin),
         FeedSource(id: "zai", name: "Z.ai", url: URL(string: "https://docs.z.ai/release-notes/new-released/rss.xml")!, provider: .zai),
         FeedSource(id: "kimi-code", name: "Kimi Code", url: URL(string: "https://github.com/MoonshotAI/kimi-code/releases.atom")!, provider: .kimiCode, skipsPrereleases: true),
-        // sst/opencode redirects here (October 2026). Its `github-v…` releases are its GitHub
-        // integration's, and its "PR #…" ones a pull request's test artifacts, not OpenCode's.
         FeedSource(id: "opencode", name: "OpenCode", url: URL(string: "https://github.com/anomalyco/opencode/releases.atom")!, provider: .opencodeGo, skipsPrereleases: true, skipsTitlePrefixes: ["github-v", "PR #"]),
         FeedSource(id: "openrouter", name: "OpenRouter", url: URL(string: "https://openrouter.ai/blog/feed.xml")!, provider: .openrouter, linkContains: "/blog/announcements/"),
-        // ChatGPT and Codex product notes: each links to a `#codex-…` anchor, ChatGPT's included.
-        // Its `#github-release-…` entries are CLI releases, which `codex-releases` already has.
-        // Those embed each release's full notes (up to 360 KB apiece), so the feed's size follows
-        // them: 1.2 MB in September 2026, 4.76 MB decoded (320 KB on the wire) in November, past
-        // the 4 MB it had then. 8 MB leaves room to grow, and a feed past its limit still reads
-        // the entries before it (`NewsFetcher.refresh`).
         FeedSource(id: "codex-changelog", name: "ChatGPT & Codex", url: URL(string: "https://learn.chatgpt.com/docs/changelog/rss.xml")!, provider: .openai, linkContains: "#codex-", sizeLimit: 8 * 1024 * 1024),
         FeedSource(id: "antigravity-blog", name: "Antigravity", url: URL(string: "https://antigravity.google/blog/rss.xml")!, provider: .antigravity),
         FeedSource(id: "antigravity-cli", name: "Antigravity CLI", url: URL(string: "https://github.com/google-antigravity/antigravity-cli/releases.atom")!, provider: .antigravity, skipsPrereleases: true),
         FeedSource(id: "minimax-code", name: "MiniMax Code", url: URL(string: "https://github.com/MiniMax-AI/minimax-code/releases.atom")!, provider: .minimax, skipsPrereleases: true),
-        // Mistral's news, a lab without a Tokenroom provider. It redirects to /news/rss and is
-        // served as text/plain (November 2026); the parser reads it as RSS either way.
         FeedSource(id: "mistral-news", name: "Mistral AI", url: URL(string: "https://mistral.ai/rss.xml")!, provider: nil, startsOnForUpgraders: false),
     ]
 }
 
-/// Reads RSS 2.0 and Atom leniently: titles as plain text, the first 30 items.
 enum FeedParser {
     static let itemLimit = 30
-    /// The most read from a feed that doesn't set its own. In September 2026 the feeds ran from
-    /// 5 KB (Devin) to 750 KB (OpenAI News, which keeps every post): 2 MB leaves room to grow, and
-    /// bounds what a broken server can make a phone download.
     static let sizeLimit = 2 * 1024 * 1024
 
     static func items(from data: Data, source: FeedSource) -> [FeedItem] {
         read(data, source: source).items
     }
 
-    /// The feed's items, whether the whole document parsed as a feed, how many entries it had
-    /// before any were left out, and whether it's a feed at all (an RSS channel or an Atom feed,
-    /// not a web page or an error document). One cut short at the size limit, or broken, still
-    /// gives the items that ended before the break.
     static func read(_ data: Data, source: FeedSource) -> (items: [FeedItem], isComplete: Bool, entries: Int, isFeed: Bool) {
         let delegate = FeedXMLDelegate(source: source)
         let parser = XMLParser(data: data.prefix(source.sizeLimit))
         parser.delegate = delegate
         parser.shouldResolveExternalEntities = false
         let parsed = parser.parse()
-        // Some feeds repeat a title for every small update ("ChatGPT for iOS"); keep the first.
         var titles = Set<String>()
         var updates = Set<String>()
         let items = delegate.items
@@ -318,14 +229,11 @@ enum FeedParser {
             .filter { item in source.linkContains.map { item.link?.absoluteString.contains($0) == true } ?? true }
             .filter { item in !source.skipsTitlePrefixes.contains { item.title.lowercased().hasPrefix($0.lowercased()) } }
             .filter { !source.suppressesRepeatedTitles || titles.insert($0.title.lowercased()).inserted }
-            // Newest first, so the day's newest update to each thing stays.
             .filter { item in !source.isCommitLog || dailyUpdateKey(item).map { updates.insert($0).inserted } ?? true }
             .prefix(itemLimit)
         return (Array(items), parsed && delegate.isFeed && data.count <= source.sizeLimit, delegate.items.count, delegate.isFeed)
     }
 
-    /// A message GitHub cut mid-word ("Add guidance for structured outp…") ends at its last whole
-    /// word instead ("Add guidance for structured…").
     static func withWholeWords(_ item: FeedItem) -> FeedItem {
         var item = item
         item.title = wholeWords(item.title)
@@ -342,11 +250,6 @@ enum FeedParser {
         return trimmed.isEmpty ? title : trimmed + "…"
     }
 
-    /// "update claude-api skill 2026-10-21" for a commit updating one thing that day; nil for
-    /// others. The thing is all that follows "Update", up to a colon or a spaced dash, with its
-    /// pull request number and a leading "the" left out: "Update the claude-api skill (#1601)" and
-    /// "Update claude-api skill: add …" update one thing, "Update the pdf skill" another, and
-    /// "Update docs for …" a third, whatever follows "for".
     static func dailyUpdateKey(_ item: FeedItem) -> String? {
         guard let date = item.updatedAt ?? item.publisherPublishedAt ?? item.published,
               let update = item.title.range(of: #"(?i)^update\s+"#, options: .regularExpression)
@@ -363,8 +266,6 @@ enum FeedParser {
         return "update \(words.joined(separator: " ")) \(day.year ?? 0)-\(day.month ?? 0)-\(day.day ?? 0)"
     }
 
-    /// An entry's link if it's a web page, resolved against the feed. Other schemes
-    /// (`javascript:`, `file:`, an app's own) are dropped, so an item only ever opens the browser.
     static func webLink(_ text: String, feed: URL) -> URL? {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty,
@@ -374,24 +275,16 @@ enum FeedParser {
         return url
     }
 
-    /// Release titles like `@scope/package@2.1.1` read as the version alone.
     static func cleanTitle(_ title: String) -> String {
         title.replacingOccurrences(of: #"^@[^/\s]+/[^@\s]+@"#, with: "", options: .regularExpression)
     }
 
-    /// "0.158.0-alpha.14", "2.2.0 beta", "v0.67.0-nightly.20261021.gd00859d6b",
-    /// "v0.66.0-preview.0", "1.0.0-canary.3", "1.2.0.dev1", and a numbered pre-release such as
-    /// "1.0.102-0". The words other than alpha, beta, and rc only count right after a hyphen or a
-    /// dot, so a title that mentions them ("What's next") isn't caught.
     static func isPrerelease(_ title: String) -> Bool {
         title.range(of: #"(?i)((-|\s)(alpha|beta|rc)|[-.](nightly|preview|canary|dev|next|snapshot))(\b|\.|\d)|\d+\.\d+\.\d+-\d+(\.\d+)*\b"#, options: .regularExpression) != nil
     }
 
-    /// HTML elements a title may carry. Other text in angle brackets is kept: "<thinking> blocks",
-    /// a `</s>` token, `Either<A, B>`.
     private static let htmlTag = #"</?(?:a|abbr|b|big|br|cite|code|del|div|em|font|h[1-6]|hr|i|img|ins|kbd|li|mark|ol|p|pre|q|small|span|strong|sub|sup|time|tt|u|ul|wbr)(?:\s[^<>]*)?/?>"#
 
-    /// Strips HTML tags, decodes entities left over from HTML titles, and collapses whitespace.
     static func plainText(_ html: String) -> String {
         var text = html.replacingOccurrences(of: htmlTag, with: " ", options: .regularExpression)
         if text.contains("&") {
@@ -403,8 +296,6 @@ enum FeedParser {
         return text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
-    /// The named entities feeds put in titles and HTML excerpts. `&amp;` is decoded last, so
-    /// `&amp;lt;` stays the text `&lt;`.
     private static let namedEntities = [
         "&lt;": "<", "&gt;": ">", "&quot;": "\"", "&#39;": "'", "&apos;": "'", "&nbsp;": " ",
         "&mdash;": "\u{2014}", "&ndash;": "\u{2013}", "&hellip;": "\u{2026}",
@@ -413,8 +304,6 @@ enum FeedParser {
         "&copy;": "\u{00A9}", "&reg;": "\u{00AE}", "&trade;": "\u{2122}",
     ]
 
-    /// Excerpts can carry a complete HTML document; title token syntax stays
-    /// governed by the narrower plainText contract above.
     static func plainExcerptText(_ html: String) -> String {
         var text = html
         for pattern in [#"(?is)<!--.*?-->"#, #"(?is)<(head|script|style)\b[^>]*>.*?</\1\s*>"#,
@@ -425,7 +314,6 @@ enum FeedParser {
         return plainText(text)
     }
 
-    /// `&#8217;` and `&#x2019;`.
     static func decodeNumericEntities(_ text: String) -> String {
         guard text.contains("&#") else { return text }
         var result = ""
@@ -444,11 +332,8 @@ enum FeedParser {
         return result + rest
     }
 
-    /// RSS dates (RFC 822, with or without seconds, two- or four-digit years) and ISO 8601 ones,
-    /// with the variants feeds write: no time zone (read as UTC), a space for the `T`, no seconds.
     static func date(_ text: String) -> Date? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Every RSS item has an empty <updated>, and every GitHub entry an empty <published>.
         guard !trimmed.isEmpty else { return nil }
         if let iso = JSONFlex.parseISO(trimmed) {
             return iso
@@ -456,7 +341,6 @@ enum FeedParser {
         return dateFormatters.date(from: trimmed)
     }
 
-    /// One formatter per format, made once: making a DateFormatter costs more than parsing with it.
     private static let dateFormatters = FeedDateFormatters()
 }
 
@@ -464,7 +348,6 @@ private final class FeedDateFormatters: @unchecked Sendable {
     private let lock = NSLock()
     private let formatters: [DateFormatter]
 
-    /// `yy` reads "26" as 2026 and "2026" as written; `yyyy` would read "26" as the year 26.
     private static let formats = [
         "EEE, dd MMM yy HH:mm:ss Z", "EEE, dd MMM yy HH:mm:ss zzz", "EEE, dd MMM yy HH:mm Z", "EEE, dd MMM yy HH:mm zzz",
         "dd MMM yy HH:mm:ss Z", "dd MMM yy HH:mm Z",
@@ -499,9 +382,6 @@ private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
     var items: [FeedItem] = []
     private(set) var isFeed = false
     private var path: [String] = []
-    /// Depth inside the current item: 0 is the item, 1 its direct children. Nil between items.
-    /// Direct children own fields; descendants of text fields may contain Atom XHTML.
-    /// Unrelated nested titles (authors, cards) never become the entry title.
     private var depth: Int?
     private var element = ""
     private var title = ""
@@ -543,7 +423,6 @@ private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
             element = name == "dc:date" || name == "content:encoded" ? name : localName
             capturesExcerpt = ["description", "summary", "content", "content:encoded"].contains(element) && excerpt.isEmpty
             excerptCandidate = ""
-            // Atom text and XHTML have already been decoded by XMLParser.
             excerptIsXMLText = path.first == "feed" && ["text", "xhtml"].contains(attributes["type"] ?? "text")
         } else {
             if isExcerpt {
@@ -552,7 +431,6 @@ private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
             }
             appendMarkupBoundary()
         }
-        // Atom links live in attributes; prefer rel="alternate".
         if current == 0, localName == "link", let href = attributes["href"], (attributes["rel"] ?? "alternate") == "alternate" {
             link = href
         }
@@ -618,7 +496,6 @@ private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
         let id = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
         let publishedAt = FeedParser.date(published)
         let updatedAt = FeedParser.date(updated)
-        // A release or commit dated only by <updated> was released or committed then.
         let datedByUpdate = publishedAt == nil && updatedAt != nil && source.datesEntriesByUpdate
         let releasedAt = datedByUpdate ? updatedAt : publishedAt
         items.append(FeedItem(
@@ -637,7 +514,6 @@ private final class FeedXMLDelegate: NSObject, XMLParserDelegate {
 }
 
 extension Sequence where Element: Hashable {
-    /// Keeps the first occurrence of each element, in order.
     func uniqued() -> [Element] {
         var seen = Set<Element>()
         return filter { seen.insert($0).inserted }

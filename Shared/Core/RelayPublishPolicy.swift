@@ -1,11 +1,5 @@
 import Foundation
 
-/// When a collector sends its readings: when usage changed or a measured run-out moved an hour
-/// (at most every 5 minutes), when a provider's status changed or a window crossed an alert
-/// threshold (after a minute), and every 9 minutes as a heartbeat, so readers can tell it's alive
-/// and say when it last checked. Nine, a little under the Mac's default 10-minute check, so a
-/// check that ends a few seconds early still sends; at 30, an iPhone showed "checked 40m ago"
-/// for a Mac that had checked two minutes before.
 struct RelayPublishPolicy: Sendable, Equatable {
     static let heartbeat: TimeInterval = 9 * 60
     static let minimumInterval: TimeInterval = 5 * 60
@@ -23,7 +17,6 @@ struct RelayPublishPolicy: Sendable, Equatable {
 
     func nextSendDate(_ envelope: RelayEnvelope, now: Date) -> Date {
         guard lastHash != nil, let lastSent, lastSent <= now else { return now }
-        // A crossing can hide inside the rounded hash (79.6% to 80.3%), so it goes out on its own.
         let urgent = Self.states(envelope) != lastStates || Self.levels(envelope) != lastLevels
         let changed = envelope.materialHash != lastHash || runOutsMoved(envelope)
         let interval = urgent ? Self.statusInterval : changed ? Self.minimumInterval : Self.heartbeat
@@ -47,9 +40,6 @@ struct RelayPublishPolicy: Sendable, Equatable {
         Self.runOutsMoved(envelope.runOuts, since: lastRunOuts)
     }
 
-    /// Whether a measured run-out moved an hour or more from the one last sent, or a window
-    /// started or stopped being measured. Against what was sent rather than hour boundaries, so
-    /// one wobbling across an hour, or around its reset, doesn't go out every five minutes.
     static func runOutsMoved(_ runOuts: [String: Date], since sent: [String: Date]) -> Bool {
         guard Set(runOuts.keys) == Set(sent.keys) else { return true }
         return runOuts.contains { key, date in
@@ -59,7 +49,6 @@ struct RelayPublishPolicy: Sendable, Equatable {
         }
     }
 
-    /// The next check sends whatever it has.
     mutating func reset() {
         lastHash = nil
     }
@@ -68,7 +57,6 @@ struct RelayPublishPolicy: Sendable, Equatable {
         Dictionary(envelope.providers.map { ($0.id, $0.state) }, uniquingKeysWith: { first, _ in first })
     }
 
-    /// The highest alert threshold (80, 95) each metered window has reached, 0 below them.
     private static func levels(_ envelope: RelayEnvelope) -> [String: Int] {
         var levels: [String: Int] = [:]
         for provider in envelope.providers {

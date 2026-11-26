@@ -41,7 +41,6 @@ import XCTest
     }
 
     func testSimultaneousAdjacentBucketsCreateOneEvent() async throws {
-        // 12:04:59 / 12:05:01 equivalent offsets around a 10-minute bucket boundary.
         let boundary = Date(timeIntervalSince1970: 1_800_004_500)
         let a = alert(reset: boundary.addingTimeInterval(-1))
         let b = alert(reset: boundary.addingTimeInterval(1))
@@ -72,7 +71,6 @@ import XCTest
         let server = DeliveryServer()
         let first = try await Self.deliver(alert(reset: now.addingTimeInterval(3600)), server: server)
         let jitter = try await Self.deliver(alert(reset: now.addingTimeInterval(4800)), server: server)
-        // 80 minutes from the first anchor (past a quarter of the session), 60 from the jitter.
         let next = try await Self.deliver(alert(reset: now.addingTimeInterval(8400)), server: server)
         let higher = try await Self.deliver(alert(reset: now.addingTimeInterval(3600), level: 95), server: server)
         XCTAssertEqual(first.eventID, jitter.eventID)
@@ -85,13 +83,11 @@ import XCTest
     func testAResetMovedWhileTheWindowGoesOnIsOneAlertAcrossDevices() async throws {
         let server = DeliveryServer()
         let reset = now.addingTimeInterval(2 * 86_400)
-        // One device saw the crossing; the provider then moved the week's reset three hours on.
         let first = try await Self.deliver(alert(reset: reset, windowKind: "weekly"), server: server)
         let moved = try await Self.deliver(alert(reset: reset.addingTimeInterval(3 * 3600), windowKind: "weekly"), server: server)
         XCTAssertTrue(first.created)
         XCTAssertEqual(moved.eventID, first.eventID, "The same week, as AlertRules.isSameInstance has it")
         XCTAssertFalse(moved.created)
-        // Once that reset has come, a reset as near is another week.
         let after = try await Self.deliver(alert(reset: reset.addingTimeInterval(3 * 3600), windowKind: "weekly"), server: server,
                                            at: reset.addingTimeInterval(60))
         XCTAssertTrue(after.created)
@@ -113,14 +109,12 @@ import XCTest
         }
         let weekly = { (used: Double) in RelayWindow(id: "weekly", kind: "weekly", title: "Weekly", used: used, resetsAt: reset, periodSec: 7 * 86_400) }
 
-        // Another device saw Opus cross 95% and announced it.
         let server = DeliveryServer()
         let theirs = try XCTUnwrap(AlertRules.alerts(previous: claude([weekly(40), opus(70, resetsAt: reset)]),
                                                      current: claude([weekly(41), opus(96, resetsAt: reset)]), preferences: choices, now: now).first)
         let announced = try await Self.deliver(theirs, server: server)
         XCTAssertTrue(announced.created)
 
-        // This Mac's readings left the window out meanwhile, and the reset moved three hours on.
         let later = now.addingTimeInterval(2 * 3600)
         var ledger = AlertLedger()
         ledger.process([claude([weekly(40), opus(70, resetsAt: reset)])], preferences: choices, now: now)
@@ -281,7 +275,6 @@ import XCTest
     }
 }
 
-/// Only the external atomic record database is replaced; production coordination is exercised.
 private actor DeliveryServer {
     struct Conflict: Error {}
     struct LostResponse: Error {}

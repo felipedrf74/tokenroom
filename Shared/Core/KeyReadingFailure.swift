@@ -1,7 +1,6 @@
 import Foundation
 
 extension RelayProvider {
-    /// Successful-check timestamps stay intact, so a fresh cache cannot make old data newer.
     func retainingAfterFailure(_ error: ProviderError, at now: Date) -> RelayProvider {
         guard (checkedAt ?? fetchedAt).map({ $0 <= now }) != false else { return self }
         if error.isTransient, isLive, let checked = checkedAt ?? fetchedAt,

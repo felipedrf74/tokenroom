@@ -1,8 +1,6 @@
 import XCTest
 @testable import Tokenroom
 
-/// What a popover card says besides its numbers: where a reading came from, whether it's
-/// current, and what the week's line shows.
 final class ProviderCardTests: XCTestCase {
     private let now = Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 25, hour: 12))!
 
@@ -22,8 +20,6 @@ final class ProviderCardTests: XCTestCase {
         XCTAssertFalse(ProviderCard.readsUnofficially(.openrouter, snapshot: reading(.openrouter, fetchedAt: now)))
     }
 
-    /// No time with it: the direct call may be what confirmed a status line reading last, and
-    /// "Checked …" says when.
     @MainActor
     func testAStatusLineReadingSaysWhereItCameFrom() {
         let kept = reading(.claude, source: "bridge", fetchedAt: now.addingTimeInterval(-3 * 3600))
@@ -32,8 +28,6 @@ final class ProviderCardTests: XCTestCase {
         XCTAssertNil(ProviderCard.sourceCaption(reading(.claude, fetchedAt: now)), "Claude's own usage call needs no caption")
     }
 
-    /// One-line rows gray out a reading that isn't current; they also say why, in a tooltip and
-    /// to VoiceOver.
     @MainActor
     func testCompactRowsSayWhyAReadingIsntCurrent() throws {
         let old = reading(.claude, fetchedAt: now.addingTimeInterval(-3 * 3600))

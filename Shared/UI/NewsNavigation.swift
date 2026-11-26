@@ -1,8 +1,6 @@
 import SwiftUI
 
 #if os(iOS) || os(macOS)
-/// Marks actual link destinations, rather than split-view roots, for Mac Back.
-/// View-based links retain their originating view's search and scroll state.
 struct NewsNavigationLink<Destination: View, Label: View>: View {
     private var destination: Destination
     private var label: Label
@@ -25,9 +23,6 @@ struct NewsNavigationLink<Destination: View, Label: View>: View {
     }
 }
 
-/// An action that stands alone: ink at a medium weight, with a glyph to say it's one: a chevron
-/// into the app, an arrow out of it, or what the action does. News's one coloured control is
-/// Read article.
 struct NewsLinkLabel: View {
     var title: String
     var symbol = "chevron.right"
@@ -35,20 +30,15 @@ struct NewsLinkLabel: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            // Its own colours don't dim by themselves, so an action that can't run says so.
             Text(title).font(.subheadline.weight(.medium)).foregroundStyle(isEnabled ? TokenroomTokens.newsAction : NewsControlMetrics.secondaryText)
-            // Named, not `.secondary`: inside a Mac `Link` that takes the link colour.
             Image(systemName: symbol).font(.caption.weight(.semibold)).foregroundStyle(NewsControlMetrics.secondaryText).accessibilityHidden(true)
         }
-        // The whole height is the target: a frame outside a plain button only takes up space.
         .frame(minHeight: NewsControlMetrics.minimumHeight)
         .contentShape(Rectangle())
     }
 }
 
 extension View {
-    /// AppKit-hosted stacks need an explicit Back command for view-based links.
-    /// iOS keeps its built-in navigation controls; a Mac root never gets Dismiss.
     @ViewBuilder func newsNavigationBackButton() -> some View {
         #if os(macOS)
         modifier(NewsNavigationBackButton())

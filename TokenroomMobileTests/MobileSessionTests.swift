@@ -4,12 +4,9 @@ import UIKit
 import XCTest
 @testable import TokenroomMobile
 
-/// Plans signed in to on this iPhone, through the store's real refresh pass: an in-memory
-/// Keychain stands in for the sessions and canned answers for the vendors, so nothing here
-/// touches this device's sign-ins or the network.
 @MainActor
 final class MobileSessionTests: XCTestCase {
-    private let now = Date(timeIntervalSince1970: 1_790_337_600) // 2026-09-25 12:00 UTC
+    private let now = Date(timeIntervalSince1970: 1_790_337_600)
     private var suites: [String] = []
     private var folders: [URL] = []
 
@@ -57,15 +54,11 @@ final class MobileSessionTests: XCTestCase {
                      tokenURL: PhoneSignIn.Cursor.tokenURL, clientID: PhoneSignIn.Cursor.clientID)
     }
 
-    /// Keys whose save and removal succeed without storing anything: every read finds no key, so
-    /// no key provider is called.
     private func acceptingKeys() -> APIKeyStore {
         APIKeyStore(servicePrefix: "app.tokenroom.tests.mobile-session.keys.", keychain: .init(
             copy: { _ in (errSecItemNotFound, nil) }, add: { _ in errSecSuccess },
             update: { _, _ in errSecItemNotFound }, delete: { _ in errSecSuccess }))
     }
-
-    // MARK: Reading
 
     func testACursorSignInReadsCursorAndGrokBotOnThisIPhone() async throws {
         let defaults = makeDefaults()
@@ -88,7 +81,6 @@ final class MobileSessionTests: XCTestCase {
         XCTAssertTrue(saved.items.contains { $0.provider.id == "grokBot" })
         XCTAssertFalse(try XCTUnwrap(store.reading(id: "cursor")).history.isEmpty, "In the history on the pass's clock, not pruned as a week old")
 
-        // Within five minutes, nothing is called again.
         await store.refresh(force: true, now: now.addingTimeInterval(120))
         XCTAssertEqual(vendor.calls(.cursor), 1)
     }
@@ -105,13 +97,10 @@ final class MobileSessionTests: XCTestCase {
         XCTAssertEqual(store.sessionProviders, [.cursor])
         XCTAssertNil(store.reading(id: "grokBot"), "Neither shown nor listed as not connected")
 
-        // Later the same day: not asked again.
         await store.refresh(force: true, now: now.addingTimeInterval(3 * 3600))
         XCTAssertEqual(vendor.calls(.grokBot), 1)
         XCTAssertEqual(store.sessionProviders, [.cursor])
 
-        // A new sign-in asks again at once, on the sign-in's clock: on the real one, a session
-        // saved for this test's day would be long expired and sent for renewal.
         try await store.saveSession(cursorSession(), for: .grokBot, now: now.addingTimeInterval(3 * 3600 + 60))
         XCTAssertEqual(store.sessionProviders, [.cursor, .grokBot])
         for _ in 0..<200 where vendor.calls(.grokBot) < 2 || store.isRefreshing {
@@ -151,8 +140,6 @@ final class MobileSessionTests: XCTestCase {
         await store.refresh(force: true, now: now)
         XCTAssertEqual(store.sessionProviders, [.openai, .cursor, .grokBot])
 
-        // Ten minutes on, Cursor is due again. On the real clock its session, dated from this
-        // test's day, would be long expired and sent for renewal.
         try await store.removeSession(for: .openai, now: now.addingTimeInterval(600))
 
         XCTAssertEqual(store.sessionProviders, [.cursor, .grokBot])
@@ -174,9 +161,6 @@ final class MobileSessionTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
 
-        // Ten minutes on, while the first pass waits on Cursor: queued behind it. On the real
-        // clock, Cursor's session, dated from this test's day, would be long expired and sent
-        // for renewal.
         let second = Task { await store.refresh(force: true, now: later) }
         for _ in 0..<10 {
             await Task.yield()
@@ -199,8 +183,6 @@ final class MobileSessionTests: XCTestCase {
         await store.refresh(force: true, now: now)
         XCTAssertEqual(vendor.calls(.cursor), 1)
 
-        // Ten minutes apart, Cursor is due again each time. On the real clock its session, dated
-        // from this test's day, would be long expired and sent for renewal.
         try await store.saveKey("fixture-key", for: .openrouter, region: nil, now: now.addingTimeInterval(600))
         XCTAssertEqual(vendor.calls(.cursor), 2, "Read again by the saved key's refresh")
         try await store.removeKey(for: .openrouter, now: now.addingTimeInterval(1200))
@@ -234,25 +216,20 @@ final class MobileSessionTests: XCTestCase {
         await first.refresh(force: true, now: now)
         XCTAssertEqual(vendor.calls(.cursor), 1)
 
-        // Relaunched ten minutes later: the wait Cursor asked for still holds.
         let relaunched = makeStore(defaults: defaults, folder: folder, keychain: keychain, vendor: vendor)
         await relaunched.refresh(force: true, now: now.addingTimeInterval(600))
         XCTAssertEqual(vendor.calls(.cursor), 1)
     }
-
-    // MARK: Claude, retired
 
     func testAClaudeSessionAnEarlierVersionKeptIsNeverReadOrRenewed() async throws {
         let defaults = makeDefaults()
         let folder = try makeFolder()
         let keychain = MemoryKeychain()
         try keychain.store.save(cursorSession(), for: .cursor, now: now)
-        // What 1.2's Claude sign-in left: its session, and Claude in the widgets' list.
         try keychain.store.save(PhoneSession(accessToken: "claude-access", refreshToken: "claude-refresh", expiresAt: now.addingTimeInterval(60),
                                              tokenURL: URL(string: "https://example.invalid/token")!, clientID: "retired-client"), for: .claude, now: now)
         defaults.set(["claude", "cursor", "grokBot"], forKey: MobileStore.Keys.sessionProviders)
         let vendor = Vendor(now: now)
-        // `makeStore` fails the test if anything is renewed.
         let store = makeStore(defaults: defaults, folder: folder, keychain: keychain, vendor: vendor)
         XCTAssertEqual(store.sessionProviders, [.cursor, .grokBot], "Not this iPhone's from the first pass")
         XCTAssertEqual(defaults.stringArray(forKey: MobileStore.Keys.sessionProviders), ["cursor", "grokBot"], "Nor the widgets'")
@@ -280,7 +257,6 @@ final class MobileSessionTests: XCTestCase {
             runs.add()
         }
 
-        // Before the first unlock: nothing yet.
         purge.start(protectedDataAvailable: false)
         purge.start(protectedDataAvailable: false)
         for _ in 0..<20 { await Task.yield() }
@@ -295,13 +271,11 @@ final class MobileSessionTests: XCTestCase {
         XCTAssertNil(keychain.store.metadata(for: .claude))
         XCTAssertEqual(keychain.store.session(for: .cursor)?.refreshToken, "cursor-refresh", "Other plans keep their sign-ins")
 
-        // Once a launch: another unlock, or another start, doesn't run it again.
         center.post(name: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil)
         purge.start(protectedDataAvailable: true)
         for _ in 0..<20 { await Task.yield() }
         XCTAssertEqual(runs.value, 1)
 
-        // Unlocked at launch: at once.
         let unlocked = RetiredSessionPurge(center: center) { runs.add() }
         unlocked.start(protectedDataAvailable: true)
         for _ in 0..<200 where runs.value == 1 {
@@ -311,10 +285,6 @@ final class MobileSessionTests: XCTestCase {
     }
 }
 
-// MARK: Stand-ins
-
-/// Canned vendor answers, counting what was asked. `held` keeps every answer back, each counted
-/// as it's asked, until `release`.
 private final class Vendor: Sendable {
     private struct Log {
         var calls: [Provider: Int] = [:]
@@ -366,14 +336,12 @@ private final class Vendor: Sendable {
     }
 }
 
-/// How many times a closure ran, from any thread.
 private final class RunCount: Sendable {
     private let count = Mutex(0)
     func add() { count.withLock { $0 += 1 } }
     var value: Int { count.withLock { $0 } }
 }
 
-/// Shut until opened, then open for good.
 private actor Gate {
     private var isOpen = false
     private var waiting: [CheckedContinuation<Void, Never>] = []
@@ -390,8 +358,6 @@ private actor Gate {
     }
 }
 
-/// An in-memory Keychain for phone sessions. `locked` makes every read fail as a locked device's
-/// would.
 private final class MemoryKeychain: @unchecked Sendable {
     private let lock = NSLock()
     private var items: [String: [String: Any]] = [:]

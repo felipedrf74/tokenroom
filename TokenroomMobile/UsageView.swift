@@ -1,8 +1,6 @@
 import SwiftUI
 import UserNotifications
 
-/// The Usage tab: windows close to a limit first, then a tile per plan with its weekly (or
-/// monthly) limit as a ring and its 5-hour limit as a bar, each with the even-pace mark.
 struct UsageView: View {
     @Bindable var store: MobileStore
     @Binding var path: [String]
@@ -10,10 +8,7 @@ struct UsageView: View {
     @State private var showsDisconnected = false
     @State private var notificationsOff = false
     @State private var showsAllClose = false
-    /// Why following a tile's window failed, from its context menu.
     @State private var followError: String?
-    /// Tile order as of the last look: tiles re-rank by urgency when the tab appears, the app
-    /// comes back, or you pull to refresh, not under your finger on a background refresh.
     @State private var order: [String] = []
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -22,8 +17,6 @@ struct UsageView: View {
         TimelineView(.periodic(from: .now, by: 60)) { tick in
             content(at: tick.date).onChange(of: tick.date, initial: true) { _, date in store.ageReadings(at: date) }
         }
-        // Kept current while the tab is on screen with the app in front, like News, a provider's
-        // detail included: leaving the tab or the app stops it, and coming back starts it again.
         .task(id: scenePhase == .active) {
             guard scenePhase == .active else { return }
             await store.keepCurrent()
@@ -80,7 +73,6 @@ struct UsageView: View {
                         disconnectedSection
                     }
                 }
-                // With nothing in it yet, the empty state's overlay takes this column's width.
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20)
                 .padding(.top, 4)
@@ -93,7 +85,6 @@ struct UsageView: View {
                 if let reading = store.reading(id: id) {
                     ProviderDetailView(reading: reading, date: date)
                 } else {
-                    // A key removal, account change, or aged-out reading can remove an open provider.
                     Text("Couldn't find a reading for this provider.")
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -108,7 +99,6 @@ struct UsageView: View {
                 }
             }
             .refreshable {
-                // Pulled: plans a Mac reads are read here too (`MacCoveragePause`).
                 await store.refresh(force: true, manual: true)
                 rank()
             }
@@ -117,11 +107,9 @@ struct UsageView: View {
             }
             .onAppear(perform: rank)
             .onChange(of: store.readings.map(\.id)) { _, ids in
-                // The first readings, or a different set (sample data on or off): rank them now.
                 if !ids.contains(where: order.contains) { order = ids }
             }
             .onChange(of: scenePhase) { _, phase in
-                // Back from Settings, where notifications may have been turned on.
                 if phase == .active {
                     rank()
                     Task { await checkNotifications() }
@@ -135,8 +123,6 @@ struct UsageView: View {
         }
     }
 
-    /// Two tiles a row, each row as tall as its taller tile; one a row at the accessibility text
-    /// sizes.
     private func tiles(at date: Date) -> some View {
         let readings = orderedReadings
         let columns = typeSize >= .xxLarge ? 1 : 2
@@ -166,8 +152,6 @@ struct UsageView: View {
         }
     }
 
-    /// The header already says where readings come from and when they were checked. A tile repeats
-    /// that only when it's the exception: readings from more than one place.
     private func showsOrigin(_ reading: MobileStore.Reading) -> Bool {
         !store.sampleMode && Set(store.readings.map(\.origin)).count > 1
     }
@@ -212,7 +196,6 @@ struct UsageView: View {
         var action: () -> Void
     }
 
-    /// Banked resets and alerts that are off. News counts live on the News tab's badge.
     private var highlights: [Highlight] {
         var items: [Highlight] = []
         let banked = store.readings.filter { $0.provider.availableBanked(at: .now) != nil }
@@ -235,8 +218,6 @@ struct UsageView: View {
         notificationsOff = status == .denied || status == .notDetermined
     }
 
-    /// "From Mac · checked 2m ago · 1 stale": when the newest reading was checked, with readings
-    /// left behind counted apart, and "checking…" while a refresh is out.
     private func header(at date: Date) -> String? {
         guard !store.sampleMode, let source = store.sourceSummary else { return nil }
         let stale = store.readings.filter { !$0.provider.isLive }.count
@@ -246,7 +227,6 @@ struct UsageView: View {
         return "From \(source) · checked \(RelativeTime.ago(checked, now: date))" + staleNote
     }
 
-    /// With the connect screen on: why a plan isn't here, when its status doesn't say.
     private func connectReason(for reading: MobileStore.Reading) -> String? {
         guard store.connectOnIPhone, reading.provider.message == nil,
               let provider = Provider(rawValue: reading.id),
@@ -255,7 +235,6 @@ struct UsageView: View {
         return reason
     }
 
-    /// Mac providers wait for a sign-in there; this iPhone's key providers for their key to work.
     private var disconnectedFooter: String {
         if store.connectOnIPhone {
             return PhoneConnect.disconnectedFooter(store.disconnected.map { reading in
@@ -272,8 +251,6 @@ struct UsageView: View {
     }
 }
 
-/// A failed relay still leaves usable readings on screen. Make the missing sync visible beside
-/// those readings rather than making users discover it in Settings or an empty state.
 private struct RelayStatusNotice: View {
     var store: MobileStore
 
@@ -315,7 +292,6 @@ private struct RelayStatusNotice: View {
 
 private struct DisconnectedRow: View {
     var reading: MobileStore.Reading
-    /// The connect screen's reason, when the status has no message of its own.
     var reason: String? = nil
 
     var body: some View {
@@ -417,7 +393,6 @@ struct UsageEmptyState: View {
         }
     }
 
-    /// What this iPhone can read by itself: plans it signs in to, when the Plans screen is on.
     private var onThisIPhone: String {
         store.canSignInOnIPhone ? "sign in to a plan or add an API key" : "add an API key"
     }

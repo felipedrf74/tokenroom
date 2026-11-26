@@ -1,7 +1,5 @@
 import Foundation
 
-/// A check is scoped to its feed. One delayed feed must not date every other
-/// source's successful reading, and an unloaded feed isn't a stale archive.
 struct NewsSourceFreshness {
     var currentCount = 0
     var delayedCount = 0
@@ -9,17 +7,12 @@ struct NewsSourceFreshness {
     var failedIDs = Set<String>()
     var uncheckedIDs = Set<String>()
     var answeredCount = 0
-    /// Read, but only up to their size limit (`NewsCache.SourceCheck.truncatedAt`).
     var truncatedIDs = Set<String>()
     var totalCount: Int { currentCount + delayedCount + unloadedCount }
     var checkedCount: Int { currentCount + delayedCount }
 
-    /// How recently an official feed must have been read to count as current: its background
-    /// interval and a download (`NewsCadence.currentInterval`). Each kind is measured against its
-    /// own interval, so a voice read two hours ago is current and a status feed isn't.
     static let currentInterval = NewsCadence.intervals(for: .official).background + NewsFetcher.downloadTimeout
 
-    /// `currentInterval`, when given, holds every source to one interval instead of its kind's.
     init(cache: NewsCache, sources: [FeedSource], now: Date = .now,
          currentInterval: TimeInterval? = nil) {
         var seen = Set<String>()

@@ -1,4 +1,3 @@
-// Unit tests hosted in Tokenroom for Mac. Signed like the host so library validation passes.
 #include "Version.xcconfig"
 
 PRODUCT_BUNDLE_IDENTIFIER = $(TOKENROOM_BUNDLE_PREFIX).mac.tests

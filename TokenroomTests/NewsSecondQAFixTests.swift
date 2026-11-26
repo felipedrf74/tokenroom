@@ -1,7 +1,6 @@
 import XCTest
 @testable import Tokenroom
 
-/// Regression sources for the second independent QA. Not executed in the no-tests fix pass.
 final class NewsSecondQAFixTests: XCTestCase {
     private var suites: [String] = []
     private var folders: [URL] = []

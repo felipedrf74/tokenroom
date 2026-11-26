@@ -10,7 +10,6 @@ struct ProviderDetailView: View {
 
     private var provider: RelayProvider { reading.provider }
 
-    /// The window the provider leads with, then the rest.
     private var orderedWindows: [RelayWindow] {
         guard let primary = provider.primaryWindow else { return provider.windows }
         return [primary] + provider.windows.filter { $0.id != primary.id }
@@ -18,8 +17,6 @@ struct ProviderDetailView: View {
 
     var body: some View {
         List {
-            // A balance has no ring to lead with: its section carries the header instead of a card
-            // of its own. With no windows at all, the header is what says why.
             if heroWindow != nil || orderedWindows.isEmpty {
                 Section {
                     header
@@ -37,7 +34,6 @@ struct ProviderDetailView: View {
                         checkedAt: provider.checkedAt ?? provider.fetchedAt,
                         isStale: !provider.isLive || window.isAwaitingReading(at: date),
                         date: date,
-                        // The hero above already shows the first metered window's number and facts.
                         isLead: isLead
                     )
                 } header: {
@@ -84,12 +80,10 @@ struct ProviderDetailView: View {
                 }
             }
         }
-        // The name once, as the page's title, rather than in the bar and again in the hero.
         .navigationTitle(provider.name)
         .navigationBarTitleDisplayMode(.large)
     }
 
-    /// The window the hero ring shows: the lead window, when it has a meter.
     private var heroWindow: RelayWindow? {
         orderedWindows.first.flatMap { $0.isMetered ? $0 : nil }
     }
@@ -105,7 +99,6 @@ struct ProviderDetailView: View {
             if let window = heroWindow {
                 let stale = !provider.isLive || window.isAwaitingReading(at: date)
                 HStack(spacing: 11.5) {
-                    // The stroke straddles the frame: this keeps it on the card's text edge.
                     UsageRing(used: window.used, isStale: stale, label: ReadingText.headline(window, now: date), lineWidth: 9, paceMark: heroPace?.elapsedFraction,
                               isAwaitingReading: window.isAwaitingReading(at: date))
                         .frame(width: 100, height: 100)
@@ -119,7 +112,6 @@ struct ProviderDetailView: View {
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         } else {
-                            // What's left: the ring's used figure and this add up.
                             HStack(alignment: .firstTextBaseline, spacing: 4) {
                                 HeadlineValue("\(TokenroomFormat.percentText(100 - window.used))%", style: .title3, signStyle: .footnote, weight: .medium)
                                 Text(ReadingText.remainingLabel(isLive: provider.isLive))
@@ -135,7 +127,6 @@ struct ProviderDetailView: View {
             let facts = UsageFacts.facts(for: heroWindow, pace: heroPace, plan: provider.plan, checkedAt: nil, isStale: !provider.isLive, now: date)
             if !facts.isEmpty {
                 Divider()
-                // One row as wide as its text, when it fits; columns that wrap when it doesn't.
                 ViewThatFits(in: .horizontal) {
                     UsageFactsGrid(facts: facts, fitsContent: true, labelFont: .caption, valueFont: .subheadline.weight(.medium), detailFont: .caption)
                     UsageFactsGrid(facts: facts, columns: typeSize.isAccessibilitySize ? 1 : 2, labelFont: .caption, valueFont: .subheadline.weight(.medium), detailFont: .caption, detailLines: 4)
@@ -145,7 +136,6 @@ struct ProviderDetailView: View {
         .padding(.vertical, 6)
     }
 
-    /// The amount and its forecast take the card's width, so a sentence ends where it should.
     @ViewBuilder
     private func amountLines(_ window: RelayWindow, isStale: Bool) -> some View {
         let forecast = isStale ? nil : Forecast.text(for: window, history: reading.history[window.id], checkedAt: provider.checkedAt ?? provider.fetchedAt, now: date)
@@ -165,7 +155,6 @@ struct ProviderDetailView: View {
         }
     }
 
-    /// A forecast in quiet ink, with a projected overrun carried as a warning about the reading.
     private func forecastText(_ forecast: String) -> Text {
         let warning = ", over budget"
         guard forecast.hasSuffix(warning) else { return Text(forecast).foregroundStyle(.secondary) }
@@ -173,8 +162,6 @@ struct ProviderDetailView: View {
         return Text("\(lead)\(Text(warning).foregroundStyle(TokenroomTokens.accentText))")
     }
 
-    /// Whose reading this is and, when it isn't current, why. The title above names the provider;
-    /// plan and last check are facts below.
     private var sourceRow: some View {
         HStack(spacing: 10) {
             ProviderMark(provider: provider, size: 28)
@@ -209,11 +196,9 @@ struct ProviderDetailView: View {
 private struct WindowDetail: View {
     var window: RelayWindow
     var history: UsageHistory?
-    /// When the reading was last confirmed, so a month's spend projects from then.
     var checkedAt: Date?
     var isStale: Bool
     var date: Date
-    /// Shown in the hero above: only the week's chart is left to show here.
     var isLead = false
 
     private var pace: Pace? {
@@ -300,7 +285,6 @@ private struct WindowDetail: View {
 
 private struct HistoryChart: View {
     var history: UsageHistory
-    /// The latest reading's level, for its dot: a chart's one colour. Nil on a stale reading.
     var level: Color?
 
     private struct Point: Identifiable {
@@ -326,7 +310,6 @@ private struct HistoryChart: View {
                     .foregroundStyle(level)
                     .symbolSize(32)
             }
-            // When the window reset during the week.
             ForEach(history.resets ?? [], id: \.self) { reset in
                 RuleMark(x: .value("Reset", reset))
                     .foregroundStyle(Color.primary.opacity(0.25))

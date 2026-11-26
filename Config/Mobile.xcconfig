@@ -1,4 +1,3 @@
-// Tokenroom for iPhone.
 #include "Version.xcconfig"
 
 SDKROOT = iphoneos

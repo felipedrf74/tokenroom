@@ -99,8 +99,6 @@ struct MacNewsFollowing: View {
             if let source = voice.feed, news.followedVoices.contains(voice.id) { NewsSourceHealth(news: news, source: source).padding(.leading, 40) }
         }
     }
-    /// A heading over two columns of rows: a long list reads across the window without a box.
-    /// `dismiss` puts a Dismiss button beside the heading, for a suggestion.
     private func sourceSection<Rows: View>(_ title: String, note: String? = nil, dismiss: (() -> Void)? = nil, @ViewBuilder rows: () -> Rows) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
@@ -116,7 +114,6 @@ struct MacNewsFollowing: View {
                 .padding(.top, 4)
         }
     }
-    /// A row with the hairline over it that its neighbours in the other column share.
     private func hairlineRow<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Divider()

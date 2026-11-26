@@ -1,13 +1,11 @@
 import XCTest
 @testable import Tokenroom
 
-/// Claude Code's settings are the user's file: one key changes, every other byte stays.
 final class JSONTextEditTests: XCTestCase {
     private var statusLine: [String: Any] {
         ["type": "command", "command": "/tmp/new.sh"]
     }
 
-    /// `statusLine` as the edit writes it: compact, sorted, slashes as they are.
     private let statusLineText = #"{"command":"/tmp/new.sh","type":"command"}"#
 
     func testReplacingAKeyKeepsEverythingElseByteForByte() throws {
@@ -65,7 +63,6 @@ final class JSONTextEditTests: XCTestCase {
     }
 
     func testAKeySetTwiceIsRefused() {
-        // Foundation reads the first of duplicate keys and Node (Claude Code) the last.
         let text = #"{"statusLine": {"command": "a"}, "model": "opus", "statusLine": {"command": "b"}}"#
         XCTAssertEqual(JSONTextEdit.count(of: "statusLine", in: text), 2)
         XCTAssertEqual(JSONTextEdit.count(of: "model", in: text), 1)

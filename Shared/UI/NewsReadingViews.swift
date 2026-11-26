@@ -2,15 +2,10 @@ import SwiftUI
 
 #if os(iOS) || os(macOS)
 extension EnvironmentValues {
-    /// False where a row keeps its actions out of sight until the pointer reaches it. A saved
-    /// bookmark, Undo, and an error always show: they say something about the item.
     @Entry var newsActionsRevealed = true
 }
 
-/// A source's follow state as a small mark, so a list of thirty sources isn't thirty switches.
-/// Still a toggle to VoiceOver and the keyboard.
 struct NewsFollowToggleStyle: ToggleStyle {
-    /// Off where the row's name beside the mark is a separate link.
     var showsLabel = true
     func makeBody(configuration: Configuration) -> some View {
         Button { configuration.isOn.toggle() } label: {
@@ -90,7 +85,6 @@ struct NewsSaveButton: View {
     @Environment(\.newsActionsRevealed) private var revealed
     @FocusState private var isFocused: Bool
     private var saved: Bool { library.isSaved(id: item.id, aliases: item.aliases) }
-    /// Beside each other, as an iPhone row has room for them only on its last line.
     private var layout: AnyLayout {
         #if os(iOS)
         compact ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(alignment: .leading))
@@ -104,9 +98,7 @@ struct NewsSaveButton: View {
                 let succeeded = saved ? undo.remove(id: item.id, aliases: item.aliases, from: library) : undo.save(item, in: library)
                 actionProblem = succeeded ? nil : library.problem
             } label: {
-                // A bordered Mac button brings its own height, level with the buttons beside it.
                 saveLabel.frame(minHeight: compact || NewsControlMetrics.minimumHeight == 44 ? NewsControlMetrics.minimumHeight : nil)
-                    // Only the glyph hides: the button stays in the key loop and with VoiceOver.
                     .opacity(!compact || saved || revealed || isFocused ? 1 : 0)
             }.focused($isFocused)
                 .accessibilityLabel(!saved ? "Save \(item.title)" : "Remove \(item.title) from saved")
@@ -181,7 +173,6 @@ struct NewsStoryDetail: View {
                 Text(item.displayTitle).font(.system(.largeTitle, design: .serif, weight: .bold)).fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
                 NewsDates(published: item.publisherPublishedAt, updated: item.updatedAt)
                 if let excerpt = item.displayExcerpt {
-                    // About 70 characters a line, however wide the window.
                     Text(excerpt).font(.body).textSelection(.enabled).frame(maxWidth: 540, alignment: .leading)
                 }
                 if item.kind == .officialStatus {
@@ -218,7 +209,6 @@ struct NewsDetailActions: View {
     @Bindable var library: NewsLibrary
     var item: NewsBookmark
     var openLabel = "Open Original"
-    /// Off where the page already names where the link goes.
     var showsHost = true
     var body: some View {
         #if os(macOS)
@@ -375,7 +365,6 @@ struct NewsSourceDetail: View {
 struct NewsSourceHealth: View {
     @Bindable var news: NewsStore
     var source: FeedSource
-    /// Off where the row's subtitle already carries the caption; the problem still shows here.
     var showsCaption = true
     var body: some View {
         let health = news.sourceHealth(for: source)

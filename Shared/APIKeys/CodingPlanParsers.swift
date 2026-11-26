@@ -1,7 +1,5 @@
 import Foundation
 
-/// Coding-plan hosts. A key only works in the region that issued it, so it's only ever sent to
-/// the host of the region the user picked (or the host their coding tool is configured with).
 enum CodingPlanEndpoint {
     static func isChina(_ region: String?) -> Bool {
         region == "China"
@@ -13,14 +11,12 @@ enum CodingPlanEndpoint {
             : "https://api.z.ai/api/monitor/usage/quota/limit")!
     }
 
-    /// The Kimi Code CLI signs in on kimi.com and keeps using that host.
     static func kimiUsages(region: String?) -> URL {
         URL(string: isChina(region)
             ? "https://api.kimi.com/coding/v1/usages"
             : "https://api.kimi.ai/coding/v1/usages")!
     }
 
-    /// Token Plan first; accounts still on the older Coding Plan answer 404 there.
     static func minimaxRemains(region: String?, legacy: Bool) -> URL {
         let host = isChina(region) ? "https://api.minimaxi.com" : "https://api.minimax.io"
         return URL(string: host + (legacy ? "/v1/api/openplatform/coding_plan/remains" : "/v1/token_plan/remains"))!
@@ -29,10 +25,6 @@ enum CodingPlanEndpoint {
     static let opencodeGoUsage = URL(string: "https://opencode.ai/zen/go/v1/usage")!
 }
 
-// MARK: Z.ai
-
-/// Z.ai's GLM Coding Plan quota (`/api/monitor/usage/quota/limit`). Errors arrive as HTTP 200
-/// with `success: false`.
 enum ZaiParser {
     static func snapshot(from data: Data, fetchedAt: Date = .now) throws -> QuotaSnapshot {
         let root = try JSONFlex.object(from: data)
@@ -53,7 +45,6 @@ enum ZaiParser {
             let reset = JSONFlex.date(limit["nextResetTime"])
             switch (type, unit, number) {
             case ("CREDIT_LIMIT", 3, 5), ("TOKENS_LIMIT", 3, 5):
-                // An idle 5-hour window can report a reset far ahead; it hasn't started yet.
                 let plausible = reset.flatMap { $0.timeIntervalSince(fetchedAt) <= 5 * 3600 + 60 ? $0 : nil }
                 session = QuotaWindow(id: "session", kind: .session, title: "Session", usedPercent: used, resetsAt: plausible, windowSeconds: 5 * 3600)
             case ("CREDIT_LIMIT", 6, 1), ("TOKENS_LIMIT", 6, 1):
@@ -71,7 +62,6 @@ enum ZaiParser {
         return try .headlined(by: windows, provider: .zai, fetchedAt: fetchedAt, planLabel: planLabel(body))
     }
 
-    /// `usage` is the limit and `remaining` what's left; `percentage` is a rounded fallback.
     static func usedPercent(_ limit: [String: Any]) -> Double? {
         if let total = JSONFlex.number(limit["usage"]), total > 0, let remaining = JSONFlex.number(limit["remaining"]) {
             return JSONFlex.clampPercent((total - remaining) / total * 100)
@@ -91,7 +81,6 @@ enum ZaiParser {
         return nil
     }
 
-    /// Z.ai's error codes: 1000–1004 are authentication, 1302/1303 rate limits.
     static func error(code: Int?, message: String) -> ProviderError {
         if message.localizedCaseInsensitiveContains("coding plan") {
             return .notEntitled("This Z.ai key isn't on a GLM Coding Plan.")
@@ -107,10 +96,6 @@ enum ZaiParser {
     }
 }
 
-// MARK: Kimi Code
-
-/// Kimi Code's `/coding/v1/usages`: ratio pools (`usages.limit_5h`, `limit_7d`,
-/// `limit_month_total`), the older count windows, and the booster wallet.
 enum KimiCodeParser {
     static func snapshot(from data: Data, fetchedAt: Date = .now) throws -> QuotaSnapshot {
         let root = try JSONFlex.object(from: data)
@@ -138,13 +123,11 @@ enum KimiCodeParser {
 
     typealias Reading = (used: Double, reset: Date?)
 
-    /// A ratio pool: `used_ratio` 0…1 (above 1 once over the limit) and an ISO `reset_time`.
     static func ratio(_ value: Any?) -> Reading? {
         guard let pool = JSONFlex.dictionary(value), let ratio = JSONFlex.number(pool["used_ratio"]) else { return nil }
         return (JSONFlex.clampPercent(ratio * 100), JSONFlex.date(pool["reset_time"]))
     }
 
-    /// An older count window: int64 strings, and one of several reset spellings.
     static func count(_ window: [String: Any]?) -> Reading? {
         guard let window, let limit = JSONFlex.number(window["limit"]), limit > 0 else { return nil }
         let used = JSONFlex.number(window["used"])
@@ -154,7 +137,6 @@ enum KimiCodeParser {
         return (JSONFlex.clampPercent(used / limit * 100), reset)
     }
 
-    /// Ratios win, except a zero ratio beside a count that shows use: the ratio lagged behind.
     static func pick(_ ratio: Reading?, legacy: Reading?) -> Reading? {
         if let ratio, !(ratio.used == 0 && (legacy?.used ?? 0) > 0) {
             return ratio
@@ -170,7 +152,6 @@ enum KimiCodeParser {
         case "TIME_UNIT_HOUR": seconds = duration * 3600
         default: return nil
         }
-        // Day-long and longer windows aren't the session window.
         return seconds < 86_400 ? seconds : nil
     }
 
@@ -192,7 +173,6 @@ enum KimiCodeParser {
         return level.replacingOccurrences(of: "LEVEL_", with: "").replacingOccurrences(of: "_", with: " ").capitalized
     }
 
-    /// The booster wallet: prepaid usage beyond the plan. Amounts are fixed point, 1e6 per cent.
     static func booster(_ value: Any?) -> ExtraUsage? {
         guard let wallet = JSONFlex.dictionary(value),
               let balance = JSONFlex.dictionary(wallet["balance"]),
@@ -215,12 +195,7 @@ enum KimiCodeParser {
     }
 }
 
-// MARK: MiniMax
-
-/// MiniMax's plan remains: `model_remains[]` lanes (`general`, `video`, or model names), each with
-/// an interval window and a weekly one.
 enum MiniMaxParser {
-    /// - Parameter legacy: the older Coding Plan endpoint, whose `*_usage_count` is what's *left*.
     static func snapshot(from data: Data, legacy: Bool = false, fetchedAt: Date = .now) throws -> QuotaSnapshot {
         let root = try JSONFlex.object(from: data)
         try check(root)
@@ -267,7 +242,6 @@ enum MiniMaxParser {
         return try .headlined(by: windows, provider: .minimax, fetchedAt: fetchedAt, planLabel: planLabel(body, root: root))
     }
 
-    /// `base_resp.status_code`: 0 is success; 1004 and 2049 mean the key (or its region) was refused.
     static func check(_ root: [String: Any]) throws {
         let base = JSONFlex.dictionary(root["base_resp"])
         let code = JSONFlex.number(base?["status_code"]).map { Int($0) } ?? 0
@@ -291,8 +265,6 @@ enum MiniMaxParser {
             && JSONFlex.number(lane["\(prefix)_remaining_percent"]) == nil
     }
 
-    /// One lane window, or nil when the plan doesn't include it (status 3 with nothing to count)
-    /// or it's unlimited.
     static func window(_ lane: [String: Any], prefix: String, start: String, end: String, legacy: Bool, now: Date) -> Lane? {
         let total = JSONFlex.number(lane["\(prefix)_total_count"]) ?? 0
         let count = JSONFlex.number(lane["\(prefix)_usage_count"])
@@ -305,7 +277,6 @@ enum MiniMaxParser {
         if let remainingPercent {
             used = 100 - remainingPercent
         } else if total > 0, let count {
-            // The Coding Plan endpoint's "usage" count is what's left, despite its name.
             used = (legacy ? total - count : count) / total * 100
         } else {
             return nil
@@ -335,10 +306,6 @@ enum MiniMaxParser {
     }
 }
 
-// MARK: OpenCode Go
-
-/// OpenCode Go's `/zen/go/v1/usage`: a rolling 5-hour window, and weekly and monthly ones.
-/// `percent` is used, 0–100.
 enum OpenCodeGoParser {
     static func snapshot(from data: Data, fetchedAt: Date = .now) throws -> QuotaSnapshot {
         let root = try JSONFlex.object(from: data)
@@ -358,14 +325,12 @@ enum OpenCodeGoParser {
 
     static func window(_ value: Any?, now: Date) -> (used: Double, reset: Date?)? {
         guard let window = JSONFlex.dictionary(value), let percent = JSONFlex.number(window["percent"]) else { return nil }
-        // A rate-limited window is spent, whatever the rounded percent says.
         let used = JSONFlex.string(window["status"]) == "rate-limited" ? max(percent, 100) : percent
         let reset = JSONFlex.date(window["resetsAt"])
             ?? JSONFlex.number(window["resetInSec"]).map { now.addingTimeInterval($0) }
         return (JSONFlex.clampPercent(used), reset)
     }
 
-    /// A 403 with `EntitlementError` is a valid key without a Go subscription.
     static func error(status: Int, body: Data) -> ProviderError? {
         guard status == 403,
               let root = try? JSONFlex.object(from: body),

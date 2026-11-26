@@ -17,8 +17,6 @@ struct SnapshotCache: Sendable {
         directory.appendingPathComponent("snapshots.json")
     }
 
-    /// When each provider last answered, which a reading's own time can't say: an unchanged
-    /// reading keeps the time it first appeared.
     var checkedURL: URL {
         directory.appendingPathComponent("checked.json")
     }
@@ -48,7 +46,6 @@ struct SnapshotCache: Sendable {
         return Self.decode(data)
     }
 
-    /// Decodes entry by entry: an unknown provider or one bad entry never drops the rest.
     static func decode(_ data: Data) -> [Provider: QuotaSnapshot] {
         guard let decoded = try? JSONDecoder().decode([String: LenientEntry].self, from: data) else {
             return [:]
@@ -71,7 +68,6 @@ struct SnapshotCache: Sendable {
         try? data.write(to: fileURL, options: .atomic)
     }
 
-    /// Headroom 1.x stored Grok Bot's plan name as a fake "plan" window.
     private static func migrated(_ snapshot: QuotaSnapshot) -> QuotaSnapshot {
         guard let index = snapshot.windows.firstIndex(where: { $0.id == "plan" && $0.kind == .pool }) else {
             return snapshot

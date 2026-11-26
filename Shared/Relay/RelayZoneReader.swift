@@ -24,8 +24,6 @@ actor RelayZoneReader<ID: Hashable & Sendable, Record: Sendable, Token: Sendable
 
     private let fetch: @Sendable (Token?) async throws -> Page
     private let recovery: @Sendable (any Error) -> Recovery
-    /// A successful nil result means the record was deleted; a per-ID failure keeps it absent.
-    /// An operation-level throw, unlike a per-ID failure, rolls back the staged zone read.
     private let retry: (@Sendable ([ID]) async throws -> [ID: Result<Record?, any Error>])?
     private var records: [ID: Record] = [:]
     private var quarantined: Set<ID> = []
@@ -88,7 +86,6 @@ actor RelayZoneReader<ID: Hashable & Sendable, Record: Sendable, Token: Sendable
         task.cancel()
     }
 
-    /// Account changes invalidate both the token and any outstanding read of the old account.
     func invalidate() {
         generation = UUID()
         scope = nil
@@ -114,7 +111,6 @@ actor RelayZoneReader<ID: Hashable & Sendable, Record: Sendable, Token: Sendable
         let started = generation
         var staged = records
         var stagedQuarantine = quarantined
-        // Newly failed IDs wait until a later read; retries are not a same-pass retry loop.
         let retryIDs = quarantined
         var cursor = token
         var seen = pass ?? (cursor == nil && !staged.isEmpty ? [] : nil)
@@ -198,7 +194,6 @@ actor RelayZoneReader<ID: Hashable & Sendable, Record: Sendable, Token: Sendable
     }
 }
 
-/// Owns the observer without passing a Foundation observer token across actor boundaries.
 final class RelayAccountObserver: @unchecked Sendable {
     private let token: any NSObjectProtocol
 
@@ -209,7 +204,6 @@ final class RelayAccountObserver: @unchecked Sendable {
     deinit { NotificationCenter.default.removeObserver(token) }
 }
 
-/// A synchronous account fence: observers close it before actor work is enqueued.
 final class RelayAccountEpoch: Sendable {
     private let current = Mutex(UUID())
     var value: UUID { current.withLock { $0 } }

@@ -1,15 +1,10 @@
 import SwiftUI
 
-/// A ring for one window: used percent in its level's colour, a slightly lighter tint at the start
-/// running to the full colour at its rounded tip. A label (the monogram or the percent) sits in
-/// the middle. Scales to its frame, from a Watch row to the iPhone's summary card.
 struct UsageRing: View {
     var used: Double
     var isStale: Bool
     var label: String
-    /// Stroke width; nil scales with the ring.
     var lineWidth: CGFloat? = nil
-    /// Where an even pace would be now, 0–1 of the window; drawn as a notch across the ring.
     var paceMark: Double? = nil
     var isAwaitingReading = false
 
@@ -19,7 +14,6 @@ struct UsageRing: View {
             let width = lineWidth ?? max(3, side * 0.11)
             let pace = MeterLayout.shownPace(paceMark, isStale: isStale, isAwaitingReading: isAwaitingReading)
             ZStack {
-                // A little wider than the ring: the stroke straddles its frame.
                 Canvas { context, size in
                     draw(in: &context, size: size, radius: side / 2, width: width, pace: pace)
                 }
@@ -41,8 +35,6 @@ struct UsageRing: View {
         .accessibilityValue(accessibilityValue)
     }
 
-    /// Track and fill, with the even pace left out of both as a gap: it's geometry rather than a
-    /// blend, so it stays a gap in every view it's composited into, whether use has passed it or not.
     private func draw(in context: inout GraphicsContext, size: CGSize, radius: CGFloat, width: CGFloat, pace: Double?) {
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
         let top = Angle.degrees(-90)
@@ -82,9 +74,6 @@ struct UsageRing: View {
         MeterLayout.usedFraction(MeterLayout.shownUsed(used, isAwaitingReading: isAwaitingReading))
     }
 
-    /// From a slightly lighter tint of the level's colour to the colour itself at the tip. The
-    /// sweep starts a little before 12 o'clock and comes back to the tint, so the round cap at
-    /// the start of the arc takes the tint rather than the far end's full colour.
     private func fill(center: CGPoint, start: Angle) -> GraphicsContext.Shading {
         if isStale {
             return .color(Color.secondary)

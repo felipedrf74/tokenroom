@@ -4,9 +4,7 @@ import XCTest
 
 final class PhoneConnectTests: XCTestCase {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
-    /// Providers whose only login is on a Mac, plus Copilot, whose phone path is a token.
     let neverSignIn: [Provider] = [.antigravity, .devin, .copilot]
-    /// The plans the iPhone signs in to itself. Not Claude: Anthropic's terms don't allow it.
     let signsIn: [Provider] = [.openai, .grok, .cursor, .grokBot]
 
     private func reading(_ provider: Provider, checkedAt: Date, used: Double = 40) -> RelayProvider {
@@ -23,8 +21,6 @@ final class PhoneConnectTests: XCTestCase {
         )
     }
 
-    // MARK: Allowlist
-
     func testTheDefaultDecisionSignsInOnlyThePlansPhoneSignInReads() {
         XCTAssertEqual(PhoneConnect.productionAllowlist, Set(signsIn))
         XCTAssertEqual(Set(PhoneSignIn.providers), Set(signsIn))
@@ -38,7 +34,6 @@ final class PhoneConnectTests: XCTestCase {
         for provider in signsIn {
             XCTAssertEqual(PhoneConnect.action(for: provider, sources: [], now: now), .signIn, provider.rawValue)
             XCTAssertEqual(PhoneConnect.action(for: provider, sources: [staleMac], now: now), .signIn, provider.rawValue)
-            // A Mac reading it live blocks a second login here.
             XCTAssertEqual(PhoneConnect.action(for: provider, sources: [liveMac], now: now), .fromMac, provider.rawValue)
         }
         for provider in Provider.allCases where !signsIn.contains(provider) {
@@ -49,11 +44,8 @@ final class PhoneConnectTests: XCTestCase {
     func testAnAllowlistATestPassesSignsInOnlyThatProvider() {
         XCTAssertEqual(PhoneConnect.action(for: .cursor, sources: [], now: now, allowlist: [.cursor]), .signIn)
         XCTAssertEqual(PhoneConnect.action(for: .claude, sources: [], now: now, allowlist: [.cursor]), .needsMac(reason: PhoneConnect.reason(for: .claude)))
-        // A key provider stays a key even on the allowlist.
         XCTAssertEqual(PhoneConnect.action(for: .copilot, sources: [], now: now, allowlist: [.copilot]), .addKey)
     }
-
-    // MARK: Coverage
 
     func testALiveMacReadingKeepsAPastedKeyForThatProvider() {
         let mac = source(.mac, [.copilot, .openrouter], checkedAt: now.addingTimeInterval(-600))
@@ -70,7 +62,6 @@ final class PhoneConnectTests: XCTestCase {
         XCTAssertEqual(PhoneConnect.action(for: .claude, sources: [mac], now: later, allowlist: []), .needsMac(reason: PhoneConnect.reason(for: .claude)))
         let gone = checked.addingTimeInterval(RelayMerge.maxSourceAge + 1)
         XCTAssertEqual(PhoneConnect.action(for: .claude, sources: [mac], now: gone), .needsMac(reason: PhoneConnect.reason(for: .claude)))
-        // A plan the iPhone signs in to follows the same Mac coverage.
         let codex = source(.mac, [.openai], checkedAt: checked)
         XCTAssertEqual(PhoneConnect.action(for: .openai, sources: [codex], now: now), .fromMac)
         XCTAssertEqual(PhoneConnect.action(for: .openai, sources: [codex], now: later), .signIn)
@@ -127,12 +118,9 @@ final class PhoneConnectTests: XCTestCase {
         let carried = cache.carriedSources(excluding: "This iPhone").map(\.source)
         XCTAssertEqual(carried.first?.kind, .otherPhone)
         XCTAssertEqual(PhoneConnect.action(for: .openai, sources: carried.covering, now: now), .signIn)
-        // An old cache's Mac label still reads as a Mac.
         let mac = ReadingCache(savedAt: now, isSample: false, items: [ReadingCache.Item(provider: item.provider, source: "Mac")])
         XCTAssertEqual(PhoneConnect.action(for: .openai, sources: mac.carriedSources(excluding: "This iPhone").map(\.source).covering, now: now), .fromMac)
     }
-
-    // MARK: The connect screen
 
     func testTheConnectListHasNoKeyProviders() {
         let list = PhoneConnect.connectList(sources: [], now: now)
@@ -161,7 +149,6 @@ final class PhoneConnectTests: XCTestCase {
         XCTAssertEqual(PhoneConnect.disconnectedFooter([.signIn]), "Sign in to these in Settings › Plans.")
         XCTAssertEqual(PhoneConnect.disconnectedFooter([.signIn, needsMac]), "Sign in to these in Settings › Plans, or use Tokenroom on a Mac.")
         XCTAssertEqual(PhoneConnect.disconnectedFooter([.signIn, .addKey, needsMac]), "Sign in to these in Settings › Plans, check their keys in Settings › API Keys, or use Tokenroom on a Mac.")
-        // Without a sign-in to offer, no footer mentions one.
         for actions in [[needsMac], [.fromMac], [.addKey], [needsMac, .addKey]] as [[PhoneConnect.Action]] {
             XCTAssertFalse(PhoneConnect.disconnectedFooter(actions).localizedCaseInsensitiveContains("sign in"))
         }
@@ -176,7 +163,6 @@ final class PhoneConnectTests: XCTestCase {
     }
 
     func testTheWatchNeverCallsTheIPhoneThisIPhone() {
-        // The iPhone hands its cache to the Watch: its own readings carry "This iPhone".
         let item = ReadingCache.Item(provider: reading(.openrouter, checkedAt: now), source: "This iPhone")
         XCTAssertEqual(item.resolvedOrigin, .thisPhone)
         XCTAssertEqual(item.resolvedOrigin.watchPhrase, "From your iPhone")
@@ -197,14 +183,11 @@ final class PhoneConnectTests: XCTestCase {
         let cache = ReadingCache(savedAt: now, isSample: false, items: output.connected)
         let decoded = try RelayEnvelope.decoder.decode(ReadingCache.self, from: RelayEnvelope.encoder.encode(cache))
         XCTAssertEqual(decoded.items.map(\.origin), output.connected.map(\.origin))
-        // A cache from before origins were kept still reads.
         let old = try RelayEnvelope.decoder.decode(ReadingCache.self, from: Data(String(decoding: RelayEnvelope.encoder.encode(cache), as: UTF8.self)
             .replacingOccurrences(of: #","origin":"mac""#, with: "").replacingOccurrences(of: #","origin":"thisPhone""#, with: "").utf8))
         XCTAssertEqual(old.items.map(\.origin), [nil, nil])
         XCTAssertEqual(Set(old.items.map(\.resolvedOrigin)), [.mac, .thisPhone])
     }
-
-    // MARK: Flag
 
     func testTheConnectScreenIsOnByDefaultAndCanBeTurnedOff() throws {
         let name = "app.tokenroom.tests.\(UUID().uuidString)"
@@ -216,8 +199,6 @@ final class PhoneConnectTests: XCTestCase {
         defaults.set(true, forKey: PhoneConnect.flagKey)
         XCTAssertTrue(PhoneConnect.isEnabled(in: defaults))
     }
-
-    // MARK: Watch handoff
 
     func testTheWatchContextCarriesReadingsAndOnlyTheFlag() {
         let data = Data("{}".utf8)
@@ -238,8 +219,6 @@ final class PhoneConnectTests: XCTestCase {
         XCTAssertFalse(WatchHandoff.asksToOpenConnect([:]))
     }
 
-    // MARK: Deep links
-
     func testTheConnectLinkParsesAndTheOthersStillDo() {
         for host in ["news", "settings", "keys", "alerts", "connect"] {
             XCTAssertNotNil(DeepLink(URL(string: "tokenroom://\(host)")!), host)
@@ -250,8 +229,6 @@ final class PhoneConnectTests: XCTestCase {
         XCTAssertNil(DeepLink(URL(string: "tokenroom://oauth/claude?code=abc")!), "Reserved for a future sign-in")
         XCTAssertNil(DeepLink(URL(string: "tokenroom://unknown")!))
     }
-
-    // MARK: Mac coverage (7 November 2026 sync decision)
 
     func testTheIPhonePausesItsSessionReadWhileAMacReadingIsFreshWithHysteresis() {
         func paused(_ minutes: Double, was: Bool, manual: Bool = false) -> Bool {
@@ -269,8 +246,6 @@ final class PhoneConnectTests: XCTestCase {
         XCTAssertEqual(MacCoveragePause.detail(planName: "Codex"), "Paused: your Mac reads Codex")
     }
 
-    /// A pull to refresh reads a paused plan but doesn't forget the pause: the next ordinary pass
-    /// in the 15–25 minute band stays paused instead of resolving to "read".
     func testAPullToRefreshReadsButKeepsThePauseForTheNextPass() {
         let pulled = MacCoveragePause.isPaused(macAge: 20 * 60, wasPaused: true, manual: true)
         let kept = MacCoveragePause.remembered(macAge: 20 * 60, wasPaused: true)

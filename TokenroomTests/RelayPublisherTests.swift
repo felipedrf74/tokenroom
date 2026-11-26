@@ -2,7 +2,6 @@ import CloudKit
 import XCTest
 @testable import Tokenroom
 
-/// The Mac's iCloud sender against a stand-in for iCloud: nothing leaves the Mac.
 final class RelayPublisherTests: XCTestCase {
     private var suites: [String] = []
 
@@ -110,8 +109,6 @@ final class RelayPublisherTests: XCTestCase {
         }
     }
 
-    /// One call that never answers gives way at the budget, and the round after it waits that
-    /// out rather than holding on iCloud call by call.
     @MainActor
     func testAniCloudCallThatNeverAnswersGivesWay() async {
         let cloud = StandInCloud(holdsPublishes: 1)
@@ -129,8 +126,6 @@ final class RelayPublisherTests: XCTestCase {
         XCTAssertEqual(cloud.preferenceReads, 0, "Waits out the call that didn't answer")
     }
 
-    /// Sync turned off while a send is out stays Off, and turning it back on starts afresh: the
-    /// zone is made again and everything is sent.
     @MainActor
     func testTurningSyncOffDuringASendKeepsItOff() async {
         let cloud = StandInCloud(holdsPublishes: 1)
@@ -152,8 +147,6 @@ final class RelayPublisherTests: XCTestCase {
         XCTAssertEqual(cloud.envelopes.count, 2, "Sent again at once: what was sent before is forgotten")
     }
 
-    /// A provider turned off while the last send was out: that send returns and records itself as
-    /// sent, but the round after it still goes at once, not after the minute's wait.
     @MainActor
     func testAProviderChangeDuringASendKeepsTheNextRoundDue() async {
         let cloud = StandInCloud(holdsPublishes: 1)
@@ -172,7 +165,6 @@ final class RelayPublisherTests: XCTestCase {
         XCTAssertEqual(cloud.envelopes.count, 2, "Then nothing changed")
     }
 
-    /// The name field left blank: the iPhone still says where readings come from.
     @MainActor
     func testABlankNameOnIPhoneIsSentAsMac() async {
         let cloud = StandInCloud()
@@ -186,7 +178,6 @@ final class RelayPublisherTests: XCTestCase {
         XCTAssertEqual(cloud.eventBodies, ["Test alert from Mac. Usage alerts will look like this."])
     }
 
-    /// Off stops new writes: alerts not yet sent stay queued. The one already out may still land.
     @MainActor
     func testTurningSyncOffStopsTheAlertsNotYetSent() async {
         let cloud = StandInCloud(holdsAlerts: 1)
@@ -205,9 +196,6 @@ final class RelayPublisherTests: XCTestCase {
     }
 }
 
-/// iCloud as `RelayPublisher` sees it, in memory. The first `holdsPublishes` sends, and the first
-/// `holdsAlerts` alert saves, wait until `release`, whatever the caller does meanwhile, like a
-/// call that doesn't answer.
 final class StandInCloud: RelayCloud, @unchecked Sendable {
     private let lock = NSLock()
     private var held: Int

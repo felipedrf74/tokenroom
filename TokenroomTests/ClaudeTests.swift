@@ -17,7 +17,6 @@ final class ClaudeTests: XCTestCase {
     private func makeBridge() throws -> ClaudeStatusLineBridge {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         folders.append(root)
-        // A space in the path, like "Application Support".
         let bridge = ClaudeStatusLineBridge(
             claudeDirectory: root.appendingPathComponent(".claude", isDirectory: true),
             bridgeDirectory: root.appendingPathComponent("App Support/bridge", isDirectory: true)
@@ -30,23 +29,19 @@ final class ClaudeTests: XCTestCase {
         try JSONSerialization.jsonObject(with: Data(contentsOf: bridge.settingsURL)) as! [String: Any]
     }
 
-    /// Full copies of settings.json in the bridge folder, named as Tokenroom 2.0.0 kept them.
     private func fullCopies(_ bridge: ClaudeStatusLineBridge) throws -> [String] {
         try FileManager.default.contentsOfDirectory(atPath: bridge.bridgeDirectory.path)
             .filter { $0 == "settings.original.json" || $0.hasPrefix("settings.backup-") }
             .sorted()
     }
 
-    /// Writes a status-line reading as Claude Code's script would, `age` seconds ago.
     private func writeReading(_ bridge: ClaudeStatusLineBridge, weekly: Double, session: Double, age: TimeInterval) throws {
         try FileManager.default.createDirectory(at: bridge.bridgeDirectory, withIntermediateDirectories: true)
-        // Resets far ahead, so nothing is dropped as past.
         let json = #"{"five_hour":{"used_percentage":\#(session),"resets_at":4102444800},"seven_day":{"used_percentage":\#(weekly),"resets_at":4102444800}}"#
         try Data(json.utf8).write(to: bridge.readingURL)
         try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-age)], ofItemAtPath: bridge.readingURL.path)
     }
 
-    /// Runs the installed script as Claude Code does, with `input` on stdin; returns what it printed.
     private func runScript(_ bridge: ClaudeStatusLineBridge, input: String) throws -> String {
         let process = Process()
         process.executableURL = bridge.scriptURL
@@ -61,7 +56,6 @@ final class ClaudeTests: XCTestCase {
         return String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
     }
 
-    /// A direct read with every kind of window: the status line's two, model caps, and extra usage.
     private func directReading(at fetchedAt: Date, now: Date) -> QuotaSnapshot {
         let week = now.addingTimeInterval(3 * 86_400)
         return QuotaSnapshot(
@@ -75,8 +69,6 @@ final class ClaudeTests: XCTestCase {
             extra: ExtraUsage(title: "Extra usage", amount: QuotaAmount(used: 5, limit: 50, remaining: 45, unit: "usd"))
         )
     }
-
-    // MARK: Parser
 
     func testFullUsageWithModelCapsAndExtraUsage() throws {
         let snapshot = try ClaudeParser.snapshot(from: fixture("claude-usage-full"))
@@ -94,8 +86,6 @@ final class ClaudeTests: XCTestCase {
         XCTAssertEqual(snapshot.windows.map(\.id), ["weekly", "session"])
         XCTAssertNil(snapshot.extra)
     }
-
-    // MARK: Status-line bridge
 
     func testInstallIntoEmptyClaudeFolder() throws {
         let bridge = try makeBridge()
@@ -118,7 +108,7 @@ final class ClaudeTests: XCTestCase {
 
         try bridge.install()
         XCTAssertEqual(try fullCopies(bridge), [], "Only the previous status line is kept, never a copy of settings.json")
-        try bridge.install() // idempotent: the first saved status line is kept
+        try bridge.install()
         let installed = try XCTUnwrap(try settings(bridge)["statusLine"] as? [String: Any])
         XCTAssertEqual(installed["padding"] as? Int, 2, "Other statusLine keys stay")
         XCTAssertEqual(try String(contentsOf: bridge.previousCommandURL, encoding: .utf8), "echo mine")
@@ -244,15 +234,12 @@ final class ClaudeTests: XCTestCase {
         sameWeek.windows[0].resetsAt = now.addingTimeInterval(-60)
         XCTAssertNil(ClaudeClient.merged(sameWeek, with: pastWeek, now: now), "Nor next to a direct read of the week that reset")
 
-        // Next to a recent direct read, a status line without the week still updates the session.
         let sessionOnly = ClaudeBridgeReading(weeklyUsed: nil, weeklyResetsAt: nil, sessionUsed: 30, sessionResetsAt: now.addingTimeInterval(3_600), at: now.addingTimeInterval(-60))
         let merged = try XCTUnwrap(ClaudeClient.merged(directReading(at: now.addingTimeInterval(-15 * 60), now: now), with: sessionOnly, now: now))
         XCTAssertEqual(merged.windows.map(\.usedPercent), [50, 30, 80, 30])
         XCTAssertEqual(merged.primaryTitle, "Weekly")
         XCTAssertEqual(merged.usedPercent, 50)
 
-        // Without a weekly value at all (an account without one, or Claude Code leaving it out),
-        // the session headlines, alone or once the direct read is too old to keep its week.
         let alone = try XCTUnwrap(sessionOnly.snapshot(now: now))
         XCTAssertEqual(alone.primaryTitle, "Session")
         XCTAssertEqual(alone.usedPercent, 30)
@@ -327,7 +314,6 @@ final class ClaudeTests: XCTestCase {
             ]
         )
         client.state.recordDirect(direct)
-        // Held off as well, so this test can never reach this Mac's real Claude login.
         client.state.block(until: Date().addingTimeInterval(600))
         try writeReading(bridge, weekly: 44, session: 12, age: 60)
 
@@ -357,7 +343,6 @@ final class ClaudeTests: XCTestCase {
         let now = Date()
         let until = now.addingTimeInterval(600)
         client.state.recordDirect(directReading(at: now.addingTimeInterval(-2 * 3600), now: now))
-        // Held off as well, so this test can never reach this Mac's real Claude login.
         client.state.block(until: until)
         try writeReading(bridge, weekly: 44, session: 12, age: 60)
 
@@ -375,10 +360,8 @@ final class ClaudeTests: XCTestCase {
         let bridge = try makeBridge()
         let client = ClaudeClient(bridge: bridge)
         let now = Date()
-        // During a 429 wait the store asks between calls; direct calls stay blocked.
         client.state.recordDirect(directReading(at: now.addingTimeInterval(-2 * 3600), now: now))
         client.state.block(until: now.addingTimeInterval(600))
-        // What's shown still carries Opus and extra usage, under an earlier status line's time.
         var shown = directReading(at: now.addingTimeInterval(-5 * 60), now: now)
         shown.source = "bridge"
         try writeReading(bridge, weekly: 44, session: 12, age: 60)
@@ -390,7 +373,6 @@ final class ClaudeTests: XCTestCase {
         XCTAssertEqual(answer?.source, "bridge")
         XCTAssertEqual(client.state.blockedUntil, now.addingTimeInterval(600), "Direct calls still wait")
 
-        // After a relaunch there's no direct read to go by: the status line alone.
         let relaunched = ClaudeClient(bridge: bridge)
         let alone = await relaunched.fetchBetweenCalls(previous: shown)
         XCTAssertEqual(alone?.windows.map(\.id), ["weekly", "session"])
@@ -409,15 +391,11 @@ final class ClaudeTests: XCTestCase {
         XCTAssertFalse(state.claimUpgrade(), "The bridge is brought up to date once per launch")
     }
 
-    // MARK: Editing settings.json
-
     func testNoCopyOfSettingsIsKeptAndEarlierCopiesGo() throws {
         let bridge = try makeBridge()
         let fileManager = FileManager.default
-        // settings.json can hold other tools' keys in env.
         let original = Data(#"{"env": {"ANTHROPIC_AUTH_TOKEN": "placeholder-key"}, "statusLine": {"type": "command", "command": "echo mine"}}"#.utf8)
         try original.write(to: bridge.settingsURL)
-        // Copies Tokenroom 2.0.0 kept; for a symlinked settings.json it copied the link.
         try fileManager.createDirectory(at: bridge.bridgeDirectory, withIntermediateDirectories: true)
         try original.write(to: bridge.bridgeDirectory.appendingPathComponent("settings.original.json"))
         try original.write(to: bridge.bridgeDirectory.appendingPathComponent("settings.backup-1790000000000.json"))
@@ -448,7 +426,6 @@ final class ClaudeTests: XCTestCase {
         try bridge.install()
         try Data("{}".utf8).write(to: bridge.bridgeDirectory.appendingPathComponent("settings.original.json"))
         try Data("{}".utf8).write(to: bridge.bridgeDirectory.appendingPathComponent("settings.backup-1790000000000.json"))
-        // The user replaced the status line since; it stays.
         let theirs = Data(#"{"statusLine": {"type": "command", "command": "echo theirs"}}"#.utf8)
         try theirs.write(to: bridge.settingsURL)
 
@@ -476,8 +453,6 @@ final class ClaudeTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: off.scriptURL.path), "A bridge that's off isn't set up")
     }
 
-    /// Dotfiles (stow, home-manager) may be shared with other Macs, where Tokenroom's script
-    /// isn't: a linked settings file is left for the user to change.
     func testALinkedSettingsFileIsLeftAlone() throws {
         let bridge = try makeBridge()
         let fileManager = FileManager.default
@@ -486,7 +461,6 @@ final class ClaudeTests: XCTestCase {
         let target = dotfiles.appendingPathComponent("claude-settings.json")
         let original = Data("{\n  \"model\": \"opus\"\n}\n".utf8)
         try original.write(to: target)
-        // Relative, the way stow links it.
         try fileManager.createSymbolicLink(atPath: bridge.settingsURL.path, withDestinationPath: "../dotfiles/claude-settings.json")
 
         XCTAssertThrowsError(try bridge.install()) { error in
@@ -500,7 +474,6 @@ final class ClaudeTests: XCTestCase {
         XCTAssertFalse(fileManager.fileExists(atPath: bridge.scriptURL.path), "Nothing set up")
         XCTAssertFalse(bridge.isInstalled)
 
-        // Set by hand, it reads as on; turning it off is left to the user too.
         let byHand = Data(#"{"statusLine": {"type": "command", "command": \#(String(decoding: try JSONEncoder().encode(bridge.command), as: UTF8.self))}}"#.utf8)
         try byHand.write(to: target)
         XCTAssertTrue(bridge.isInstalled)
@@ -509,7 +482,6 @@ final class ClaudeTests: XCTestCase {
         }
         XCTAssertEqual(try Data(contentsOf: target), byHand)
 
-        // The same for a linked .claude folder.
         let linkedFolder = try makeBridge()
         let shared = linkedFolder.claudeDirectory.deletingLastPathComponent().appendingPathComponent("shared-claude", isDirectory: true)
         try fileManager.moveItem(at: linkedFolder.claudeDirectory, to: shared)
@@ -520,7 +492,6 @@ final class ClaudeTests: XCTestCase {
         }
         XCTAssertEqual(try Data(contentsOf: shared.appendingPathComponent("settings.json")), original)
 
-        // A linked folder with no settings file yet is still a link, not a broken one.
         try fileManager.removeItem(at: shared.appendingPathComponent("settings.json"))
         XCTAssertThrowsError(try linkedFolder.install()) { error in
             guard case .linked(let shown, _)? = error as? ClaudeStatusLineBridge.BridgeError else { return XCTFail("\(error)") }
@@ -543,7 +514,6 @@ final class ClaudeTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: bridge.scriptURL.path), "Refused before anything is written")
     }
 
-    /// An atomic write would replace a read-only file in a folder that can be written to.
     func testAReadOnlySettingsFileIsRefusedNotReplaced() throws {
         let bridge = try makeBridge()
         let original = Data(#"{"model": "opus"}"#.utf8)
@@ -577,7 +547,6 @@ final class ClaudeTests: XCTestCase {
         }
         XCTAssertEqual(try Data(contentsOf: bridge.settingsURL), duplicated)
 
-        // As 2.0.0 could leave it: Tokenroom's status line first, while Claude Code runs the last.
         let ours = String(decoding: try JSONSerialization.data(withJSONObject: ["type": "command", "command": bridge.command], options: [.sortedKeys, .withoutEscapingSlashes]), as: UTF8.self)
         try Data(#"{"statusLine": \#(ours), "statusLine": {"type": "command", "command": "echo last"}}"#.utf8).write(to: bridge.settingsURL)
         XCTAssertFalse(bridge.isInstalled, "Claude Code runs the last one")
@@ -597,7 +566,6 @@ final class ClaudeTests: XCTestCase {
             XCTAssertFalse(bridge.isInstalled, name)
         }
 
-        // Foundation reads a comma after the last setting; Claude Code and the in-place edit don't.
         let trailingComma = Data("{\n  \"model\": \"opus\",\n}\n".utf8)
         try trailingComma.write(to: bridge.settingsURL)
         XCTAssertThrowsError(try bridge.install())
@@ -670,7 +638,6 @@ final class ClaudeTests: XCTestCase {
         let personal = try project("beta", file: "settings.local.json", statusLine: true)
         let plain = try project("gamma", file: "settings.json", statusLine: false)
         let bare = try project("delta", file: nil, statusLine: false)
-        // The user settings folder itself sets a status line; it's the one Tokenroom edits.
         try JSONSerialization.data(withJSONObject: ["statusLine": ["type": "command", "command": "echo user"]]).write(to: bridge.settingsURL)
 
         XCTAssertEqual(bridge.projectOverrides(), [], "No ~/.claude.json, no projects")
@@ -687,14 +654,12 @@ final class ClaudeTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: config).write(to: home.appendingPathComponent(".claude.json"))
 
         XCTAssertEqual(bridge.projectOverrides().map(\.lastPathComponent), ["alpha", "beta"], "Shared or personal project settings; never the user folder itself")
-        // Paths are read in order; the home folder sorts first and counts toward the limit.
         XCTAssertEqual(bridge.projectOverrides(limit: 2).map(\.lastPathComponent), ["alpha"])
     }
 
     func testTheHomeFolderIsKnownThroughALinkOrInAnotherCase() throws {
         let bridge = try makeBridge()
         let home = bridge.claudeDirectory.deletingLastPathComponent()
-        // The user settings set a status line; it's the one Tokenroom edits.
         try JSONSerialization.data(withJSONObject: ["statusLine": ["type": "command", "command": "echo user"]]).write(to: bridge.settingsURL)
         let link = home.appendingPathComponent("home-link")
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: home)
@@ -707,7 +672,6 @@ final class ClaudeTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: config).write(to: home.appendingPathComponent(".claude.json"))
         XCTAssertEqual(bridge.projectOverrides(), [], "The home folder's settings.json is the user settings file, however its path is spelled")
 
-        // Its settings.local.json does replace the bridge for sessions in the home folder.
         try JSONSerialization.data(withJSONObject: ["statusLine": ["type": "command", "command": "echo local"]])
             .write(to: bridge.claudeDirectory.appendingPathComponent("settings.local.json"))
         XCTAssertEqual(bridge.projectOverrides().count, paths.count)

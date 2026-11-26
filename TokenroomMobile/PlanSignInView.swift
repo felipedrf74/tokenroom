@@ -1,11 +1,6 @@
 import SwiftUI
 import UIKit
 
-/// Signs this iPhone in to a plan on the vendor's own page. Codex and Grok Build: show a short
-/// code, open the vendor's page to approve it, and finish on their own once it's approved. Cursor
-/// and Grok Bot: open Cursor's page, sign in (Grok and X accounts work there), and finish on their
-/// own. The session is saved to this iPhone's Keychain; nothing typed here is a password. Claude
-/// has no sign-in here (`PhoneSignIn`).
 struct PlanSignInView: View {
     var store: MobileStore
     var provider: Provider
@@ -61,8 +56,6 @@ struct PlanSignInView: View {
             .interactiveDismissDisabled(phase == .finishing)
         }
     }
-
-    // MARK: Codex and Grok Build
 
     @ViewBuilder private var deviceCodeSteps: some View {
         switch phase {
@@ -157,8 +150,6 @@ struct PlanSignInView: View {
             }
         }
     }
-
-    // MARK: Saving
 
     private func save(_ session: PhoneSession) async throws {
         phase = .finishing

@@ -1,35 +1,25 @@
 import Foundation
 
-/// What a Usage tile shows for one provider: its long window (weekly, a month, a billing cycle)
-/// as a ring, and its 5-hour session as a bar. A balance with no limit shows its amount instead.
 struct UsageTile: Equatable, Sendable {
-    /// The window the ring shows. Nil for a balance with no meter.
     var ring: RelayWindow?
-    /// The session window the bar shows, when the provider has one besides the ring's.
     var bar: RelayWindow?
-    /// An amount-only window (a balance), shown as its amount.
     var balance: RelayWindow?
 }
 
-/// A window close to its limit, for the list at the top of the Usage tab.
 struct CloseWindow: Equatable, Sendable, Identifiable {
     var provider: RelayProvider
     var window: RelayWindow
     var pace: Pace?
 
-    /// The provider and window, so a row keeps its own state (Follow's) when the list re-ranks.
     var id: String { provider.id + "/" + window.id }
 }
 
 enum UsageTiles {
-    /// The first alert level: a window at this much used is close to its limit.
     static let closeUse = Double(AlertPreferences.supportedThresholds.min() ?? 80)
 
     static func tile(for provider: RelayProvider) -> UsageTile {
         let metered = provider.windows.filter(\.isMetered)
         let session = metered.first { $0.windowKind == .session }
-        // The long window: the primary when it isn't the session, else the first weekly, else
-        // any other metered window. A provider with only a session shows it as the ring.
         let ring = provider.primaryWindow.flatMap { $0.isMetered && $0.windowKind != .session ? $0 : nil }
             ?? metered.first { $0.windowKind == .weekly }
             ?? metered.first { $0.windowKind != .session }
@@ -46,10 +36,6 @@ enum UsageTiles {
         return pace.verdict == .limitReached || pace.runOutNeedsAttention
     }
 
-    /// Every window still close to its limit, most urgent first: the limit reached, then the
-    /// soonest run-out, then the most used. A stale reading stays while its last percentage
-    /// is still at 80% or the collector's measured run-out is still before the reset.
-    /// A window that has reset stays out.
     static func closeWindows(_ readings: [(provider: RelayProvider, history: [String: UsageHistory])], now: Date = .now) -> [CloseWindow] {
         var found: [CloseWindow] = []
         for reading in readings {
@@ -73,8 +59,6 @@ enum UsageTiles {
         }
     }
 
-    /// `items` (in rank order) in the order their IDs had when last ranked: tiles keep their
-    /// places between looks. Ones not in `order` follow, in their rank.
     static func ordered<Item>(_ items: [Item], id: (Item) -> String, as order: [String]) -> [Item] {
         let position = Dictionary(order.enumerated().map { ($1, $0) }) { first, _ in first }
         return items.enumerated()
@@ -83,8 +67,6 @@ enum UsageTiles {
             .map(\.item)
     }
 
-    /// How long before the reset a window runs out: "35 min before it resets",
-    /// "3 hours before it resets", "2 days before it resets".
     static func lead(runsOut: Date, resetsAt: Date) -> String {
         let seconds = max(resetsAt.timeIntervalSince(runsOut), 60)
         let when: String

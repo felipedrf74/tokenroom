@@ -175,7 +175,6 @@ final class NewsQAFixTests: XCTestCase {
     @MainActor func testReadEvictionKeepsSavedSnapshotAndReopens() throws {
         let directory = folder()
         let entries = (0..<5000).map { ["ids": ["read-\($0)"], "date": 1_000_000_000.0 + Double($0)] as [String: Any] }
-        // One uniquely oldest read plus 4,999 newer ones makes eviction deterministic.
         var read = entries
         read[0]["date"] = 900_000_000.0
         let data = try JSONSerialization.data(withJSONObject: ["version": 1, "saved": [], "read": read])

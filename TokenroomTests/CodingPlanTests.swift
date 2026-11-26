@@ -8,8 +8,6 @@ final class CodingPlanTests: XCTestCase {
 
     private let now = Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 25, hour: 12))!
 
-    // MARK: Z.ai
-
     func testZaiWeeklyLeadsAndUsesTheExactCounts() throws {
         let snapshot = try ZaiParser.snapshot(from: fixture("zai-quota"), fetchedAt: now)
         XCTAssertEqual(snapshot.windows.map(\.id), ["weekly", "session", "tools-monthly"])
@@ -41,8 +39,6 @@ final class CodingPlanTests: XCTestCase {
             XCTAssertEqual(error as? ProviderError, .rateLimited(until: nil))
         }
     }
-
-    // MARK: Kimi Code
 
     func testKimiRatioPoolsAndBooster() throws {
         let snapshot = try KimiCodeParser.snapshot(from: fixture("kimi-usages"), fetchedAt: now)
@@ -77,8 +73,6 @@ final class CodingPlanTests: XCTestCase {
         let spent = try KimiCodeParser.snapshot(from: Data(#"{\#(pools),"boosterWallet":{"balance":{"type":"BOOSTER","amount":"2000000000","amountLeft":"0"}}}"#.utf8), fetchedAt: now)
         XCTAssertEqual(spent.extra?.amount.remaining, 0)
     }
-
-    // MARK: MiniMax
 
     func testMiniMaxTotalsWithoutAUsageCountAreNotAReading() throws {
         let partial = #"{"base_resp":{"status_code":0},"model_remains":[{"model_name":"general","current_interval_total_count":1000,"current_interval_remaining_percent":60,"current_weekly_total_count":5000}]}"#
@@ -117,8 +111,6 @@ final class CodingPlanTests: XCTestCase {
         }
     }
 
-    // MARK: OpenCode Go
-
     func testOpenCodeGoPercentsAreUsedOutOfAHundred() throws {
         let snapshot = try OpenCodeGoParser.snapshot(from: fixture("opencode-go-usage"), fetchedAt: now)
         XCTAssertEqual(snapshot.windows.map(\.id), ["weekly", "session", "monthly"])
@@ -135,8 +127,6 @@ final class CodingPlanTests: XCTestCase {
         XCTAssertNil(OpenCodeGoParser.error(status: 401, body: body))
         XCTAssertNil(OpenCodeGoParser.error(status: 403, body: Data(#"{"error":{"type":"AuthError"}}"#.utf8)))
     }
-
-    // MARK: Keys found on this Mac
 
     private var folders: [URL] = []
 
@@ -211,8 +201,6 @@ final class CodingPlanTests: XCTestCase {
         XCTAssertEqual(try go.credential.get(), APIKeyCredential(key: "placeholder-go", source: "opencode"))
     }
 
-    // MARK: Requests
-
     private func stub(_ handler: @escaping @Sendable (URLRequest) -> (Int, Data)) {
         StubURLProtocol.handler = handler
         let configuration = URLSessionConfiguration.ephemeral
@@ -239,7 +227,6 @@ final class CodingPlanTests: XCTestCase {
         XCTAssertEqual(Set(StubURLProtocol.requests.compactMap { $0.url?.host }), ["api.minimax.io"])
     }
 
-    /// A key the Token Plan answers for, with every lane not included, may be on the Coding Plan.
     func testMiniMaxFallsBackToTheCodingPlanWhenNoTokenPlanLaneIsIncluded() async throws {
         let legacy = fixture("minimax-coding-plan")
         let empty = Data(#"{"base_resp":{"status_code":0},"data":{"model_remains":[{"model_name":"general","current_interval_total_count":0,"current_interval_usage_count":0,"current_interval_status":3,"current_weekly_total_count":0,"current_weekly_usage_count":0,"current_weekly_status":3}]}}"#.utf8)
@@ -250,7 +237,6 @@ final class CodingPlanTests: XCTestCase {
         XCTAssertEqual(snapshot.usedPercent, 75, accuracy: 0.001)
         XCTAssertEqual(StubURLProtocol.requests.map { $0.url?.path }, ["/v1/token_plan/remains", "/v1/api/openplatform/coding_plan/remains"])
 
-        // Neither has a lane: the Token Plan's reason, not the older endpoint's failure.
         stub { request in
             request.url?.path.contains("token_plan") == true ? (200, empty) : (404, Data())
         }
@@ -262,9 +248,6 @@ final class CodingPlanTests: XCTestCase {
         }
     }
 
-    /// When the Token Plan includes no lane, the Coding Plan's own failures stay what they are: a
-    /// 429 keeps its wait, a refused key and an outage say so. Only an endpoint not there, or one
-    /// with no limits either, falls back to the Token Plan's reason.
     func testMiniMaxCodingPlanFailuresAreKeptAfterAnEmptyTokenPlan() async {
         let empty = Data(#"{"base_resp":{"status_code":0},"data":{"model_remains":[{"model_name":"general","current_interval_total_count":0,"current_interval_usage_count":0,"current_interval_status":3,"current_weekly_total_count":0,"current_weekly_usage_count":0,"current_weekly_status":3}]}}"#.utf8)
         func failure(_ status: Int, headers: [String: String] = [:]) async -> ProviderError? {
@@ -324,13 +307,10 @@ final class CodingPlanTests: XCTestCase {
     }
 }
 
-/// Answers every request with `handler` and records it.
 final class StubURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var handler: (@Sendable (URLRequest) -> (Int, Data))?
     nonisolated(unsafe) static var requests: [URLRequest] = []
-    /// Extra response headers, e.g. `Retry-After`.
     nonisolated(unsafe) static var headers: [String: String] = [:]
-    /// When set, the request fails before `handler` runs.
     nonisolated(unsafe) static var failure: URLError?
 
     static func reset() {

@@ -1,17 +1,12 @@
 import Foundation
 
-/// A week of hourly usage per window, kept in `history.json` next to the readings cache (the Mac's
-/// Application Support folder, the iPhone's App Group), plus the last six hours of raw readings in
-/// memory for pace. Percentages only.
 @MainActor
 final class HistoryStore {
-    /// Raw readings kept for pace: six hours at a five-minute refresh.
     static let recentCapacity = 72
 
     private(set) var weeks: [String: UsageHistory] = [:]
     private var recent: [String: [(date: Date, used: Double)]] = [:]
     private var dirty = false
-    /// Files in `history-taking/` this store has recorded and not yet deleted, by name.
     private var taken: Set<String> = []
     private var lastClaim = 0
     private let fileURL: URL?
@@ -20,13 +15,11 @@ final class HistoryStore {
         fileURL = directory?.appendingPathComponent(Self.fileName)
         let saved = Self.loadSaved(from: directory)
         weeks = Self.migrated(saved)
-        // Written back under the new keys with the next save.
         dirty = weeks != saved
     }
 
     nonisolated static let fileName = "history.json"
 
-    /// The saved weeks, keyed `provider/window`, for readers that don't record (widgets).
     nonisolated static func load(from directory: URL?) -> [String: UsageHistory] {
         migrated(loadSaved(from: directory))
     }
@@ -39,8 +32,6 @@ final class HistoryStore {
         return saved
     }
 
-    /// Copilot's month read with a token was `ai_credits` in 2.0.0; its week carries on under the
-    /// ID the login and the token both use now.
     private nonisolated static func migrated(_ saved: [String: UsageHistory]) -> [String: UsageHistory] {
         var weeks = saved
         for (key, week) in weeks {
@@ -62,9 +53,6 @@ final class HistoryStore {
         record(snapshot, now: .now)
     }
 
-    /// - Parameter now: this device's clock. A reading dated more than an hour after it (a
-    ///   file's time, or the clock set back since) is left out: it would move the week past
-    ///   every later reading.
     func record(_ snapshot: QuotaSnapshot, now: Date) {
         guard snapshot.fetchedAt <= now.addingTimeInterval(UsageHistory.step) else { return }
         if Self.fold(snapshot, into: &weeks, now: now) {
@@ -86,16 +74,12 @@ final class HistoryStore {
         prune(now: now)
     }
 
-    /// One reading into the weeks it belongs to; whether anything changed. The store records
-    /// through it, and widgets use it to show readings the app hasn't taken in yet.
     nonisolated static func fold(_ snapshot: QuotaSnapshot, into weeks: inout [String: UsageHistory], now: Date) -> Bool {
         guard snapshot.fetchedAt <= now.addingTimeInterval(UsageHistory.step) else { return false }
         var anyChanged = false
         for window in snapshot.windows {
             let key = RelayHistory.key(provider: snapshot.provider.rawValue, window: window.id)
             var week = weeks[key] ?? UsageHistory(endingAt: snapshot.fetchedAt)
-            // A week that ran ahead of the clock takes every new reading for one older than
-            // itself, so it starts over.
             if week.start > now {
                 week = UsageHistory(endingAt: snapshot.fetchedAt)
             }
@@ -116,20 +100,9 @@ final class HistoryStore {
         return anyChanged
     }
 
-    // MARK: Readings widgets took
-
-    /// Readings widgets took with this iPhone's keys, waiting for the app to record them: a file
-    /// per provider and hour, holding the hour's latest reading. The app is the one writer of
-    /// `history.json`, so a widget never races it for that file, and widgets write files of their
-    /// own rather than rewriting a shared list.
     nonisolated static let pendingFolderName = "history-pending"
-    /// Where the app moves queued readings while it records them: one a widget queues meanwhile
-    /// waits for the next refresh, and ones a refresh cut short are recorded by the next. Each
-    /// gets a name of its own there (`QueuedFile`), which only the app writes: a widget can't
-    /// replace a file the app is reading or about to delete.
     nonisolated static let takingFolderName = "history-taking"
 
-    /// The readings waiting, oldest first; of two with one time, the one queued later last.
     nonisolated static func pending(in directory: URL?) -> [QuotaSnapshot] {
         guard let directory else { return [] }
         let files = queuedFiles(in: directory.appendingPathComponent(takingFolderName)).sorted { $0.claim < $1.claim }
@@ -139,9 +112,6 @@ final class HistoryStore {
             .map(\.element)
     }
 
-    /// Adds readings a widget took, for the app to record the next time it refreshes. A later
-    /// reading of a provider in the same hour takes an earlier one's place, and readings older
-    /// than the week history holds are dropped.
     nonisolated static func queue(_ snapshots: [QuotaSnapshot], in directory: URL?, now: Date = .now) {
         guard !snapshots.isEmpty, let directory else { return }
         let folder = directory.appendingPathComponent(pendingFolderName, isDirectory: true)
@@ -159,10 +129,6 @@ final class HistoryStore {
         }
     }
 
-    /// A queued reading's file. A widget names it `<provider>-<hour>.json`; the app moves it to
-    /// `<provider>-<hour>.<claim>.json`, the claim counting up, so each one it takes keeps a file
-    /// of its own and the order it was taken in. One moved by 2.6.4 or earlier kept the widget's
-    /// name and comes first.
     private struct QueuedFile {
         let url: URL
         let slot: String
@@ -217,8 +183,6 @@ final class HistoryStore {
         return .reading(snapshot)
     }
 
-    /// One `rename` to a name nothing else has, before the file is read: whatever a widget
-    /// queues from then on is another file.
     private nonisolated static func claim(_ url: URL, as destination: URL) {
         url.withUnsafeFileSystemRepresentation { from in
             destination.withUnsafeFileSystemRepresentation { to in
@@ -228,7 +192,6 @@ final class HistoryStore {
         }
     }
 
-    /// The saved weeks with the readings widgets took since, for a widget to show.
     nonisolated static func loadWithPending(from directory: URL?, now: Date) -> [String: UsageHistory] {
         var weeks = load(from: directory)
         for snapshot in pending(in: directory) {
@@ -237,9 +200,6 @@ final class HistoryStore {
         return weeks
     }
 
-    /// Records the readings widgets took, oldest first. Called before this refresh's own, which
-    /// are newer. They're moved aside first, so one a widget queues meanwhile stays queued, and
-    /// deleted only once the week is saved, so a refresh cut short loses none.
     func takePending(now: Date = .now) {
         guard let directory = fileURL?.deletingLastPathComponent() else { return }
         let taking = directory.appendingPathComponent(Self.takingFolderName, isDirectory: true)
@@ -277,7 +237,6 @@ final class HistoryStore {
         }
         for (file, snapshot) in readings {
             if latest[file.slot] != file.name {
-                // An hour keeps its latest reading, as it does in the widgets' queue.
                 discard(file)
             } else if !taken.contains(file.name) {
                 record(snapshot, now: now)
@@ -303,8 +262,6 @@ final class HistoryStore {
         }
     }
 
-    /// Forgets windows with no reading in the last week: ones a provider stopped reporting,
-    /// or providers turned off. They'd otherwise be saved and relayed forever.
     private func prune(now: Date) {
         let cutoff = now.addingTimeInterval(-Double(UsageHistory.capacity) * UsageHistory.step)
         let gone = weeks.compactMap { key, week in week.end <= cutoff ? key : nil }
@@ -316,7 +273,6 @@ final class HistoryStore {
         dirty = true
     }
 
-    /// Readings for pace: raw recent ones, else the hourly week.
     func samples(provider: Provider, window: String) -> [(date: Date, used: Double)] {
         let key = RelayHistory.key(provider: provider.rawValue, window: window)
         if let recent = recent[key], recent.count >= 3 {
@@ -325,7 +281,6 @@ final class HistoryStore {
         return weeks[key]?.points ?? []
     }
 
-    /// One provider's weeks, keyed by window ID.
     func weeks(for provider: Provider) -> [String: UsageHistory] {
         let prefix = RelayHistory.key(provider: provider.rawValue, window: "")
         var result: [String: UsageHistory] = [:]
@@ -335,7 +290,6 @@ final class HistoryStore {
         return result
     }
 
-    /// History to relay, limited to the given providers.
     func relayHistory(for providers: [Provider]) -> RelayHistory {
         let ids = Set(providers.map(\.rawValue))
         return RelayHistory(series: weeks.filter { key, week in

@@ -21,8 +21,6 @@ struct NewsView: View {
                 }.padding(.horizontal, 20).padding(.top, 4).padding(.bottom, 24)
             }
             .background(MobileNewsPalette.canvas)
-            // A real title bar, as Usage has: content scrolls under the system's edge effect
-            // rather than into the status bar.
             .navigationTitle("News")
             .navigationSubtitle(Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day().year()))
             .toolbar {
@@ -36,21 +34,14 @@ struct NewsView: View {
                 if destination == .skills { await skills.refresh(sort: skills.sort, force: true) }
                 else if destination != .saved { await news.refresh(maxAge: 0, preferences: store.alertPreferences, notifies: false, waitsForFollowUp: true) }
             }
-            // Kept current while on screen with the app in front; leaving it stops the checks, so
-            // the background keeps to its hourly ones, and coming back starts them again.
             .task(id: scenePhase == .active) {
                 guard scenePhase == .active else { return }
                 await news.keepCurrent(preferences: { store.alertPreferences })
             }
         }
-        // A new page, not a scrolled one, so search stays behind its button on every destination
-        // and the selector doesn't move between them.
         .id(destination)
-        // Outside the `id`: a page it replaces can't see the change. Search belongs to one page.
         .onChange(of: destination) { _, _ in search = "" }
-        // News reads in ink: its one coloured control is Read article. Pushed pages inherit this.
         .tint(.primary)
-        // Except a switch, whose ink track hides its knob in dark mode.
         .toggleStyle(ControlSwitchStyle())
     }
     @ViewBuilder private var selector: some View {
@@ -58,7 +49,6 @@ struct NewsView: View {
             Menu {
                 ForEach(NewsDestination.allCases) { item in Button(item.rawValue, systemImage: item.symbol) { destination = item } }
             } label: {
-                // The only way to the other destinations at these sizes, so it has to look like one.
                 HStack(spacing: 6) {
                     Label(destination.rawValue, systemImage: destination.symbol)
                     Image(systemName: "chevron.up.chevron.down").font(.footnote.weight(.semibold)).foregroundStyle(MobileNewsPalette.secondary).accessibilityHidden(true)
@@ -125,7 +115,6 @@ struct NewsSettingsView: View {
     }
 }
 
-/// A system switch in the controls' colour, wherever the page's tint is ink.
 private struct ControlSwitchStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
         Toggle(configuration).toggleStyle(.switch).tint(TokenroomTokens.control)

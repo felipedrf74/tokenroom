@@ -1,7 +1,5 @@
 import Foundation
 
-/// Saving the App Group file does not replace a WidgetKit timeline. Keep the last reload
-/// request separately, across app launches, so unchanged checks and deferred changes reach it.
 enum WidgetReloadSchedule {
     static let defaultsKey = "widgetReloadBaseline"
     static let checkStep: TimeInterval = 45 * 60
@@ -45,8 +43,6 @@ enum WidgetReloadSchedule {
         } else if cache.materialHash(at: now) != previous.materialHash(at: now) {
             return true
         }
-        // A future collector date counts as now. Store the effective date when requesting a
-        // reload too, so a fast collector cannot delay renewal on subsequent heartbeats.
         let previousChecks = WatchHandoffSchedule.checks(in: previous)
         let step = background ? checkStep : 0
         let advanced = cache.presented(at: now).items.contains { item in
@@ -60,9 +56,6 @@ enum WidgetReloadSchedule {
     }
 }
 
-/// A failed due read gets another opportunity soon, rather than an hour of stale presentation.
-/// Sixteen short retries leave room for hourly recovery for the rest of a day (under forty
-/// builds even when continuously offline). A server wait always wins.
 struct WidgetRefreshResult: Sendable {
     static let retryAllowance = 16
     var cache: ReadingCache?

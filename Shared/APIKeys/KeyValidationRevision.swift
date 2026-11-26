@@ -1,6 +1,5 @@
 import Foundation
 
-/// A result authorizes only the exact input revision that produced it. Never persisted.
 struct KeyValidationRevision {
     struct Attempt: Equatable, Sendable {
         let id = UUID()

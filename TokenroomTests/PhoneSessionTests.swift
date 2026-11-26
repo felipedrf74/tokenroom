@@ -3,8 +3,6 @@ import Security
 import XCTest
 @testable import Tokenroom
 
-/// An in-memory Keychain: every query is recorded, any call can be made to fail, and no real
-/// Keychain item is ever named.
 final class FakeKeychain: @unchecked Sendable {
     enum Operation: Equatable { case copy, add, update, delete }
 
@@ -17,7 +15,6 @@ final class FakeKeychain: @unchecked Sendable {
     private let lock = NSLock()
     private var items: [String: [String: Any]] = [:]
     private(set) var calls: [Call] = []
-    /// Return a status to make that call fail without changing anything.
     var failure: (Operation, [String: Any]) -> OSStatus? = { _, _ in nil }
 
     private static let identity = [kSecAttrService, kSecAttrAccount, kSecAttrAccessGroup].map { $0 as String }
@@ -100,7 +97,6 @@ final class PhoneSessionTests: XCTestCase {
     var now: Date { Self.now }
     let group = "ABCDE12345.app.tokenroom.ios"
     let sharedGroup = "ABCDE12345.app.tokenroom.shared"
-    /// A fixture provider: the allowlist a test passes is the test's own, never production's.
     static let fixture = Provider.cursor
     var fixture: Provider { Self.fixture }
 
@@ -127,8 +123,6 @@ final class PhoneSessionTests: XCTestCase {
         )
     }
 
-    // MARK: Allowlist
-
     func testProductionAllowlistIsThePlansThatSignIn() {
         XCTAssertEqual(PhoneConnect.productionAllowlist, [.openai, .grok, .cursor, .grokBot])
         XCTAssertEqual(PhoneConnect.productionAllowlist, Set(PhoneSignIn.providers), "Widgets compile the literal; keep it equal")
@@ -136,20 +130,15 @@ final class PhoneSessionTests: XCTestCase {
         XCTAssertTrue(PhoneConnect.productionAllowlist.isDisjoint(with: PhoneSessionStore.retiredProviders), "A retired plan is never signed in to")
     }
 
-    // MARK: Retired plans
-
     func testAClaudeSessionAnEarlierVersionKeptIsDeletedWithNoRequestAndNothingElseTouched() throws {
         let keychain = FakeKeychain()
         let store = makeStore(keychain)
-        // What an earlier version could leave: Claude's session, a renewal's recovery item, and a
-        // write probe that couldn't be deleted.
         try store.save(session("claude", expiresIn: 3600), for: .claude, now: now)
         XCTAssertTrue(store.saveRecovery(session("claude-renewed", expiresIn: 3600), for: .claude))
         var probe = store.query(for: .claude)
         probe[kSecAttrAccount as String] = PhoneSessionStore.probeAccount
         probe[kSecValueData as String] = Data("ok".utf8)
         keychain.put(probe)
-        // Every plan still signed in to here, each mid-renewal with a recovery item, and a pasted key.
         let kept = PhoneConnect.productionAllowlist.sorted { $0.rawValue < $1.rawValue }
         for provider in kept {
             try store.save(session(provider.rawValue, expiresIn: 3600), for: provider, now: now)
@@ -162,7 +151,6 @@ final class PhoneSessionTests: XCTestCase {
             kSecValueData as String: Data("tr-key".utf8),
         ])
         let before = keychain.count
-        // Anything sent through Tokenroom's HTTP session is caught here.
         StubURLProtocol.reset()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubURLProtocol.self]
@@ -183,7 +171,6 @@ final class PhoneSessionTests: XCTestCase {
         for run in 1...2 {
             keychain.forgetCalls()
             XCTAssertTrue(store.purgeRetired(), "Run \(run)")
-            // Only deletes, only Claude's own items: no token is read, so none can be sent.
             XCTAssertFalse(keychain.calls.isEmpty)
             for call in keychain.calls {
                 XCTAssertEqual(call.operation, .delete, "Run \(run)")
@@ -215,13 +202,11 @@ final class PhoneSessionTests: XCTestCase {
             try store.save(session(provider.rawValue, expiresIn: 3600), for: provider, now: now)
         }
         keychain.forgetCalls()
-        // Even when asked to, by mistake.
         XCTAssertTrue(store.purgeRetired(Array(PhoneConnect.productionAllowlist)))
         XCTAssertTrue(keychain.calls.isEmpty)
         for provider in PhoneConnect.productionAllowlist {
             XCTAssertEqual(store.session(for: provider)?.refreshToken, "refresh-\(provider.rawValue)", provider.rawValue)
         }
-        // A locked Keychain: reported, so a later launch tries again, and nothing else is changed.
         try store.save(session("claude", expiresIn: 3600), for: .claude, now: now)
         keychain.failure = { operation, _ in operation == .delete ? errSecInteractionNotAllowed : nil }
         XCTAssertFalse(store.purgeRetired())
@@ -265,8 +250,6 @@ final class PhoneSessionTests: XCTestCase {
         TokenroomHTTP.request(URL(string: "https://example.invalid/usage")!, token: token)
     }
 
-    // MARK: Access group
-
     func testEverySessionQueryNamesTheAppIdentifierGroup() throws {
         let keychain = FakeKeychain()
         let store = makeStore(keychain)
@@ -308,8 +291,6 @@ final class PhoneSessionTests: XCTestCase {
         XCTAssertTrue(keychain.calls.isEmpty, "No store, so no Keychain call")
         XCTAssertNotNil(PhoneSessionStore.make(plistValue: group, sharedGroup: sharedGroup, keychain: keychain.operations))
     }
-
-    // MARK: Items
 
     func testAnExchangingSessionDoesNotSendUsageWithTheOldAccessToken() async throws {
         let keychain = FakeKeychain()
@@ -362,7 +343,6 @@ final class PhoneSessionTests: XCTestCase {
         let store = makeStore(keychain)
         try store.save(session("claude", expiresIn: 3600), for: .claude, now: now)
         try store.save(session("copilot", expiresIn: 3600), for: .copilot, now: now)
-        // A pasted key, where `APIKeyStore` keeps it.
         keychain.put([
             kSecAttrService as String: "app.tokenroom.key.openrouter",
             kSecAttrAccount as String: "default",
@@ -380,8 +360,6 @@ final class PhoneSessionTests: XCTestCase {
         XCTAssertNotNil(keychain.item(service: "app.tokenroom.key.openrouter", account: "default", group: sharedGroup))
         XCTAssertFalse(keychain.calls.contains { $0.operation == .delete }, "Nothing is deleted")
     }
-
-    // MARK: Preflight
 
     func testAKeychainThatWontTakeAWriteStopsTheRefreshBeforeItsPosted() async throws {
         let keychain = FakeKeychain()
@@ -426,8 +404,6 @@ final class PhoneSessionTests: XCTestCase {
         keychain.failure = { operation, _ in operation == .delete ? errSecInteractionNotAllowed : nil }
         XCTAssertFalse(store.canReplace(fixture))
     }
-
-    // MARK: Renewal
 
     func testARenewalStoresTheNewGrantAndMarksItReady() async throws {
         let keychain = FakeKeychain()
@@ -543,9 +519,6 @@ final class PhoneSessionTests: XCTestCase {
         XCTAssertEqual(store.metadata(for: fixture)?.state, .rejected)
     }
 
-    /// A recovery item the Keychain couldn't read just now (locked, busy) isn't a missing one:
-    /// the session isn't rejected, and the next pass finishes from it. Only
-    /// `errSecItemNotFound` is missing.
     func testARecoveryItemThatCantBeReadNowIsntTakenForAMissingOne() async throws {
         let keychain = FakeKeychain()
         let store = makeStore(keychain)
@@ -582,9 +555,6 @@ final class PhoneSessionTests: XCTestCase {
         XCTAssertEqual(posts.count, 0)
     }
 
-    /// Review fix: only a locked or busy Keychain is "couldn't read now". Any other failure is
-    /// taken for a missing item, as before, so the plan asks for a sign-in rather than staying
-    /// unreachable for good.
     func testAnyOtherKeychainFailureOnTheRecoveryItemStillRejects() async throws {
         let keychain = FakeKeychain()
         let store = makeStore(keychain)
@@ -612,8 +582,6 @@ final class PhoneSessionTests: XCTestCase {
         XCTAssertEqual(store.recoveryLookup(for: fixture), .unreadable, "Locked: asked again later")
     }
 
-    /// Review fix: a forced renewal held back by the minute after a busy host isn't sent, so it
-    /// doesn't spend the hour's early renewal.
     func testAForcedRenewalHeldBackByABusyHostIsAllowedAMinuteLater() async throws {
         let keychain = FakeKeychain()
         let store = makeStore(keychain)
@@ -623,7 +591,6 @@ final class PhoneSessionTests: XCTestCase {
             posts.increment()
             return posts.count == 1 ? .notDispatched : .granted(Self.session("new", expiresIn: 3600))
         }
-        // A 429 on the due renewal, then an early 401 in the same pass.
         let busy = await refresher.renewIfNeeded(fixture, now: now)
         XCTAssertEqual(busy, .unavailable)
         let held = await refresher.renewIfNeeded(fixture, now: now.addingTimeInterval(10), force: true)
@@ -693,8 +660,6 @@ final class PhoneSessionTests: XCTestCase {
         XCTAssertEqual(store.metadata(for: fixture)?.state, .rejected)
     }
 
-    // MARK: Nothing secret leaves the store
-
     func testSessionMaterialNeverReachesARecordOrTheWatch() async throws {
         let accessMarker = "TRSESSIONACCESSQ7"
         let refreshMarker = "TRSESSIONREFRESHQ7"
@@ -712,8 +677,6 @@ final class PhoneSessionTests: XCTestCase {
         let snapshot = try await client.fetch(now: now).get()
         XCTAssertEqual(authorization.value, "Bearer \(accessMarker)", "The session is used for the request")
 
-        // On the reading's clock: the real one leaves out a reading dated this test's day, and
-        // the history checked below would be empty.
         let history = await MainActor.run { () -> RelayHistory in
             let store = HistoryStore(directory: nil)
             store.record(snapshot, now: Self.now)

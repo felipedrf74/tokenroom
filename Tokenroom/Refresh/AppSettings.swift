@@ -31,18 +31,14 @@ final class AppSettings {
         didSet { persist() }
     }
 
-    /// Presentation only, local to this Mac; it never changes the menu bar or relay readings.
     var popoverStyle: PopoverStyle {
         didSet { persist() }
     }
 
-    /// Enabled providers that stay in the popover but out of the menu bar.
     var hiddenFromMenuBar: Set<Provider> {
         didSet { persist() }
     }
 
-    /// Kept for older readers and unresolved legacy references. A number alone never chooses a
-    /// currency for a multi-currency provider.
     var budgets: [Provider: Double] {
         didSet { persist() }
     }
@@ -55,24 +51,18 @@ final class AppSettings {
         didSet { applyLaunchAtLogin() }
     }
 
-    /// Usage alerts as notifications on this Mac too. The iPhone gets them either way.
     var showsAlertsOnMac: Bool {
         didSet { persist() }
     }
 
-    /// Opt-in: check OpenRouter's public model list and official changelogs for the News window.
     var newsEnabled: Bool {
         didSet { persist() }
     }
 
-    /// This Mac's copy of the alert preferences. Either device can change them; the newer copy
-    /// in iCloud wins.
     var alertPreferences: AlertPreferences {
         didSet { persist() }
     }
 
-    /// The time zone this Mac last gave quiet hours (`QuotaStore.followTimeZone`), so only a
-    /// change of zone here moves them. Nil until a build that follows it first runs.
     var followedTimeZone: String? {
         get { defaults.string(forKey: Keys.followedTimeZone) }
         set { defaults.set(newValue, forKey: Keys.followedTimeZone) }
@@ -86,8 +76,6 @@ final class AppSettings {
 
     private let defaults: UserDefaults
     private var isReady = false
-    /// Choices a newer Tokenroom saved for providers this one doesn't know, kept as they were so
-    /// going back to that version finds them intact.
     @ObservationIgnored private var foreign = ForeignChoices()
 
     private struct ForeignChoices {
@@ -97,7 +85,6 @@ final class AppSettings {
         var budgets: [String: Double] = [:]
         var budgetReferences: [String: Any] = [:]
     }
-    /// Providers these settings hadn't seen before this launch, so detection can turn them on.
     private(set) var newlyKnown: [Provider] = []
 
     enum Keys {
@@ -118,8 +105,6 @@ final class AppSettings {
 
     static let currentVersion = 2
 
-    /// - Parameter detectsSession: whether a provider this install has never seen already has a
-    ///   local session. Such providers start enabled; others wait in Settings.
     init(defaults: UserDefaults = .standard, detectsSession: (Provider) -> Bool = { _ in false }) {
         self.defaults = defaults
         enabled = Self.resolveEnabled(defaults: defaults, detectsSession: detectsSession)
@@ -197,8 +182,6 @@ final class AppSettings {
         }
     }
 
-    /// The saved list is authoritative for every provider the saved settings already knew,
-    /// including an empty list. Only providers the settings never saw get default handling.
     private static func resolveEnabled(defaults: UserDefaults, detectsSession: (Provider) -> Bool) -> Set<Provider> {
         let saved = (defaults.array(forKey: Keys.enabled) as? [String]).map {
             Set($0.compactMap(Provider.init(rawValue:)))
@@ -207,14 +190,12 @@ final class AppSettings {
         if defaults.integer(forKey: Keys.version) >= 2 {
             known = Set((defaults.array(forKey: Keys.known) as? [String] ?? []).compactMap(Provider.init(rawValue:)))
         } else if saved != nil {
-            // Version 1 stored only the enabled list; it knew Headroom 1.x's providers.
             known = Provider.legacy
         } else {
             known = []
         }
         var enabled = saved ?? []
         for provider in Provider.allCases where !known.contains(provider) {
-            // Organization keys can change billing and settings: they're only turned on by hand.
             guard provider.category != .orgSpend else { continue }
             if provider.enabledByDefault || detectsSession(provider) {
                 enabled.insert(provider)
@@ -227,7 +208,6 @@ final class AppSettings {
         (saved as? [String] ?? []).filter { Provider(rawValue: $0) == nil }
     }
 
-    /// Providers the saved settings never knew, before this launch saves them as known.
     private static func unknownProviders(defaults: UserDefaults) -> [Provider] {
         if defaults.integer(forKey: Keys.version) >= 2 {
             let known = Set((defaults.array(forKey: Keys.known) as? [String] ?? []).compactMap(Provider.init(rawValue:)))
@@ -239,8 +219,6 @@ final class AppSettings {
         return Provider.allCases
     }
 
-    /// Turns on providers new to this install that turned out to have a session on this Mac.
-    /// Organization keys never turn on by themselves.
     func enableDetected(_ providers: Set<Provider>) {
         for provider in newlyKnown where providers.contains(provider) && provider.category != .orgSpend {
             enabled.insert(provider)

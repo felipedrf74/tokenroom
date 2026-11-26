@@ -1,7 +1,6 @@
 import XCTest
 @testable import Tokenroom
 
-/// Placeholder credentials and .invalid URLs only. No provider or Keychain is contacted.
 final class HTTPPrivacyTests: XCTestCase {
     override func tearDown() {
         TokenroomHTTP.overrideSession(nil)
@@ -38,7 +37,6 @@ final class HTTPPrivacyTests: XCTestCase {
     }
 
     func testPOSTCredentialsStayOnTheirOriginForBothReplayedAndChangedMethods() {
-        // Devin puts a key in JSON; OAuth puts a refresh token in JSON or a form body.
         let original = request(method: "POST", body: Data("refresh_token=placeholder".utf8))
         let replayed = request("https://elsewhere.example.invalid/token", method: "POST", body: original.httpBody)
         let changedToGET = request("https://elsewhere.example.invalid/token")
@@ -66,7 +64,7 @@ final class HTTPPrivacyTests: XCTestCase {
         let session = TokenroomHTTP.defaultSession
         let delegate = try XCTUnwrap(session.delegate as? any URLSessionTaskDelegate)
         let original = request(method: "POST", body: Data("refresh_token=placeholder".utf8))
-        let task = session.dataTask(with: original) // Kept suspended: no networking.
+        let task = session.dataTask(with: original)
         defer { task.cancel() }
         let response = try XCTUnwrap(HTTPURLResponse(url: original.url!, statusCode: 307, httpVersion: "HTTP/1.1", headerFields: nil))
         let destination = request("https://elsewhere.example.invalid/token", method: "POST", body: original.httpBody)

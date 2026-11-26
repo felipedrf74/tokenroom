@@ -1,15 +1,9 @@
 import SwiftUI
 
-/// One provider on the Usage tab: its long window (weekly, a month, a billing cycle) as a ring
-/// with the even-pace notch, and its 5-hour session as a bar with the pace tick. Each says when
-/// it resets, or when it runs out if that comes first.
 struct UsageTileView: View {
     var reading: MobileStore.Reading
     var date: Date = .now
-    /// Where the reading came from and its age, when the header above doesn't cover it.
     var showsOrigin = true
-    /// Windows the Close to a limit card already speaks for: the tile says when they reset,
-    /// rather than repeating the same warning a few lines down.
     var warnedWindows: Set<String> = []
 
     private var provider: RelayProvider { reading.provider }
@@ -58,20 +52,15 @@ struct UsageTileView: View {
         .opacity(isStale ? 0.7 : 1)
         .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .accessibilityElement(children: .combine)
-        // Being close already shows at the top of the tab, in the meter, and in the status line.
         .accessibilityValue(isClose ? "Close to a limit" : "")
     }
 
-    /// Where the reading came from and how long ago, on one line at the foot of the tile:
-    /// "From your Mac · 2m ago".
     private var origin: some View {
         let isSample = reading.source == SampleData.sourceLabel
         let symbol = isSample ? "sparkles" : reading.origin == .mac ? "laptopcomputer" : "iphone"
         let place = isSample ? "Sample data" : reading.origin.phrase
         let checked = (provider.checkedAt ?? provider.fetchedAt).map { " · \(RelativeTime.ago($0, now: date))" } ?? ""
         return Label {
-            // Wraps rather than cutting the age short ("From your other iPhone · 12m ago" on an
-            // SE, or at larger text): the age is what this line is for.
             Text(place + checked)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -97,7 +86,6 @@ struct UsageTileView: View {
     private func ringRow(_ ring: RelayWindow) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 7) {
-                // The stroke straddles the frame: this keeps it on the tile's text edge.
                 UsageRing(used: ring.used, isStale: isStale || ring.isAwaitingReading(at: date), label: ReadingText.headline(ring, now: date), lineWidth: 5.5, paceMark: pace(ring)?.elapsedFraction,
                           isAwaitingReading: ring.isAwaitingReading(at: date))
                     .frame(width: 52, height: 52)
@@ -147,7 +135,6 @@ struct UsageTileView: View {
         }
     }
 
-    /// Under a ring with no bar: "249 of 300 requests", "$312.50 of $1,000", else the plan.
     private func detail(_ tile: UsageTile) -> String? {
         guard tile.balance == nil else { return nil }
         if let amount = tile.ring?.amount, let detail = ReadingText.amountDetail(amount) {
@@ -157,7 +144,6 @@ struct UsageTileView: View {
     }
 }
 
-/// When a window resets, or when it runs out if that comes first.
 struct WindowStatus: View {
     var window: RelayWindow
     var pace: Pace?
@@ -194,14 +180,11 @@ struct WindowStatus: View {
     }
 }
 
-/// The top of the Usage tab: every window at 80% or more, or running ahead toward a run-out
-/// before its reset, most urgent first. Follow starts the Live Activity for the first.
 struct CloseToLimitCard: View {
     var windows: [CloseWindow]
     var date: Date = .now
     @Binding var showsAll: Bool
     var open: (String) -> Void
-    /// The rows it shows. Tiles keep their own warning for any window past these.
     static let rowLimit = 4
     @State private var followError: String?
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -271,7 +254,6 @@ struct CloseToLimitCard: View {
                     ProviderMark(provider: item.provider, size: 24)
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            // At the accessibility sizes the limit goes under the name, so neither is cut short.
                             let names = typeSize.isAccessibilitySize
                                 ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0))
                                 : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 6))
@@ -308,8 +290,6 @@ struct CloseToLimitCard: View {
         .padding(.vertical, 8)
     }
 
-    /// "Runs out 10:18 AM · 35 min before it resets", "Limit reached · resets in 2h 10m",
-    /// "Past 80% · resets Oct 1".
     private func caption(_ item: CloseWindow) -> Text {
         guard item.provider.isLive else {
             let checked = Text(ReadingText.lastChecked(item.provider.checkedAt ?? item.provider.fetchedAt, now: date))

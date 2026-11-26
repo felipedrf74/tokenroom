@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// The Mac's News sections are the iPhone's filters: Today, Models, Announcements, Retiring.
 typealias NewsSection = NewsFilter
 
 extension NewsFilter {
@@ -16,7 +15,6 @@ extension NewsFilter {
     }
 }
 
-/// What the News window shows: one of the filters, a lab's models, or a tool's announcements.
 enum NewsPage: Hashable {
     case destination(NewsDestination)
     case filter(NewsFilter)
@@ -24,13 +22,10 @@ enum NewsPage: Hashable {
     case tool(String)
 }
 
-/// The section the News window should show, set each time the popover opens it.
 @Observable
 @MainActor
 final class NewsPageRequest {
     private(set) var section: NewsSection = .today
-    /// Counts requests, so asking again for the section last asked for still leaves a lab, a
-    /// tool, or a search the window shows now.
     private(set) var count = 0
 
     func open(_ section: NewsSection) {
@@ -39,7 +34,6 @@ final class NewsPageRequest {
     }
 }
 
-/// Native sidebar navigation over the shared device-local reader.
 struct NewsWindowView: View {
     @Bindable var store: QuotaStore
     var request: NewsPageRequest?
@@ -107,7 +101,6 @@ struct NewsWindowView: View {
                 detail(news)
                     .navigationTitle(title)
             }
-            // The page's own heading says this: the title stays for the Window menu and VoiceOver.
             .toolbar(removing: .title)
             .toolbar {
                 if #available(macOS 26, *) {
@@ -119,8 +112,6 @@ struct NewsWindowView: View {
             }.id(page)
         }
         .id(request?.count)
-        // Pushed views own the visible AppKit toolbar, so they receive these
-        // window commands rather than relying on the hidden root's toolbar.
         .environment(\.newsWindowCommands, windowCommands(news))
         .onAppear { if page == nil { page = request?.section == .today || request == nil && savedFilter == .today ? .destination(.today) : .filter(request?.section ?? savedFilter) } }
         .onChange(of: page) { _, page in search = ""; if case .filter(let filter)? = page { savedFilter = filter } }

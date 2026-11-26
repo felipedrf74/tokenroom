@@ -1,16 +1,11 @@
 import Foundation
 import Synchronization
 
-/// GitHub Copilot's monthly quotas from `copilot_internal/user`, read with the GitHub login that
-/// Copilot's editor extensions or the gh CLI already keep. Mac only: the endpoint is private.
 struct CopilotClient: ProviderClient {
     let provider = Provider.copilot
     static let userURL = URL(string: "https://api.github.com/copilot_internal/user")!
-    /// A fine-grained token pasted in Settings › API Keys, for GitHub's documented billing API.
     var keys = CredentialReaders.apiKeys
 
-    /// The GitHub login Copilot's tools keep, else a pasted fine-grained token. When the login
-    /// is missing or rejected and a token is there, the token answers.
     func fetch() async -> Result<QuotaSnapshot, ProviderError> {
         let login = await BlockingIO.run({ CopilotCredentials.token() })
         var failure = ProviderError.signedOut(provider.signInHint)
@@ -47,9 +42,6 @@ struct CopilotClient: ProviderClient {
         }
     }
 
-    /// Whether a pasted token answers after the login failed this way: a missing or refused
-    /// login, or the private endpoint turning it down (400, 404, 422: no Copilot on that login, or
-    /// the endpoint changed). An outage or a rate limit stays one.
     static func fallsBack(after failure: ProviderError, status: Int?) -> Bool {
         switch failure {
         case .expired, .signedOut, .notEntitled, .parse:
@@ -60,8 +52,6 @@ struct CopilotClient: ProviderClient {
     }
 }
 
-/// Reads `copilot_internal/user`. The response also names the account and its organizations;
-/// only the quota fields and the plan are read.
 enum CopilotParser {
     static func snapshot(from data: Data, fetchedAt: Date = .now, calendar: Calendar = .gregorianUTC) throws -> QuotaSnapshot {
         let root = try JSONFlex.object(from: data)
@@ -72,7 +62,6 @@ enum CopilotParser {
 
         var windows: [QuotaWindow] = []
         if let snapshots = JSONFlex.dictionary(root["quota_snapshots"]) {
-            // Since June 2026 GitHub bills in AI credits; the same bucket then counts credits.
             let credits = (root["token_based_billing"] as? Bool) == true
             for (id, title, unit) in buckets {
                 let named = id == "premium_interactions" && credits ? (title: "AI credits", unit: "credits") : (title: title, unit: unit)
@@ -83,7 +72,6 @@ enum CopilotParser {
             }
         } else if let left = JSONFlex.dictionary(root["limited_user_quotas"]),
                   let limits = JSONFlex.dictionary(root["monthly_quotas"]) {
-            // The older Free plan shape: what's left, and the monthly limits.
             for (id, title, unit) in buckets {
                 guard let limit = JSONFlex.number(limits[id]), limit > 0, let remaining = JSONFlex.number(left[id]) else { continue }
                 windows.append(QuotaWindow(
@@ -100,23 +88,19 @@ enum CopilotParser {
         return try .headlined(by: windows, provider: .copilot, fetchedAt: fetchedAt, planLabel: planLabel(root))
     }
 
-    /// Premium requests (AI credits on token billing) lead when the plan has them.
     static let buckets: [(id: String, title: String, unit: String)] = [
         ("premium_interactions", "Premium requests", "requests"),
         ("chat", "Chat", "messages"),
         ("completions", "Completions", "completions"),
     ]
 
-    /// Nil for unlimited buckets and for the zero placeholders org-managed seats report.
     static func window(_ bucket: [String: Any], id: String, title: String, unit: String, resetsAt: Date?, startsAt: Date?) -> QuotaWindow? {
         let entitlement = JSONFlex.number(bucket["entitlement"])
         let remaining = JSONFlex.number(bucket["remaining"]) ?? JSONFlex.number(bucket["quota_remaining"])
-        // `remaining` alone says nothing: one request into overage it is -1 too.
         if (bucket["unlimited"] as? Bool) == true || entitlement == -1 {
             return nil
         }
         guard let entitlement, entitlement > 0 else { return nil }
-        // Below zero once the plan allows overage and it's in use.
         let percentLeft = JSONFlex.number(bucket["percent_remaining"]) ?? remaining.map { $0 / entitlement * 100 }
         guard let percentLeft else { return nil }
         return QuotaWindow(
@@ -127,7 +111,6 @@ enum CopilotParser {
         )
     }
 
-    /// `access_type_sku` tells the plans apart; `copilot_plan` says "individual" even on Free.
     static func planLabel(_ root: [String: Any]) -> String? {
         let sku = JSONFlex.string(root["access_type_sku"])?.lowercased() ?? ""
         let plan = JSONFlex.string(root["copilot_plan"])?.lowercased() ?? ""
@@ -152,8 +135,6 @@ enum CopilotParser {
     }
 }
 
-/// The GitHub login Copilot can use, read in place: Copilot's own `apps.json`/`hosts.json`, then
-/// the gh CLI's `hosts.yml`, then the gh token in the Keychain. github.com only, never refreshed.
 enum CopilotCredentials {
     private static let cache = Mutex<(token: String, readAt: Date)?>(nil)
     static let cacheTTL: TimeInterval = 5 * 60
@@ -180,7 +161,6 @@ enum CopilotCredentials {
         cache.withLock { $0 = nil }
     }
 
-    /// Changes when a login is added or replaced. Only file dates and sizes, never the token.
     static func sessionStamp(configDirectory: URL = CopilotCredentials.configDirectory) -> String? {
         for file in ["github-copilot/apps.json", "github-copilot/hosts.json"] {
             let url = configDirectory.appendingPathComponent(file)
@@ -193,8 +173,6 @@ enum CopilotCredentials {
         return LocalSources.fileStamp(hosts)
     }
 
-    /// Copilot's editor extensions: `apps.json` keys look like `github.com:<app id>`, the older
-    /// `hosts.json` uses `github.com`.
     static func copilotToken(configDirectory: URL) -> String? {
         ["github-copilot/apps.json", "github-copilot/hosts.json"].lazy
             .compactMap { copilotToken(in: configDirectory.appendingPathComponent($0)) }
@@ -211,8 +189,6 @@ enum CopilotCredentials {
         return nil
     }
 
-    /// gh keeps the token in `hosts.yml` (plain-text storage) or in the Keychain under
-    /// `gh:github.com`, with the active user as the account.
     static func ghToken(configDirectory: URL) -> String? {
         let hosts = configDirectory.appendingPathComponent("gh/hosts.yml")
         guard let text = try? String(contentsOf: hosts, encoding: .utf8), let host = ghHost(text) else { return nil }
@@ -223,8 +199,6 @@ enum CopilotCredentials {
         return decodeKeyring(stored)
     }
 
-    /// The `github.com:` block of gh's `hosts.yml`: the active `user`, and its `oauth_token` when
-    /// gh stores tokens in the file. Tokens for other hosts (GitHub Enterprise) are ignored.
     static func ghHost(_ yaml: String) -> (user: String?, token: String?)? {
         var inHost = false
         var childIndent: Int?
@@ -243,7 +217,6 @@ enum CopilotCredentials {
             if childIndent == nil {
                 childIndent = indent
             }
-            // Only the host's own keys; entries under `users:` sit deeper.
             guard indent == childIndent else { continue }
             let key = trimmed[..<colon]
             let value = unquote(trimmed[trimmed.index(after: colon)...].trimmingCharacters(in: .whitespaces))
@@ -257,8 +230,6 @@ enum CopilotCredentials {
         return (user, token)
     }
 
-    /// go-keyring (gh's Keychain library) can wrap values as `go-keyring-base64:<base64>` or
-    /// `go-keyring-encoded:<hex>`.
     static func decodeKeyring(_ value: String) -> String? {
         if value.hasPrefix("go-keyring-base64:") {
             return Data(base64Encoded: String(value.dropFirst("go-keyring-base64:".count))).flatMap { String(data: $0, encoding: .utf8) }

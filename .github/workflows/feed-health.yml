@@ -1,8 +1,3 @@
-# Weekly, advisory check of every public source News and Skills read, from the reliability
-# decision of 7 November 2026 (docs/news-reliability-council-20261107.md). It never gates a merge:
-# it isn't part of CI and doesn't run on pull requests. It reads the catalog from the Swift
-# sources (scripts/feed-health.py), then opens or updates one issue labelled `feed-health` while
-# a source needs attention, and closes it once all are healthy.
 name: Feed health
 
 on:
@@ -24,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Test the probe
         run: python3 -B scripts/tests/feed-health-test.py

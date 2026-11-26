@@ -115,9 +115,6 @@ extension NewsCollectionHealth {
         return caption + " · " + (isVoice ? "Latest article " : "Latest update ") + latest.formatted(format)
     }
 
-    /// A source's line in Following: quiet when it's fine, saying so when it isn't. Every row here
-    /// is an official source, so its kind says nothing; a problem or a source awaiting its first
-    /// read does.
     var followingCaption: String? {
         problem ?? (uncheckedCount >= sourceCount ? "Not checked yet" : uncheckedCount > 0 ? caption : nil)
     }

@@ -3,10 +3,6 @@ import LocalAuthentication
 import os
 import Security
 
-/// Reads sessions that the official CLIs and apps already keep on this Mac.
-/// `LoginSession` renews Claude, Grok Build, and Codex in the tool's own login and writes the
-/// new access and refresh tokens back. Every other login is read only.
-/// These calls block (files, SQLite, `/usr/bin/security`); call them through `BlockingIO`.
 enum CredentialReaders {
     static var grokHome: URL {
         if let override = ProcessInfo.processInfo.environment["GROK_HOME"], !override.isEmpty {
@@ -56,9 +52,7 @@ enum CredentialReaders {
         var userID: String?
         var refreshToken: String = ""
         var clientID: String = ""
-        /// `oidc_issuer` from the file, or `https://auth.x.ai` when the file leaves it out.
         var issuer: String = ""
-        /// The auth.json entry this login lives under.
         var mapKey: String = ""
         var expiresText: String = ""
         var rawJSON: String = ""
@@ -112,8 +106,6 @@ enum CredentialReaders {
         )
     }
 
-    /// An access token inside a minute of expiry is not used as-is. `LoginSession` renews it
-    /// first; this still refuses a caller that skipped that.
     static func usableGrokToken(_ auth: GrokAuth, now: Date = .now) throws -> String {
         guard !auth.accessToken.isEmpty else {
             throw ProviderError.signedOut(Provider.grok.signInHint)
@@ -149,7 +141,6 @@ enum CredentialReaders {
         }
     }
 
-    /// Keys pasted in Settings on this Mac.
     static let apiKeys = APIKeyStore()
 
     static func sessionStamp(_ provider: Provider) -> String? {
@@ -188,8 +179,6 @@ enum CredentialReaders {
         apiKeys.metadata(for: provider).map { "\($0.last4)-\(Int($0.addedAt.timeIntervalSince1970))" }
     }
 
-    /// Forgets cached tokens so the next read sees what the CLIs wrote since.
-    /// The Keychain service list is cached separately (`invalidateKeychainServices`).
     static func invalidateCaches() {
         claudeCache.withLock { $0 = nil }
         cursorCache.withLock { $0 = nil }
@@ -235,8 +224,6 @@ enum CredentialReaders {
         var expiresAtMs: Double?
         var refreshExpiresAtMs: Double?
         var rawJSON: String
-        /// The item's own account attribute. Empty when the item was found without one and its
-        /// account couldn't be read (`claudeLoginCanBeRenewedInPlace`).
         var account: String
         var service: String
 
@@ -247,8 +234,6 @@ enum CredentialReaders {
 
         var isExpired: Bool { isExpired(at: Date()) }
 
-        /// Whether this session can still be renewed. When it can't, Sign In starts a fresh
-        /// `claude auth login`.
         func canRefresh(at now: Date) -> Bool {
             guard let refreshToken, !refreshToken.isEmpty else { return false }
             if let refreshExpiresAtMs {
@@ -259,7 +244,6 @@ enum CredentialReaders {
 
         var canRefresh: Bool { canRefresh(at: Date()) }
 
-        /// An expired access token counts only when Tokenroom can renew it in this same item.
         func countsAsUsableSession(now: Date = .now) -> Bool {
             guard !accessToken.isEmpty else { return false }
             if CredentialReaders.renewalIsRejected(.claude, refreshToken: refreshToken ?? "") {
@@ -278,8 +262,6 @@ enum CredentialReaders {
     private static let claudeAgentCache = OSAllocatedUnfairLock<(value: String, readAt: Date)?>(initialState: nil)
     private static let cursorCache = OSAllocatedUnfairLock<(token: String, readAt: Date)?>(initialState: nil)
 
-    /// Claude's usage endpoint expects Claude Code's User-Agent. It is built from the installed
-    /// CLI so the version doesn't go stale.
     static func claudeUserAgent() -> String {
         if let cached = claudeAgentCache.withLock({ $0 }), Date().timeIntervalSince(cached.readAt) < claudeAgentTTL {
             return cached.value
@@ -296,7 +278,6 @@ enum CredentialReaders {
         return "claude-cli (external, cli)"
     }
 
-    /// Version from the CLI's install path (`…/versions/2.1.280` or `…/claude-code/2.1.280/…`).
     static func claudeVersion(of cli: URL) -> String? {
         cli.resolvingSymlinksInPath().pathComponents.reversed().first(where: isVersionString)
     }
@@ -335,35 +316,17 @@ enum CredentialReaders {
         return best
     }
 
-    /// What one call to `/usr/bin/security` found. A missing account is not a refusal:
-    /// the login-password dialog is the refusal, and that must not be tried again.
     enum SecurityPasswordResult: Equatable, Sendable {
         case value(String)
         case missing
         case unavailable
     }
 
-    /// One Claude item's secret, and the account the item is filed under.
     struct ClaudeSecret: Equatable {
         var value: String
-        /// Nil when the item was found without an account and its own couldn't be read.
         var account: String?
     }
 
-    /// A quiet read of one Claude item. The access list is checked before the secret.
-    /// The secret is never read with SecItem: that call waits in securityd when this
-    /// build is not the trusted-application entry, even if the partition list names
-    /// this app, and the wait holds every later keychain call. `/usr/bin/security`
-    /// is already trusted by these items and returns without asking. It runs once,
-    /// plus one retry when the account attribute is absent. Anything it is not
-    /// trusted to read is left unread. A read the caller is not allowed to open is
-    /// what showed the login-password dialog, and the five-second process limit
-    /// then replaced it with another.
-    ///
-    /// An item found by that retry is filed under another account. Its own account is then
-    /// read from its attributes (`itemAccount`, which reads no secret), because the write-back
-    /// finds the item by account: under `account` it would add a second item, and Claude Code
-    /// would keep reading this one, with the refresh token the renewal used up.
     static func readClaudeSecret(
         service: String,
         account: String,
@@ -388,22 +351,11 @@ enum CredentialReaders {
         }
     }
 
-    /// A Claude item that is there but can't be used as it is. A read that fails now (a locked
-    /// Keychain, the tool not answering) throws `ProviderError.unreachable` instead.
     enum UnusableClaudeItem: Error, Equatable {
-        /// Its secret was read in full and isn't a login (Claude Code signed out of it, say).
         case notALogin
-        /// Its own access list was read and doesn't trust `/usr/bin/security`, so it isn't read.
-        /// That can change (Keychain Access, or Claude Code's Always Allow) with the item as it was.
         case untrusted
     }
 
-    /// One Claude item by its service and account: the item a saved grant renews, which another
-    /// may outrank in `claudeAuth`. Read the same quiet way (access list first, then
-    /// `/usr/bin/security` only where it's trusted). Nil when the item isn't there; throws
-    /// `unreachable` when it can't be read now, so a grant waiting for it is kept, and
-    /// `UnusableClaudeItem` when it's there but can't be used as it is. `access` stands in for the
-    /// item's own access list, looked up by service and account.
     static func claudeItem(
         service: String,
         account: String,
@@ -433,8 +385,6 @@ enum CredentialReaders {
         }
     }
 
-    /// Whether an item with this service and account is in the Keychain, from its attributes
-    /// only: no secret is read and nothing asks. Nil when the Keychain didn't say.
     static func claudeItemExists(service: String, account: String) -> Bool? {
         let context = LAContext()
         context.interactionNotAllowed = true
@@ -454,10 +404,6 @@ enum CredentialReaders {
         }
     }
 
-    /// The account attribute of the item `/usr/bin/security` finds for `service` without an
-    /// account: the same search, so the same item an account-less read returned. Attributes
-    /// only (no `-w` or `-g`), so the secret isn't read and nothing asks. Nil when the item has
-    /// no account, or the tool didn't answer.
     static func securityAccount(service: String, keychain: String? = nil) -> String? {
         var args = ["find-generic-password", "-s", service]
         if let keychain {
@@ -470,8 +416,6 @@ enum CredentialReaders {
         return accountAttribute(inSecurityOutput: text)
     }
 
-    /// `"acct"<blob>="name"` from `find-generic-password`, or `"acct"<blob>=0x…  "…"` when the
-    /// name isn't plain ASCII. `<NULL>` is an item without an account.
     static func accountAttribute(inSecurityOutput text: String) -> String? {
         let prefix = "\"acct\"<blob>="
         for line in text.split(whereSeparator: \.isNewline) {
@@ -504,25 +448,16 @@ enum CredentialReaders {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    /// `apple-tool:` is `/usr/bin/security`. A team id is not.
     static func isSecurityToolPartition(_ partition: String) -> Bool {
         partition == "apple-tool:" || partition.hasPrefix("apple-tool:")
     }
 
-    /// Who may read one keychain item, without reading or prompting for the secret.
-    /// A partition list is checked before the trusted-application list. A caller whose
-    /// partition is missing from that list gets the login-password dialog, so a path
-    /// entry is used only when the item has no partition list.
     struct ClaudeKeyAccess: Equatable {
         var partitions: [String] = []
         var hasPartitionList: Bool = false
         var trustedPaths: [String] = []
-        /// A decrypt (or any-operation) ACL trusts the security tool or all applications.
-        /// Partition membership alone doesn't grant permission to decrypt a secret.
         var allowsSecurityToolDecryption: Bool = false
         var trustsThisApp: Bool = false
-        /// The access list was read. False when the Keychain didn't answer (locked, say), so
-        /// whether the item trusts the tool isn't known yet.
         var wasRead: Bool = false
 
         var trustsSecurityTool: Bool {
@@ -533,7 +468,6 @@ enum CredentialReaders {
         }
     }
 
-    /// With `account`, the access list of that one item, not of whichever item has the service.
     static func claudeKeyAccess(service: String, account: String? = nil) -> ClaudeKeyAccess {
         let context = LAContext()
         context.interactionNotAllowed = true
@@ -601,7 +535,6 @@ enum CredentialReaders {
         return found
     }
 
-    /// Trusted-application entries are paths, sometimes with trailing NUL bytes.
     static func trustedApplicationPath(from data: Data) -> String? {
         let bytes = data.prefix { $0 != 0 }
         guard let path = String(data: bytes, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -630,7 +563,6 @@ enum CredentialReaders {
         return team
     }()
 
-    /// The partition plist is sometimes the ACL description itself, and sometimes that plist in hex.
     static func partitions(inACLDescription description: String) -> [String] {
         var texts = [description]
         if let decoded = hexDecoded(description) {
@@ -673,8 +605,6 @@ enum CredentialReaders {
         return (candidate.expiresAtMs ?? 0) > (current.expiresAtMs ?? 0)
     }
 
-    /// Keychain services Claude Code uses: `Claude Code-credentials` and `Claude Code-credentials-…`.
-    /// Listing attributes never prompts and never reads secrets.
     private static func claudeCredentialServices() -> [String] {
         if let cached = claudeServicesCache.withLock({ $0 }), Date().timeIntervalSince(cached.readAt) < keychainServicesTTL {
             return cached.names
@@ -703,8 +633,6 @@ enum CredentialReaders {
         return list
     }
 
-    /// A generic password through `/usr/bin/security`, for items another CLI created with it (gh
-    /// through go-keyring, Claude Code): their access lists trust that tool, so no prompt.
     static func securityGenericPassword(service: String, account: String?) -> String? {
         guard case .value(let value) = securityPassword(service: service, account: account) else { return nil }
         return value
@@ -729,19 +657,13 @@ enum CredentialReaders {
         let read = {
             run(URL(fileURLWithPath: "/usr/bin/security"), args, promptAllowed ? 180 : 5)
         }
-        // Automated reads remain serialized. An explicit system dialog runs in its own
-        // process (with its own legacy Keychain lock), without retaining this app's gate
-        // while the user decides. In-process SecItem calls still always use that gate.
         let output = promptAllowed ? read() : KeychainGate.sync(read)
-        // 44 is errSecItemNotFound once the status is truncated to a process exit code.
         if !output.timedOut, output.status == 44 { return .missing }
         guard output.succeeded, let text = String(data: output.stdout, encoding: .utf8) else { return .unavailable }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? .unavailable : .value(trimmed)
     }
 
-    /// As with Claude, inspect the ACL before a background secret read. SecItem's secret
-    /// read can hang even with prompts disabled. Sign In alone allows the system dialog.
     static func grokBotStoragePassword(
         promptAllowed: Bool = false,
         access: (String) -> ClaudeKeyAccess = { claudeKeyAccess(service: $0) },
@@ -758,17 +680,11 @@ enum CredentialReaders {
         return present(password)
     }
 
-    /// A token Cursor already refused isn't a session to finish signing in with.
     static func hasUsableCursorSession() -> Bool {
         guard let token = try? cursorAccessToken() else { return false }
         return refusedCursorToken.withLock { $0 != fingerprint(token) }
     }
 
-    /// Cursor's token: the Keychain first (Cursor 3.9 and later keep it there), then the older
-    /// `state.vscdb`, which may still hold a token from before the move that no longer works. A
-    /// Keychain token past its expiry gives way to a current one in the database, which an older
-    /// Cursor still keeps up to date, and so does one Cursor refused before its expiry (revoked),
-    /// until the Keychain holds another.
     static func cursorAccessToken(
         keychain: (String) -> String? = { keychainPassword(service: $0, promptAllowed: false) },
         database: URL = cursorDatabaseURL,
@@ -792,12 +708,7 @@ enum CredentialReaders {
         return token
     }
 
-    /// After Cursor refused `refused`: the token in `state.vscdb` when it's a different one, which
-    /// an older Cursor may keep working after the Keychain's was revoked. It's then the one
-    /// reused for the usual 20 seconds, so Grok Bot's check right after doesn't try the refused
-    /// one first.
     static func cursorTokenAfterRefusal(of refused: String, database: URL = cursorDatabaseURL, now: Date = .now) -> String? {
-        // Only the Keychain's is remembered: it's the one that would otherwise go first again.
         if lastKeychainCursorToken.withLock({ $0 == fingerprint(refused) }) {
             refusedCursorToken.withLock { $0 = fingerprint(refused) }
         }
@@ -808,15 +719,9 @@ enum CredentialReaders {
         return saved
     }
 
-    /// The Keychain token Cursor last refused, as a fingerprint kept in memory only, so a revoked
-    /// token doesn't cost a failing call before the database's on every check. Forgotten when
-    /// the Keychain holds another token, or Tokenroom restarts.
     private static let refusedCursorToken = OSAllocatedUnfairLock<Int?>(initialState: nil)
-    /// The Keychain token last read, likewise as a fingerprint.
     private static let lastKeychainCursorToken = OSAllocatedUnfairLock<Int?>(initialState: nil)
 
-    /// Forgets both, as a restart does, for tests sharing this process. `invalidateCaches`
-    /// keeps them: another tool's sign-in doesn't make a revoked Cursor token work again.
     static func forgetCursorRefusal() {
         refusedCursorToken.withLock { $0 = nil }
         lastKeychainCursorToken.withLock { $0 = nil }
@@ -828,8 +733,6 @@ enum CredentialReaders {
         return hasher.finalize()
     }
 
-    /// A JWT's `exp`, in seconds. Nothing else in the token is read. Nil when it isn't a JWT
-    /// or the claim can't be read; callers then leave the decision to the server.
     static func jwtExpiry(_ token: String) -> Date? {
         let parts = token.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count == 3 else { return nil }
@@ -842,8 +745,6 @@ enum CredentialReaders {
         return Date(timeIntervalSince1970: expiry)
     }
 
-    /// Whether a JWT's `exp` has passed. A token that isn't a JWT, or has no expiry, counts as
-    /// current and is left to the server to judge.
     static func tokenHasExpired(_ token: String, now: Date = .now) -> Bool {
         guard let expiry = jwtExpiry(token) else { return false }
         return expiry <= now
@@ -858,8 +759,6 @@ enum CredentialReaders {
         return [db, wal].compactMap { $0 }.joined(separator: ":")
     }
 
-    /// - Parameter promptAllowed: false fails quietly instead of asking for Keychain access,
-    ///   for items another app owns that are polled every refresh.
     static func keychainPassword(service: String, account: String? = nil, promptAllowed: Bool = true) -> String? {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -870,8 +769,6 @@ enum CredentialReaders {
         if !promptAllowed {
             let context = LAContext()
             context.interactionNotAllowed = true
-            // The context alone does not stop a legacy keychain ACL from showing the
-            // login-password dialog. Fail instead of asking.
             query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail
             query[kSecUseAuthenticationContext as String] = context
         }
@@ -922,34 +819,18 @@ enum CredentialReaders {
         try parseClaudeAuth(raw, account: NSUserName(), service: claudeKeychainService).accessToken
     }
 
-    /// The last Claude login read, without touching the Keychain. Nil until something has read it.
     static func cachedClaudeAuth() -> ClaudeAuth? {
         claudeCache.withLock { $0 }
     }
 
-    /// The access token just written, so the next read doesn't keep using the one from before
-    /// the renewal. The Keychain itself is also updated.
     static func rememberClaudeAuth(_ auth: ClaudeAuth) {
         claudeCache.withLock { $0 = auth }
     }
 
-    /// Whether Tokenroom can exchange a Claude refresh token and store the result in the
-    /// same item. SecItem cannot: a new build is not the trusted-application entry, so the
-    /// update waits in securityd. `/usr/bin/security` is already trusted. An update with
-    /// `-U` and no `-T` keeps that tool and the trusted-application paths, which is what
-    /// the read uses. Passing `-T` can replace those paths. Setting a partition list asks
-    /// for the keychain password, so this write does not.
-    ///
-    /// `-U` finds the item by account and service. Without the item's own account the update
-    /// would add a second item and leave this one, with the used-up refresh token, where
-    /// Claude Code reads it: that login isn't renewed here.
     static func claudeLoginCanBeRenewedInPlace(_ auth: ClaudeAuth) -> Bool {
         !auth.account.isEmpty
     }
 
-    /// `security -i` reads one line with a 4096-byte buffer. A longer line is truncated
-    /// and must not be sent. A Claude login is larger than that, so it uses the same
-    /// argv fallback Claude Code uses.
     static let securityInteractiveLineLimit = 4096 - 64
 
     struct ClaudeSecurityUpdate: Equatable {
@@ -957,8 +838,6 @@ enum CredentialReaders {
         var stdin: Data?
     }
 
-    /// One quiet update of a generic password. The secret is hex, so the command needs no
-    /// extra quoting. Stdin keeps a short value off the process arguments. No `-T`.
     static func claudeSecurityUpdate(service: String, account: String, json: String, keychain: String? = nil) -> ClaudeSecurityUpdate {
         let hex = Data(json.utf8).map { String(format: "%02x", $0) }.joined()
         var line = "add-generic-password -U -a \(securityInteractiveQuoted(account)) -s \(securityInteractiveQuoted(service)) -X \(hex)"
@@ -982,7 +861,6 @@ enum CredentialReaders {
     }
 
     static func writeClaudeCredential(service: String, account: String, json: String, keychain: String? = nil) -> Bool {
-        // Without the item's account, `-U` would add an item instead of updating one.
         guard !json.isEmpty, !account.isEmpty else { return false }
         let update = claudeSecurityUpdate(service: service, account: account, json: json, keychain: keychain)
         let output = KeychainGate.sync {
@@ -999,8 +877,6 @@ enum CredentialReaders {
         return stored == json
     }
 
-    /// A refresh grant these providers already rejected, as a fingerprint of the refresh token
-    /// only. A later login writes a different refresh token, so this stops applying.
     private static let rejectedRefresh = OSAllocatedUnfairLock<[Provider: Int]>(initialState: [:])
 
     static func noteRenewalRejected(_ provider: Provider, refreshToken: String) {
@@ -1019,7 +895,6 @@ enum CredentialReaders {
 }
 
 extension CredentialReaders.GrokAuth {
-    /// The CLI login can be exchanged at auth.x.ai. Any other issuer is left alone.
     var canRenew: Bool {
         guard !refreshToken.isEmpty, !clientID.isEmpty, !issuer.isEmpty else { return false }
         return OAuthRefresh.grokTokenURL(issuer: issuer) != nil

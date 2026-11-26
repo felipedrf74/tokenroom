@@ -1,11 +1,6 @@
 import Foundation
 import UIKit
 
-/// Where a phone session may be kept on this iPhone: its own application identifier, read from
-/// `TokenroomApplicationIdentifier` in Info.plist (`$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)`),
-/// the way `RelayAvailability` reads the iCloud container. Nil when the build left it missing,
-/// empty, or unfilled, or when it is the group widgets share for pasted keys: then no
-/// `PhoneSessionStore` is made. Never logged.
 enum PhoneSessionAvailability {
     static let infoKey = "TokenroomApplicationIdentifier"
 
@@ -16,8 +11,6 @@ enum PhoneSessionAvailability {
         )
     }
 
-    /// The store, or nil when the access group can't be trusted: then no plan can be signed in to
-    /// on this iPhone (`MobileStore.sessions` is nil, and Settings › Plans offers no Sign In).
     static func store() -> PhoneSessionStore? {
         PhoneSessionStore.make(
             plistValue: Bundle.main.object(forInfoDictionaryKey: infoKey) as? String,
@@ -26,11 +19,6 @@ enum PhoneSessionAvailability {
     }
 }
 
-/// Deletes the sessions of plans this iPhone no longer signs in to (Claude), once a launch,
-/// whatever the connect flag says (`PhoneSessionStore.purgeRetired`: Keychain deletes only, no
-/// request). It runs only while protected data is available, so a launch while the iPhone is
-/// locked (a background push) waits for it instead of failing: it tries once when that arrives,
-/// and an item still left is tried on the next launch, never in a loop.
 @MainActor
 final class RetiredSessionPurge {
     typealias Purge = @Sendable () async -> Void
@@ -45,13 +33,11 @@ final class RetiredSessionPurge {
         self.purge = purge
     }
 
-    /// The app's own: the iPhone app's session store, off the main thread.
     static func system() -> RetiredSessionPurge? {
         guard let store = PhoneSessionAvailability.store() else { return nil }
         return RetiredSessionPurge { await BlockingIO.run { _ = store.purgeRetired() } }
     }
 
-    /// Runs now when protected data is available, else when it becomes so. Once a launch.
     func start(protectedDataAvailable: Bool) {
         guard !hasRun, observer == nil else { return }
         guard protectedDataAvailable else {

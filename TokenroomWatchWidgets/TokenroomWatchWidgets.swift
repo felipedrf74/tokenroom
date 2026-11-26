@@ -10,8 +10,6 @@ struct TokenroomWatchWidgets: WidgetBundle {
     }
 }
 
-// MARK: Complications
-
 struct ComplicationProvider: TimelineProvider {
     func placeholder(in context: Context) -> ComplicationEntry {
         ComplicationEntry(date: .now, items: SampleData.cache().items)
@@ -29,7 +27,6 @@ struct ComplicationProvider: TimelineProvider {
             let now = Date.now
             let reloads = WidgetReloadLog.record(widget, at: now)
             let cache = await RelayReadings.cache(at: ReadingCache.defaultURL, maxAge: 15 * 60, budget: 6, now: now)
-            // Reset, stale, and expiry boundaries update presentation without inventing usage.
             let horizon = now.addingTimeInterval(8 * 3600)
             let boundaries = cache?.presentationDates(after: now, until: horizon) ?? []
             let entries = ([now] + boundaries.prefix(31)).map { date in
@@ -52,9 +49,6 @@ struct UsageComplication: Widget {
     }
 }
 
-// MARK: Smart Stack
-
-/// One provider's window, chosen by `relevance()`; not something people configure.
 struct WindowIntent: WidgetConfigurationIntent {
     static let title: LocalizedStringResource = "Usage Window"
 
@@ -78,8 +72,6 @@ struct ResetSoonEntry: RelevanceEntry {
     var isSample = false
 }
 
-/// Relevant in the Smart Stack for the last 8 hours before a session or a busy window resets,
-/// and for the next half day whenever a window is at 80% or more (`WidgetSchedule.relevance`).
 struct ResetSoonProvider: RelevanceEntriesProvider {
     func relevance() async -> WidgetRelevance<WindowIntent> {
         let now = Date.now

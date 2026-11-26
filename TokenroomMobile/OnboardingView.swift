@@ -4,8 +4,6 @@ struct OnboardingView: View {
     @Bindable var store: MobileStore
     @Environment(\.dismiss) private var dismiss
 
-    /// Every choice fits one screen at the default text size, down at the thumb and clear of the
-    /// sheet's corner; larger sizes scroll.
     var body: some View {
         NavigationStack {
             GeometryReader { proxy in
@@ -53,7 +51,6 @@ struct OnboardingView: View {
                 if relayIsUnavailable {
                     localPrimary
                 } else {
-                    // The one primary action: a Mac reads the most plans.
                     VStack(alignment: .leading, spacing: 8) {
                         NavigationLink {
                             ConnectMacView(store: store) { dismiss() }
@@ -121,8 +118,6 @@ struct OnboardingView: View {
     @ViewBuilder
     private var keyRow: some View {
         if store.connectOnIPhone {
-            // The path someone without a Mac can finish. Copilot is named: it's the
-            // subscription people expect to sign in to, and its token works here.
             OptionRow(symbol: "key", title: "Add a key on this iPhone", text: "Copilot, OpenRouter, and more.")
         } else {
             OptionRow(symbol: "key", title: "Add an API key", text: "OpenRouter, DeepSeek, and more.")
@@ -222,7 +217,6 @@ private struct OptionRow: View {
 
 private struct ConnectMacView: View {
     var store: MobileStore
-    /// Closes the whole welcome sheet, not just this step.
     var close: () -> Void
 
     var body: some View {

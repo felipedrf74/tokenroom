@@ -1,7 +1,6 @@
 import Foundation
 import Security
 
-/// Injectable Keychain calls. Credential-store regression tests never need a real item.
 struct KeychainOperations: Sendable {
     var copy: @Sendable ([String: Any]) -> (status: OSStatus, item: CFTypeRef?)
     var add: @Sendable ([String: Any]) -> OSStatus

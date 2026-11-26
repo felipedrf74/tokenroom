@@ -1,7 +1,5 @@
 import SwiftUI
 
-/// All styles consume the same presentation status and clock as the original card. The original
-/// sign-in/error controls remain the fallback when there is no usable connected reading.
 struct PopoverProviderView: View {
     var card: ProviderCard
     var style: PopoverStyle
@@ -38,15 +36,12 @@ struct PopoverProviderView: View {
         }
     }
 
-    /// Signed-out and loading rows keep the card's controls, without its box in a style's list.
     private var plainCard: ProviderCard {
         var plain = card
         plain.isPlain = style != .classic
         return plain
     }
 
-    /// The same row as a live reading, grey, with what went wrong and how to fix it. It opens the
-    /// provider's page like any row, for the last reading's other limits, credits, and plan.
     private func expiredRow(hint: String) -> some View {
         let window = reading.primaryWindow
         return VStack(alignment: .leading, spacing: 6) {
@@ -70,7 +65,6 @@ struct PopoverProviderView: View {
                         }
                     }
                     Spacer(minLength: 0)
-                    // Orbit's ring carries a percent; a balance has no ring, so its amount shows here.
                     if let window, style != .orbit || !window.isMetered {
                         PopoverValue(text: ReadingText.headline(window, now: card.date), size: window.isMetered ? 24 : 18, monospaced: style == .instrument)
                             .foregroundStyle(.secondary)
@@ -88,8 +82,6 @@ struct PopoverProviderView: View {
         .padding(.vertical, 8)
     }
 
-    /// Cached values do not imply a working session. Expired sessions must keep their recovery
-    /// controls throughout the cache grace period, in the overview and in an already-open detail.
     static func usesStyledReading(_ status: ProviderStatus) -> Bool {
         if case .expired = status { return false }
         return !status.isDisconnected && status.snapshot != nil
@@ -164,7 +156,6 @@ struct PopoverProviderView: View {
         }
     }
 
-    /// The even pace on a list row's ring or meter, as Classic's cards show it.
     private func listPace(_ window: RelayWindow) -> Double? {
         isDimmed(window) ? nil : card.pace?.elapsedFraction
     }
@@ -206,7 +197,6 @@ struct PopoverProviderView: View {
     private func ring(_ window: RelayWindow, side: CGFloat, dimmed: Bool = false, paceMark: Double? = nil) -> some View {
         let dimmed = dimmed || isDimmed(window)
         let awaiting = window.isAwaitingReading(at: card.date)
-        // UsageRing's stroke straddles its frame; leave room for its cap on every side.
         let inset = max(3, side * 0.05)
         return UsageRing(used: window.used, isStale: dimmed, label: "", lineWidth: side * 0.095, paceMark: paceMark, isAwaitingReading: awaiting)
             .frame(width: side - inset * 2, height: side - inset * 2).padding(inset)
@@ -272,12 +262,10 @@ struct PopoverProviderView: View {
         }
         .padding(.horizontal, 20)
         .padding(.top, 14)
-        // Past the footer's fade, so the last line can be read at the end of the scroll.
         .padding(.bottom, 24)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// The header above names the provider, so the hero is only the reading.
     @ViewBuilder private func hero(_ window: RelayWindow) -> some View {
         if style == .orbit || style == .aurora, window.isMetered {
             HStack(spacing: 18) {
@@ -326,7 +314,6 @@ struct PopoverProviderView: View {
         }
     }
 
-    /// The chart's one colour: its latest reading's level, on a current reading only.
     private func level(for history: UsageHistory, window: RelayWindow) -> Color? {
         guard !isDimmed(window), let latest = history.points.last?.used else { return nil }
         return TokenroomTokens.usageColor(usedPercent: latest, isStale: false)
@@ -376,7 +363,6 @@ struct PopoverProviderView: View {
     }
 
     private func metadata(_ snapshot: QuotaSnapshot) -> some View {
-        // When it was checked is in the header, for this provider.
         VStack(alignment: .leading, spacing: 6) {
             if snapshot.planLabel != nil || ProviderCard.sourceCaption(snapshot) != nil || ProviderCard.readsUnofficially(card.provider, snapshot: snapshot) { Divider() }
             if let plan = snapshot.planLabel { Text("Plan · \(plan)") }

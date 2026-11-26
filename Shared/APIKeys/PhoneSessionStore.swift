@@ -1,70 +1,41 @@
 import Foundation
 import Security
 
-/// A session a vendor issued to Tokenroom on this iPhone, from a sign-in made on this iPhone with
-/// the vendor's public client (`PhoneSignIn`). Never a copy of another tool's login, and never an
-/// identity: no email, subject, organization, or id token. A grant parser drops those before
-/// `save`.
 struct PhoneSession: Codable, Equatable, Sendable {
     var accessToken: String
     var refreshToken: String
     var expiresAt: Date?
-    /// The token endpoint that issued this session. No secret is stored beside it.
     var tokenURL: URL
-    /// The vendor's public client the sign-in used: the same one its own CLI or app uses
-    /// (`PhoneSignIn`), since none of these vendors offers one for other apps. No secret.
     var clientID: String
 }
 
-/// Kept beside the session; not a secret. A screen may read this on the main actor. It has no
-/// last four characters: part of a bearer token is still a credential.
 struct PhoneSessionMetadata: Codable, Equatable, Sendable {
     enum State: String, Codable, Sendable {
         case ready
-        /// Set before a refresh token is sent, so a launch after a crash knows the server may
-        /// have rotated it.
         case exchanging
-        /// The server refused the refresh token. The token bytes are gone; the row asks to sign in.
         case rejected
     }
 
     var addedAt: Date
     var state: State
-    /// Rejected because the token host turned down the sign-in's client (`invalid_client`,
-    /// `unauthorized_client`), not the refresh token. Nil otherwise, and in older items.
     var clientRefused: Bool? = nil
 }
 
-/// Phone sessions, one Keychain item per provider, in the iPhone app's own access group.
-///
-/// Written by a sign-in on this iPhone, for the plans in `PhoneConnect.productionAllowlist`; a
-/// plan taken off it (`retiredProviders`) has its items deleted on launch. Same accessibility and
-/// not-synchronizable flags as `APIKeyStore` on the iPhone, so a session stays on this device
-/// and needs it unlocked once since starting. The Watch doesn't compile this file, and the
-/// widget extension doesn't either (a membership exception in the project), and isn't entitled
-/// to the group. Reads can block: call through `BlockingIO`.
 struct PhoneSessionStore: Sendable {
     enum SessionError: Error, Equatable {
         case keychain(OSStatus)
         case encoding
     }
 
-    /// The iPhone application identifier (`TEAMID.app.tokenroom.ios`). Required on every query:
-    /// a query without one goes to the first group in the entitlements, which is the group the
-    /// widgets share for pasted keys. Never nil, never that shared group.
     var accessGroup: String
-    /// Tests pass their own prefixes so they never name a real item.
     var servicePrefix = "app.tokenroom.ios.session."
     var recoveryService = "app.tokenroom.ios.session-recovery"
     var keychain: KeychainOperations = .system
 
     static let account = "default"
     static let probeAccount = "writable-probe"
-    /// What the token bytes hold once the server refused the refresh token.
     static let rejectedMarker = Data("rejected".utf8)
 
-    /// The access group to use, or nil when the build didn't fill it in correctly. Nil means no
-    /// store is made: the caller doesn't fall back to the shared group or to an omitted one.
     static func accessGroup(plistValue: String?, sharedGroup: String?) -> String? {
         guard let value = plistValue?.trimmingCharacters(in: .whitespacesAndNewlines),
               !value.isEmpty, !value.contains("$("),
@@ -73,8 +44,6 @@ struct PhoneSessionStore: Sendable {
         return value
     }
 
-    /// The store for a build's Info.plist value, or nil (and no Keychain call) when the value
-    /// can't be trusted.
     static func make(plistValue: String?, sharedGroup: String?, keychain: KeychainOperations = .system) -> PhoneSessionStore? {
         accessGroup(plistValue: plistValue, sharedGroup: sharedGroup).map {
             PhoneSessionStore(accessGroup: $0, keychain: keychain)
@@ -85,7 +54,6 @@ struct PhoneSessionStore: Sendable {
         servicePrefix + provider.rawValue
     }
 
-    /// The session item's query, as every call passes it.
     func query(for provider: Provider) -> [String: Any] {
         base(service: service(for: provider), account: Self.account)
     }
@@ -104,15 +72,11 @@ struct PhoneSessionStore: Sendable {
             kSecAttrSynchronizable as String: false,
         ]
         #if os(macOS)
-        // Access groups exist only in the data-protection keychain on the Mac.
         query[kSecUseDataProtectionKeychain as String] = true
         #endif
         return query
     }
 
-    // MARK: Reading
-
-    /// Nil unless the item holds a session with a refresh token: a rejected item has none.
     func session(for provider: Provider) -> PhoneSession? {
         decodeSession(readData(query(for: provider)))
     }
@@ -121,8 +85,6 @@ struct PhoneSessionStore: Sendable {
         readAttributes(query(for: provider)).flatMap(Self.decodeMetadata)
     }
 
-    /// What the Keychain says about a provider's session: there, not there, or couldn't be read
-    /// now (locked, busy). A caller doesn't take "couldn't be read" for signed out.
     enum Lookup: Equatable, Sendable {
         case found(PhoneSessionMetadata)
         case none
@@ -149,12 +111,6 @@ struct PhoneSessionStore: Sendable {
         session(for: provider) != nil
     }
 
-    // MARK: Writing
-
-    /// Whether this provider's item will take a write, proven before a refresh token is sent and
-    /// without touching the token. An existing item gets its own metadata written back (no
-    /// `kSecValueData` in the update). Otherwise a probe, holding only the word `ok`, is added and
-    /// deleted; the delete is always tried, and a probe that couldn't be deleted means no.
     func canReplace(_ provider: Provider) -> Bool {
         let query = query(for: provider)
         if let attributes = readAttributes(query) {
@@ -170,7 +126,6 @@ struct PhoneSessionStore: Sendable {
         return deleted == errSecSuccess || deleted == errSecItemNotFound
     }
 
-    /// Changes the state in the metadata only; the token bytes stay as they are.
     @discardableResult
     func setState(_ state: PhoneSessionMetadata.State, for provider: Provider) -> Bool {
         let query = query(for: provider)
@@ -180,13 +135,10 @@ struct PhoneSessionStore: Sendable {
         return keychain.update(query, [kSecAttrGeneric as String: generic]) == errSecSuccess
     }
 
-    /// A new sign-in: the session, ready, dated now.
     func save(_ session: PhoneSession, for provider: Provider, now: Date) throws {
         try write(session, metadata: PhoneSessionMetadata(addedAt: now, state: .ready), to: query(for: provider), provider: provider)
     }
 
-    /// Puts the new grant in the recovery item, before the session item is replaced. False means
-    /// the caller retries this write, never the token request.
     func saveRecovery(_ session: PhoneSession, for provider: Provider) -> Bool {
         let metadata = PhoneSessionMetadata(addedAt: metadata(for: provider)?.addedAt ?? .now, state: .exchanging)
         return (try? write(session, metadata: metadata, to: recoveryQuery(for: provider), provider: provider)) != nil
@@ -196,11 +148,6 @@ struct PhoneSessionStore: Sendable {
         decodeSession(readData(recoveryQuery(for: provider)))
     }
 
-    /// The recovery item: there, not there, or couldn't be read now. Only a Keychain that's
-    /// locked or busy (`errSecInteractionNotAllowed`) is "couldn't be read now", and asked again
-    /// later. Any other failure, an item read that holds no usable session, and
-    /// `errSecItemNotFound` are "not there", as before: waiting wouldn't change them, and the
-    /// plan would otherwise stay unreachable for good.
     enum RecoveryLookup: Equatable, Sendable {
         case found(PhoneSession)
         case none
@@ -226,15 +173,11 @@ struct PhoneSessionStore: Sendable {
         _ = keychain.delete(recoveryQuery(for: provider))
     }
 
-    /// Deletes the recovery item, and throws when one is there and couldn't be deleted: a new
-    /// sign-in must not go in while an old grant could still be recovered over it.
     func clearRecovery(for provider: Provider) throws {
         let status = keychain.delete(recoveryQuery(for: provider))
         guard status == errSecSuccess || status == errSecItemNotFound else { throw SessionError.keychain(status) }
     }
 
-    /// Replaces the session from the recovery item, sets it ready, then deletes the recovery
-    /// item. False leaves both items as they were, so it can be tried again.
     func finishFromRecovery(for provider: Provider) -> Bool {
         guard let recovered = takeRecovery(for: provider) else { return false }
         let addedAt = metadata(for: provider)?.addedAt ?? .now
@@ -247,9 +190,6 @@ struct PhoneSessionStore: Sendable {
         return true
     }
 
-    /// The server refused the refresh token: the token bytes become the word `rejected`, and the
-    /// item stays with its date, so the row can ask to sign in again. Only this provider's
-    /// session item changes; no key and no other session is touched.
     func markRejected(for provider: Provider, now: Date, clientRefused: Bool = false) {
         let query = query(for: provider)
         let addedAt = metadata(for: provider)?.addedAt ?? now
@@ -263,27 +203,14 @@ struct PhoneSessionStore: Sendable {
         }
     }
 
-    /// What the user's Remove does: the session and any recovery item.
     func remove(for provider: Provider) throws {
         let status = keychain.delete(query(for: provider))
         deleteRecovery(for: provider)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw SessionError.keychain(status) }
     }
 
-    // MARK: Retired plans
-
-    /// Plans the iPhone signed in to once and no longer does. Their items are deleted on launch
-    /// (`purgeRetired`). Claude, since 2026-11-07: Anthropic's terms don't allow other apps to
-    /// offer a Claude.ai login or to keep its tokens (docs/iphone-login-without-a-mac.md).
     static let retiredProviders: [Provider] = [.claude]
 
-    /// Deletes each retired plan's session item, its recovery item, and any probe `canReplace`
-    /// left behind. Only deletes, each by its exact query: no token is read, revoked, or renewed,
-    /// and nothing is sent. A plan still signed in to here (on the allowlist, or the owner of a
-    /// session one reads with) is never touched, and neither is any other provider's item.
-    /// Running it again finds nothing and changes nothing.
-    /// - Returns: false when an item was there and couldn't be deleted now (locked, busy); a
-    ///   later launch tries again.
     @discardableResult
     func purgeRetired(_ providers: [Provider] = Self.retiredProviders) -> Bool {
         let inUse = Set(PhoneConnect.productionAllowlist.map(PhoneSignIn.sessionOwner)).union(PhoneConnect.productionAllowlist)
@@ -302,9 +229,6 @@ struct PhoneSessionStore: Sendable {
         return cleared
     }
 
-    // MARK: Private
-
-    /// Updates the item in place when it exists, so a failed write never leaves it deleted.
     private func write(_ session: PhoneSession, metadata: PhoneSessionMetadata, to query: [String: Any], provider: Provider) throws {
         guard !session.refreshToken.isEmpty,
               let data = try? JSONEncoder().encode(session),

@@ -2,7 +2,6 @@ import SwiftUI
 
 #if os(macOS)
 extension EnvironmentValues {
-    /// Supplied by the containing scroll viewport, independent of child widths.
     @Entry var macNewsAvailableWidth: CGFloat = 600
 }
 
@@ -52,8 +51,6 @@ struct MacNewsReaderContent: View {
         } else if let model = edition.topStory {
             MacNewsModelCard(model: model, news: news, library: library)
         }
-        // Each story has one position in the briefing; the full collection is
-        // always available through See all rather than repeating the lead.
         let remaining = latest == nil ? updates : Array(updates.dropFirst(3))
         if !remaining.isEmpty {
             MacNewsPanel {
@@ -115,7 +112,6 @@ struct MacNewsReaderContent: View {
     }
     @ViewBuilder private func storyColumns(_ items: [FeedItem]) -> some View {
         if availableWidth >= 680 {
-            // Rows pair across the columns, so the hairlines line up however the titles wrap.
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 32, alignment: .top), count: 2), alignment: .leading, spacing: 0) {
                 ForEach(Array(items.enumerated()), id: \.element.stableID) { index, item in
                     VStack(alignment: .leading, spacing: 0) {

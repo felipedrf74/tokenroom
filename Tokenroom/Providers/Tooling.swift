@@ -64,8 +64,6 @@ enum Tooling {
         return best?.url
     }
 
-    /// An explicit search list replaces machine-specific defaults; tests pass [] to use only
-    /// their fixtures. Production omits it and keeps its installed-tool discovery.
     static func resolve(_ name: String, extraDirectories: [URL] = [], searchDirectories: [URL]? = nil) -> URL? {
         let home = FileManager.default.homeDirectoryForCurrentUser
         var directories = extraDirectories

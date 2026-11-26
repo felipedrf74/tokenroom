@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// The same readings and actions, with a presentation chosen by the person using this Mac.
 enum PopoverStyle: String, CaseIterable, Identifiable {
     case orbit, instrument, strata, aurora, classic
 
@@ -38,8 +37,6 @@ struct PopoverSurface: View {
     }
 }
 
-/// Separate number and sign views keep the selected style's type size across detail navigation
-/// and style changes, including when the same percentage is shown at several sizes.
 struct PopoverValue: View {
     var text: String
     var size: CGFloat
@@ -61,7 +58,6 @@ struct PopoverValue: View {
     }
 }
 
-/// Native meters, not images: partial segments and the fill edge reflect the actual quota.
 struct PopoverMeter: View {
     var style: PopoverStyle
     var used: Double
@@ -89,7 +85,6 @@ struct PopoverMeter: View {
                             .overlay(alignment: .leading) {
                                 Rectangle().fill(tint)
                                     .overlay {
-                                        // Past the even pace, a step lighter, as other meters.
                                         if let start = aheadStart, (Double(index) + 0.5) / 20 > start {
                                             Color.white.opacity(0.28)
                                         }
@@ -107,11 +102,9 @@ struct PopoverMeter: View {
             GeometryReader { geometry in
                 RoundedRectangle(cornerRadius: height / 2).fill(TokenroomTokens.track)
                     .overlay(alignment: .leading) {
-                        // Pale on a light panel; on a dark one, the level's own colour.
                         Rectangle().fill(tint.opacity(isStale || scheme == .dark ? 1 : 0.85))
                             .frame(width: geometry.size.width * fraction)
                             .overlay(alignment: .leading) {
-                                // Past the even pace, the same colour a step lighter, as other meters.
                                 if let start = aheadStart {
                                     Color.white.opacity(0.28).padding(.leading, geometry.size.width * start)
                                 }
@@ -127,7 +120,6 @@ struct PopoverMeter: View {
         }
     }
 
-    /// Where a fill runs ahead of the even pace, as a fraction of the meter.
     private var aheadStart: Double? {
         guard let paceMark = shownPace, fraction > paceMark + 0.015 else { return nil }
         return paceMark
@@ -137,13 +129,11 @@ struct PopoverMeter: View {
         if let paceMark = shownPace {
             let x = width * paceMark
             if style == .instrument {
-                // A gap in the segments, in the panel's own colour, with the mark in it.
                 Rectangle().fill(Color(hex: "1A2430")).frame(width: 4, height: height + 2)
                     .offset(x: max(0, min(width - 4, x - 2)), y: -1)
                 Capsule().fill(Color.white.opacity(0.7)).frame(width: 1.5, height: height + 2)
                     .offset(x: max(0, min(width - 1.5, x - 0.75)), y: -1)
             } else {
-                // A notch through the fill, in the panel's colour, as `MeterTrack` cuts one.
                 Rectangle().fill(Color(nsColor: .windowBackgroundColor)).frame(width: 3, height: height)
                     .offset(x: max(0, min(width - 3, x - 1.5)))
                 Capsule().fill(TokenroomTokens.paceMark).frame(width: 1.5, height: height + 2)

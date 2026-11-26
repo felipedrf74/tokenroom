@@ -1,7 +1,5 @@
 import Foundation
 
-/// Shared by the iPhone app, widgets, and Watch handoff. Old cache files stay quarantined after
-/// an account change even if clearing the file fails or an old widget writes its result late.
 enum PhoneCacheAccess {
     static let generationKey = "phoneCacheAccountGeneration"
 
@@ -29,7 +27,6 @@ enum PhoneCacheAccess {
         cache.accountGeneration = generation
         cache.localSource?.accountGeneration = generation
         try cache.save(to: url)
-        // A late writer can leave a file, but that file's old generation is never accepted.
         return generation == self.generation(in: defaults)
     }
 }

@@ -71,8 +71,6 @@ final class RelayZoneReaderTests: XCTestCase {
         XCTAssertEqual(tokens[2], 1, "Retry begins at the last fully committed snapshot")
     }
 
-    /// The blocked record stays in the delta until its cursor is accepted. Repeating a failed
-    /// cursor must not indefinitely hide a successful sibling that arrived on the same page.
     private actor StickyRecordPages {
         private(set) var tokens: [Int?] = []
         private(set) var retriedIDs: [[String]] = []
@@ -434,8 +432,6 @@ final class RelayZoneReaderTests: XCTestCase {
         XCTAssertNil(tokens[1])
     }
 
-    /// The first fetch deliberately ignores cancellation until released, like a suspended
-    /// CloudKit operation. Later requests must not remain attached to it or accept its result.
     private actor SuspendedPages {
         private var first: CheckedContinuation<Reader.Page, Never>?
         private var started: [CheckedContinuation<Void, Never>] = []
@@ -478,8 +474,6 @@ final class RelayZoneReaderTests: XCTestCase {
             return try await reader.contents()
         }
         await fulfillment(of: [recovered], timeout: 1)
-        // Release after checking recovery, so even a regression finishes with failed assertions
-        // rather than leaving the test permanently suspended.
         await pages.releaseFirst()
         let secondResult = try await second.value
         let tokens = await pages.tokens
@@ -523,7 +517,6 @@ final class RelayZoneReaderTests: XCTestCase {
             return try await reader.contents()
         }
         await fulfillment(of: [joined], timeout: 1)
-        // Give the second task the actor turn to enter while the first fetch is suspended.
         for _ in 0..<20 { await Task.yield() }
         await pages.releaseFirst()
 

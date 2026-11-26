@@ -1,18 +1,9 @@
 import Darwin
 import Foundation
 
-/// When each key-read provider was last called, and until when it asked to be left alone. The
-/// iPhone app and its widgets run in separate processes; they share this through the App Group,
-/// so a widget refresh counts toward Anthropic's 15-minute spacing and honors a 429. Each value
-/// is a defaults key of its own, written whole, so one process never overwrites another's
-/// values with an older copy. UserDefaults is thread-safe, which Swift can't see.
-///
-/// Checking and then recording is one step (`claim`). A file lock in the App Group covers the
-/// app and a widget; a process lock covers threads in one process when that container is absent.
 struct KeyFetchGate: @unchecked Sendable {
     private let defaults: UserDefaults
     private let lockDirectory: URL?
-    /// Where 2.0.0 kept every provider's values together, rewritten on each change.
     static let legacyKey = "keyFetchGate"
 
     init(defaults: UserDefaults = AppGroup.defaults, lockDirectory: URL? = AppGroup.containerURL?.appendingPathComponent("key-fetch-locks", isDirectory: true)) {
@@ -21,9 +12,6 @@ struct KeyFetchGate: @unchecked Sendable {
         migrate()
     }
 
-    /// Whether a call now would come too soon after the last one, or before a Retry-After. Times
-    /// from before the clock was set back don't count, so they can't hold calls off for as long
-    /// as it moved.
     func isResting(_ provider: Provider, now: Date = .now) -> Bool {
         if let blocked = blockedUntil(provider), blocked > now, blocked.timeIntervalSince(now) <= ProviderStatus.longestRetry {
             return true
@@ -43,14 +31,11 @@ struct KeyFetchGate: @unchecked Sendable {
         defaults.object(forKey: Self.blockedKey(provider)) as? Date
     }
 
-    /// A call going out now, or nil to take one back (it was cut short and didn't count).
     func recordAttempt(_ provider: Provider, at date: Date?) {
         defaults.set(date, forKey: Self.attemptKey(provider))
         defaults.removeObject(forKey: Self.claimKey(provider))
     }
 
-    /// Owns the actual fetch, including providers with no minimum spacing. The lease stays
-    /// with the worker when its caller times out; it ends only once that worker finishes.
     func claim(_ provider: Provider, at date: Date = .now) -> FetchClaim? {
         synchronized(provider) {
             guard !isResting(provider, now: date),
@@ -64,19 +49,13 @@ struct KeyFetchGate: @unchecked Sendable {
         }
     }
 
-    /// The prior attempt is captured with the claim, rather than before another process can
-    /// write. A reset or a newer claim, even at the same timestamp, fences this restoration.
     func restoreAttempt(_ claim: FetchClaim) {
         synchronized(claim.provider) {
             guard owns(claim), lastAttempt(claim.provider) == claim.written else { return }
-            // Keep ownership until the worker stops: a late 429 still applies to this key.
             defaults.set(claim.previous, forKey: Self.attemptKey(claim.provider))
         }
     }
 
-    /// Persist the physical response before releasing the lease. Doing it in the waiting
-    /// caller leaves a gap between worker completion and that caller resuming, or loses a
-    /// response that arrived after the caller's budget expired.
     func complete(_ claim: FetchClaim, result: Result<QuotaSnapshot, ProviderError>, at date: Date = .now) {
         switch result {
         case .success:
@@ -110,8 +89,6 @@ struct KeyFetchGate: @unchecked Sendable {
         func finish() { lease.finish() }
     }
 
-    /// flock descriptors are shared by copies of a claim. Closing is idempotent; the process
-    /// registry also excludes a second worker in builds without an App Group.
     fileprivate final class FetchLease: @unchecked Sendable {
         private static let registry = NSLock()
         nonisolated(unsafe) private static var active: Set<String> = []
@@ -155,12 +132,10 @@ struct KeyFetchGate: @unchecked Sendable {
         deinit { finish() }
     }
 
-    /// A 429's wait, or nil to clear it after a good answer.
     func block(_ provider: Provider, until date: Date?) {
         defaults.set(date, forKey: Self.blockedKey(provider))
     }
 
-    /// A key saved or removed: the old key's spacing and 429 wait don't apply to the new one.
     func reset(_ provider: Provider) {
         synchronized(provider) {
             recordAttempt(provider, at: nil)
@@ -179,8 +154,6 @@ struct KeyFetchGate: @unchecked Sendable {
         return body()
     }
 
-    /// Shared by the app and its widgets. Nil where there is no App Group, which is also
-    /// where the two processes do not share this gate's defaults.
     private func openLease(_ provider: Provider) -> Int32? {
         guard let folder = lockDirectory else { return nil }
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -216,7 +189,6 @@ struct KeyFetchGate: @unchecked Sendable {
         "keyFetchGate.\(provider.rawValue).claimID"
     }
 
-    /// Moves 2.0.0's shared entry to the keys above, once.
     private func migrate() {
         guard let data = defaults.data(forKey: Self.legacyKey) else { return }
         defaults.removeObject(forKey: Self.legacyKey)

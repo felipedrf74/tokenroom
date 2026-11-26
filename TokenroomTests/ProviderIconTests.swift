@@ -1,8 +1,6 @@
 import XCTest
 @testable import Tokenroom
 
-/// Provider icons: every icon a provider names ships in the app, and the ones still missing are
-/// the ones meant to be.
 final class ProviderIconTests: XCTestCase {
     func testEveryNamedIconShips() {
         for provider in Provider.allCases {
@@ -12,7 +10,6 @@ final class ProviderIconTests: XCTestCase {
     }
 
     func testProvidersWithoutAnIconAreTheOnesWaitingOnTheirOwners() {
-        // xAI's kit isn't in yet.
         XCTAssertEqual(Set(Provider.allCases.filter { $0.assetName == nil }), [.xaiOrg])
     }
 

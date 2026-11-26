@@ -122,8 +122,6 @@ final class SkillsQAFixTests: XCTestCase {
         let reader = Task { await store.refresh(sort: .trending) }
         await gate.waitUntilPaused()
         await gate.waitForArrivals(1)
-        // The fetch deliberately returns a body after its sole reader has cancelled.
-        // Acknowledgments replace the old blocking MainActor semaphore schedule.
         reader.cancel(); await reader.value
         await gate.release()
         _ = await physical.value?.value
@@ -139,7 +137,7 @@ final class SkillsQAFixTests: XCTestCase {
             return .status(429, retryAfter: "600")
         }, clock: { Date(timeIntervalSince1970: 100) }, waitForAnswer: { task in
             if await gate.arrived() == 1 {
-                await gate.waitUntilPaused() // This case expires an already-issued request.
+                await gate.waitUntilPaused()
                 return .unreachable
             }
             return await task.value

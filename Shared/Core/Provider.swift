@@ -1,7 +1,5 @@
 import Foundation
 
-/// Every provider this build knows. Raw values live in settings, caches, and the iCloud relay:
-/// never rename or reuse one.
 enum Provider: String, CaseIterable, Codable, Identifiable, Hashable, Sendable {
     case grok
     case grokBot
@@ -25,59 +23,36 @@ enum Provider: String, CaseIterable, Codable, Identifiable, Hashable, Sendable {
 
     var id: String { rawValue }
 
-    /// Providers Headroom 1.x shipped with. Settings written by 1.x already knew about them.
     static let legacy: Set<Provider> = [.grok, .grokBot, .claude, .openai, .cursor]
 }
 
-/// What a provider is, in one place. Adding a provider means one entry in `Provider.descriptor`.
 struct ProviderDescriptor: Sendable {
     enum Category: String, Sendable {
-        /// Subscription quota (weekly, session, or billing-cycle windows).
         case subscription
-        /// Pay-as-you-go credit balance, read with an API key.
         case apiBalance
-        /// Organization spend, read with an admin key.
         case orgSpend
     }
 
-    /// Where a provider's credential comes from.
     enum Access: Sendable {
-        /// Another tool's login on the Mac (a CLI or an app). The iPhone sees it through the relay.
         case localLogin
-        /// A pasted key, or on the Mac the key a coding tool is already configured with.
         case codingPlanKey
-        /// A pasted key only.
         case pastedKey
     }
 
     var displayName: String
     var shortName: String
-    /// One letter for the Mac's fallback icon tile.
     var letter: String
-    /// Up to two letters for the monogram, shown where there's no icon (and in tinted widgets).
     var monogram: String
-    /// Monogram tint, `#RRGGBB`.
     var tintHex: String
     var category: Category = .subscription
-    /// Whether a provider this install has never seen starts enabled. Otherwise it is enabled
-    /// only when a local session is detected.
     var enabledByDefault: Bool = false
-    /// The provider's icon in `Shared/UI/ProviderIcons.xcassets`, on every platform; nil falls
-    /// back to the monogram. Sources and terms: `docs/provider-icons.md`.
     var assetName: String?
-    /// An official mark without a square of its own: drawn whole on a white tile with clear
-    /// space, never cropped or recoloured.
     var iconIsMark = false
-    /// Mac menu-bar glyph; nil falls back to a drawn mark.
     var menuGlyphName: String?
     var signInHint: String
     var expiredHint: String
-    /// Checks closer together than this are skipped, even when forced (rate-limited endpoints).
     var minimumInterval: TimeInterval = 0
-    /// For providers read with a pasted API key.
     var key: KeySpec? = nil
-    /// A documented API that reads the same usage with a key, for where the local login can't
-    /// be used: the iPhone, or a Mac without the tool's login (Copilot's billing API).
     var fallbackKey: KeySpec? = nil
 
     var access: Access {
@@ -85,37 +60,24 @@ struct ProviderDescriptor: Sendable {
         return key.isCodingPlan ? .codingPlanKey : .pastedKey
     }
 
-    /// Read from the endpoint the provider's own app or CLI uses, not a documented API. Works
-    /// today, may change without notice; the Mac says so.
     var isUnofficial: Bool {
         access == .localLogin
     }
 }
 
-/// How a provider's API key is entered.
 struct KeySpec: Sendable {
     var label = "API key"
 
-    /// "Create an API key", "Create a fine-grained token".
     var createTitle: String {
         let article = label.first.map { "aeiouAEIOU".contains($0) } == true ? "an" : "a"
         return "Create \(article) \(label)"
     }
-    /// Where to create a key.
     var createURL: URL
-    /// Start of a typical key, shown as a hint.
     var prefixHint = ""
-    /// Accounts in separate regions, e.g. Moonshot's global and China platforms, or other
-    /// choices saved with the key (Copilot's plan).
     var regions: [String] = []
-    /// What the choice is called in the key form.
     var choiceLabel = "Account"
-    /// What the key needs, shown in the key form, e.g. a token permission.
     var note: String? = nil
-    /// Org-wide admin or management keys get an extra warning.
     var isAdmin = false
-    /// A subscription's key that a coding tool on the Mac may already hold (Claude Code
-    /// settings, the Kimi Code CLI, OpenCode). Pasting one is optional there.
     var isCodingPlan = false
 }
 
@@ -133,7 +95,6 @@ extension Provider {
                 assetName: "ProviderBuild",
                 menuGlyphName: "GlyphBuild",
                 signInHint: "Sign in with grok login to see usage.",
-                // Renewed in the CLI's own login until that refresh token is rejected.
                 expiredHint: "Session expired. Sign in with grok login again."
             )
         case .grokBot:
@@ -159,9 +120,7 @@ extension Provider {
                 enabledByDefault: true,
                 assetName: "ProviderClaude",
                 signInHint: "Sign in with claude login to see usage.",
-                // Renewed in Claude Code's own login until that refresh token is rejected.
                 expiredHint: "Session expired. Sign in with claude login again.",
-                // The usage endpoint answers 429 to more than about one call every few minutes.
                 minimumInterval: 5 * 60
             )
         case .openai:
@@ -222,7 +181,6 @@ extension Provider {
                 iconIsMark: true,
                 signInHint: "Sign in to Antigravity, and install agy 1.1.11 or later, to see usage.",
                 expiredHint: "Session expired. Open Antigravity to sign in again.",
-                // Each check runs the agy CLI, which can take a while.
                 minimumInterval: 5 * 60
             )
         case .devin:
@@ -258,7 +216,6 @@ extension Provider {
                 assetName: "ProviderKimi",
                 iconIsMark: true,
                 signInHint: "Sign in with the kimi CLI (Kimi Code), or add a Kimi Code API key.",
-                // The CLI owns its login; Tokenroom never refreshes it.
                 expiredHint: "Session expired. Run kimi once to refresh it, or add an API key.",
                 key: KeySpec(createURL: URL(string: "https://www.kimi.com/code/console")!, prefixHint: "sk-kimi-", regions: ["Global", "China"], isCodingPlan: true)
             )
@@ -368,7 +325,6 @@ extension Provider {
                 iconIsMark: true,
                 signInHint: "Add an Anthropic Admin key to see this month's spend.",
                 expiredHint: "Couldn't use this key. It needs to be an Anthropic Admin key.",
-                // Cost reports update slowly; polling faster only spends rate limit.
                 minimumInterval: 15 * 60,
                 key: KeySpec(label: "Admin key", createURL: URL(string: "https://console.anthropic.com/settings/admin-keys")!, prefixHint: "sk-ant-admin", isAdmin: true)
             )
@@ -390,9 +346,7 @@ extension Provider {
     var displayName: String { descriptor.displayName }
     var key: KeySpec? { descriptor.key }
     var usesAPIKey: Bool { descriptor.key != nil }
-    /// The key form for this provider: its own key, or a documented fallback (Copilot).
     var keySpec: KeySpec? { descriptor.key ?? descriptor.fallbackKey }
-    /// Readable on the iPhone with a key pasted there.
     var readsWithKey: Bool { keySpec != nil }
     var access: ProviderDescriptor.Access { descriptor.access }
     var shortName: String { descriptor.shortName }

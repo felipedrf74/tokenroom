@@ -20,10 +20,8 @@ final class SignInCoordinator {
     private let readUsable: @Sendable (Provider) async -> Bool
     private let authorizeGrokBot: @Sendable () async -> Bool?
     var onConnected: ((Provider) -> Void)?
-    /// API-key providers are connected in Settings, not by signing in.
     var onAddKey: ((Provider) -> Void)?
 
-    /// Tests supply readers so cancelled and overlapping attempts never touch a real login.
     init(
         readStamp: @escaping @Sendable (Provider) async -> String? = { provider in
             await BlockingIO.run { CredentialReaders.sessionStamp(provider) }
@@ -139,7 +137,6 @@ final class SignInCoordinator {
             CredentialReaders.invalidateCaches()
             polls += 1
             if polls % 10 == 0 {
-                // A new login can land in a new `Claude Code-credentials-…` item.
                 CredentialReaders.invalidateKeychainServices()
             }
             let connected = await sessionBecameUsable(provider, baseline: baseline)

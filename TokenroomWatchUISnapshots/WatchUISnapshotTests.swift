@@ -1,7 +1,5 @@
 import XCTest
 
-/// The Watch app from sample data, as real screenshots, written to `TOKENROOM_SNAPSHOT_DIR`. Run by
-/// `./scripts/ui-snapshots.sh`; without the folder it skips.
 final class WatchUISnapshotTests: XCTestCase {
     private var output: URL!
 

@@ -2,8 +2,6 @@ import Foundation
 import Security
 import SwiftUI
 
-/// Only app-owned test/snapshot roots select this composition. Injected store tests and
-/// ordinary sample mode retain the production initializer's behavior.
 @MainActor enum MobileRuntime {
     static func store(launchDefaults: UserDefaults = .standard,
                       isUnitTestHost: Bool = LaunchEnvironment.isUnitTestHost,
@@ -21,8 +19,6 @@ import SwiftUI
 }
 
 extension MobileRuntime {
-    /// `-TokenroomSnapshotConnect YES`: an inert snapshot still shows the plan screens and choices
-    /// a real user gets. Nothing in them works without a store that can reach out.
     private static func showsConnect(_ launchDefaults: UserDefaults) -> Bool {
         #if DEBUG
         launchDefaults.bool(forKey: "TokenroomSnapshotConnect")

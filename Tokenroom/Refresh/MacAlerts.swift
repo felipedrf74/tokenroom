@@ -1,7 +1,6 @@
 import Foundation
 import UserNotifications
 
-/// Usage alerts as notifications on this Mac, when turned on in Settings.
 enum MacAlerts {
     static func requestPermission() async -> Bool {
         (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])) ?? false
@@ -15,7 +14,6 @@ enum MacAlerts {
             content.body = alert.body
             content.sound = alert.isUrgent ? .default : nil
             content.threadIdentifier = alert.provider
-            // The alert's ID, so a repeat replaces it instead of stacking.
             center.add(UNNotificationRequest(identifier: alert.id, content: content, trigger: nil))
         }
     }

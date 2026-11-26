@@ -1,10 +1,8 @@
 import XCTest
 @testable import Tokenroom
 
-/// Files written by earlier builds, read by this one. Each golden fixture is exactly what an
-/// older writer produced; they must keep decoding as long as a device might still hold one.
 final class GoldenFixtureTests: XCTestCase {
-    private let now = Date(timeIntervalSince1970: 1_790_337_600) // 2026-09-25 12:00 UTC
+    private let now = Date(timeIntervalSince1970: 1_790_337_600)
 
     private var folders: [URL] = []
 
@@ -29,8 +27,6 @@ final class GoldenFixtureTests: XCTestCase {
         return folder
     }
 
-    /// A newer Mac's record: this build reads what it can and asks for an update otherwise, even
-    /// when the newer format changed shape and doesn't decode here.
     func testANewerFormatAsksForAnUpdateEvenWhenItDoesntDecode() throws {
         let current = try fixture("relay-envelope-v1")
         XCTAssertNotNil(RelayEnvelope.read(current).envelope)
@@ -56,7 +52,6 @@ final class GoldenFixtureTests: XCTestCase {
         XCTAssertFalse(RelayEnvelope.read(Data("not json".utf8)).needsNewerApp)
     }
 
-    /// A v1 Mac's record, from before providers carried a category and windows a pace.
     func testRelayEnvelopeFromAVersionOneMac() throws {
         let envelope = try RelayEnvelope.decode(fixture("relay-envelope-v1"))
         XCTAssertEqual(envelope.v, 1)
@@ -87,7 +82,6 @@ final class GoldenFixtureTests: XCTestCase {
         XCTAssertEqual(again.materialHash, envelope.materialHash)
     }
 
-    /// Hourly weeks from before balances and resets were kept.
     func testRelayHistoryFromAVersionOneMac() throws {
         let history = try RelayHistory.decode(fixture("relay-history-v1"))
         XCTAssertEqual(history.v, 1)
@@ -101,7 +95,6 @@ final class GoldenFixtureTests: XCTestCase {
         XCTAssertNil(claude.resets)
         XCTAssertNil(claude.windowResetsAt)
 
-        // A newer build keeps recording into an older week.
         var continued = claude
         XCTAssertTrue(continued.record(66, at: now.addingTimeInterval(3600)))
         XCTAssertTrue(continued.recordAmount(10, at: now.addingTimeInterval(3600)))
@@ -110,7 +103,6 @@ final class GoldenFixtureTests: XCTestCase {
         XCTAssertEqual(try RelayHistory.decode(history.encoded()), history)
     }
 
-    /// The iPhone's widget cache as the first release saved it.
     func testWidgetCacheFromTheFirstRelease() throws {
         let cache = try XCTUnwrap(ReadingCache.load(from: fixtureURL("widget-cache-v1")))
         XCTAssertEqual(cache.v, ReadingCache.version)
@@ -130,7 +122,6 @@ final class GoldenFixtureTests: XCTestCase {
         XCTAssertEqual(ReadingCache.load(from: url)?.materialHash, cache.materialHash)
     }
 
-    /// Headroom 1.x's snapshot cache: dates since 2001, and Grok Bot's plan as a fake window.
     func testSnapshotCacheFromHeadroomOne() throws {
         let snapshots = SnapshotCache.decode(try fixture("snapshots-v1"))
         XCTAssertEqual(Set(snapshots.keys), [.grok, .grokBot, .claude, .openai, .cursor])

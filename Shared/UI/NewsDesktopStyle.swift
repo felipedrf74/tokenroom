@@ -1,9 +1,6 @@
 import SwiftUI
 
 #if os(macOS)
-/// Desktop presentation shares the reader's stores and actions, while giving a
-/// pointer-driven window its own density and visual hierarchy. A group on the page is set apart
-/// by space and hairlines, never by a box: the window is the only surface.
 struct MacNewsPanel<Content: View>: View {
     var spacing: CGFloat = 12
     @ViewBuilder var content: () -> Content
@@ -13,9 +10,6 @@ struct MacNewsPanel<Content: View>: View {
     }
 }
 
-/// Hides a row's actions until the pointer reaches the row. They stay in the layout and in the
-/// key loop, so a keyboard reaches them (a focused action shows itself), and VoiceOver finds them
-/// revealed from the start.
 private struct MacNewsRevealsActions: ViewModifier {
     @State private var isHovering = false
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
@@ -32,8 +26,6 @@ extension View {
     func macNewsRevealsActions() -> some View { modifier(MacNewsRevealsActions()) }
 }
 
-/// One of a row's quiet actions, following the row's reveal. Never fully transparent, so it stays
-/// a live control while hidden.
 struct MacNewsRowAction<Content: View>: View {
     @ViewBuilder var content: () -> Content
     @Environment(\.newsActionsRevealed) private var revealed
@@ -212,8 +204,6 @@ struct MacNewsHero: View {
             }.padding(.top, 4)
         }
     }
-    /// The one dark object on a light page, so it's kept short and let back a little. The artwork
-    /// itself is never recoloured.
     @ViewBuilder private var illustration: some View {
         if let image = TokenroomImage.named("NewsEditorialArt") {
             Color.clear

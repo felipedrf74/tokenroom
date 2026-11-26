@@ -1,7 +1,5 @@
 import SwiftUI
 
-/// A provider's mark drawn from its monogram and tint. iPhone and Apple Watch never ship provider
-/// logos.
 struct MonogramMark: View {
     var text: String
     var tint: Color
@@ -18,7 +16,6 @@ struct MonogramMark: View {
                     .foregroundStyle(.white)
                     .minimumScaleFactor(0.6)
             }
-            // The same edge and lift as a provider's own icon, so a monogram sits among them.
             .overlay(shape.strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
             .modifier(IconLift(size: size))
             .accessibilityHidden(true)
@@ -32,7 +29,6 @@ extension MonogramMark {
 }
 
 extension Color {
-    /// `#RRGGBB`; gray when malformed.
     init(hex: String) {
         let digits = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
         guard digits.count == 6, let value = UInt32(digits, radix: 16) else {

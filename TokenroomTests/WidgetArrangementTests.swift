@@ -1,7 +1,6 @@
 import XCTest
 @testable import Tokenroom
 
-/// Which providers the iPhone's widgets show and in what order, tested on the Mac.
 final class WidgetArrangementTests: XCTestCase {
     private var suites: [String] = []
 
@@ -57,7 +56,6 @@ final class WidgetArrangementTests: XCTestCase {
     }
 
     func testMovingARowSwitchesToTheUsersOrderAndKeepsAbsentProvidersPlaces() {
-        // Kimi was placed first earlier and has no reading now, so the list doesn't show it.
         let arrangement = WidgetArrangement(sequence: ["kimiCode", "openai", "claude"])
         let listed = arrangement.listed(ranked, id: { $0 })
         XCTAssertEqual(listed, ["openai", "claude", "cursor", "grok"])
@@ -73,8 +71,6 @@ final class WidgetArrangementTests: XCTestCase {
         XCTAssertEqual(middle.sequence, ["claude", "kimiCode", "openai"], "An absent provider stays between the two it was between")
     }
 
-    /// Claude first, Cursor second, OpenAI third; back to most urgent first; Claude's reading
-    /// goes; then "My Order" again. Nothing was dragged, so nothing moved.
     func testChoosingYourOwnOrderAgainKeepsAnAbsentProvidersPlace() {
         var arrangement = WidgetArrangement(order: .urgency, sequence: ["claude", "cursor", "openai"])
         let onScreen = arrangement.listed(["openai", "cursor"], id: { $0 })
@@ -82,7 +78,6 @@ final class WidgetArrangementTests: XCTestCase {
         arrangement.order = .manual
         XCTAssertEqual(arrangement.sequence, ["claude", "cursor", "openai"])
         XCTAssertEqual(arranged(arrangement, ["openai", "claude", "cursor"]), ["claude", "cursor", "openai"])
-        // The first time, the order on screen becomes the order kept, new providers last.
         let first = WidgetArrangement().placing(ranked)
         XCTAssertEqual(first.sequence, ranked)
         XCTAssertEqual(WidgetArrangement(sequence: ["grok"]).placing(ranked).sequence, ["grok", "openai", "claude", "cursor"])

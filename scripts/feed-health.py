@@ -1,16 +1,4 @@
 #!/usr/bin/env python3
-"""Checks every public source News and Skills read, live, and reports what needs attention.
-
-Advisory: it never fails a build. The weekly `Feed health` workflow runs it and opens or
-updates one issue. The catalog is read from the Swift sources, so there is no second list:
-`FeedSource.catalog` (Shared/Core/Feeds.swift), `NewsVoice.catalog` and `NewsStatusSource`
-(Shared/Core/NewsSources.swift), OpenRouter's model list, and ClawHub's rankings.
-
-A source needs attention when it doesn't answer 200, isn't a feed (or, for the JSON sources,
-the shape Tokenroom reads), is past its size limit (or within 80% of it), or hasn't published in
-30 days (official feeds) or 60 (voices and discussion). Status feeds may be quiet: a quiet one is
-fine. Run it locally with `python3 scripts/feed-health.py`.
-"""
 import argparse
 import concurrent.futures
 import gzip
@@ -38,7 +26,7 @@ class Source:
     id: str
     name: str
     url: str
-    kind: str  # official, status, voice, models, skills
+    kind: str
     limit: int = DEFAULT_LIMIT
 
 
@@ -54,8 +42,6 @@ class Result:
 
 
 def code(text, limit=200):
-    """Server-supplied text (a Link header, an error's reason) as inline code in the issue:
-    no Markdown, mentions or links of its own, and no `|` to break the table."""
     text = " ".join(str(text).split())[:limit].replace("`", "'").replace("\\", "/").replace("|", "\\|")
     return f"`{text}`"
 
@@ -66,7 +52,6 @@ def _limit(text):
 
 
 def catalog(root=ROOT):
-    """Every source, read from the Swift catalog."""
     sources = []
     feed = re.compile(r'FeedSource\(id: "([^"]+)", name: "([^"]+)", url: URL\(string: "([^"]+)"\)!([^\n]*)')
     for path in ["Shared/Core/Feeds.swift", "Shared/Core/NewsSources.swift"]:
@@ -75,11 +60,10 @@ def catalog(root=ROOT):
             if ".officialStatus" in rest:
                 kind = "status"
             elif ".commentary" in rest:
-                continue  # The voices' helper below makes these.
+                continue
             else:
                 kind = "official"
             sources.append(Source(identifier, name, url, kind, _limit(rest)))
-    # The third argument is an X handle, or `site: "…"` for a publication without its own account.
     voice = re.compile(r'voice\("([^"]+)", "([^"]+)", (?:site: )?"[^"]+", "([^"]+)", "[^"]+"([^\n]*)\)')
     for match in voice.finditer((root / "Shared/Core/NewsSources.swift").read_text()):
         identifier, name, url, rest = match.groups()
@@ -112,7 +96,6 @@ def local(tag):
 
 
 def read_feed(body):
-    """(is a feed, entries, newest date) for an RSS or Atom document."""
     try:
         root = ET.fromstring(body)
     except ET.ParseError:
@@ -134,7 +117,6 @@ def read_feed(body):
 
 
 def read_json(source, body):
-    """Problems with a JSON source's shape, as Tokenroom reads it."""
     try:
         root = json.loads(body)
     except ValueError:
@@ -157,7 +139,6 @@ def read_json(source, body):
 
 
 def assess(source, status, body, headers=None, now=None):
-    """The result for one answer: pure, so the tests can feed it."""
     now = now or datetime.now(timezone.utc)
     result = Result(source, status=status, size=len(body))
     if status != 200:
@@ -232,7 +213,9 @@ def report(results, now=None):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description="Checks every public source News and Skills read, live, and reports what needs attention."
+    )
     parser.add_argument("--output", type=Path, help="also write the Markdown report here")
     parser.add_argument("--status-file", type=Path, help="write `healthy` or `attention` here")
     args = parser.parse_args(argv)
@@ -245,7 +228,7 @@ def main(argv=None):
         args.output.write_text(text)
     if args.status_file:
         args.status_file.write_text("attention" if any(r.problems for r in results) else "healthy")
-    return 0  # Advisory: the report says what needs attention.
+    return 0
 
 
 if __name__ == "__main__":

@@ -1,12 +1,6 @@
 import Foundation
 
-/// Edits one top-level key of a JSON object in place, leaving the rest of the text (formatting,
-/// key order, comments-free spacing) exactly as the user wrote it. Returns nil when the text
-/// isn't a JSON object it can edit safely, or sets the key more than once: Foundation reads the
-/// first of duplicate keys and Node (Claude Code) the last, so editing either might not count.
 enum JSONTextEdit {
-    /// The text with `key`'s value replaced, or the key added at the end when it's missing. An
-    /// added line ends like the text's own lines (CRLF or LF).
     static func setting(_ key: String, to value: Any, in text: String) -> String? {
         guard let valueText = compact(value) else { return nil }
         var bytes = Array(text.utf8)
@@ -29,7 +23,6 @@ enum JSONTextEdit {
         return String(decoding: bytes, as: UTF8.self)
     }
 
-    /// The text without `key`, and without the comma that separated it.
     static func removing(_ key: String, in text: String) -> String? {
         var bytes = Array(text.utf8)
         guard let object = scanObject(bytes), object.count(of: key) <= 1 else { return nil }
@@ -38,10 +31,8 @@ enum JSONTextEdit {
         let range: Range<Int>
         var replacement: [UInt8] = []
         if index > 0 {
-            // From the end of the previous value: drops ", "key": value".
             range = object.members[index - 1].valueRange.upperBound..<member.valueRange.upperBound
         } else if object.members.count > 1 {
-            // First of several: drops ""key": value, " up to the next key.
             range = member.keyStart..<object.members[index + 1].keyStart
         } else {
             range = (object.open + 1)..<object.close
@@ -51,13 +42,9 @@ enum JSONTextEdit {
         return String(decoding: bytes, as: UTF8.self)
     }
 
-    /// How many times the object sets `key` at the top level; nil when the text isn't a JSON
-    /// object these edits can handle.
     static func count(of key: String, in text: String) -> Int? {
         scanObject(Array(text.utf8))?.count(of: key)
     }
-
-    // MARK: Scanning
 
     private struct Member {
         var key: String
@@ -80,12 +67,9 @@ enum JSONTextEdit {
               let data = try? JSONSerialization.data(withJSONObject: [value], options: [.sortedKeys, .withoutEscapingSlashes]),
               let array = String(data: data, encoding: .utf8)
         else { return nil }
-        // Serialized inside an array so strings and numbers work too; drop the brackets.
         return String(array.dropFirst().dropLast())
     }
 
-    /// CRLF when the text's first line break is one, else LF. JSON strings can't hold a raw line
-    /// break, so any in the text is layout.
     private static func lineEnding(in bytes: [UInt8]) -> String {
         guard let newline = bytes.firstIndex(of: UInt8(ascii: "\n")) else { return "\n" }
         return newline > 0 && bytes[newline - 1] == UInt8(ascii: "\r") ? "\r\n" : "\n"
@@ -99,7 +83,6 @@ enum JSONTextEdit {
         return String(decoding: bytes[start..<position], as: UTF8.self)
     }
 
-    /// The top-level object's braces and members, or nil for anything else.
     private static func scanObject(_ bytes: [UInt8]) -> Object? {
         var index = skipWhitespace(bytes, 0)
         guard index < bytes.count, bytes[index] == UInt8(ascii: "{") else { return nil }
@@ -145,7 +128,6 @@ enum JSONTextEdit {
         return index
     }
 
-    /// One past the closing quote of the string starting at `index`.
     private static func endOfString(_ bytes: [UInt8], _ index: Int) -> Int? {
         var index = index + 1
         while index < bytes.count {
@@ -161,8 +143,6 @@ enum JSONTextEdit {
         return nil
     }
 
-    /// One past the end of the value starting at `index`: a string, an object or array (nesting
-    /// counted, strings skipped), or a literal.
     private static func endOfValue(_ bytes: [UInt8], _ index: Int) -> Int? {
         guard index < bytes.count else { return nil }
         switch bytes[index] {
@@ -197,25 +177,16 @@ enum JSONTextEdit {
         }
     }
 
-    // MARK: Nested values
-
-    /// A JSON literal for `string`, including quotes and escaping, or nil when it can't be encoded.
     static func literal(_ string: String) -> String? {
         compact(string)
     }
 
-    /// Every raw value of `key`, anywhere in objects nested in the text. Nil when the text isn't
-    /// one JSON value these edits can handle. A key written inside a string is not one of these.
     static func literals(of key: String, in text: String) -> [String]? {
         guard let found = valueRanges(of: key, in: text) else { return nil }
         let bytes = Array(text.utf8)
         return found.ranges.map { String(decoding: bytes[$0], as: UTF8.self) }
     }
 
-    /// Replaces each value of `key` that is exactly `oldLiteral` with `newLiteral`. Nested objects
-    /// and arrays are walked; text inside strings is not. Nil when nothing matched or the text
-    /// isn't one JSON value these edits can handle, so a caller can rewrite the whole value
-    /// instead of saving a half-applied edit.
     static func replaceValue(of key: String, equalTo oldLiteral: String, with newLiteral: String, in text: String) -> String? {
         guard let found = valueRanges(of: key, in: text) else { return nil }
         var bytes = found.bytes
@@ -247,7 +218,6 @@ enum JSONTextEdit {
         bytes.starts(with: [0xEF, 0xBB, 0xBF]) ? 3 : 0
     }
 
-    /// One past the value at `index`. Records values of `key` in objects along the way.
     private static func walkValue(_ bytes: [UInt8], index: Int, key: String, ranges: inout [Range<Int>]) -> Int? {
         guard index < bytes.count else { return nil }
         switch bytes[index] {

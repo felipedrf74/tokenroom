@@ -1,32 +1,22 @@
 import Foundation
 
-/// The iPhone's last merged readings, saved in the App Group so its widgets can show them without
-/// a network call. Readings only, like the relay records: never keys, tokens, or identities.
 struct ReadingCache: Codable, Equatable, Sendable {
     static let version = 1
     static let fileName = "readings.json"
 
     struct Item: Codable, Equatable, Sendable, Identifiable {
         var provider: RelayProvider
-        /// The collector it came from, e.g. "Mac", "This iPhone", or "Sample".
         var source: String
-        /// A week of hourly usage per window ID, when the collector sent it.
         var history: [String: UsageHistory] = [:]
-        /// Which device the reading came from, as the iPhone that saved this saw it. Nil in a
-        /// cache saved before readings kept it: `CollectorKind(legacyLabel:)` stands in.
         var origin: CollectorKind? = nil
-        /// Anonymous collector record ID, distinct from any provider or Apple Account identity.
         var sourceID: String? = nil
 
         var id: String { provider.id }
 
-        /// The note a widget puts under its rows for this reading, beside the window its row leads
-        /// with (picked with this reading's history), so it never repeats that row.
         func attention(now: Date) -> String? {
             ReadingText.attention(provider, now: now, lead: provider.leadWindow(now: now, history: history))
         }
 
-        /// The origin, or the label's best guess for an older cache.
         var resolvedOrigin: CollectorKind {
             origin ?? CollectorKind(legacyLabel: source)
         }
@@ -35,14 +25,9 @@ struct ReadingCache: Codable, Equatable, Sendable {
     var v: Int = ReadingCache.version
     var savedAt: Date
     var isSample: Bool
-    /// Most urgent first.
     var items: [Item]
-    /// A device-local random cache generation, never an account identifier or relay field.
-    /// iPhone widgets use it to reject caches written before an Apple Account change.
     var accountGeneration: String? = nil
     var relaySnapshot: RelaySnapshot? = nil
-    /// The paired phone's own authoritative membership, including an empty provider list.
-    /// Unlike merged rows, this retains a phone reading even when a Mac wins that row.
     var localSource: SourceSnapshot? = nil
     var cloudReadAt: Date? = nil
 
@@ -56,7 +41,6 @@ struct ReadingCache: Codable, Equatable, Sendable {
         var label: String
         var kind: CollectorKind?
         var envelope: RelayEnvelope
-        /// Only the phone-local snapshot carries its device-local cache generation.
         var accountGeneration: String? = nil
 
         init(_ source: RelayMerge.Source) {
@@ -81,13 +65,9 @@ struct ReadingCache: Codable, Equatable, Sendable {
         }
     }
 
-    /// Nil leaves the established legacy-cache policy in place when exact provenance is absent.
-    /// A snapshot or cache dated ahead of `now` counts as now (`ReadingFreshness.ordering`), and an
-    /// iCloud read as new as the one kept is taken.
     func reconcilingSourceUpdate(_ incoming: ReadingCache, now: Date = .now) -> ReadingCache? {
         let order = { (date: Date) in ReadingFreshness.ordering(date, now: now) }
         let incomingIsNewer = order(incoming.savedAt) >= order(savedAt)
-        // A legacy handover cannot claim exact source membership from its displayed rows.
         guard relaySnapshot != nil || localSource != nil,
               incoming.relaySnapshot != nil || incoming.localSource != nil else { return nil }
 
@@ -105,8 +85,6 @@ struct ReadingCache: Codable, Equatable, Sendable {
             let retainedGeneration = retained.accountGeneration ?? accountGeneration
             let candidateGeneration = candidate.accountGeneration ?? incoming.accountGeneration
             if retained.id != candidate.id || retainedGeneration != candidateGeneration {
-                // Exact local provenance belongs to one paired phone and one validated cache
-                // generation. A new scope must not inherit the previous scope's cloud sources.
                 return incomingIsNewer ? incoming : self
             }
             local = order(candidate.envelope.checkedAt) > order(retained.envelope.checkedAt) ? candidate : retained
@@ -148,8 +126,6 @@ struct ReadingCache: Codable, Equatable, Sendable {
             local = paired
         }
 
-        // Histories are already stored with displayed items. Carry only ones belonging to the
-        // exact winning collector; raw snapshots need no duplicate week of hourly samples.
         var histories: [String: RelayHistory] = [:]
         var historyChecks: [String: Date] = [:]
         for cache in [self, incoming] {
@@ -176,14 +152,10 @@ struct ReadingCache: Codable, Equatable, Sendable {
         return result
     }
 
-    /// The oldest last-success time, so one fresh provider never dates older readings as current.
     var checkedAt: Date? {
         items.compactMap { $0.provider.checkedAt ?? $0.provider.fetchedAt }.min()
     }
 
-    /// Whether this can replace `shown`: none of the providers both hold is older here. The
-    /// newest reading overall would do instead, but then a provider gone from this one (a key
-    /// removed, iCloud data deleted) would hold it back.
     func isAtLeastAsFresh(as shown: ReadingCache) -> Bool {
         let shownTimes = Dictionary(shown.items.map { ($0.id, $0.provider.checkedAt ?? $0.provider.fetchedAt) }, uniquingKeysWith: { first, _ in first })
         return items.allSatisfy { item in
@@ -193,12 +165,10 @@ struct ReadingCache: Codable, Equatable, Sendable {
         }
     }
 
-    /// Measured run-outs, keyed `provider/window` (`RelayEnvelope.runOuts`).
     var runOuts: [String: Date] {
         RelayEnvelope(producer: "cache", appVersion: "", checkedAt: .distantPast, providers: items.map(\.provider)).runOuts
     }
 
-    /// Changes only when what widgets draw changes, not on every check.
     var materialHash: Int {
         var hasher = Hasher()
         hasher.combine(isSample)
@@ -207,9 +177,6 @@ struct ReadingCache: Codable, Equatable, Sendable {
         return hasher.finalize()
     }
 
-    /// What a reload asked for from the background is spent on, out of WidgetKit's daily budget:
-    /// a provider added or gone, its state, a level crossed (80%, 95%, used up), a window
-    /// starting over. Smaller moves wait for the next timeline, which reads the saved readings.
     var reloadSignature: Int {
         var hasher = Hasher()
         hasher.combine(isSample)
@@ -219,37 +186,24 @@ struct ReadingCache: Codable, Equatable, Sendable {
             for window in item.provider.windows where window.isMetered {
                 hasher.combine(window.id)
                 hasher.combine(window.used >= 100 ? 3 : window.used >= 95 ? 2 : window.used >= 80 ? 1 : 0)
-                // Rounded, not cut off: a reset worked out as now plus seconds lands a second
-                // either side of the hour it's on.
                 hasher.combine(window.resetsAt.map { Int(($0.timeIntervalSince1970 / 3600).rounded()) })
             }
         }
         return hasher.finalize()
     }
 
-    /// `materialHash` as the readings are drawn at `date`, where one checked over an hour before
-    /// is stale. Two caches with the same numbers then differ when one's reading has aged since
-    /// it was saved and the other's is live again: widgets and the Watch still show the first
-    /// one stale.
     func materialHash(at date: Date) -> Int {
         presented(at: date).materialHash
     }
 
-    /// `reloadSignature` as the readings are drawn at `date` (see `materialHash(at:)`).
     func reloadSignature(at date: Date) -> Int {
         presented(at: date).reloadSignature
     }
 
-    /// When a widget built from this cache reloads, judged by its readings as shown now: one
-    /// saved live hours ago is stale by then, and doesn't hurry the reload as a current one would.
     func nextReload(after now: Date, reloads: Int) -> Date {
         WidgetSchedule.nextReload(after: now, items: presented(at: now).items, reloads: reloads)
     }
 
-    /// What these readings change from `previous`, both drawn at `date`: whether anything shown
-    /// differs, and whether it's worth one of the budgeted reloads asked for from the background
-    /// (`reloadSignature`). The Watch measures what it merged against what its complications
-    /// last drew from.
     func changes(since previous: ReadingCache?, at date: Date) -> (shown: Bool, worthReload: Bool) {
         (materialHash(at: date) != previous?.materialHash(at: date),
          reloadSignature(at: date) != previous?.reloadSignature(at: date))
@@ -259,7 +213,6 @@ struct ReadingCache: Codable, Equatable, Sendable {
         AppGroup.containerURL?.appendingPathComponent(fileName)
     }
 
-    /// Nil when missing, damaged, or written by a newer version.
     static func load(from url: URL) -> ReadingCache? {
         guard let data = try? Data(contentsOf: url),
               let cache = try? RelayEnvelope.decoder.decode(ReadingCache.self, from: data),
@@ -274,13 +227,6 @@ struct ReadingCache: Codable, Equatable, Sendable {
     }
 }
 
-/// When widgets and complications ask for their next timeline: every 30 minutes while a live
-/// window is at 80% or more and resets within 12 hours, when fresh readings matter most,
-/// otherwise hourly. A month-long budget sitting at 85% doesn't need more. Countdowns tick and
-/// meters roll over at resets without a reload, and the apps reload widgets themselves when
-/// readings change. A widget that has already reloaded 32 times in the last 24 hours, whatever
-/// asked for them, waits the hour: 32 half an hour apart and hourly ones after them fit any day
-/// within WidgetKit's budget of about 40 reloads a widget, even one that's busy throughout.
 enum WidgetSchedule {
     static let busyInterval: TimeInterval = 30 * 60
     static let calmInterval: TimeInterval = 60 * 60
@@ -288,8 +234,6 @@ enum WidgetSchedule {
     static let busyHorizon: TimeInterval = 12 * 3600
     static let busyAllowance = 32
 
-    /// - Parameter reloads: the widget's timeline builds in the last 24 hours, this one included
-    ///   (`WidgetReloadLog.record`).
     static func nextReload(after now: Date, items: [ReadingCache.Item], reloads: Int = 0) -> Date {
         guard reloads < busyAllowance else { return now.addingTimeInterval(calmInterval) }
         let busy = items.map { $0.rolledOver(at: now) }.contains { item in
@@ -299,10 +243,6 @@ enum WidgetSchedule {
             }
         }
         let scheduled = now.addingTimeInterval(busy ? busyInterval : calmInterval)
-        // Before a reading goes stale rather than after, so the reload can bring it back live
-        // (`ReadingCache.nearsStale`) before a faded entry is drawn; the timeline's own entry at
-        // the stale moment (`presentationDates`) still fades one nobody checked again. Only a
-        // live reading goes stale.
         let boundaries = items.flatMap { item -> [Date] in
             guard let checked = item.provider.checkedAt ?? item.provider.fetchedAt else { return [] }
             let expiry = checked.addingTimeInterval(ReadingFreshness.expiresAfter + 1)
@@ -312,9 +252,6 @@ enum WidgetSchedule {
         return min(scheduled, boundaries.min() ?? scheduled)
     }
 
-    /// When the Watch's Smart Stack offers a live provider's windows: the last 8 hours before the
-    /// window a Live Activity would follow resets, and the next half day for its busiest window at
-    /// 80% or more. Both, so a session resetting soon doesn't hide a week that's nearly spent.
     static func relevance(of provider: RelayProvider, now: Date) -> [(window: RelayWindow, span: ClosedRange<Date>)] {
         guard provider.isLive else { return [] }
         var spans: [(window: RelayWindow, span: ClosedRange<Date>)] = []

@@ -1,6 +1,5 @@
 import Foundation
 
-/// Running processes is Mac-only.
 extension BlockingIO {
     struct ProcessOutput: Sendable {
         var status: Int32
@@ -12,10 +11,6 @@ extension BlockingIO {
         }
     }
 
-    /// Runs a process to completion and returns its stdout. Output is drained while the process
-    /// runs, so more than a pipe buffer's worth can't deadlock it. Killed after `timeout`, or
-    /// once it writes more than `maxOutput` bytes.
-    /// Blocks the calling thread: call it from `run`, never from an async context directly.
     static func runProcess(
         _ executable: URL,
         arguments: [String],
@@ -52,9 +47,6 @@ extension BlockingIO {
         let drained = DispatchSemaphore(value: 0)
         let reader = stdout.fileHandleForReading
         DispatchQueue.global(qos: .utility).async {
-            // Kept chunk by chunk: EOF may never come (below), and what came before it counts.
-            // `read(upToCount:)` throws once the handle is closed, where `availableData` would
-            // raise an exception nothing here can catch.
             while let chunk = try? reader.read(upToCount: 64 * 1024), !chunk.isEmpty {
                 if collected.append(chunk) > maxOutput {
                     process.terminate()
@@ -77,8 +69,6 @@ extension BlockingIO {
                 _ = exited.wait(timeout: .now() + 1)
             }
         }
-        // EOF arrives once everything holding stdout closes it, and a child the process left
-        // running still does. Closing this end ends the read, so the reader doesn't wait on it.
         if drained.wait(timeout: .now() + 1) == .timedOut {
             try? reader.close()
             _ = drained.wait(timeout: .now() + 1)
@@ -98,7 +88,6 @@ extension BlockingIO {
             lock.withLock { value }
         }
 
-        /// Adds a chunk; returns how much is held now.
         func append(_ chunk: Data) -> Int {
             lock.withLock {
                 value.append(chunk)

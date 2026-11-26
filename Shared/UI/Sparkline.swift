@@ -1,8 +1,5 @@
 import SwiftUI
 
-/// A week of hourly usage as a neutral line over a faint area. Hours without a reading leave a
-/// gap; 0–100% spans the full height. `level` marks the latest reading with a dot in its level's
-/// colour: the only colour a chart carries. Leave it out for a stale reading.
 struct Sparkline: View {
     var history: UsageHistory
     var tint: Color = TokenroomTokens.chartLine
@@ -13,7 +10,6 @@ struct Sparkline: View {
         Canvas { context, size in
             let values = history.used
             guard values.count > 1 else { return }
-            // Room for the latest reading's dot at the right edge, so it isn't cut in half.
             let radius = lineWidth * 1.8
             let step = (size.width - (level == nil ? 0 : radius)) / CGFloat(values.count - 1)
             for segment in Self.segments(values) {
@@ -42,14 +38,12 @@ struct Sparkline: View {
         .accessibilityHidden(true)
     }
 
-    /// What the line shows, for VoiceOver: its highest hour and the latest.
     static func summary(_ history: UsageHistory) -> String {
         let used = history.points.map { $0.used }
         guard let latest = used.last, let highest = used.max() else { return "No readings" }
         return "Highest \(TokenroomFormat.percentText(highest))%, latest \(TokenroomFormat.percentText(latest))%"
     }
 
-    /// Runs of consecutive readings, as (hour index, used %).
     static func segments(_ values: [UInt8?]) -> [[(Int, Double)]] {
         var segments: [[(Int, Double)]] = []
         var current: [(Int, Double)] = []

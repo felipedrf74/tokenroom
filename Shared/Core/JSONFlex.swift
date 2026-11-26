@@ -26,7 +26,6 @@ enum JSONFlex {
             if let date = fractional.date(from: string) ?? basic.date(from: string) {
                 return date
             }
-            // Date-only values (`2026-10-01`) mean midnight UTC.
             return string.count == 10 ? day.date(from: string) : nil
         }
 

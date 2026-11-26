@@ -2,8 +2,6 @@ import CloudKit
 import XCTest
 @testable import Tokenroom
 
-/// The refresh loop around the checks: what's shown, and when a check or a share goes out.
-/// Stubbed providers and a throwaway snapshot folder only: no logins, no network, no iCloud.
 final class RefreshReliabilityTests: XCTestCase {
     private var suites: [String] = []
     private var folders: [URL] = []
@@ -33,8 +31,6 @@ final class RefreshReliabilityTests: XCTestCase {
         return defaults
     }
 
-    /// Calls through `TokenroomHTTP` answer with `status`, or fail with `failure` before any
-    /// answer, as the network would.
     private func network(status: Int = 200, failure: URLError.Code? = nil) {
         StubURLProtocol.handler = { _ in (status, Data("{}".utf8)) }
         StubURLProtocol.failure = failure.map { URLError($0) }
@@ -70,7 +66,6 @@ final class RefreshReliabilityTests: XCTestCase {
         )
     }
 
-    /// Waits on the main actor, so the store's own tasks run meanwhile.
     @MainActor
     private func waitUntil(timeout: TimeInterval = 3, _ condition: () -> Bool) async {
         let deadline = Date().addingTimeInterval(timeout)
@@ -79,9 +74,6 @@ final class RefreshReliabilityTests: XCTestCase {
         }
     }
 
-    // MARK: Settings
-
-    /// Turned on in Settings: checked now, not left on "Checking…" until the timer's next check.
     @MainActor
     func testAProviderTurnedOnIsCheckedAtOnce() async throws {
         let cursor = Scripted(provider: .cursor, results: [.success(snapshot(.cursor))])
@@ -101,7 +93,6 @@ final class RefreshReliabilityTests: XCTestCase {
         XCTAssertEqual(cursor.calls, 1, "Only the provider turned on")
     }
 
-    /// Turning a provider off and on again isn't a new login: its spacing and Retry-After hold.
     @MainActor
     func testTurningAProviderBackOnKeepsItsSpacingAndRetryAfter() async throws {
         let claude = Scripted(provider: .claude, results: [.success(snapshot(.claude))])
@@ -120,8 +111,6 @@ final class RefreshReliabilityTests: XCTestCase {
         }
     }
 
-    /// Turned off in Settings: the iPhone's list loses it with a round sent at once, not at the
-    /// timer's next check.
     @MainActor
     func testAProviderTurnedOffLeavesTheiPhonesListAtOnce() async throws {
         let cloud = StandInCloud()
@@ -139,7 +128,6 @@ final class RefreshReliabilityTests: XCTestCase {
         XCTAssertEqual(cloud.envelopes.last?.providers.map(\.id), ["cursor"])
     }
 
-    /// A new "Refresh every" starts the timer's wait over, instead of after the wait under way.
     @MainActor
     func testANewRefreshIntervalStartsTheWaitOver() async throws {
         let store = try makeStore([Scripted(provider: .cursor, results: [.success(snapshot(.cursor))])], enabled: [.cursor])
@@ -158,8 +146,6 @@ final class RefreshReliabilityTests: XCTestCase {
         await waitUntil { (store.nextTimedCheck?.timeIntervalSinceNow ?? .infinity) < 400 }
         XCTAssertEqual(try XCTUnwrap(store.nextTimedCheck).timeIntervalSinceNow, 300, accuracy: 30)
     }
-
-    // MARK: Waking
 
     @MainActor
     func testADeferredReadingIsSharedWithoutAnotherProviderCheck() async throws {
@@ -272,7 +258,6 @@ final class RefreshReliabilityTests: XCTestCase {
         XCTAssertEqual(cloud.envelopes.first?.providers.first?.checkedAt, start)
     }
 
-    /// No call reached the network (awake before the Wi-Fi): checked once more soon after.
     @MainActor
     func testACheckThatCouldntReachTheNetworkIsTriedOnceMore() async throws {
         network(failure: .notConnectedToInternet)
@@ -293,7 +278,6 @@ final class RefreshReliabilityTests: XCTestCase {
         }
         XCTAssertNil(store.offlineRetry)
 
-        // Once: a retry that still can't connect is left to the timer.
         network(failure: .cannotFindHost)
         let offline = [ReachingClient(provider: .cursor, reading: snapshot(.cursor)), ReachingClient(provider: .devin, reading: snapshot(.devin))]
         let still = try makeStore(offline, enabled: [.cursor, .devin])
@@ -304,7 +288,6 @@ final class RefreshReliabilityTests: XCTestCase {
         XCTAssertEqual(offline.map(\.calls), [2, 2])
         XCTAssertNil(still.offlineRetry, "No second retry")
 
-        // A single provider also recovers when the network explicitly reports being offline.
         let alone = ReachingClient(provider: .cursor, reading: snapshot(.cursor))
         let single = try makeStore([alone], enabled: [.cursor])
         let singleGate = TestGate()
@@ -372,8 +355,6 @@ final class RefreshReliabilityTests: XCTestCase {
         await followUp.value
     }
 
-    /// A server that answered with an error, or was too slow, was reached: that isn't the Mac
-    /// being offline. No retry, and Claude's five minutes between calls hold.
     @MainActor
     func testServerErrorsAndTimeoutsKeepTheSpacingAndArentRetried() async throws {
         for (status, failure) in [(500, nil), (404, nil), (400, nil), (200, URLError.Code.timedOut)] as [(Int, URLError.Code?)] {
@@ -392,7 +373,6 @@ final class RefreshReliabilityTests: XCTestCase {
         }
     }
 
-    /// The retry is an ordinary check: a provider resting after a recent call stays resting.
     @MainActor
     func testTheOfflineRetryKeepsEachProvidersSpacing() async throws {
         network(status: 200)
@@ -416,8 +396,6 @@ final class RefreshReliabilityTests: XCTestCase {
         XCTAssertEqual(claude.calls, 1, "Claude, called a moment ago, isn't called by the retry")
     }
 
-    /// A share asked for while the round going to sleep cancelled is still ending gets a round of
-    /// its own, rather than being folded into one that won't go round again.
     @MainActor
     func testAShareAskedForWhileACancelledRoundEndsStillGoesOut() async throws {
         let cloud = StandInCloud(holdsPublishes: 1)
@@ -437,10 +415,6 @@ final class RefreshReliabilityTests: XCTestCase {
         await first.value
     }
 
-    // MARK: Menu bar
-
-    /// Rate limited before its first reading: connected, so the popover lists it and the menu
-    /// bar keeps its place with a placeholder.
     @MainActor
     func testARateLimitedProviderWithoutAReadingKeepsItsPlaceInTheMenuBar() async throws {
         let client = Scripted(provider: .cursor, results: [.failure(.rateLimited(until: Date().addingTimeInterval(600)))])
@@ -455,10 +429,6 @@ final class RefreshReliabilityTests: XCTestCase {
         XCTAssertEqual(meter.displayValue, "–%")
     }
 
-    // MARK: Budgets
-
-    /// A new budget goes on the reading the status shows, and doesn't bring back one the
-    /// 24-hour grace of an expired session already dropped.
     @MainActor
     func testABudgetGoesOnTheReadingShownAndNotOnADroppedOne() async throws {
         let old = Date().addingTimeInterval(-2 * 86_400)
@@ -476,7 +446,6 @@ final class RefreshReliabilityTests: XCTestCase {
             return XCTFail("The dropped reading came back: \(String(describing: store.statuses[.openaiOrg]))")
         }
 
-        // A reading kept from the last launch takes the budget at once.
         let folder = try makeFolder()
         let now = Date()
         SnapshotCache(directory: folder).save([.openaiOrg: OrgSpend.snapshot(.openaiOrg, window: OrgSpend.spendWindow(250, now: now), fetchedAt: now)])
@@ -497,7 +466,6 @@ final class RefreshReliabilityTests: XCTestCase {
     }
 }
 
-/// Holds whoever waits on it until `open`.
 final class TestGate: @unchecked Sendable {
     private let lock = NSLock()
     private var isOpen = false
@@ -525,8 +493,6 @@ final class TestGate: @unchecked Sendable {
     }
 }
 
-/// Checks through `TokenroomHTTP`, so what the stubbed network does is what the store sees: an
-/// answer of 200 is this reading, any other answer or failure is the client's usual error.
 final class ReachingClient: ProviderClient, @unchecked Sendable {
     let provider: Provider
     private let reading: QuotaSnapshot
@@ -581,7 +547,6 @@ private final class HeldFirstClient: ProviderClient, @unchecked Sendable {
     func release() { gate.open() }
 }
 
-/// Answers each check with the next scripted result, repeating the last one.
 private final class Scripted: ProviderClient, @unchecked Sendable {
     let provider: Provider
     private let lock = NSLock()

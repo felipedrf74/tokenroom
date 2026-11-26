@@ -3,7 +3,6 @@ import SwiftUI
 
 struct PopoverView: View {
     @Bindable var store: QuotaStore
-    /// Opens Settings, on the given page or the last one shown.
     var onSettings: (SettingsTab?) -> Void
     var onNews: (NewsSection) -> Void
     @State private var showsDisconnected = false
@@ -46,7 +45,6 @@ struct PopoverView: View {
                     .padding(.bottom, 8)
             } else {
                 if let provider = detailProvider {
-                    // A short page sits at its own height, so a balance doesn't float in space.
                     ViewThatFits(in: .vertical) {
                         providerDetail(provider)
                             .fixedSize(horizontal: false, vertical: true)
@@ -62,7 +60,6 @@ struct PopoverView: View {
                         providerList
                             .fixedSize(horizontal: false, vertical: true)
                         ScrollView {
-                            // Room under the last row, so the fade never covers it for good.
                             providerList.padding(.bottom, 24)
                         }
                         .mask(Self.scrollFade)
@@ -90,7 +87,6 @@ struct PopoverView: View {
         .transaction { $0.animation = nil }
     }
 
-    /// Fades what scrolls under the footer, so a row is never cut through by a hard line.
     private static var scrollFade: some View {
         VStack(spacing: 0) {
             Color.black
@@ -98,7 +94,6 @@ struct PopoverView: View {
         }
     }
 
-    /// One edge for the header, rows, and footer.
     private var sideInset: CGFloat { isClassic ? TokenroomTokens.cardPadding : 20 }
 
     private func providerDetail(_ provider: Provider) -> some View {
@@ -133,7 +128,6 @@ struct PopoverView: View {
         }
     }
 
-    /// More than five connected providers: one line each until clicked.
     private var isCompact: Bool {
         store.connectedProviders.count > 5
     }
@@ -176,16 +170,13 @@ struct PopoverView: View {
         }
     }
 
-    /// Banked resets and news at a glance: "2 banked resets · 3 new models · 5 updates".
     @ViewBuilder
     private var highlights: some View {
-        // A provider's page lists its own banked resets, and another's don't belong on it.
         let banked: (count: Int, providers: [Provider]) = showsBankedPill ? store.bankedResets : (0, [])
         let news = store.settings.newsEnabled ? store.news : nil
         let models = news?.unseenModelCount ?? 0
         let updates = news?.unseenReleaseCount ?? 0
         if banked.count > 0 || models > 0 || updates > 0 {
-            // Full labels when they fit, shorter ones when all three show.
             ViewThatFits(in: .horizontal) {
                 highlightPills(banked: banked, models: models, updates: updates, short: false)
                 highlightPills(banked: banked, models: models, updates: updates, short: true)
@@ -193,7 +184,6 @@ struct PopoverView: View {
         }
     }
 
-    /// Hidden once the cards that list the resets are open: it only opens them.
     private var showsBankedPill: Bool {
         detailProvider == nil && !(isClassic && !store.bankedResets.providers.isEmpty && store.bankedResets.providers.allSatisfy(expanded.contains))
     }
@@ -235,7 +225,6 @@ struct PopoverView: View {
                 .font(.system(size: TokenroomTokens.captionSize))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            // Headroom's own login item can't be read or carried over; this takes its place.
             Toggle("Launch Tokenroom at login", isOn: $store.settings.launchAtLogin)
                 .toggleStyle(.checkbox)
                 .font(.system(size: TokenroomTokens.captionSize))
@@ -286,9 +275,6 @@ struct PopoverView: View {
         )
     }
 
-    /// When sending to iCloud failed: said in the header, where it's seen, rather than only in
-    /// Settings. States someone chose (sync off, no iCloud account on this Mac, Tokenroom's data
-    /// deleted in iCloud settings) and unsigned builds stay in Settings, so nothing nags for good.
     var syncProblem: String? {
         guard let relay = store.relay else { return nil }
         switch relay.state {
@@ -300,7 +286,6 @@ struct PopoverView: View {
     var checkedHeaderText: String {
         if store.isRefreshing { return "Checking…" }
         if let detailProvider { return "Checked \(RelativeTime.ago(store.lastChecked(detailProvider), now: store.presentationNow))" }
-        // A signed-out provider keeps its last check from before; it isn't on show to be current.
         let shown = store.popoverProviders.filter { !(store.statuses[$0] ?? .loading).isDisconnected }
         let oldestCheck = shown.compactMap { store.lastChecked($0) }.min()
         return "Checked \(RelativeTime.ago(oldestCheck, now: store.presentationNow))"
@@ -325,7 +310,6 @@ struct PopoverView: View {
                 HStack(spacing: 5) {
                     Text(checkedHeaderText)
                     if let relay = store.relay, case .sent(let date) = relay.state {
-                        // Quiet when the iPhone is getting readings: a mark, with when as its tooltip.
                         Image(systemName: "checkmark.icloud")
                             .imageScale(.small)
                             .help("Sent to your iPhone and Watch \(RelativeTime.ago(date, now: store.presentationNow))")
@@ -396,7 +380,6 @@ struct PopoverView: View {
             }
             .buttonStyle(.plain)
             Spacer()
-            // Quit is one click further, as in the system's own extras: rarely wanted, never lost.
             Menu {
                 Button("Quit Tokenroom") {
                     NSApp.terminate(nil)
@@ -419,7 +402,6 @@ struct PopoverView: View {
     }
 }
 
-/// A small action in the popover's footer strip.
 private struct HighlightPill: View {
     var title: String
     var systemImage: String

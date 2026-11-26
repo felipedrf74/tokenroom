@@ -9,8 +9,6 @@ final class ProviderUpgradeTests: XCTestCase {
         return try! Data(contentsOf: url)
     }
 
-    // MARK: Codex
-
     func testCodexPlanCreditsBankedAndNamedLimits() throws {
         let snapshot = try OpenAIParser.snapshot(from: fixture("openai-credits-banked"))
         XCTAssertEqual(snapshot.planLabel, "Plus")
@@ -31,7 +29,7 @@ final class ProviderUpgradeTests: XCTestCase {
     }
 
     func testResetCreditExpiriesSkipRedeemedUnsupportedAndExpired() throws {
-        let now = Date(timeIntervalSince1970: 1_790_000_000) // 2026-09-21
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
         let expiries = try OpenAIParser.availableResetExpiries(from: fixture("openai-reset-credits"), now: now)
         let iso = ISO8601DateFormatter()
         XCTAssertEqual(expiries, [iso.date(from: "2026-10-03T00:00:00Z")!, iso.date(from: "2026-10-10T00:00:00Z")!])
@@ -69,9 +67,6 @@ final class ProviderUpgradeTests: XCTestCase {
         XCTAssertEqual(AmountFormat.text(12.4, unit: "usd", locale: Locale(identifier: "en_US")), "$12.40")
     }
 
-    // MARK: Grok
-
-    /// `GET /v1/settings`: only the plan's display name is read, trimmed.
     func testGrokPlanLabelFromSettings() {
         XCTAssertEqual(GrokParser.planLabel(fromSettings: fixture("grok-settings")), "SuperGrok Heavy")
         XCTAssertNil(GrokParser.planLabel(fromSettings: Data(#"{"subscription_tier_display":""}"#.utf8)))
@@ -79,9 +74,6 @@ final class ProviderUpgradeTests: XCTestCase {
         XCTAssertNil(GrokParser.planLabel(fromSettings: Data("not json".utf8)))
     }
 
-    // MARK: Fixtures
-
-    /// Fixtures must stay anonymous: no emails, API keys, JWTs, or GitHub tokens.
     func testFixturesContainNoSecretsOrIdentity() throws {
         let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures")
         let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)

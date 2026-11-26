@@ -1,13 +1,9 @@
 import Foundation
 
-/// The few facts that explain a window at a glance, as short label and value pairs instead of a
-/// stack of sentences: when it resets, how the pace looks against an even spread, the plan, and
-/// when it was last checked. The Mac's expanded card and the iPhone's detail show them as a grid.
 struct UsageFact: Equatable, Sendable, Identifiable {
     var label: String
     var value: String
     var detail: String?
-    /// Set when the value needs attention (ahead of pace, limit reached).
     var severity: Pace.Severity? = nil
 
     var id: String { label }
@@ -62,7 +58,6 @@ enum UsageFacts {
         }
     }
 
-    /// "3d 1h", "2h 10m", "5m".
     static func countdown(to date: Date, now: Date) -> String {
         guard let text = RelativeTime.resets(date, now: now) else { return "—" }
         return text.hasPrefix("resets in ") ? String(text.dropFirst("resets in ".count)) : text.capitalizedFirst
@@ -70,7 +65,6 @@ enum UsageFacts {
 }
 
 extension String {
-    /// "just now" → "Just now".
     var capitalizedFirst: String {
         prefix(1).uppercased() + dropFirst()
     }

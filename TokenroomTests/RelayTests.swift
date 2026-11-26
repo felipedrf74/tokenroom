@@ -77,7 +77,6 @@ final class RelayTests: XCTestCase {
 
     @MainActor
     func testStoreEnvelopeHasEnabledProvidersAndNoIdentity() throws {
-        // A fixed name: macOS keeps an empty preferences file for every name used.
         let suite = "tokenroom.tests.\(Self.self)"
         defer { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
         let defaults = UserDefaults(suiteName: suite)!
@@ -100,11 +99,6 @@ final class RelayTests: XCTestCase {
         }
     }
 
-    // MARK: Tokenroom's data deleted in iCloud settings
-
-    /// Deleted in iCloud settings and seen once: a later launch, which starts with nothing in
-    /// memory, still knows, so its first save doesn't make the zone again. Only the user's own
-    /// choice ends it.
     func testADeletedZoneIsRememberedAcrossLaunchesUntilTheUserStartsAgain() throws {
         let suite = "tokenroom.tests.\(Self.self).zone"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -128,7 +122,6 @@ final class RelayTests: XCTestCase {
         }
     }
 
-    /// A throwaway stand-in for a device's defaults.
     private func zoneDefaults(_ name: String) throws -> UserDefaults {
         let suite = "tokenroom.tests.\(Self.self).\(name)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -137,10 +130,6 @@ final class RelayTests: XCTestCase {
         return defaults
     }
 
-    /// The user deletes Tokenroom's data in iCloud settings and the iPhone, which has no keys and
-    /// so never saves, sees it. Then, as its message says, the user turns the Mac's sync off and
-    /// on: the zone is back with the Mac's readings. The iPhone's next read finds them, which ends
-    /// the deletion there, so its push subscriptions go in again.
     func testAReadThatFindsTheZoneBackEndsTheDeletion() async throws {
         let deletion = RelayZoneDeletion(defaults: try zoneDefaults("read"))
         let deleted = try await deletion.read(account: { "acct-a" }, { () async throws -> [String: Int] in throw CKError(.userDeletedZone) })
@@ -156,9 +145,6 @@ final class RelayTests: XCTestCase {
         XCTAssertFalse(deletion.isRecorded, "Records there: the zone is back, by the user's choice on the Mac")
     }
 
-    /// Recorded under account A, then account B signs in on this device (it never used Tokenroom,
-    /// so it has no zone). B's first save makes the zone as usual, rather than pausing with
-    /// "Tokenroom's iCloud data was deleted"; A's deletion still holds for A.
     func testADeletionRecordedForAnotherAccountDoesntStand() async throws {
         let deletion = RelayZoneDeletion(defaults: try zoneDefaults("account"))
         let calls = Mutex<[String]>([])
@@ -192,8 +178,6 @@ final class RelayTests: XCTestCase {
         XCTAssertTrue(deletion.stands(for: nil), "When the account signed in can't be told, it stands, to be safe")
     }
 
-    /// Recorded for account A, then account B signs in for a while, then A again: A's deletion is
-    /// still there, so the Mac doesn't make A's zone again and send a week of history back.
     func testADeletionIsKeptForItsAccountAcrossAnotherSigningIn() throws {
         let defaults = try zoneDefaults("accounts")
         RelayZoneDeletion(defaults: defaults).mark(for: "acct-a")
@@ -201,8 +185,6 @@ final class RelayTests: XCTestCase {
         XCTAssertTrue(RelayZoneDeletion(defaults: defaults).stands(for: "acct-a"), "A's, still, once A is back")
     }
 
-    /// A deletion seen when the account couldn't be told holds for this launch, but isn't saved
-    /// for every account to come.
     func testADeletionForAnAccountThatCouldntBeToldIsntSavedForEveryAccount() throws {
         let defaults = try zoneDefaults("unknown")
         let deletion = RelayZoneDeletion(defaults: defaults)
@@ -211,8 +193,6 @@ final class RelayTests: XCTestCase {
         XCTAssertFalse(RelayZoneDeletion(defaults: defaults).stands(for: "acct-b"), "A later launch, signed in to B, isn't held back")
     }
 
-    /// The user turns the Mac's sync off and on while a read that will find the zone deleted is
-    /// under way: what that read found was from before, and isn't recorded.
     func testADeletionFoundByAReadFromBeforeTheUserStartedAgainIsntRecorded() async throws {
         let deletion = RelayZoneDeletion(defaults: try zoneDefaults("inflight"))
         let deleted = try await deletion.read(account: { "acct-a" }, { () async throws -> [String: Int] in
@@ -223,8 +203,6 @@ final class RelayTests: XCTestCase {
         XCTAssertFalse(deletion.stands(for: "acct-a"))
     }
 
-    /// After the user deletes Tokenroom's data in iCloud settings, the zone reads as empty: the
-    /// Watch and complications drop what was deleted rather than keep showing it.
     func testAReadOfADeletedZoneEmptiesTheWatchsReadings() async throws {
         let now = Date(timeIntervalSince1970: 1_790_337_600)
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)

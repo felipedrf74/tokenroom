@@ -1,14 +1,11 @@
 import Foundation
 
-/// Orders providers by how soon they need attention: a reached limit and a quick run-out first,
-/// then the most used. Balances without a limit come last.
 enum UsageRanking {
     private struct WindowRank {
         var urgency: Int
         var used: Double
     }
 
-    /// Pace for a provider's headline window.
     static func pace(for provider: RelayProvider, history: UsageHistory?, now: Date = .now) -> Pace? {
         guard let window = provider.primaryWindow, window.isMetered else { return nil }
         return pace(for: window, isStale: !provider.isLive, history: history, now: now)
@@ -54,18 +51,11 @@ enum UsageRanking {
         return "\(window.displayTitle) limit reached"
     }
 
-    /// How urgently one open window needs a compact surface. A reached limit leads even when
-    /// the reading is stale: the percentage is still the last measurement. A projected run-out
-    /// uses the severity `Pace` already assigned.
     static func urgency(of window: RelayWindow, pace: Pace?) -> Int {
         if window.used >= 100 { return urgency(severity: .critical) }
         return urgency(pace)
     }
 
-    /// The window a menu bar, widget, or Watch row leads with. The provider's primary window
-    /// stays the card headline. Among metered windows that have not reset, this is the reached
-    /// limit, then the tightest run-out, then the most used. When every metered window is
-    /// waiting for a new reading, the primary window remains so the surface can say so.
     static func leadWindow(for provider: RelayProvider, now: Date = .now, pace: (RelayWindow) -> Pace?) -> RelayWindow? {
         let active = provider.windows.filter { $0.isMetered && !$0.isAwaitingReading(at: now) }
         guard !active.isEmpty else { return provider.primaryWindow }
@@ -84,13 +74,10 @@ enum UsageRanking {
         }?.window
     }
 
-    /// Most urgent first; ties by name.
     static func sorted<Item>(_ items: [Item], provider: (Item) -> RelayProvider, now: Date = .now, pace: (Item) -> Pace?) -> [Item] {
         sorted(items, provider: provider, now: now, windowPace: { item, _ in pace(item) })
     }
 
-    /// Rank by one window's urgency and percentage together, so a calm week cannot inflate
-    /// the rank of a less urgent session. The primary headline stays unchanged.
     static func sorted<Item>(_ items: [Item], provider: (Item) -> RelayProvider, now: Date = .now, windowPace: (Item, RelayWindow) -> Pace?) -> [Item] {
         let keyed: [(item: Item, metered: Bool, urgency: Int, used: Double, name: String)] = items.map { item in
             let reading = provider(item)
@@ -116,9 +103,6 @@ enum UsageRanking {
 }
 
 extension RelayProvider {
-    /// The window a widget shows under the one it leads with, when there's room for two: the
-    /// primary window when the lead is another one (as `ReadingText.attention` names it), else
-    /// the session, else the most used of the rest. Only open, metered windows.
     func secondWindow(lead: RelayWindow, now: Date = .now) -> RelayWindow? {
         let others = windows.filter { $0.id != lead.id && $0.isMetered && !$0.isAwaitingReading(at: now) }
         if let primary = primaryWindow, primary.id != lead.id, let match = others.first(where: { $0.id == primary.id }) {
@@ -127,7 +111,6 @@ extension RelayProvider {
         return others.first { $0.windowKind == .session } ?? others.max { $0.used < $1.used }
     }
 
-    /// Compact surfaces pass each window's pace, including a projected run-out on a stale reading.
     func leadWindow(now: Date = .now, history: [String: UsageHistory] = [:]) -> RelayWindow? {
         UsageRanking.leadWindow(for: self, now: now) { window in
             UsageRanking.pace(for: window, isStale: !isLive, history: history[window.id], now: now)

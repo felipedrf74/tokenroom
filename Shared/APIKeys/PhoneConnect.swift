@@ -1,43 +1,18 @@
 import Foundation
 
-/// What the iPhone offers for each provider, and who covers it. Pure: no Keychain, no login.
-///
-/// The decision, in order:
-/// 1. A provider read with a key (`readsWithKey`, Copilot's fine-grained token included) is
-///    `.addKey`, whatever a Mac shows: a pasted key for that provider stays available.
-/// 2. A Mac reading for it that is still live is `.fromMac`. That blocks a second phone login
-///    only. Another iPhone isn't a Mac; a stale, expired, or signed-out Mac card doesn't count.
-/// 3. A provider on the allowlist is `.signIn`: Codex, Grok Build, Cursor, and Grok Bot sign in
-///    on the iPhone itself (`PhoneSignIn`).
-/// 4. Everything else is `.needsMac`, with the reason as the row's copy and no button. Claude is
-///    one: Anthropic's terms don't allow other apps to offer a Claude.ai login, so its reading
-///    comes only from a Mac.
-///
-/// It never reads `isUnofficial`: that ignores Copilot's documented token and calls the pasted
-/// coding-plan keys official.
 enum PhoneConnect: Sendable {
     enum Action: Equatable, Sendable {
-        /// A Mac reading is still live. Blocks a phone login, not a pasted key.
         case fromMac
-        /// A pasted key, or Copilot's fine-grained token. On the key card and in API Keys, not
-        /// on the connect screen.
         case addKey
-        /// Sign in on this iPhone, with the vendor's own sign-in page.
         case signIn
-        /// No button. `reason` is the row's copy.
         case needsMac(reason: String)
     }
 
-    /// A collector's envelope and what kind of device it is.
     struct CoveringSource: Sendable {
         var kind: CollectorKind
         var envelope: RelayEnvelope
     }
 
-    /// The only allowlist: the plans `PhoneSignIn` signs in to (widgets compile this file, not
-    /// that one; a test keeps the two equal). Taking one out stops its sign-in, renewals, and
-    /// reads on the next launch; list it in `PhoneSessionStore.retiredProviders` too, so its
-    /// session is deleted from the Keychain on launch. Claude came out on 2026-11-07.
     static let productionAllowlist: Set<Provider> = [.openai, .grok, .cursor, .grokBot]
 
     static func action(
@@ -58,8 +33,6 @@ enum PhoneConnect: Sendable {
         return .needsMac(reason: reason(for: provider))
     }
 
-    /// Whether a Mac is publishing a reading for this provider that's live now. Uses the merge's
-    /// age limit and the freshness rules readers use, not a copy of their numbers.
     static func isCoveredByMac(_ provider: Provider, sources: [CoveringSource], now: Date = .now) -> Bool {
         sources.contains { source in
             guard source.kind == .mac, now.timeIntervalSince(source.envelope.checkedAt) <= RelayMerge.maxSourceAge else { return false }
@@ -72,9 +45,6 @@ enum PhoneConnect: Sendable {
         }
     }
 
-    /// How old the newest live Mac reading for this provider is, or nil when no Mac has one live
-    /// (the same sources and rules as `isCoveredByMac`). One dated ahead of the clock counts as
-    /// just checked.
     static func macReadingAge(_ provider: Provider, sources: [CoveringSource], now: Date = .now) -> TimeInterval? {
         sources.compactMap { source -> TimeInterval? in
             guard source.kind == .mac, now.timeIntervalSince(source.envelope.checkedAt) <= RelayMerge.maxSourceAge else { return nil }
@@ -89,8 +59,6 @@ enum PhoneConnect: Sendable {
         }.min()
     }
 
-    /// Why a provider can't be connected on the iPhone (one off the allowlist). Each line names the
-    /// Mac, and none promises a sign-in.
     static func reason(for provider: Provider) -> String {
         switch provider {
         case .grok: "Needs Tokenroom on a Mac. Grok Build doesn't offer a usage API for other apps."
@@ -104,8 +72,6 @@ enum PhoneConnect: Sendable {
         }
     }
 
-    /// The providers the connect screen lists: those to sign in to here, those that need a Mac,
-    /// and those a Mac covers now. Key providers stay on the key card and in API Keys.
     static func connectList(sources: [CoveringSource], now: Date = .now, allowlist: Set<Provider> = productionAllowlist) -> [(provider: Provider, action: Action)] {
         Provider.allCases.compactMap { provider in
             let action = action(for: provider, sources: sources, now: now, allowlist: allowlist)
@@ -116,8 +82,6 @@ enum PhoneConnect: Sendable {
         }
     }
 
-    /// The footer under Usage's Not connected, with the connect screen on. Each kind of provider
-    /// is sent where it can be fixed: a sign-in here, a key, or a Mac.
     static func disconnectedFooter(_ actions: [Action]) -> String {
         let signIn = actions.contains(.signIn)
         let keys = actions.contains(.addKey)
@@ -133,17 +97,9 @@ enum PhoneConnect: Sendable {
         }
     }
 
-    // MARK: Flag
-
-    /// Shows the connect screen, plan sign-in, and their copy. On by default; off leaves every
-    /// string as it was before them and stops reading phone sessions (they stay in the Keychain).
-    /// Rolling back is shipping `defaultValue` false. In `UserDefaults.standard`, not the App
-    /// Group: the widgets don't read it, and the Watch learns it only as `connectAvailable`.
     static let flagKey = "connectOnIPhone"
     static let defaultValue = true
 
-    /// `-connectOnIPhone NO` (or `YES`) on launch sets it in any build, Release included, because
-    /// launch arguments sit in the defaults' argument domain. TestFlight doesn't pass them.
     static func isEnabled(in defaults: UserDefaults = .standard) -> Bool {
         if let argument = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)[flagKey] {
             return (argument as? String).map { ["YES", "1", "true"].contains($0) } ?? (argument as? Bool ?? defaultValue)
@@ -152,29 +108,16 @@ enum PhoneConnect: Sendable {
     }
 }
 
-/// While a Mac reads a plan this iPhone is signed in to, the iPhone leaves its own session read
-/// alone, so the two don't both call the vendor and the tile doesn't switch between them. It
-/// pauses while the Mac's live reading is at most `pauseWithin` old and reads again once it's
-/// more than `resumeAfter` old; in between it keeps what the last pass decided, so a Mac checking
-/// every ten minutes doesn't flip it on every pass. Pulling to refresh reads anyway.
 enum MacCoveragePause {
     static let pauseWithin: TimeInterval = 15 * 60
     static let resumeAfter: TimeInterval = 25 * 60
-    /// App Group defaults: the plans the last pass paused, as provider raw values. Not a secret.
     static let defaultsKey = "sessionsPausedByMac"
 
-    /// Whether this pass leaves the plan's session read out.
-    /// - Parameters:
-    ///   - macAge: `PhoneConnect.macReadingAge`, nil when no Mac reading is live.
-    ///   - wasPaused: what the last pass decided.
-    ///   - manual: a pull to refresh.
     static func isPaused(macAge: TimeInterval?, wasPaused: Bool, manual: Bool) -> Bool {
         guard !manual else { return false }
         return remembered(macAge: macAge, wasPaused: wasPaused)
     }
 
-    /// What a pass saves as its decision for the next one. A pull to refresh reads anyway but
-    /// doesn't forget the pause, so the next ordinary pass in the 15–25 minute band stays paused.
     static func remembered(macAge: TimeInterval?, wasPaused: Bool) -> Bool {
         guard let macAge else { return false }
         if macAge <= pauseWithin { return true }
@@ -182,14 +125,12 @@ enum MacCoveragePause {
         return wasPaused
     }
 
-    /// The Plans row for a paused plan, named as the plan is (`PhoneSignIn.planName`).
     static func detail(planName: String) -> String {
         "Paused: your Mac reads \(planName)"
     }
 }
 
 extension Array where Element == RelayMerge.Source {
-    /// Merge sources as connect coverage, each with the kind of device behind it.
     var covering: [PhoneConnect.CoveringSource] {
         compactMap { source in
             guard let kind = source.kind else { return nil }

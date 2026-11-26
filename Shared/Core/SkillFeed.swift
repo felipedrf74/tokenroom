@@ -27,10 +27,7 @@ struct SkillListing: Codable, Equatable, Sendable, Identifiable {
     var downloads: Int?
     var stars: Int?
     var requirements: [String]
-    /// One-based position in the provider's response, before invalid/duplicate records are dropped.
     var sourceRank: Int? = nil
-    /// Lifetime installs, which the trending ranking gives instead of downloads. Optional for
-    /// saved lists from earlier releases.
     var installs: Int? = nil
     var id: String { owner + "/" + slug }
     var canonicalURL: URL { URL(string: "https://clawhub.ai/\(owner)/skills/\(slug)")! }
@@ -39,11 +36,8 @@ struct SkillListing: Codable, Equatable, Sendable, Identifiable {
 struct SkillPage: Sendable { var listings: [SkillListing]; var cursor: String? }
 enum SkillFeed {
     static let sizeLimit = 2 * 1024 * 1024
-    /// Shown under every ranking: ClawHub lists what anyone uploads.
     static let communityNote = "Community uploads. ClawHub doesn't review them, so read a skill before you install it."
 
-    /// `sort=trending` on `/api/v1/skills` is deprecated (its `Link` header names the successor,
-    /// November 2026); the other rankings stay there.
     static func request(sort: SkillSort) -> URLRequest {
         var components: URLComponents
         if sort == .trending {
@@ -60,10 +54,6 @@ enum SkillFeed {
         return request
     }
 
-    /// Reads either shape: `/api/v1/skills`'s (`ownerHandle`, `stats`) or the trending
-    /// endpoint's (`publisher.handle`, `rank`, `metrics`, `trust`). The trending list also carries
-    /// skills.sh entries, which aren't ClawHub's and have no ClawHub page or verdict: those are
-    /// left out, as is anything ClawHub's scan didn't call clean.
     static func parse(_ data: Data) throws -> SkillPage {
         guard data.count <= sizeLimit, let root = try JSONSerialization.jsonObject(with: data) as? [String: Any], let items = root["items"] as? [[String: Any]] else { throw ProviderError.parse }
         var ids = Set<String>()
@@ -87,16 +77,11 @@ enum SkillFeed {
             return SkillListing(owner: owner, slug: slug, name: String(name.prefix(500)), summary: (item["summary"] as? String).map { String($0.prefix(2000)) }, version: version?["version"] as? String,
                                 updatedAt: date(item["updatedAt"]), downloads: count(stats?["downloads"]), stars: count(stats?["stars"]), requirements: Array((runtime + platforms).prefix(100)), sourceRank: position + 1)
         }
-        // An explicit empty catalog is valid. A nonempty page with no usable record is
-        // a schema failure, so it must not replace a previously usable ranking.
         guard items.isEmpty || !listings.isEmpty else { throw ProviderError.parse }
         return SkillPage(listings: listings, cursor: root["nextCursor"] as? String)
     }
 
-    /// One entry of the trending endpoint, ranked as ClawHub ranked it (`rank`, else its position).
     private static func trending(_ item: [String: Any], position: Int, ids: inout Set<String>) -> SkillListing? {
-        // Only what says it's ClawHub's and that ClawHub's scan called clean: an entry missing
-        // either is left out, not given the benefit of the doubt.
         guard item["source"] as? String == "clawhub",
               (item["trust"] as? [String: Any])?["clawHubVerdict"] as? String == "clean" else { return nil }
         let publisher = item["publisher"] as? [String: Any]

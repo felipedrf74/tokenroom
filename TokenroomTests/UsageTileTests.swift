@@ -1,7 +1,6 @@
 import XCTest
 @testable import Tokenroom
 
-/// The iPhone Usage tab's tiles and its Close to a limit list, tested on the Mac.
 final class UsageTileTests: XCTestCase {
     private let now = Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 25, hour: 12))!
 
@@ -21,7 +20,6 @@ final class UsageTileTests: XCTestCase {
     }
 
     func testTheRingTakesTheLongWindowAndTheBarTheSession() {
-        // A primary session (as Claude's status line can report) still leaves the weekly for the ring.
         let both = UsageTiles.tile(for: provider(primary: "session", [session(40), weekly(64)]))
         XCTAssertEqual(both.ring?.id, "weekly")
         XCTAssertEqual(both.bar?.id, "session")
@@ -76,14 +74,12 @@ final class UsageTileTests: XCTestCase {
         XCTAssertTrue(UsageTiles.isClose(weekly(80), pace: nil))
         XCTAssertFalse(UsageTiles.isClose(weekly(79), pace: nil))
 
-        // 60% of a 5-hour window, 2.5 hours in: ahead of pace, out before the reset.
         let hot = session(60, resetsIn: 2.5 * 3600)
         let hotPace = UsageRanking.pace(for: hot, isStale: false, history: nil, now: now)
         XCTAssertEqual(hotPace?.verdict, .ahead)
         XCTAssertNotNil(hotPace?.runsOutAt)
         XCTAssertTrue(UsageTiles.isClose(hot, pace: hotPace))
 
-        // Ahead of pace, but lasting to the reset, is not close.
         let lasting = Pace(verdict: .ahead, delta: 12, elapsedFraction: 0.5, resetsAt: now.addingTimeInterval(3600), runsOutAt: nil, severity: .none)
         XCTAssertFalse(UsageTiles.isClose(session(62), pace: lasting))
 
@@ -96,15 +92,10 @@ final class UsageTileTests: XCTestCase {
 
     func testCloseWindowsPutTheMostUrgentFirst() {
         let readings: [(provider: RelayProvider, history: [String: UsageHistory])] = [
-            // Past 80%, no reset known: close, but nothing runs out.
             (provider(id: "copilot", [RelayWindow(id: "premium", kind: "monthly", title: "Premium requests", used: 83, resetsAt: nil)]), [:]),
-            // Weekly at 78%, 94 hours into the week: runs out in about a day.
             (provider(id: "openai", [weekly(78, resetsIn: 74 * 3600), session(22, resetsIn: 3 * 3600 + 40 * 60)]), [:]),
-            // 5-hour at 86%, 3h48m in: runs out in about half an hour.
             (provider(id: "claude", primary: "weekly", [session(86, resetsIn: 72 * 60), weekly(64, resetsIn: 53 * 3600)]), [:]),
-            // The limit is reached.
             (provider(id: "kimiCode", [session(100, resetsIn: 90 * 60)]), [:]),
-            // A stale window still at 80% stays. A calm window stays out.
             (provider(id: "zai", state: "stale", [weekly(95)]), [:]),
             (provider(id: "grok", [weekly(23, resetsIn: 102 * 3600)]), [:]),
         ]
@@ -112,8 +103,6 @@ final class UsageTileTests: XCTestCase {
         XCTAssertEqual(close.map { "\($0.provider.id)/\($0.window.id)" }, ["kimiCode/session", "claude/session", "openai/weekly", "zai/weekly", "copilot/premium"])
     }
 
-    /// Rows are named by provider and window, not place: when the list re-ranks, a row's state
-    /// (Follow's) goes with the window it was for.
     func testCloseWindowsAreNamedByProviderAndWindowNotPlace() {
         let claude = provider(id: "claude", [session(86, resetsIn: 72 * 60), weekly(92, resetsIn: 53 * 3600)])
         let openai = provider(id: "openai", [session(82, resetsIn: 60 * 60)])

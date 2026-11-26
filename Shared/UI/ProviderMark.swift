@@ -1,9 +1,6 @@
 import SwiftUI
 import WidgetKit
 
-/// A provider's own icon, on every platform: an app icon as it is, or an official mark whole on a
-/// white tile with clear space. Providers without an icon, and widgets the system tints or
-/// renders clear, show the monogram instead, since an icon can't be tinted without recolouring it.
 struct ProviderMark: View {
     var providerID: String
     var monogram: String
@@ -16,8 +13,6 @@ struct ProviderMark: View {
             let shape = RoundedRectangle(cornerRadius: size * 0.23, style: .continuous)
             Group {
                 if provider.iconIsMark {
-                    // White in light; a step down in dark, where a pure white tile is the
-                    // brightest thing on screen. The mark on it is untouched.
                     shape
                         .fill(Color(light: (255, 255, 255), dark: (230, 230, 234)))
                         .overlay {
@@ -54,9 +49,7 @@ struct ProviderMark: View {
     }
 
     #if !os(macOS)
-    /// The longest side, in points, an icon is kept at: more than any mark is drawn.
     static let longestSide: CGFloat = 64
-    /// Icons already fitted, by asset name. `NSCache` is safe to share between threads.
     nonisolated(unsafe) private static let fittedIcons = NSCache<NSString, UIImage>()
 
     static func fitted(named name: String) -> UIImage? {
@@ -67,10 +60,6 @@ struct ProviderMark: View {
         return result
     }
 
-    /// A vector icon comes at the size its file declares (OpenRouter's is 1024 by 730 points),
-    /// and WidgetKit won't archive a widget holding an image that large: the widget stays on
-    /// its placeholder. An icon past `longestSide` is drawn at that size instead, at three
-    /// pixels a point so it stays sharp wherever a mark is drawn.
     static func fitted(_ image: UIImage) -> UIImage {
         let longest = max(image.size.width, image.size.height)
         guard longest > longestSide else { return image }
@@ -93,8 +82,6 @@ struct ProviderMark: View {
     #endif
 }
 
-/// A provider tile sits a hair above its card, as app icons do in Apple's own lists: a faint
-/// shadow under it, none at glyph sizes where it would only blur the edge.
 struct IconLift: ViewModifier {
     var size: CGFloat
 

@@ -1,8 +1,5 @@
 import Foundation
 
-/// A reference is an amount in one currency, never an exchange-rate conversion. Keeping both
-/// fields together prevents a replacement key or reordered multi-currency response from changing
-/// the meaning of the saved number.
 struct BudgetReference: Equatable, Sendable {
     var amount: Double
     var unit: String
@@ -15,9 +12,6 @@ enum BudgetReferencePreferences {
     static let amountsKey = "budgets"
     static let referencesKey = "budgetReferences"
 
-    /// Older builds saved only numbers. Only providers with a single documented currency can
-    /// migrate automatically. Moonshot and DeepSeek retain their number without a guessed unit;
-    /// the user must enter it again in the labelled field to activate it.
     static func legacyUnit(for provider: Provider) -> String? {
         switch provider {
         case .openrouter, .vercelGateway, .openaiOrg, .anthropicOrg, .xaiOrg: "usd"
@@ -42,8 +36,6 @@ enum BudgetReferencePreferences {
         return legacyUnit(for: provider).map { BudgetReference(amount: amount, unit: $0) }
     }
 
-    /// The proposed Moonshot account defines the editor label before a key is saved or fetched.
-    /// Other multi-currency providers use their reading's unit. No credential read is needed.
     static func editorUnit(for provider: Provider, region: String?, readingUnit: String?) -> String {
         if provider == .moonshot, let region { return region.lowercased() == "china" ? "cny" : "usd" }
         return ["usd", "cny"].contains(readingUnit ?? "") ? readingUnit! : "usd"
@@ -51,11 +43,6 @@ enum BudgetReferencePreferences {
 }
 
 extension QuotaSnapshot {
-    /// A budget the user sets turns amount-only windows into meters: spend against the budget,
-    /// or a balance against the amount it started from. Provider-owned meters are left alone;
-    /// old app-created meters are removed before the saved reference's currency is checked.
-    /// Rows in other currencies stay plain amounts. An organization's monthly
-    /// budget only measures spend: an xAI team's prepaid credits stay an amount.
     func applyingBudget(reference: BudgetReference?) -> QuotaSnapshot {
         let measuresBalances = provider.category != .orgSpend
         var copy = self
@@ -78,20 +65,16 @@ extension QuotaSnapshot {
         return copy
     }
 
-    /// The unit a budget is set in: the first amount's, e.g. `usd` or `cny`.
     var budgetUnit: String? {
         windows.first { $0.amount != nil }?.amount?.unit
     }
 
-    /// ISO code for the budget field: `CNY` for a yuan balance, else `USD`.
     var budgetCurrencyCode: String {
         budgetUnit == "cny" ? "CNY" : "USD"
     }
 }
 
 extension ReadingCache {
-    /// Widget fast paths and retained local readings must obey the current phone reference too.
-    /// References on other collectors belong to those collectors and are never replaced here.
     func applyingLocalBudgetReferences(in defaults: UserDefaults) -> ReadingCache {
         guard !isSample else { return self }
         var copy = self
@@ -127,9 +110,6 @@ private extension QuotaWindow {
 }
 
 extension QuotaAmount {
-    /// This amount measured against a budget: spend against it, or a balance against the amount
-    /// it started from. Nil when the budget doesn't measure it (a balance, for an organization's
-    /// monthly budget).
     func meter(against budget: Double, measuresBalances: Bool) -> (used: Double, amount: QuotaAmount)? {
         var amount = self
         let used: Double
@@ -137,7 +117,6 @@ extension QuotaAmount {
             used = JSONFlex.clampPercent(spent / budget * 100)
         } else if measuresBalances, let remaining = remainingOrComputed {
             used = JSONFlex.clampPercent((1 - remaining / budget) * 100)
-            // What the meter shows: spent from the reference, not a lifetime total.
             amount.used = max(budget - remaining, 0)
         } else {
             return nil
@@ -149,10 +128,6 @@ extension QuotaAmount {
 }
 
 extension RelayProvider {
-    /// A saved reading with the budget or reference set now rather than the one it was saved
-    /// with: a stand-in for a provider this launch hasn't read (its calls are spaced, or it's
-    /// rate limited) shows a new budget at once. Windows metered against a budget are measured
-    /// again; the provider's own meters are left alone.
     func applyingBudget(reference: BudgetReference?) -> RelayProvider {
         var copy = self
         copy.windows = windows.map { window in
@@ -161,7 +136,6 @@ extension RelayProvider {
             amount.limit = nil
             amount.isBudget = nil
             if amount.remaining != nil {
-                // Worked out from the old reference.
                 amount.used = nil
             }
             plain.amount = amount

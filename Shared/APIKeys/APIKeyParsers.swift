@@ -1,7 +1,5 @@
 import Foundation
 
-/// OpenRouter's `GET /api/v1/key`: the pasted key's own limit and spend. The key's masked
-/// label is never read.
 enum OpenRouterParser {
     static func snapshot(from data: Data, fetchedAt: Date = .now, calendar: Calendar = .gregorianUTC) throws -> QuotaSnapshot {
         let root = try JSONFlex.object(from: data)
@@ -57,7 +55,6 @@ enum OpenRouterParser {
         )
     }
 
-    /// OpenRouter limits reset at midnight UTC: daily, weekly (Monday), or monthly (the 1st).
     static func period(_ reset: String?, now: Date, calendar: Calendar) -> (kind: WindowKind, title: String, start: Date?, end: Date?) {
         switch reset?.lowercased() {
         case "daily":
@@ -77,7 +74,6 @@ enum OpenRouterParser {
     }
 }
 
-/// DeepSeek's `GET /user/balance`: one balance per currency.
 enum DeepSeekParser {
     static func snapshot(from data: Data, fetchedAt: Date = .now) throws -> QuotaSnapshot {
         let root = try JSONFlex.object(from: data)
@@ -110,7 +106,6 @@ enum DeepSeekParser {
     }
 }
 
-/// Moonshot's `GET /v1/users/me/balance`. Global accounts are billed in dollars, China in yuan.
 enum MoonshotParser {
     static func snapshot(from data: Data, region: String?, fetchedAt: Date = .now) throws -> QuotaSnapshot {
         let root = try JSONFlex.object(from: data)
@@ -140,7 +135,6 @@ enum MoonshotEndpoint {
     }
 }
 
-/// Vercel AI Gateway's `GET /v1/credits`: prepaid credits left and used, in dollars.
 enum VercelGatewayParser {
     static func snapshot(from data: Data, fetchedAt: Date = .now) throws -> QuotaSnapshot {
         let root = try JSONFlex.object(from: data)
