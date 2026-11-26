@@ -42,7 +42,7 @@ struct ProviderMark: View {
     static func image(_ provider: Provider) -> Image? {
         guard let name = provider.assetName else { return nil }
         #if os(macOS)
-        return TokenroomImage.named(name).map { Image(nsImage: $0) }
+        return TokenroomImage.icon(name).map { Image(nsImage: $0) }
         #else
         return fitted(named: name).map { Image(uiImage: $0) }
         #endif
