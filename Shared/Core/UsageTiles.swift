@@ -16,6 +16,7 @@ struct CloseWindow: Equatable, Sendable, Identifiable {
 
 enum UsageTiles {
     static let closeUse = Double(AlertPreferences.supportedThresholds.min() ?? 80)
+    static let closeRowLimit = 4
 
     static func tile(for provider: RelayProvider) -> UsageTile {
         let metered = provider.windows.filter(\.isMetered)
@@ -36,17 +37,32 @@ enum UsageTiles {
         return pace.verdict == .limitReached || pace.runOutNeedsAttention
     }
 
-    static func closeWindows(_ readings: [(provider: RelayProvider, history: [String: UsageHistory])], now: Date = .now) -> [CloseWindow] {
+    static func paces(for provider: RelayProvider, history: [String: UsageHistory], now: Date = .now) -> [Pace?] {
+        let isStale = !provider.isLive
+        return provider.windows.map { window in
+            guard window.isMetered, !window.isAwaitingReading(at: now) else { return nil }
+            return UsageRanking.pace(for: window, isStale: isStale, history: history[window.id], now: now)
+        }
+    }
+
+    static func closeWindows(in provider: RelayProvider, paces: [Pace?], now: Date = .now) -> [CloseWindow] {
         var found: [CloseWindow] = []
-        for reading in readings {
-            for window in reading.provider.windows where window.isMetered && !window.isAwaitingReading(at: now) {
-                let pace = UsageRanking.pace(for: window, isStale: !reading.provider.isLive, history: reading.history[window.id], now: now)
-                if isClose(window, pace: pace) {
-                    found.append(CloseWindow(provider: reading.provider, window: window, pace: pace))
-                }
+        for (window, pace) in zip(provider.windows, paces) where window.isMetered && !window.isAwaitingReading(at: now) {
+            if isClose(window, pace: pace) {
+                found.append(CloseWindow(provider: provider, window: window, pace: pace))
             }
         }
-        return found.sorted { lhs, rhs in
+        return found
+    }
+
+    static func closeWindows(_ readings: [(provider: RelayProvider, history: [String: UsageHistory])], now: Date = .now) -> [CloseWindow] {
+        mostUrgentFirst(readings.flatMap { reading in
+            closeWindows(in: reading.provider, paces: paces(for: reading.provider, history: reading.history, now: now), now: now)
+        })
+    }
+
+    static func mostUrgentFirst(_ found: [CloseWindow]) -> [CloseWindow] {
+        found.sorted { lhs, rhs in
             let lhsOut = lhs.window.used >= 100 || lhs.pace?.verdict == .limitReached
             let rhsOut = rhs.window.used >= 100 || rhs.pace?.verdict == .limitReached
             if lhsOut != rhsOut { return lhsOut }

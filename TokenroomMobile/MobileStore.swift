@@ -1139,12 +1139,7 @@ final class MobileStore {
     }
 
     var sourceSummary: String? {
-        let labels = Array(Set(readings.map(\.source))).sorted()
-        switch labels.count {
-        case 0: return nil
-        case 1: return labels[0]
-        default: return labels.dropLast().joined(separator: ", ") + " and " + labels[labels.count - 1]
-        }
+        UsageBoard.sourceSummary(readings.map(\.source))
     }
 
     func connectAction(for provider: Provider, now: Date = .now) -> PhoneConnect.Action {

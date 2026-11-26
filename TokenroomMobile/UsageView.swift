@@ -24,7 +24,14 @@ struct UsageView: View {
     }
 
     private func content(at date: Date) -> some View {
-        NavigationStack(path: $path) {
+        let readings = store.readings
+        let board = UsageBoard(
+            readings.map { (provider: $0.provider, history: $0.history, source: $0.source, origin: $0.origin) },
+            showsAllClose: showsAllClose, now: date
+        )
+        let close = board.close
+        let highlights = self.highlights(in: readings)
+        return NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     if store.sampleMode {
@@ -33,14 +40,13 @@ struct UsageView: View {
                             .padding(.vertical, 10)
                             .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color(.secondarySystemGroupedBackground)))
                     }
-                    if !store.sampleMode, !store.readings.isEmpty || !store.disconnected.isEmpty {
+                    if !store.sampleMode, !readings.isEmpty || !store.disconnected.isEmpty {
                         RelayStatusNotice(store: store)
                     }
-                    let close = closeWindows(at: date)
                     if !close.isEmpty {
                         CloseToLimitCard(windows: close, date: date, showsAll: $showsAllClose) { id in path = [id] }
                     }
-                    if !highlights.isEmpty, !store.readings.isEmpty {
+                    if !highlights.isEmpty, !readings.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
                                 ForEach(highlights) { highlight in
@@ -59,7 +65,7 @@ struct UsageView: View {
                         }
                         .padding(.horizontal, -20)
                     }
-                    if !store.readings.isEmpty {
+                    if !readings.isEmpty {
                         if !close.isEmpty {
                             Text("All plans")
                                 .font(.subheadline.weight(.semibold))
@@ -67,7 +73,7 @@ struct UsageView: View {
                                 .padding(.top, 4)
                                 .accessibilityAddTraits(.isHeader)
                         }
-                        tiles(at: date)
+                        tiles(readings, board: board, at: date)
                     }
                     if !store.disconnected.isEmpty {
                         disconnectedSection
@@ -80,7 +86,7 @@ struct UsageView: View {
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Usage")
-            .navigationSubtitle(header(at: date) ?? "")
+            .navigationSubtitle(header(board, at: date) ?? "")
             .navigationDestination(for: String.self) { id in
                 if let reading = store.reading(id: id) {
                     ProviderDetailView(reading: reading, date: date)
@@ -94,7 +100,7 @@ struct UsageView: View {
                 }
             }
             .overlay {
-                if store.readings.isEmpty, store.disconnected.isEmpty {
+                if readings.isEmpty, store.disconnected.isEmpty {
                     UsageEmptyState(store: store)
                 }
             }
@@ -106,7 +112,7 @@ struct UsageView: View {
                 await checkNotifications()
             }
             .onAppear(perform: rank)
-            .onChange(of: store.readings.map(\.id)) { _, ids in
+            .onChange(of: readings.map(\.id)) { _, ids in
                 if !ids.contains(where: order.contains) { order = ids }
             }
             .onChange(of: scenePhase) { _, phase in
@@ -123,17 +129,17 @@ struct UsageView: View {
         }
     }
 
-    private func tiles(at date: Date) -> some View {
-        let readings = orderedReadings
+    private func tiles(_ readings: [MobileStore.Reading], board: UsageBoard, at date: Date) -> some View {
+        let tiles = UsageTiles.ordered(Array(zip(readings, board.plans)), id: \.0.id, as: order)
+        let showsOrigin = !store.sampleMode && board.hasMixedOrigins
         let columns = typeSize >= .xxLarge ? 1 : 2
-        let rows = stride(from: 0, to: readings.count, by: columns).map { Array(readings[$0..<min($0 + columns, readings.count)]) }
+        let rows = stride(from: 0, to: tiles.count, by: columns).map { Array(tiles[$0..<min($0 + columns, tiles.count)]) }
         return Grid(horizontalSpacing: 12, verticalSpacing: 12) {
-            ForEach(rows, id: \.first?.id) { row in
+            ForEach(rows, id: \.first?.0.id) { row in
                 GridRow {
-                    ForEach(row) { reading in
+                    ForEach(row, id: \.0.id) { reading, plan in
                         NavigationLink(value: reading.id) {
-                            UsageTileView(reading: reading, date: date, showsOrigin: showsOrigin(reading),
-                                          warnedWindows: Set(closeWindows(at: date).prefix(showsAllClose ? .max : CloseToLimitCard.rowLimit).filter { $0.provider.id == reading.id }.map(\.window.id)))
+                            UsageTileView(reading: reading, plan: plan, date: date, showsOrigin: showsOrigin)
                         }
                         .buttonStyle(.plain)
                         .contextMenu {
@@ -150,10 +156,6 @@ struct UsageView: View {
                 }
             }
         }
-    }
-
-    private func showsOrigin(_ reading: MobileStore.Reading) -> Bool {
-        !store.sampleMode && Set(store.readings.map(\.origin)).count > 1
     }
 
     private var disconnectedSection: some View {
@@ -177,16 +179,8 @@ struct UsageView: View {
         }
     }
 
-    private var orderedReadings: [MobileStore.Reading] {
-        UsageTiles.ordered(store.readings, id: \.id, as: order)
-    }
-
     private func rank() {
         order = store.readings.map(\.id)
-    }
-
-    private func closeWindows(at date: Date) -> [CloseWindow] {
-        UsageTiles.closeWindows(store.readings.map { (provider: $0.provider, history: $0.history) }, now: date)
     }
 
     private struct Highlight: Identifiable {
@@ -196,9 +190,9 @@ struct UsageView: View {
         var action: () -> Void
     }
 
-    private var highlights: [Highlight] {
+    private func highlights(in readings: [MobileStore.Reading]) -> [Highlight] {
         var items: [Highlight] = []
-        let banked = store.readings.filter { $0.provider.availableBanked(at: .now) != nil }
+        let banked = readings.filter { $0.provider.availableBanked(at: .now) != nil }
         let bankedCount = banked.reduce(0) { $0 + ($1.provider.availableBanked(at: .now)?.available ?? 0) }
         if bankedCount > 0, let first = banked.first {
             items.append(Highlight(id: "banked", title: bankedCount == 1 ? "1 banked reset" : "\(bankedCount) banked resets", symbol: "arrow.counterclockwise") {
@@ -218,12 +212,12 @@ struct UsageView: View {
         notificationsOff = status == .denied || status == .notDetermined
     }
 
-    private func header(at date: Date) -> String? {
-        guard !store.sampleMode, let source = store.sourceSummary else { return nil }
-        let stale = store.readings.filter { !$0.provider.isLive }.count
+    private func header(_ board: UsageBoard, at date: Date) -> String? {
+        guard !store.sampleMode, let source = board.sourceSummary else { return nil }
+        let stale = board.staleCount
         let staleNote = stale > 0 ? " · \(stale) stale" : ""
         if store.isRefreshing { return "From \(source) · checking…" + staleNote }
-        guard let checked = store.latestChecked else { return "From \(source)" }
+        guard let checked = board.latestChecked else { return "From \(source)" }
         return "From \(source) · checked \(RelativeTime.ago(checked, now: date))" + staleNote
     }
 

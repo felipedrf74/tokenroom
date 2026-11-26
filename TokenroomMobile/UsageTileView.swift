@@ -2,20 +2,16 @@ import SwiftUI
 
 struct UsageTileView: View {
     var reading: MobileStore.Reading
+    var plan: UsageBoard.Plan
     var date: Date = .now
     var showsOrigin = true
-    var warnedWindows: Set<String> = []
 
     private var provider: RelayProvider { reading.provider }
     private var isStale: Bool { !provider.isLive }
 
-    private func pace(_ window: RelayWindow) -> Pace? {
-        UsageRanking.pace(for: window, isStale: isStale, history: reading.history[window.id], now: date)
-    }
-
     var body: some View {
-        let tile = UsageTiles.tile(for: provider)
-        let isClose = [tile.ring, tile.bar].compactMap { $0 }.contains { !$0.isAwaitingReading(at: date) && UsageTiles.isClose($0, pace: pace($0)) }
+        let tile = plan.tile
+        let isClose = plan.isClose
         VStack(alignment: .leading, spacing: 10) {
             header
             if let ring = tile.ring {
@@ -86,7 +82,7 @@ struct UsageTileView: View {
     private func ringRow(_ ring: RelayWindow) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 7) {
-                UsageRing(used: ring.used, isStale: isStale || ring.isAwaitingReading(at: date), label: ReadingText.headline(ring, now: date), lineWidth: 5.5, paceMark: pace(ring)?.elapsedFraction,
+                UsageRing(used: ring.used, isStale: isStale || ring.isAwaitingReading(at: date), label: ReadingText.headline(ring, now: date), lineWidth: 5.5, paceMark: plan.ringPace?.elapsedFraction,
                           isAwaitingReading: ring.isAwaitingReading(at: date))
                     .frame(width: 52, height: 52)
                     .padding(.leading, 2.75)
@@ -96,7 +92,7 @@ struct UsageTileView: View {
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            WindowStatus(window: ring, pace: warnedWindows.contains(ring.id) ? nil : pace(ring), isStale: isStale, date: date)
+            WindowStatus(window: ring, pace: plan.warnedWindows.contains(ring.id) ? nil : plan.ringPace, isStale: isStale, date: date)
         }
     }
 
@@ -110,9 +106,9 @@ struct UsageTileView: View {
                 HeadlineValue(ReadingText.headline(bar, now: date), style: .subheadline, signStyle: .caption2)
                     .foregroundStyle(TokenroomTokens.ink(remaining: 100 - bar.used, isStale: isStale))
             }
-            MeterTrack(usedPercent: bar.used, remaining: 100 - bar.used, isStale: isStale || bar.isAwaitingReading(at: date), paceMark: pace(bar)?.elapsedFraction, height: 5,
+            MeterTrack(usedPercent: bar.used, remaining: 100 - bar.used, isStale: isStale || bar.isAwaitingReading(at: date), paceMark: plan.barPace?.elapsedFraction, height: 5,
                        isAwaitingReading: bar.isAwaitingReading(at: date))
-            WindowStatus(window: bar, pace: warnedWindows.contains(bar.id) ? nil : pace(bar), isStale: isStale, date: date)
+            WindowStatus(window: bar, pace: plan.warnedWindows.contains(bar.id) ? nil : plan.barPace, isStale: isStale, date: date)
         }
     }
 
@@ -185,7 +181,7 @@ struct CloseToLimitCard: View {
     var date: Date = .now
     @Binding var showsAll: Bool
     var open: (String) -> Void
-    static let rowLimit = 4
+    static let rowLimit = UsageTiles.closeRowLimit
     @State private var followError: String?
     @Environment(\.dynamicTypeSize) private var typeSize
 
