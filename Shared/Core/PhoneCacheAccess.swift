@@ -11,6 +11,21 @@ enum PhoneCacheAccess {
         defaults.set(UUID().uuidString, forKey: generationKey)
     }
 
+    static func markSignedOut(in defaults: UserDefaults) {
+        let previous = generation(in: defaults)
+        if previous?.hasPrefix("signed-out:") != true {
+            defaults.set("signed-out:" + (previous ?? "initial"), forKey: generationKey)
+        }
+    }
+
+    static func markAvailable(in defaults: UserDefaults, expecting generation: String?) -> String? {
+        if generation?.hasPrefix("signed-out:") == true, generation == self.generation(in: defaults) {
+            invalidate(in: defaults)
+            return self.generation(in: defaults)
+        }
+        return generation
+    }
+
     static func accepts(_ cache: ReadingCache, defaults: UserDefaults) -> Bool {
         cache.accountGeneration == generation(in: defaults)
     }

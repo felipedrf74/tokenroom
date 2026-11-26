@@ -68,8 +68,10 @@ enum WidgetRefresher {
         let contents = relayResult.contents
         let signedOut = relayResult.signedOut
         if signedOut {
-            PhoneCacheAccess.invalidate(in: defaults)
+            PhoneCacheAccess.markSignedOut(in: defaults)
             generation = PhoneCacheAccess.generation(in: defaults)
+        } else if contents != nil {
+            generation = PhoneCacheAccess.markAvailable(in: defaults, expecting: generation)
         }
         let readRetryAt = WidgetRefreshResult.retryDate(cloudRetryAt: relayResult.retryAt,
                                                        keyFailures: Array(failures.values), now: now)

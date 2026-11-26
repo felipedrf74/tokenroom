@@ -160,6 +160,28 @@ final class HistoryQueueFailureTests: XCTestCase {
         XCTAssertTrue(HistoryStore.pending(in: folder).isEmpty)
     }
 
+    func testRepeatedSignOutKeepsThePendingLocalWriteUntilTheAccountChanges() throws {
+        let folder = try makeFolder()
+        let clock = at(900)
+        let name = UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let retry = HistoryQueueRetry()
+        PhoneCacheAccess.markSignedOut(in: defaults)
+        let generation = PhoneCacheAccess.generation(in: defaults)
+        XCTAssertFalse(retry.queue([money(80, at: clock)], in: nil, generation: generation, now: clock).isComplete)
+        PhoneCacheAccess.markSignedOut(in: defaults)
+        XCTAssertEqual(retry.queue([], in: folder, generation: PhoneCacheAccess.generation(in: defaults), now: clock).queued.count, 1)
+        XCTAssertEqual(waiting(in: folder), [80])
+        let active = PhoneCacheAccess.markAvailable(in: defaults, expecting: generation)
+        XCTAssertNotEqual(active, generation)
+        XCTAssertFalse(retry.queue([money(70, at: clock)], in: nil, generation: active, now: clock).isComplete)
+        PhoneCacheAccess.markSignedOut(in: defaults)
+        XCTAssertNotEqual(PhoneCacheAccess.generation(in: defaults), generation)
+        XCTAssertTrue(retry.queue([], in: folder, generation: PhoneCacheAccess.generation(in: defaults), now: clock).queued.isEmpty)
+        XCTAssertEqual(waiting(in: folder), [80])
+    }
+
     func testAReadingStillUnwrittenAfterItsWeekIsDropped() throws {
         let folder = try makeFolder()
         let clock = at(900)

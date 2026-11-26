@@ -58,6 +58,15 @@ struct UsageHistory: Codable, Equatable, Sendable {
         return true
     }
 
+    mutating func restoreMissingAmounts(from history: UsageHistory) {
+        guard var values = amounts else { return }
+        for (date, remaining) in history.amountPoints where date >= start && date < end {
+            let index = Int(date.timeIntervalSince(start) / Self.step)
+            if values.indices.contains(index), values[index] == nil { values[index] = remaining }
+        }
+        amounts = values
+    }
+
     func migratingLegacyAmounts(for providerID: String) -> UsageHistory {
         guard amountUnit == nil, amounts != nil else { return self }
         var copy = self

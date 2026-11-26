@@ -459,7 +459,7 @@ final class MobileStore {
             guard relayGeneration == generation, !Task.isCancelled else { return }
             switch account {
             case .available:
-                break
+                cacheGeneration = PhoneCacheAccess.markAvailable(in: defaults, expecting: cacheGeneration)
             case .noAccount:
                 SyncHealthLog.record(.cloudRead, .noAccount, in: defaults)
                 resetRelayAccount(phase: .noAccount)
@@ -559,7 +559,10 @@ final class MobileStore {
         }
         let retainedLocal = previous?.localSource?.envelope.providers
             ?? previous?.items.filter { $0.source == Self.localLabel }.map(\.provider) ?? []
-        if invalidateCache { PhoneCacheAccess.invalidate(in: defaults) }
+        if invalidateCache {
+            if phase == .noAccount { PhoneCacheAccess.markSignedOut(in: defaults) }
+            else { PhoneCacheAccess.invalidate(in: defaults) }
+        }
         cacheGeneration = PhoneCacheAccess.generation(in: defaults)
         relayGeneration = UUID()
         relaySources = []

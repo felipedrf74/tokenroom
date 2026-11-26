@@ -367,11 +367,90 @@ final class HistoryStoreRecoveryTests: XCTestCase {
         let second = HistoryStore(directory: folder)
         second.record(money(70, at: at(3700)), now: at(4000))
         XCTAssertFalse(second.saveIfNeeded())
-        XCTAssertEqual(try Data(contentsOf: file), original)
+        XCTAssertEqual(balances(in: folder), [150, 70])
         XCTAssertEqual(chmod(recovery.path, 0o600), 0)
         XCTAssertEqual(try Data(contentsOf: recovery), bytes)
         XCTAssertTrue(second.saveIfNeeded())
         XCTAssertEqual(balances(in: folder), [150, 80, 70])
+    }
+
+    @MainActor
+    func testClaimsWaitForUnreadableReceiptsBeforeReplayingAnEqualTimeBalance() throws {
+        let folder = try makeFolder()
+        let file = folder.appendingPathComponent(HistoryStore.fileName)
+        try Data("{".utf8).write(to: file)
+        let clock = at(3600)
+        let store = HistoryStore(directory: folder)
+        HistoryStore.queue([money(100, at: at(60))], in: folder, now: clock)
+        store.takePending(now: clock)
+        store.record(money(80, at: at(60)), now: clock)
+        XCTAssertFalse(store.saveIfNeeded())
+        try Data("{}".utf8).write(to: file)
+        let receipts = folder.appendingPathComponent("history-recovery.json")
+        XCTAssertEqual(chmod(receipts.path, 0), 0)
+        defer { chmod(receipts.path, 0o600) }
+        let next = HistoryStore(directory: folder)
+        next.takePending(now: clock)
+        XCTAssertEqual(chmod(receipts.path, 0o600), 0)
+        XCTAssertTrue(next.saveIfNeeded())
+        XCTAssertEqual(balances(in: folder), [80])
+    }
+
+    @MainActor
+    func testReturningToTheAppKeepsAnEqualTimeCorrectionWrittenDuringRollback() throws {
+        let folder = try makeFolder()
+        let file = folder.appendingPathComponent(HistoryStore.fileName)
+        try Data("{".utf8).write(to: file)
+        let clock = at(3600)
+        let store = HistoryStore(directory: folder)
+        store.record(money(100, at: at(60)), now: clock)
+        XCTAssertFalse(store.saveIfNeeded())
+        var previousVersion: [String: UsageHistory] = [:]
+        XCTAssertTrue(HistoryStore.fold(money(80, at: at(60)), into: &previousVersion, now: clock))
+        try RelayEnvelope.encoder.encode(previousVersion).write(to: file, options: .atomic)
+        let next = HistoryStore(directory: folder)
+        XCTAssertEqual(next.weeks[balanceKey]?.amountPoints.map(\.remaining), [80])
+        XCTAssertEqual(HistoryStore.loadWithPending(from: folder, now: clock)[balanceKey]?.amountPoints.map(\.remaining), [80])
+        XCTAssertTrue(next.saveIfNeeded())
+        XCTAssertEqual(balances(in: folder), [80])
+    }
+
+    @MainActor
+    func testDamagedRecoveryBytesArePreservedWhileNewReadingsStillSave() throws {
+        let folder = try makeFolder()
+        let clock = at(3600)
+        try seed(in: folder, clock: clock)
+        let bad = Data("{".utf8)
+        let recovery = folder.appendingPathComponent("history-recovery.json")
+        try bad.write(to: recovery)
+        for amount in [80.0, 70.0] {
+            let store = HistoryStore(directory: folder)
+            store.record(money(amount, at: at(60)), now: clock)
+            XCTAssertTrue(store.saveIfNeeded())
+            XCTAssertEqual(balances(in: folder), [150, amount])
+        }
+        let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+        let preserved = try XCTUnwrap(files.first { $0.lastPathComponent.hasPrefix("history-recovery.json.damaged-") })
+        XCTAssertEqual(try Data(contentsOf: preserved), bad)
+    }
+
+    @MainActor
+    func testRestoringHistoryDoesNotRepublishExpiredWindows() throws {
+        let folder = try makeFolder()
+        let file = folder.appendingPathComponent(HistoryStore.fileName)
+        let old = at(-9 * 86400)
+        let store = HistoryStore(directory: folder)
+        store.record(money(100, at: old), now: old)
+        XCTAssertTrue(store.saveIfNeeded())
+        let original = try Data(contentsOf: file)
+        try Data("{".utf8).write(to: file)
+        let next = HistoryStore(directory: folder)
+        next.record(weekly(30, at: at(60)), now: at(60))
+        XCTAssertFalse(next.saveIfNeeded())
+        try original.write(to: file)
+        XCTAssertNil(HistoryStore.loadWithPending(from: folder, now: at(60))[balanceKey])
+        XCTAssertTrue(next.saveIfNeeded())
+        XCTAssertTrue(next.relayHistory(for: [.moonshot]).series.isEmpty)
     }
 
     private func at(_ seconds: TimeInterval) -> Date {
