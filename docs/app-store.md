@@ -2,6 +2,14 @@
 
 A draft for App Store Connect. Provider names appear only in the description, as facts, never in the name, subtitle, or keywords. Tokenroom isn't affiliated with any provider.
 
+## What's New — 1.3.8
+
+Usage does less work when you open it with several AI plans connected. Your percentages, pace indicators and close-to-limit warnings update together, and you can expand the warning list to see every plan that needs attention.
+
+Usage history recovers more reliably after an interrupted save. If your iPhone temporarily cannot read the history file, Tokenroom keeps new readings separately and brings them back into your charts when the file is available again.
+
+Today in News prepares releases, voices and status updates faster. A story with a future publication date can no longer take the headline early.
+
 ## What's New — 1.3.7
 
 Submitted 21 November 2026 at 10:42 UTC with build 1.3.7 (1), with the polish overhaul (#80): Waiting for Review, with automatic release after approval to all users. [The delivery record](release-delivery-20261121.md) has the package, upload and submission.
