@@ -311,12 +311,250 @@ final class HistoryQueueDurabilityTests: XCTestCase {
         relaunched.takePending(now: clock)
         XCTAssertEqual(HistoryStore.load(from: folder)[weeklyKey]?.points.map(\.used), [35], "The later one of its hour is recorded meanwhile")
         let waiting = queuedFiles(in: folder)
-        XCTAssertEqual(waiting.count, 1, "The one that can't be read still waits")
+        XCTAssertEqual(waiting.count, 2, "The one that can't be read still waits, beside the later one saved")
         waiting.forEach { chmod($0.path, 0o644) }
+        XCTAssertTrue(HistoryStore.pending(in: folder).isEmpty, "An earlier reading of the hour doesn't count once a later one is saved")
 
         relaunched.takePending(now: clock)
-        XCTAssertEqual(relaunched.weeks[weeklyKey]?.points.map(\.used), [35], "An hour keeps its highest use")
+        XCTAssertEqual(relaunched.weeks[weeklyKey]?.points.map(\.used), [35], "The hour keeps its later reading")
         XCTAssertTrue(queuedFiles(in: folder).isEmpty, "Read at last, so no longer waiting")
+    }
+
+    @MainActor
+    func testAReadingReadableOnlyAfterOneOfItsTimeWasSavedDoesNotReplaceIt() throws {
+        try assertALateReadableReadingDoesNotReplaceTheOneSaved(relaunching: false)
+    }
+
+    @MainActor
+    func testAReadingReadableOnlyAfterOneOfItsTimeWasSavedDoesNotReplaceItAfterARelaunch() throws {
+        try assertALateReadableReadingDoesNotReplaceTheOneSaved(relaunching: true)
+    }
+
+    @MainActor
+    private func assertALateReadableReadingDoesNotReplaceTheOneSaved(relaunching: Bool, file: StaticString = #filePath, line: UInt = #line) throws {
+        try XCTSkipIf(getuid() == 0, "Root reads a file whatever its mode")
+        let folder = try makeFolder()
+        let clock = at(3 * 3600)
+        var store = HistoryStore(directory: folder)
+        let next = { if relaunching { store = HistoryStore(directory: folder) } }
+        HistoryStore.queue([money(100, at: at(60))], in: folder, now: clock)
+        queuedFiles(in: folder).forEach { XCTAssertEqual(chmod($0.path, 0), 0, file: file, line: line) }
+        store.takePending(now: clock)
+        XCTAssertNil(HistoryStore.load(from: folder)[balanceKey], "It can't be read yet", file: file, line: line)
+
+        HistoryStore.queue([money(80, at: at(60))], in: folder, now: clock)
+        next()
+        store.takePending(now: clock)
+        XCTAssertEqual(HistoryStore.load(from: folder)[balanceKey]?.amountPoints.map(\.remaining), [80], "The one queued later is saved meanwhile", file: file, line: line)
+        XCTAssertEqual(shown(in: folder, at: clock), [80], file: file, line: line)
+
+        queuedFiles(in: folder).forEach { chmod($0.path, 0o644) }
+        XCTAssertEqual(shown(in: folder, at: clock), [80], "A widget keeps the one queued later", file: file, line: line)
+        XCTAssertEqual(waiting(in: folder), [], "The earlier one no longer counts", file: file, line: line)
+
+        next()
+        store.takePending(now: clock)
+        XCTAssertEqual(store.weeks[balanceKey]?.amountPoints.map(\.remaining), [80], "So does the app", file: file, line: line)
+        XCTAssertEqual(HistoryStore.load(from: folder)[balanceKey]?.amountPoints.map(\.remaining), [80], file: file, line: line)
+        XCTAssertEqual(shown(in: folder, at: clock), [80], file: file, line: line)
+        XCTAssertTrue(queuedFiles(in: folder).isEmpty, "Nothing is left behind", file: file, line: line)
+
+        next()
+        store.takePending(now: clock)
+        XCTAssertEqual(HistoryStore.load(from: folder)[balanceKey]?.amountPoints.map(\.remaining), [80], file: file, line: line)
+    }
+
+    @MainActor
+    func testAReadingReadableLateIsRecordedWhenItIsLaterThanTheOneSaved() throws {
+        try XCTSkipIf(getuid() == 0, "Root reads a file whatever its mode")
+        let folder = try makeFolder()
+        let clock = at(3 * 3600)
+        HistoryStore.queue([money(100, at: at(600))], in: folder, now: clock)
+        queuedFiles(in: folder).forEach { XCTAssertEqual(chmod($0.path, 0), 0) }
+        HistoryStore(directory: folder).takePending(now: clock)
+        HistoryStore.queue([money(80, at: at(60))], in: folder, now: clock)
+        HistoryStore(directory: folder).takePending(now: clock)
+        XCTAssertEqual(HistoryStore.load(from: folder)[balanceKey]?.amountPoints.map(\.remaining), [80])
+
+        queuedFiles(in: folder).forEach { chmod($0.path, 0o644) }
+        XCTAssertEqual(shown(in: folder, at: clock), [100], "A widget shows the hour's later reading")
+        XCTAssertEqual(waiting(in: folder), [100])
+        let relaunched = HistoryStore(directory: folder)
+        relaunched.takePending(now: clock)
+        let week = try XCTUnwrap(HistoryStore.load(from: folder)[balanceKey])
+        XCTAssertEqual(week.amountPoints.map(\.remaining), [100])
+        XCTAssertEqual(week.amountCheckedAt, at(600))
+        XCTAssertTrue(queuedFiles(in: folder).isEmpty)
+    }
+
+    @MainActor
+    func testANewReadingIsSavedAtOnceWhileAnotherOfItsHourCannotBeRead() throws {
+        try XCTSkipIf(getuid() == 0, "Root reads a file whatever its mode")
+        let folder = try makeFolder()
+        let clock = at(3 * 3600)
+        HistoryStore.queue([money(100, at: at(60))], in: folder, now: clock)
+        queuedFiles(in: folder).forEach { XCTAssertEqual(chmod($0.path, 0), 0) }
+        let store = HistoryStore(directory: folder)
+        store.takePending(now: clock)
+
+        for (remaining, seconds) in [(80.0, 60.0), (75, 60), (70, 300), (65, 300)] {
+            HistoryStore.queue([money(remaining, at: at(seconds))], in: folder, now: clock)
+            store.takePending(now: clock)
+            XCTAssertEqual(HistoryStore.load(from: folder)[balanceKey]?.amountPoints.map(\.remaining), [remaining], "Saved in the refresh that takes it")
+            XCTAssertEqual(shown(in: folder, at: clock), [remaining])
+            XCTAssertLessThanOrEqual(queuedFiles(in: folder).count, 3)
+        }
+        HistoryStore.queue([money(90, at: at(120))], in: folder, now: clock)
+        XCTAssertEqual(shown(in: folder, at: clock), [65], "An earlier reading of the hour doesn't show over a later one saved")
+        store.takePending(now: clock)
+        XCTAssertEqual(HistoryStore.load(from: folder)[balanceKey]?.amountPoints.map(\.remaining), [65])
+        store.takePending(now: clock)
+        XCTAssertEqual(queuedFiles(in: folder).count, 2, "The one that can't be read and the latest one saved")
+
+        queuedFiles(in: folder).forEach { chmod($0.path, 0o644) }
+        XCTAssertEqual(shown(in: folder, at: clock), [65])
+        HistoryStore(directory: folder).takePending(now: clock)
+        let week = try XCTUnwrap(HistoryStore.load(from: folder)[balanceKey])
+        XCTAssertEqual(week.amountPoints.map(\.remaining), [65])
+        XCTAssertEqual(week.amountCheckedAt, at(300))
+        XCTAssertTrue(queuedFiles(in: folder).isEmpty)
+    }
+
+    @MainActor
+    func testTheReadingKeptForOneThatCannotBeReadLeavesWithItsHour() throws {
+        try XCTSkipIf(getuid() == 0, "Root reads a file whatever its mode")
+        let folder = try makeFolder()
+        let clock = at(3 * 3600)
+        HistoryStore.queue([money(100, at: at(60))], in: folder, now: clock)
+        queuedFiles(in: folder).forEach { XCTAssertEqual(chmod($0.path, 0), 0) }
+        let store = HistoryStore(directory: folder)
+        store.takePending(now: clock)
+        HistoryStore.queue([money(80, at: at(60))], in: folder, now: clock)
+        store.takePending(now: clock)
+        XCTAssertEqual(queuedFiles(in: folder).count, 2)
+
+        HistoryStore(directory: folder).takePending(now: at(8 * 86_400))
+        XCTAssertTrue(queuedFiles(in: folder).isEmpty, "What the week no longer holds goes")
+    }
+
+    @MainActor
+    func testAFolderThatCannotBeListedIsNotClaimedInto() throws {
+        try XCTSkipIf(getuid() == 0, "Root lists a folder whatever its mode")
+        let folder = try makeFolder()
+        let clock = at(3 * 3600)
+        HistoryStore.queue([money(50, at: at(600))], in: folder, now: clock)
+        try blockSaves(in: folder)
+        HistoryStore(directory: folder).takePending(now: clock)
+        HistoryStore.queue([money(80, at: at(60))], in: folder, now: clock)
+        let taking = folder.appendingPathComponent(HistoryStore.takingFolderName)
+        XCTAssertEqual(chmod(taking.path, 0o300), 0)
+        XCTAssertThrowsError(try FileManager.default.contentsOfDirectory(atPath: taking.path), "It can be written to, not listed")
+
+        HistoryStore(directory: folder).takePending(now: clock)
+        XCTAssertEqual(chmod(taking.path, 0o755), 0)
+        XCTAssertEqual(amounts(in: folder).sorted(), [50, 80], "The reading a failed save left is still there")
+
+        try allowSaves(in: folder)
+        let relaunched = HistoryStore(directory: folder)
+        relaunched.takePending(now: clock)
+        let week = try XCTUnwrap(HistoryStore.load(from: folder)[balanceKey])
+        XCTAssertEqual(week.amountPoints.map(\.remaining), [50], "The hour's later reading is the one recorded")
+        XCTAssertEqual(week.amountCheckedAt, at(600))
+        XCTAssertTrue(queuedFiles(in: folder).isEmpty)
+    }
+
+    func testAClaimTakesANameOfItsOwnAndReplacesNothing() throws {
+        let folder = try makeFolder()
+        let clock = at(3 * 3600)
+        let taking = folder.appendingPathComponent(HistoryStore.takingFolderName, isDirectory: true)
+        try FileManager.default.createDirectory(at: taking, withIntermediateDirectories: true)
+        HistoryStore.queue([money(80, at: at(60))], in: folder, now: clock)
+        let queued = try XCTUnwrap(queuedFiles(in: folder).first)
+        let slot = queued.deletingPathExtension().lastPathComponent
+        try RelayEnvelope.encoder.encode(money(50, at: at(600))).write(to: taking.appendingPathComponent("\(slot).1.json"))
+        try RelayEnvelope.encoder.encode(money(60, at: at(900))).write(to: taking.appendingPathComponent("\(slot).2.json"))
+
+        XCTAssertEqual(HistoryStore.claim(queued, slot: slot, in: taking, after: 0), 3, "The first name nothing holds")
+        let held = Dictionary(uniqueKeysWithValues: queuedFiles(in: folder).map { ($0.lastPathComponent, amount(at: $0)) })
+        XCTAssertEqual(held, ["\(slot).1.json": 50, "\(slot).2.json": 60, "\(slot).3.json": 80])
+        XCTAssertNil(HistoryStore.claim(queued, slot: slot, in: taking, after: 3), "Nothing left to move")
+        XCTAssertEqual(queuedFiles(in: folder).count, 3)
+    }
+
+    @MainActor
+    func testACorrectedEarlierReadingReplacesItsRawSampleInPlace() throws {
+        let folder = try makeFolder()
+        let clock = at(3 * 3600)
+        HistoryStore.queue([weekly(30, at: at(60)), weekly(35, at: at(3660)), weekly(41, at: at(7260))], in: folder, now: clock)
+        try blockSaves(in: folder)
+        let store = HistoryStore(directory: folder)
+        store.takePending(now: clock)
+
+        HistoryStore.queue([weekly(38, at: at(3660))], in: folder, now: clock)
+        try allowSaves(in: folder)
+        store.takePending(now: clock)
+        var samples = store.samples(provider: .openai, window: "weekly")
+        XCTAssertEqual(samples.map(\.date), [at(60), at(3660), at(7260)], "One raw reading a time, oldest first")
+        XCTAssertEqual(samples.map(\.used), [30, 38, 41])
+        XCTAssertEqual(HistoryStore.load(from: folder)[weeklyKey]?.points.map(\.used), [30, 38, 41])
+        XCTAssertEqual(HistoryStore.loadWithPending(from: folder, now: clock)[weeklyKey]?.points.map(\.used), [30, 38, 41])
+        XCTAssertTrue(queuedFiles(in: folder).isEmpty)
+
+        HistoryStore.queue([weekly(33, at: at(1800))], in: folder, now: clock)
+        store.takePending(now: clock)
+        samples = store.samples(provider: .openai, window: "weekly")
+        XCTAssertEqual(samples.map(\.date), [at(60), at(1800), at(3660), at(7260)], "A reading from between two goes between them")
+        XCTAssertEqual(samples.map(\.used), [30, 33, 38, 41])
+    }
+
+    @MainActor
+    func testACorrectedEarlierReadingIsInOrderAfterARelaunch() throws {
+        let folder = try makeFolder()
+        let clock = at(3 * 3600)
+        HistoryStore.queue([weekly(30, at: at(60)), weekly(35, at: at(3660)), weekly(41, at: at(7260))], in: folder, now: clock)
+        try blockSaves(in: folder)
+        HistoryStore(directory: folder).takePending(now: clock)
+        HistoryStore.queue([weekly(38, at: at(3660))], in: folder, now: clock)
+        XCTAssertEqual(HistoryStore.loadWithPending(from: folder, now: clock)[weeklyKey]?.points.map(\.used), [30, 38, 41], "Widgets show the correction")
+
+        try allowSaves(in: folder)
+        let relaunched = HistoryStore(directory: folder)
+        relaunched.takePending(now: clock)
+        let samples = relaunched.samples(provider: .openai, window: "weekly")
+        XCTAssertEqual(samples.map(\.date), [at(60), at(3660), at(7260)])
+        XCTAssertEqual(samples.map(\.used), [30, 38, 41])
+        XCTAssertEqual(HistoryStore.load(from: folder)[weeklyKey]?.points.map(\.used), [30, 38, 41])
+        XCTAssertTrue(queuedFiles(in: folder).isEmpty)
+    }
+
+    @MainActor
+    func testRawSamplesStayInOrderAndWithinCapacityWhenEarlierOnesArrive() {
+        let store = HistoryStore(directory: nil)
+        let clock = at(3 * 3600)
+        let count = HistoryStore.recentCapacity + 8
+        for index in 0..<count {
+            store.record(weekly(Double(index % 50), at: at(Double(index) * 60)), now: clock)
+        }
+        let kept = (8..<count).map { at(Double($0) * 60) }
+        XCTAssertEqual(store.samples(provider: .openai, window: "weekly").map(\.date), kept)
+
+        store.record(weekly(77, at: at(40 * 60)), now: clock)
+        var samples = store.samples(provider: .openai, window: "weekly")
+        XCTAssertEqual(samples.map(\.date), kept, "A corrected reading keeps its place")
+        XCTAssertEqual(samples.first { $0.date == at(40 * 60) }?.used, 77)
+
+        store.record(weekly(12, at: at(0)), now: clock)
+        samples = store.samples(provider: .openai, window: "weekly")
+        XCTAssertEqual(samples.map(\.date), kept, "One older than every sample kept doesn't push a newer one out")
+
+        store.record(weekly(66, at: at(40 * 60 + 30)), now: clock)
+        samples = store.samples(provider: .openai, window: "weekly")
+        XCTAssertEqual(samples.count, HistoryStore.recentCapacity)
+        XCTAssertEqual(samples.map(\.date), samples.map(\.date).sorted(), "Oldest first")
+        XCTAssertEqual(Set(samples.map(\.date)).count, samples.count, "One sample a time")
+        XCTAssertEqual(samples.first?.date, at(9 * 60), "The oldest makes room")
+        XCTAssertEqual(samples.first { $0.date == at(40 * 60 + 30) }?.used, 66)
+        XCTAssertEqual(samples.last?.date, kept.last)
     }
 
     private func at(_ seconds: TimeInterval) -> Date {
@@ -358,6 +596,22 @@ final class HistoryQueueDurabilityTests: XCTestCase {
     private func cutShort(in folder: URL) throws {
         try FileManager.default.moveItem(at: folder.appendingPathComponent(HistoryStore.pendingFolderName),
                                          to: folder.appendingPathComponent(HistoryStore.takingFolderName))
+    }
+
+    private func amount(at url: URL) -> Double? {
+        (try? Data(contentsOf: url)).flatMap { try? RelayEnvelope.decoder.decode(QuotaSnapshot.self, from: $0) }?.windows.first?.amount?.remaining
+    }
+
+    private func amounts(in folder: URL) -> [Double] {
+        queuedFiles(in: folder).compactMap(amount(at:))
+    }
+
+    private func waiting(in folder: URL) -> [Double] {
+        HistoryStore.pending(in: folder).compactMap { $0.windows.first?.amount?.remaining }
+    }
+
+    private func shown(in folder: URL, at clock: Date) -> [Double]? {
+        HistoryStore.loadWithPending(from: folder, now: clock)[balanceKey]?.amountPoints.map(\.remaining)
     }
 
     private func queuedFiles(in folder: URL) -> [URL] {
