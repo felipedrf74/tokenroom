@@ -39,12 +39,14 @@ struct PopoverView: View {
             }
 
             let providers = store.popoverProviders
+            let detail = detailProvider
+            let connected = providers.isEmpty || detail != nil ? [] : store.connectedProviders
             if providers.isEmpty {
                 emptyProviders
                     .padding(.horizontal, TokenroomTokens.cardPadding)
                     .padding(.bottom, 8)
             } else {
-                if let provider = detailProvider {
+                if let provider = detail {
                     ViewThatFits(in: .vertical) {
                         providerDetail(provider)
                             .fixedSize(horizontal: false, vertical: true)
@@ -57,10 +59,10 @@ struct PopoverView: View {
                     .id(provider)
                 } else {
                     ViewThatFits(in: .vertical) {
-                        providerList
+                        providerList(connected)
                             .fixedSize(horizontal: false, vertical: true)
                         ScrollView {
-                            providerList.padding(.bottom, 24)
+                            providerList(connected).padding(.bottom, 24)
                         }
                         .mask(Self.scrollFade)
                     }
@@ -68,7 +70,7 @@ struct PopoverView: View {
                 }
             }
 
-            highlights
+            highlights(connected)
                 .padding(.horizontal, sideInset)
                 .padding(.top, 10)
 
@@ -97,12 +99,13 @@ struct PopoverView: View {
     private var sideInset: CGFloat { isClassic ? TokenroomTokens.cardPadding : 20 }
 
     private func providerDetail(_ provider: Provider) -> some View {
-        PopoverProviderView(card: providerCard(provider, expanded: true), style: style, showsDetails: true)
+        PopoverProviderView(card: providerCard(provider, expanded: true, compact: false), style: style, showsDetails: true)
     }
 
-    private var providerList: some View {
-        VStack(spacing: TokenroomTokens.cardGap) {
-            cards(store.connectedProviders)
+    private func providerList(_ connected: [Provider]) -> some View {
+        let compact = isClassic && connected.count > 5
+        return VStack(spacing: TokenroomTokens.cardGap) {
+            cards(connected, compact: compact)
             let disconnected = store.disconnectedProviders
             if !disconnected.isEmpty {
                 Button {
@@ -122,24 +125,20 @@ struct PopoverView: View {
                 .padding(.horizontal, sideInset)
                 .accessibilityLabel("Not connected, \(disconnected.count) providers")
                 if showsDisconnected {
-                    cards(disconnected)
+                    cards(disconnected, compact: compact)
                 }
             }
         }
     }
 
-    private var isCompact: Bool {
-        store.connectedProviders.count > 5
-    }
-
-    private func cards(_ providers: [Provider]) -> some View {
-        VStack(spacing: isClassic ? (isCompact ? 6 : TokenroomTokens.cardGap) : 0) {
+    private func cards(_ providers: [Provider], compact: Bool) -> some View {
+        VStack(spacing: isClassic ? (compact ? 6 : TokenroomTokens.cardGap) : 0) {
             ForEach(providers, id: \.self) { provider in
                 let isExpanded = expanded.contains(provider)
                 if isClassic {
-                    providerCard(provider, expanded: isExpanded)
+                    providerCard(provider, expanded: isExpanded, compact: compact)
                 } else {
-                    PopoverProviderView(card: providerCard(provider, expanded: false), style: style) {
+                    PopoverProviderView(card: providerCard(provider, expanded: false, compact: false), style: style) {
                         selectedProvider = provider
                     }
                     if provider != providers.last { Divider().padding(.horizontal, 20) }
@@ -149,12 +148,12 @@ struct PopoverView: View {
         .padding(.horizontal, isClassic ? TokenroomTokens.cardPadding : 0)
     }
 
-    private func providerCard(_ provider: Provider, expanded: Bool) -> ProviderCard {
+    private func providerCard(_ provider: Provider, expanded: Bool, compact: Bool) -> ProviderCard {
         ProviderCard(
             provider: provider, status: store.presentationStatus(for: provider), checkedAt: store.lastChecked(provider),
             pace: store.pace(for: provider, now: store.presentationNow),
             windowPaces: expanded ? store.windowPaces(for: provider, now: store.presentationNow) : [:],
-            weeks: store.weeks(for: provider), isExpanded: expanded, isCompact: isClassic && isCompact,
+            weeks: store.weeks(for: provider), isExpanded: expanded, isCompact: compact,
             onToggleExpanded: { if isClassic { toggle(provider) } else { selectedProvider = provider } },
             signInPhase: store.signIn.phase, onSignIn: { store.signIn.signIn(provider) },
             onCancelSignIn: { store.signIn.cancel() }, onInstall: { store.signIn.openInstallPage(provider) },
@@ -171,8 +170,8 @@ struct PopoverView: View {
     }
 
     @ViewBuilder
-    private var highlights: some View {
-        let banked: (count: Int, providers: [Provider]) = showsBankedPill ? store.bankedResets : (0, [])
+    private func highlights(_ connected: [Provider]) -> some View {
+        let banked = shownBanked(store.bankedResets(among: connected))
         let news = store.settings.newsEnabled ? store.news : nil
         let models = news?.unseenModelCount ?? 0
         let updates = news?.unseenReleaseCount ?? 0
@@ -184,8 +183,8 @@ struct PopoverView: View {
         }
     }
 
-    private var showsBankedPill: Bool {
-        detailProvider == nil && !(isClassic && !store.bankedResets.providers.isEmpty && store.bankedResets.providers.allSatisfy(expanded.contains))
+    private func shownBanked(_ banked: (count: Int, providers: [Provider])) -> (count: Int, providers: [Provider]) {
+        isClassic && !banked.providers.isEmpty && banked.providers.allSatisfy(expanded.contains) ? (0, []) : banked
     }
 
     private func highlightPills(banked: (count: Int, providers: [Provider]), models: Int, updates: Int, short: Bool) -> some View {

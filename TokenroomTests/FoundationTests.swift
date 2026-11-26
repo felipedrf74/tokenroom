@@ -666,6 +666,33 @@ final class FoundationTests: XCTestCase {
         XCTAssertEqual(store.bankedResets.providers, [.openai])
     }
 
+    @MainActor
+    func testBankedResetsCountedFromAGivenListMatchTheStoresOwn() throws {
+        let defaults = makeDefaults()
+        defaults.set(["openai", "claude", "cursor", "grok"], forKey: "enabledProviders")
+        let store = QuotaStore(settings: AppSettings(defaults: defaults), clients: [], cache: SnapshotCache(directory: try makeFolder()))
+        var codex = snapshot(.openai, used: 20)
+        codex.banked = BankedResets(available: 2)
+        var claude = snapshot(.claude, used: 80)
+        claude.banked = BankedResets(available: 1)
+        var grok = snapshot(.grok, used: 50)
+        grok.banked = BankedResets(available: 0)
+        store.statuses = [
+            .openai: .live(codex), .claude: .live(claude), .grok: .live(grok),
+            .cursor: .signedOut(Provider.cursor.signInHint),
+        ]
+        let connected = store.connectedProviders
+        XCTAssertEqual(connected, [.claude, .grok, .openai], "Most used first")
+        let counted = store.bankedResets(among: connected)
+        XCTAssertEqual(counted.count, store.bankedResets.count)
+        XCTAssertEqual(counted.providers, store.bankedResets.providers)
+        XCTAssertEqual(counted.count, 3)
+        XCTAssertEqual(counted.providers, [.claude, .openai], "The pill opens the first provider in the popover's order")
+        XCTAssertEqual(store.bankedResets(among: [.openai, .claude]).providers, [.openai, .claude], "The order is the list's, not the store's")
+        XCTAssertEqual(store.bankedResets(among: []).count, 0, "A provider's detail and an empty popover count nothing")
+        XCTAssertEqual(store.bankedResets(among: []).providers, [])
+    }
+
     func testABankedResetPastItsExpiryIsNoLongerCounted() {
         let measured = Date(timeIntervalSince1970: 1_790_000_000)
         let noon = measured.addingTimeInterval(3 * 3600)

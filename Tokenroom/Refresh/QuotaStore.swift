@@ -615,9 +615,13 @@ final class QuotaStore {
     }
 
     var bankedResets: (count: Int, providers: [Provider]) {
+        bankedResets(among: connectedProviders)
+    }
+
+    func bankedResets(among connected: [Provider]) -> (count: Int, providers: [Provider]) {
         var count = 0
         var providers: [Provider] = []
-        for provider in connectedProviders {
+        for provider in connected {
             if let available = statuses[provider]?.snapshot?.availableBanked(at: presentationNow)?.available, available > 0 {
                 count += available
                 providers.append(provider)
