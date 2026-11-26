@@ -188,8 +188,6 @@ final class HistoryQueueDurabilityTests: XCTestCase {
         try assertAReadingQueuedDuringTheReadIsKept(whileReading: try RelayEnvelope.encoder.encode(earlier))
     }
 
-    /// A widget replaces a queued file while the app is still reading the one it found there.
-    /// `slow` takes long enough to read that the widget's write lands in the middle.
     @MainActor
     private func assertAReadingQueuedDuringTheReadIsKept(whileReading slow: Data, file: StaticString = #filePath, line: UInt = #line) throws {
         let folder = try makeFolder()

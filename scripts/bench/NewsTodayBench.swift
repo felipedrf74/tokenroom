@@ -209,7 +209,6 @@ struct NewsTodayBench {
         String(format: "%.3f", value)
     }
 
-    /// A CSV field (RFC 4180): quoted when it holds a comma, a quote or a line break.
     static func csvField(_ field: String) -> String {
         guard field.unicodeScalars.contains(where: { $0 == "," || $0 == "\"" || $0 == "\n" || $0 == "\r" }) else { return field }
         return "\"" + field.replacingOccurrences(of: "\"", with: "\"\"") + "\""
