@@ -116,7 +116,7 @@ git diff --quiet HEAD -- Shared Tokenroom scripts/bench scripts/bench-mac-icons.
 bench() { "$OUT/$1-$2/TokenroomIconBench.app/Contents/MacOS/TokenroomIconBench" "${@:3}"; }
 
 raw="$OUT/present.csv"
-print "variant,catalog,run,set,scale,first_show_wall_ms,cold_cpu_ms,cold_footprint_kb,churn_cpu_ms_per_generation,churn_footprint_kb,churn_peak_kb,tick_cpu_ms_per_tick,final_footprint_kb" > "$raw"
+print "variant,catalog,run,set,scale,first_show_wall_ms,cold_cpu_ms,cold_footprint_kb,churn_cpu_ms_per_generation,churn_footprint_kb,churn_sampled_max_kb,tick_cpu_ms_per_tick,final_footprint_kb" > "$raw"
 for run in {1..$RUNS}; do
   for kind in $kinds; do
     for set in popover all; do
@@ -150,7 +150,7 @@ fields = [
     ("cold_footprint_kb", "cold footprint KB"),
     ("churn_cpu_ms_per_generation", "rebuild CPU ms"),
     ("churn_footprint_kb", "footprint after rebuilds KB"),
-    ("churn_peak_kb", "peak footprint KB"),
+    ("churn_sampled_max_kb", "max sampled footprint KB"),
     ("tick_cpu_ms_per_tick", "unrelated update CPU ms"),
 ]
 print()

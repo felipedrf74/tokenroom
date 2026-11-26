@@ -55,8 +55,7 @@ final class MenuBarTally {
 enum MenuBarObservationBench {
     static func now() -> UInt64 { clock_gettime_nsec_np(CLOCK_UPTIME_RAW) }
 
-    static func makeStore() -> (QuotaStore, cleanup: () -> Void) {
-        let moment = Date()
+    static func makeStore(at moment: Date) -> (QuotaStore, cleanup: () -> Void) {
         let samples = SampleData.snapshots(now: moment)
         let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("TokenroomMenuBench-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
@@ -97,7 +96,9 @@ enum MenuBarObservationBench {
         return next
     }
 
-    static func run(batched: Bool, spacing: UInt64, store: QuotaStore) async -> String {
+    static func run(batched: Bool, spacing: UInt64, moment: Date) async -> String {
+        let (store, cleanup) = makeStore(at: moment)
+        defer { cleanup() }
         let tally = MenuBarTally()
         let read: () -> MenuBarReading = {
             let began = now()
@@ -122,22 +123,22 @@ enum MenuBarObservationBench {
         let providers = Provider.allCases.filter { store.statuses[$0]?.snapshot != nil && store.settings.isEnabled($0) }
         let first = now()
         var last = first
-        for provider in providers {
+        for (index, provider) in providers.enumerated() {
             guard let snapshot = store.statuses[provider]?.snapshot else { continue }
-            let date = Date()
+            let date = moment.addingTimeInterval(Double(index + 1))
             store.statuses[provider] = .live(bumped(snapshot, at: date))
             store.checkedAt[provider] = date
             last = now()
             await Task.yield()
-            store.ageReadings(at: Date())
+            store.ageReadings(at: date)
             await Task.yield()
             if spacing > 0 { try? await Task.sleep(nanoseconds: spacing) }
         }
         try? await Task.sleep(for: .milliseconds(400))
         let final = MenuBarReading(store)
         let after = tally.applied.dropFirst(before.applied)
-        let firstShown = after.first { $0.reading != initial }?.at
-        let finalShown = after.first { $0.reading == final }?.at
+        let firstDelivered = after.first { $0.reading != initial }?.at
+        let finalDelivered = after.first { $0.reading == final }?.at
         func ms(_ value: UInt64?, since: UInt64) -> String {
             guard let value else { return "never" }
             return String(format: "%.1f", (Double(value) - Double(since)) / 1_000_000)
@@ -151,13 +152,14 @@ enum MenuBarObservationBench {
             "\(tally.reads - before.reads)",
             String(format: "%.3f", Double(tally.readNanos - before.nanos) / 1_000_000),
             "\(after.count)",
-            ms(firstShown, since: first),
-            ms(finalShown, since: last),
+            ms(firstDelivered, since: first),
+            ms(finalDelivered, since: last),
         ].joined(separator: ",")
     }
 
     static func main() async {
-        let (store, cleanup) = makeStore()
+        let moment = Date()
+        let (store, cleanup) = makeStore(at: moment)
         defer { cleanup() }
         var costs: [UInt64] = []
         for _ in 0..<500 {
@@ -167,12 +169,12 @@ enum MenuBarObservationBench {
         }
         costs.sort()
         print("one reading of the menu bar (\(MenuBarReading(store).meters.count) meters): median \(String(format: "%.1f", Double(costs[costs.count / 2]) / 1000)) us, p90 \(String(format: "%.1f", Double(costs[costs.count * 9 / 10]) / 1000)) us")
-        print("observer,providers,spacing_ms,burst_ms,readings,reading_ms,applied,first_shown_after_first_change_ms,last_shown_after_last_change_ms")
+        print("observer,providers,spacing_ms,burst_ms,readings,reading_ms,applied,first_delivered_after_first_change_ms,last_delivered_after_last_change_ms")
         let rounds = Int(ProcessInfo.processInfo.environment["BENCH_ROUNDS"] ?? "5") ?? 5
         for spacing in [UInt64(0), 2_000_000, 10_000_000, 25_000_000, 60_000_000] {
-            for _ in 0..<rounds {
-                for batched in [false, true] {
-                    print(await run(batched: batched, spacing: spacing, store: store))
+            for round in 0..<rounds {
+                for batched in round.isMultiple(of: 2) ? [false, true] : [true, false] {
+                    print(await run(batched: batched, spacing: spacing, moment: moment))
                 }
             }
         }

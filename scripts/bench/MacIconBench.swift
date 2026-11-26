@@ -246,7 +246,7 @@ enum MacIconBench {
         let scale = window.backingScaleFactor
         func kb(_ bytes: UInt64) -> Int64 { Int64(bytes) / 1024 }
         func ms(_ nanos: UInt64) -> String { String(format: "%.3f", Double(nanos) / 1_000_000) }
-        print("set,scale,first_show_wall_ms,cold_cpu_ms,cold_footprint_kb,churn_cpu_ms_per_generation,churn_footprint_kb,churn_peak_kb,tick_cpu_ms_per_tick,final_footprint_kb")
+        print("set,scale,first_show_wall_ms,cold_cpu_ms,cold_footprint_kb,churn_cpu_ms_per_generation,churn_footprint_kb,churn_sampled_max_kb,tick_cpu_ms_per_tick,final_footprint_kb")
         print([
             set,
             "\(scale)",

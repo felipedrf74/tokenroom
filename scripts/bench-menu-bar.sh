@@ -39,7 +39,7 @@ import csv, statistics, sys
 lines = open(sys.argv[1]).read().strip().split("\n")
 rows = list(csv.DictReader(lines[1:]))
 print("\nMedian per burst of one result per provider (each followed by the presentation clock's restart)")
-print(f"{'spacing':>8} {'observer':>8} {'readings':>9} {'reading ms':>11} {'applied':>8} {'first shown ms':>15} {'last shown ms':>14}")
+print(f"{'spacing':>8} {'observer':>8} {'readings':>9} {'reading ms':>11} {'applied':>8} {'first delivery ms':>15} {'last delivery ms':>14}")
 for spacing in sorted({r["spacing_ms"] for r in rows}, key=float):
     for observer in ("legacy", "batched"):
         group = [r for r in rows if r["spacing_ms"] == spacing and r["observer"] == observer]
@@ -47,5 +47,5 @@ for spacing in sorted({r["spacing_ms"] for r in rows}, key=float):
             values = [float(r[key]) for r in group if r[key] != "never"]
             return statistics.median(values) if values else float("nan")
         print(f"{spacing:>6}ms {observer:>8} {median('readings'):9.0f} {median('reading_ms'):11.3f} {median('applied'):8.0f} "
-              f"{median('first_shown_after_first_change_ms'):15.1f} {median('last_shown_after_last_change_ms'):14.1f}")
+              f"{median('first_delivered_after_first_change_ms'):15.1f} {median('last_delivered_after_last_change_ms'):14.1f}")
 SUMMARY
