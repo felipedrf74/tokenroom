@@ -54,8 +54,9 @@ final class HistoryStore {
         record(snapshot, now: .now)
     }
 
-    func record(_ snapshot: QuotaSnapshot, now: Date) {
-        guard snapshot.fetchedAt <= now.addingTimeInterval(UsageHistory.step) else { return }
+    @discardableResult
+    func record(_ snapshot: QuotaSnapshot, now: Date) -> Bool {
+        guard Self.accepts(snapshot, now: now) else { return false }
         if Self.fold(snapshot, into: &weeks, now: now) {
             dirty = true
         }
@@ -87,10 +88,15 @@ final class HistoryStore {
             recent[key] = samples
         }
         prune(now: now)
+        return true
+    }
+
+    nonisolated static func accepts(_ snapshot: QuotaSnapshot, now: Date) -> Bool {
+        snapshot.fetchedAt <= now.addingTimeInterval(UsageHistory.step)
     }
 
     nonisolated static func fold(_ snapshot: QuotaSnapshot, into weeks: inout [String: UsageHistory], now: Date) -> Bool {
-        guard snapshot.fetchedAt <= now.addingTimeInterval(UsageHistory.step) else { return false }
+        guard accepts(snapshot, now: now) else { return false }
         var anyChanged = false
         for window in snapshot.windows {
             let key = RelayHistory.key(provider: snapshot.provider.rawValue, window: window.id)
@@ -310,7 +316,11 @@ final class HistoryStore {
             }
             switch Self.queued(at: file.url) {
             case .reading(let snapshot):
-                readings.append((file, snapshot))
+                if taken[file.name] != nil || Self.accepts(snapshot, now: now) {
+                    readings.append((file, snapshot))
+                } else {
+                    discard(file)
+                }
             case .invalid:
                 discard(file)
             case .missing:
@@ -329,8 +339,7 @@ final class HistoryStore {
             let behind = floors[file.slot].map { Self.isBehind($0, time: snapshot.fetchedAt, claim: file.claim) } ?? false
             if behind || latest[file.slot] != file.name {
                 if !discard(file) { waiting.insert(file.slot) }
-            } else if taken[file.name] == nil {
-                record(snapshot, now: now)
+            } else if taken[file.name] == nil, record(snapshot, now: now) {
                 taken[file.name] = snapshot.fetchedAt
             }
         }
