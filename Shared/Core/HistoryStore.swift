@@ -52,10 +52,13 @@ final class HistoryStore {
 
     private nonisolated static let writeReceiptName = "history-write-receipt.json"
 
+    private nonisolated static let stagedName = "history-write-staged"
+
     private func removeWriteReceipt() {
-        if let receipt = fileURL?.deletingLastPathComponent().appendingPathComponent(Self.writeReceiptName),
-           FileManager.default.fileExists(atPath: receipt.path) {
-            try? FileManager.default.removeItem(at: receipt)
+        guard let directory = fileURL?.deletingLastPathComponent() else { return }
+        for name in [Self.writeReceiptName, Self.stagedName] {
+            let file = directory.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: file.path) { try? FileManager.default.removeItem(at: file) }
         }
     }
 
@@ -78,7 +81,30 @@ final class HistoryStore {
     private struct WriteReceipt: Codable {
         let origin: FileRevision
         let published: FileRevision
-        let writtenBalances: Set<String>
+        let writtenBalances: [String: FileRevision]
+
+        init(origin: FileRevision, published: FileRevision, writtenBalances: [String: FileRevision]) {
+            self.origin = origin
+            self.published = published
+            self.writtenBalances = writtenBalances
+        }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            origin = try values.decode(FileRevision.self, forKey: .origin)
+            let revision = try values.decode(FileRevision.self, forKey: .published)
+            published = revision
+            do {
+                writtenBalances = try values.decode([String: FileRevision].self, forKey: .writtenBalances)
+            } catch DecodingError.typeMismatch {
+                let keys = try values.decode(Set<String>.self, forKey: .writtenBalances)
+                writtenBalances = Dictionary(uniqueKeysWithValues: keys.map { ($0, revision) })
+            }
+        }
+
+        func revision(for key: String) -> FileRevision {
+            writtenBalances[key] ?? origin
+        }
 
         static func current(in file: URL?, revision: FileRevision?) -> Self? {
             guard let file, let revision,
@@ -91,9 +117,21 @@ final class HistoryStore {
         var snapshot: QuotaSnapshot
         let revision: FileRevision?
 
-        init(snapshot: QuotaSnapshot, revision: FileRevision?) {
+        let balanceRevisions: [String: FileRevision]?
+
+        init(snapshot: QuotaSnapshot, file: URL?) {
             self.snapshot = snapshot
-            self.revision = revision
+            revision = FileRevision(file)
+            if let receipt = WriteReceipt.current(in: file, revision: revision) {
+                var versions: [String: FileRevision] = [:]
+                for window in snapshot.windows where window.amount != nil {
+                    let key = RelayHistory.key(provider: snapshot.provider.rawValue, window: window.id)
+                    versions[key] = receipt.revision(for: key)
+                }
+                balanceRevisions = versions
+            } else {
+                balanceRevisions = nil
+            }
         }
 
         init(from decoder: Decoder) throws {
@@ -101,9 +139,11 @@ final class HistoryStore {
             if values.contains(.snapshot) {
                 snapshot = try values.decode(QuotaSnapshot.self, forKey: .snapshot)
                 revision = try values.decodeIfPresent(FileRevision.self, forKey: .revision)
+                balanceRevisions = try values.decodeIfPresent([String: FileRevision].self, forKey: .balanceRevisions)
             } else {
                 snapshot = try QuotaSnapshot(from: decoder)
                 revision = nil
+                balanceRevisions = nil
             }
         }
 
@@ -113,7 +153,8 @@ final class HistoryStore {
             for index in result.windows.indices {
                 let key = RelayHistory.key(provider: result.provider.rawValue, window: result.windows[index].id)
                 guard let primary = saved[key], primary.amountCheckedAt == result.fetchedAt else { continue }
-                if receipt == nil || receipt?.origin != revision || receipt?.writtenBalances.contains(key) == true {
+                let observed = balanceRevisions?[key] ?? revision
+                if observed == nil || observed != (receipt?.revision(for: key) ?? current) {
                     result.windows[index].amount = nil
                 }
             }
@@ -272,7 +313,7 @@ final class HistoryStore {
     private func writeWhileReceiptsAreUnavailable(_ updated: [String: UsageHistory], to file: URL) -> Bool {
         guard let previous = FileRevision(file) else { return false }
         let directory = file.deletingLastPathComponent()
-        let staged = directory.appendingPathComponent("history-write-staged")
+        let staged = directory.appendingPathComponent(Self.stagedName)
         let receiptURL = directory.appendingPathComponent(Self.writeReceiptName)
         let receipts: [WriteReceipt]
         switch Self.read([WriteReceipt].self, from: receiptURL, preserveMalformed: true) {
@@ -281,18 +322,20 @@ final class HistoryStore {
         case .unavailable: return false
         }
         let prior = receipts.first { $0.published == previous }
-        var balances = prior?.writtenBalances.intersection(updated.keys) ?? []
+        var touched = Set<String>()
         for observation in unsaved {
             let snapshot = observation.snapshot
             for window in snapshot.windows where window.amount?.remainingOrComputed != nil {
                 let key = RelayHistory.key(provider: snapshot.provider.rawValue, window: window.id)
-                if updated[key]?.amountCheckedAt == snapshot.fetchedAt { balances.insert(key) }
+                if updated[key]?.amountCheckedAt == snapshot.fetchedAt { touched.insert(key) }
             }
         }
         defer { try? FileManager.default.removeItem(at: staged) }
         do {
             try RelayEnvelope.encoder.encode(updated).write(to: staged, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
             guard let next = FileRevision(staged), previous == FileRevision(file) else { return false }
+            var balances = prior?.writtenBalances.filter { updated[$0.key] != nil } ?? [:]
+            for key in touched { balances[key] = next }
             let receipt = WriteReceipt(origin: prior?.origin ?? previous, published: next, writtenBalances: balances)
             try RelayEnvelope.encoder.encode([prior, receipt].compactMap { $0 }).write(to: receiptURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
             return rename(staged.path, file.path) == 0
@@ -313,7 +356,7 @@ final class HistoryStore {
         }
         let sample = QuotaSnapshot(provider: snapshot.provider, usedPercent: 0, fetchedAt: snapshot.fetchedAt,
                                    primaryTitle: "", windows: windows)
-        let observation = Observation(snapshot: sample, revision: FileRevision(fileURL))
+        let observation = Observation(snapshot: sample, file: fileURL)
         if unsaved.last != observation {
             unsaved.append(observation)
         }

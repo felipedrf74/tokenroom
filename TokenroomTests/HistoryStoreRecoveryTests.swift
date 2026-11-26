@@ -552,6 +552,41 @@ final class HistoryStoreRecoveryTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: receipt.path))
     }
 
+    @MainActor
+    func testIntermediateCorrectionsSurviveOnlyLaterWritesOfUnrelatedBalances() throws {
+        for sameProvider in [false, true] {
+            let folder = try makeFolder()
+            let main = folder.appendingPathComponent(HistoryStore.fileName)
+            let journal = folder.appendingPathComponent("history-recovery.json")
+            let staged = folder.appendingPathComponent("history-write-staged")
+            let time = at(3600)
+            func write(_ sample: QuotaSnapshot) -> Bool {
+                let store = HistoryStore(directory: folder)
+                store.record(sample, now: time)
+                return store.saveIfNeeded()
+            }
+            XCTAssertTrue(write(money(100, at: time)))
+            XCTAssertEqual(chmod(main.path, 0), 0)
+            XCTAssertFalse(write(money(80, at: time)))
+            XCTAssertEqual(chmod(main.path, 0o600), 0)
+            XCTAssertEqual(chmod(journal.path, 0), 0)
+            XCTAssertFalse(write(weekly(40, at: time)))
+            XCTAssertEqual(chmod(journal.path, 0o600), 0)
+            XCTAssertEqual(chmod(main.path, 0), 0)
+            XCTAssertFalse(write(money(75, at: time)))
+            XCTAssertEqual(chmod(main.path, 0o600), 0)
+            XCTAssertEqual(chmod(journal.path, 0), 0)
+            XCTAssertFalse(write(sameProvider ? money(60, at: time) : weekly(50, at: time)))
+            try Data(contentsOf: main).write(to: staged)
+            XCTAssertEqual(chmod(journal.path, 0o600), 0)
+            let expected: [Double] = sameProvider ? [60] : [75]
+            XCTAssertEqual(HistoryStore.loadWithPending(from: folder, now: time)[balanceKey]?.amountPoints.map(\.remaining), expected)
+            XCTAssertTrue(HistoryStore(directory: folder).saveIfNeeded())
+            XCTAssertEqual(balances(in: folder), expected)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: staged.path))
+        }
+    }
+
     private func at(_ seconds: TimeInterval) -> Date {
         hour.addingTimeInterval(seconds)
     }
