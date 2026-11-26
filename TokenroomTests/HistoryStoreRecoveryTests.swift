@@ -293,6 +293,87 @@ final class HistoryStoreRecoveryTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: file), damaged)
     }
 
+    @MainActor
+    func testDirectAppHistorySurvivesRelaunchWhileTheMainFileStaysDamaged() throws {
+        let folder = try makeFolder()
+        let clock = at(3600)
+        try seed(in: folder, clock: clock)
+        let file = folder.appendingPathComponent(HistoryStore.fileName)
+        let original = try Data(contentsOf: file)
+        let invalid = Data("{".utf8)
+        try invalid.write(to: file)
+        let store = HistoryStore(directory: folder)
+        var sample = money(80, at: at(60))
+        sample.planLabel = "private-fixture-label"
+        sample.source = "private-fixture-source"
+        store.record(sample, now: clock)
+        XCTAssertFalse(store.saveIfNeeded())
+        XCTAssertEqual(try Data(contentsOf: file), invalid)
+        let recovery = folder.appendingPathComponent("history-recovery.json")
+        XCTAssertFalse(try String(contentsOf: recovery, encoding: .utf8).contains("private-fixture"))
+        let second = HistoryStore(directory: folder)
+        XCTAssertEqual(second.weeks[balanceKey]?.amountPoints.map(\.remaining), [80])
+        XCTAssertEqual(HistoryStore.loadWithPending(from: folder, now: clock)[balanceKey]?.amountPoints.map(\.remaining), [80])
+        second.record(money(70, at: at(3700)), now: at(4000))
+        XCTAssertFalse(second.saveIfNeeded())
+        try original.write(to: file)
+        let third = HistoryStore(directory: folder)
+        XCTAssertTrue(third.saveIfNeeded())
+        XCTAssertEqual(balances(in: folder), [150, 80, 70])
+        XCTAssertEqual(third.weeks[weeklyKey]?.points.map(\.used), [30])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: recovery.path))
+    }
+
+    @MainActor
+    func testRecoveryDoesNotReplayAnOlderQueuedBalanceOverADirectCorrection() throws {
+        let folder = try makeFolder()
+        let clock = at(3600)
+        try seed(in: folder, clock: clock)
+        let file = folder.appendingPathComponent(HistoryStore.fileName)
+        let original = try Data(contentsOf: file)
+        try Data("{".utf8).write(to: file)
+        let store = HistoryStore(directory: folder)
+        HistoryStore.queue([money(100, at: at(60))], in: folder, now: clock)
+        store.takePending(now: clock)
+        store.record(money(80, at: at(60)), now: clock)
+        XCTAssertFalse(store.saveIfNeeded())
+        let second = HistoryStore(directory: folder)
+        second.takePending(now: clock)
+        XCTAssertEqual(second.weeks[balanceKey]?.amountPoints.map(\.remaining), [80])
+        XCTAssertEqual(HistoryStore.loadWithPending(from: folder, now: clock)[balanceKey]?.amountPoints.map(\.remaining), [80])
+        try original.write(to: file)
+        XCTAssertTrue(second.saveIfNeeded())
+        XCTAssertEqual(balances(in: folder), [150, 80])
+        XCTAssertTrue(queued(in: folder).isEmpty)
+    }
+
+    @MainActor
+    func testAnUnreadableRecoveryFileIsNotReplacedAndItsSamplesReturn() throws {
+        try XCTSkipIf(getuid() == 0, "Requires file permissions")
+        let folder = try makeFolder()
+        let clock = at(3600)
+        try seed(in: folder, clock: clock)
+        let file = folder.appendingPathComponent(HistoryStore.fileName)
+        let original = try Data(contentsOf: file)
+        try Data("{".utf8).write(to: file)
+        let first = HistoryStore(directory: folder)
+        first.record(money(80, at: at(60)), now: clock)
+        XCTAssertFalse(first.saveIfNeeded())
+        let recovery = folder.appendingPathComponent("history-recovery.json")
+        let bytes = try Data(contentsOf: recovery)
+        XCTAssertEqual(chmod(recovery.path, 0), 0)
+        defer { chmod(recovery.path, 0o600) }
+        try original.write(to: file)
+        let second = HistoryStore(directory: folder)
+        second.record(money(70, at: at(3700)), now: at(4000))
+        XCTAssertFalse(second.saveIfNeeded())
+        XCTAssertEqual(try Data(contentsOf: file), original)
+        XCTAssertEqual(chmod(recovery.path, 0o600), 0)
+        XCTAssertEqual(try Data(contentsOf: recovery), bytes)
+        XCTAssertTrue(second.saveIfNeeded())
+        XCTAssertEqual(balances(in: folder), [150, 80, 70])
+    }
+
     private func at(_ seconds: TimeInterval) -> Date {
         hour.addingTimeInterval(seconds)
     }

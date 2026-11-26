@@ -13,14 +13,17 @@ final class HistoryStore {
     private var lastClaim = 0
     private var unloaded = false
     private var unsaved: [QuotaSnapshot] = []
+    private var recoveryDirty = false
+    private var recoveryUnreadable = false
+    private var recoveryOnDisk = false
     private var nextUnsavedPrune = Date.distantPast
     private var clock = Date.distantPast
     private let fileURL: URL?
 
     init(directory: URL?) {
         fileURL = directory?.appendingPathComponent(Self.fileName)
-        switch Self.saved(in: directory) {
-        case .weeks(let saved):
+        switch Self.read([String: UsageHistory].self, from: fileURL) {
+        case .value(let saved):
             weeks = Self.migrated(saved)
             dirty = weeks != saved
         case .missing:
@@ -28,52 +31,130 @@ final class HistoryStore {
         case .unavailable:
             unloaded = true
         }
+        switch Self.read(Recovery.self, from: recoveryURL) {
+        case .value(let recovery):
+            restoreRecovery(recovery)
+        case .unavailable:
+            recoveryUnreadable = true
+            unloaded = true
+        case .missing:
+            break
+        }
     }
 
     nonisolated static let fileName = "history.json"
 
+    private nonisolated static let recoveryName = "history-recovery.json"
+
+    private var recoveryURL: URL? {
+        fileURL?.deletingLastPathComponent().appendingPathComponent(Self.recoveryName)
+    }
+
+    private struct Recovery: Codable {
+        var clock: Date
+        var samples: [QuotaSnapshot]
+        var claimed: [String: Date]
+        var waiting: Set<String>
+
+        func apply(to weeks: inout [String: UsageHistory]) {
+            for sample in samples {
+                _ = HistoryStore.fold(sample, into: &weeks, now: clock)
+            }
+        }
+    }
+
     nonisolated static func load(from directory: URL?) -> [String: UsageHistory] {
-        guard case .weeks(let saved) = saved(in: directory) else { return [:] }
+        guard case .value(let saved) = read([String: UsageHistory].self, from: directory?.appendingPathComponent(fileName)) else { return [:] }
         return migrated(saved)
     }
 
-    private enum Saved {
-        case weeks([String: UsageHistory])
+    private nonisolated static func diskWeeks(from directory: URL?, claimed: inout Set<String>) -> [String: UsageHistory] {
+        var weeks = load(from: directory)
+        if case .value(let recovery) = read(Recovery.self, from: directory?.appendingPathComponent(recoveryName)) {
+            recovery.apply(to: &weeks)
+            claimed = Set(recovery.claimed.keys)
+        }
+        return weeks
+    }
+
+    private enum Saved<Value> {
+        case value(Value)
         case missing
         case unavailable
     }
 
-    private nonisolated static func saved(in directory: URL?) -> Saved {
-        guard let url = directory?.appendingPathComponent(fileName) else { return .missing }
-        let data: Data
+    private nonisolated static func read<Value: Decodable>(_ type: Value.Type, from url: URL?) -> Saved<Value> {
+        guard let url else { return .missing }
         do {
-            data = try Data(contentsOf: url)
+            let data = try Data(contentsOf: url)
+            return .value(try RelayEnvelope.decoder.decode(type, from: data))
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile {
             return .missing
         } catch {
             return .unavailable
         }
-        guard let saved = try? RelayEnvelope.decoder.decode([String: UsageHistory].self, from: data) else { return .unavailable }
-        return .weeks(saved)
+    }
+
+    private func restoreRecovery(_ recovery: Recovery) {
+        clock = max(clock, recovery.clock)
+        unsaved = recovery.samples + unsaved
+        taken.merge(recovery.claimed) { _, newer in newer }
+        held.formUnion(recovery.waiting)
+        for name in recovery.claimed.keys {
+            lastClaim = max(lastClaim, QueuedFile(URL(fileURLWithPath: name)).claim)
+        }
+        unloaded = false
+        for sample in unsaved { record(sample, now: clock) }
+        unloaded = true
+        recoveryOnDisk = true
     }
 
     private func loadSavedIfUnloaded() -> Bool {
         guard unloaded else { return true }
-        switch Self.saved(in: fileURL?.deletingLastPathComponent()) {
-        case .weeks(let saved):
-            var restored = Self.migrated(saved)
-            for snapshot in unsaved {
-                _ = Self.fold(snapshot, into: &restored, now: clock)
+        if recoveryUnreadable {
+            switch Self.read(Recovery.self, from: recoveryURL) {
+            case .value(let recovery): restoreRecovery(recovery)
+            case .missing: break
+            case .unavailable: return false
             }
-            weeks = restored
-            dirty = restored != saved
-        case .missing:
-            dirty = !weeks.isEmpty
-        case .unavailable:
+            recoveryUnreadable = false
+        }
+        let recovery = Recovery(clock: clock, samples: unsaved, claimed: taken, waiting: held)
+        if recoveryDirty, let recoveryURL {
+            do {
+                try RelayEnvelope.encoder.encode(recovery).write(to: recoveryURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            } catch {
+                return false
+            }
+            recoveryDirty = false
+            recoveryOnDisk = true
+        }
+        guard !hasExposedConflict else { return false }
+        let saved: [String: UsageHistory]
+        switch Self.read([String: UsageHistory].self, from: fileURL) {
+        case .value(let existing): saved = existing
+        case .missing: saved = [:]
+        case .unavailable: return false
+        }
+        var restored = Self.migrated(saved)
+        recovery.apply(to: &restored)
+        do {
+            if restored != saved, let fileURL {
+                try RelayEnvelope.encoder.encode(restored).write(to: fileURL, options: .atomic)
+            }
+            discardTaken()
+            guard taken.isEmpty else { return false }
+            if recoveryOnDisk, let recoveryURL {
+                try FileManager.default.removeItem(at: recoveryURL)
+            }
+        } catch {
             return false
         }
+        weeks = restored
         unloaded = false
+        recoveryOnDisk = false
         unsaved = []
+        dirty = false
         return true
     }
 
@@ -84,8 +165,15 @@ final class HistoryStore {
             unsaved.removeAll { $0.fetchedAt < cutoff }
             nextUnsavedPrune = clock.addingTimeInterval(UsageHistory.step)
         }
-        if unsaved.last != snapshot {
-            unsaved.append(snapshot)
+        let windows = snapshot.windows.map { window in
+            var window = window
+            window.title = ""
+            return window
+        }
+        let sample = QuotaSnapshot(provider: snapshot.provider, usedPercent: 0, fetchedAt: snapshot.fetchedAt,
+                                   primaryTitle: "", windows: windows)
+        if unsaved.last != sample {
+            unsaved.append(sample)
         }
     }
 
@@ -112,9 +200,15 @@ final class HistoryStore {
 
     @discardableResult
     func record(_ snapshot: QuotaSnapshot, now: Date) -> Bool {
+        record(snapshot, now: now, alreadyQueued: false)
+    }
+
+    @discardableResult
+    private func record(_ snapshot: QuotaSnapshot, now: Date, alreadyQueued: Bool) -> Bool {
         guard Self.accepts(snapshot, now: now) else { return false }
         if unloaded {
             keepUnsaved(snapshot, now: now)
+            if !alreadyQueued || recoveryOnDisk { recoveryDirty = true }
         }
         if Self.fold(snapshot, into: &weeks, now: now) {
             dirty = true
@@ -185,11 +279,15 @@ final class HistoryStore {
     nonisolated static let heldExtension = "held"
 
     nonisolated static func pending(in directory: URL?) -> [QuotaSnapshot] {
+        pending(in: directory, excluding: [])
+    }
+
+    private nonisolated static func pending(in directory: URL?, excluding claimed: Set<String>) -> [QuotaSnapshot] {
         guard let directory else { return [] }
         let taken = (queuedFiles(in: directory.appendingPathComponent(takingFolderName)) ?? []).sorted { $0.claim < $1.claim }
         let saved = latestSaved(among: taken)
         var readings: [(snapshot: QuotaSnapshot, slot: String, claim: Int)] = taken.compactMap { file in
-            file.saved == nil ? queuedSnapshot(at: file.url).map { ($0, file.slot, file.claim) } : nil
+            file.saved == nil && !claimed.contains(file.name) ? queuedSnapshot(at: file.url).map { ($0, file.slot, file.claim) } : nil
         }
         readings += (queuedFiles(in: directory.appendingPathComponent(pendingFolderName)) ?? []).compactMap { file in
             queuedSnapshot(at: file.url).map { ($0, file.slot, Int.max) }
@@ -347,8 +445,9 @@ final class HistoryStore {
     }
 
     nonisolated static func loadWithPending(from directory: URL?, now: Date) -> [String: UsageHistory] {
-        var weeks = load(from: directory)
-        for snapshot in pending(in: directory) {
+        var claimed = Set<String>()
+        var weeks = diskWeeks(from: directory, claimed: &claimed)
+        for snapshot in pending(in: directory, excluding: claimed) {
             _ = fold(snapshot, into: &weeks, now: now)
         }
         return weeks
@@ -383,6 +482,8 @@ final class HistoryStore {
         var saved: [QueuedFile] = []
         var waiting: Set<String> = []
         var exposed: Set<String> = []
+        let earlierClaims = recoveryOnDisk ? taken : [:]
+        let earlierWaiting = recoveryOnDisk ? held : []
         for file in files {
             if (file.hour ?? .distantPast) < cutoff {
                 discard(file)
@@ -421,7 +522,7 @@ final class HistoryStore {
                     waiting.insert(file.slot)
                     if !hold(file) { exposed.insert(file.slot) }
                 }
-            } else if !exposed.contains(file.slot), taken[file.name] == nil, record(snapshot, now: now) {
+            } else if !exposed.contains(file.slot), taken[file.name] == nil, record(snapshot, now: now, alreadyQueued: true) {
                 taken[file.name] = snapshot.fetchedAt
             }
         }
@@ -429,6 +530,7 @@ final class HistoryStore {
             discard(file)
         }
         held = waiting
+        if recoveryOnDisk, earlierClaims != taken || earlierWaiting != held { recoveryDirty = true }
         hasExposedConflict = files.contains { exposed.contains($0.slot) && taken[$0.name] != nil }
     }
 
