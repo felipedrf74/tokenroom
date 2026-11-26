@@ -453,6 +453,50 @@ final class HistoryStoreRecoveryTests: XCTestCase {
         XCTAssertTrue(next.relayHistory(for: [.moonshot]).series.isEmpty)
     }
 
+    @MainActor
+    func testUpdatingAnotherProviderCannotCancelAnUnloadedBalanceCorrection() throws {
+        let folder = try makeFolder()
+        let file = folder.appendingPathComponent(HistoryStore.fileName)
+        let recovery = folder.appendingPathComponent("history-recovery.json")
+        let clock = at(3600)
+        let first = HistoryStore(directory: folder)
+        first.record(money(100, at: clock), now: clock)
+        XCTAssertTrue(first.saveIfNeeded())
+        XCTAssertEqual(chmod(file.path, 0), 0)
+        defer { chmod(file.path, 0o600) }
+        let second = HistoryStore(directory: folder)
+        second.record(money(80, at: clock), now: clock)
+        XCTAssertFalse(second.saveIfNeeded())
+        XCTAssertEqual(chmod(file.path, 0o600), 0)
+        XCTAssertEqual(chmod(recovery.path, 0), 0)
+        defer { chmod(recovery.path, 0o600) }
+        let third = HistoryStore(directory: folder)
+        third.record(weekly(50, at: clock), now: clock)
+        XCTAssertFalse(third.saveIfNeeded())
+        XCTAssertEqual(chmod(recovery.path, 0o600), 0)
+        XCTAssertEqual(HistoryStore.loadWithPending(from: folder, now: clock)[balanceKey]?.amountPoints.map(\.remaining), [80])
+        XCTAssertTrue(HistoryStore(directory: folder).saveIfNeeded())
+        XCTAssertEqual(balances(in: folder), [80])
+        XCTAssertEqual(HistoryStore.load(from: folder)[weeklyKey]?.points.map(\.used), [50])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent("history-recovery-bases").path))
+    }
+
+    @MainActor
+    func testAnIdleWeekExpiresWhenRecoveryResumesWithoutAnotherObservation() throws {
+        let folder = try makeFolder()
+        let file = folder.appendingPathComponent(HistoryStore.fileName)
+        try Data("{".utf8).write(to: file)
+        let store = HistoryStore(directory: folder)
+        store.record(money(80, at: hour), now: hour)
+        XCTAssertFalse(store.saveIfNeeded())
+        try Data("{}".utf8).write(to: file)
+        let later = at(9 * 86400)
+        XCTAssertNil(HistoryStore.loadWithPending(from: folder, now: later)[balanceKey])
+        let next = HistoryStore(directory: folder)
+        next.takePending(now: later)
+        XCTAssertTrue(next.relayHistory(for: [.moonshot]).series.isEmpty)
+    }
+
     private func at(_ seconds: TimeInterval) -> Date {
         hour.addingTimeInterval(seconds)
     }

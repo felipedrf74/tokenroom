@@ -38,7 +38,7 @@ final class HistoryStore {
             recoveryUnreadable = true
             unloaded = true
         case .missing:
-            break
+            removeRecoveryBases()
         }
     }
 
@@ -50,10 +50,23 @@ final class HistoryStore {
         fileURL?.deletingLastPathComponent().appendingPathComponent(Self.recoveryName)
     }
 
-    private struct FileRevision: Codable, Equatable {
+    private nonisolated static let basesFolder = "history-recovery-bases"
+
+    private func removeRecoveryBases() {
+        if let folder = fileURL?.deletingLastPathComponent().appendingPathComponent(Self.basesFolder),
+           FileManager.default.fileExists(atPath: folder.path) {
+            try? FileManager.default.removeItem(at: folder)
+        }
+    }
+
+    private struct FileRevision: Codable, Hashable {
         let inode: UInt64
         let modified: Double
         let size: UInt64
+
+        func reference(in directory: URL) -> URL {
+            directory.appendingPathComponent(HistoryStore.basesFolder).appendingPathComponent("\(inode)-\(modified.bitPattern)-\(size).ref")
+        }
 
         init?(_ url: URL?) {
             guard let url, let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
@@ -86,12 +99,16 @@ final class HistoryStore {
             }
         }
 
-        func reconciling(with saved: [String: UsageHistory], revision current: FileRevision?) -> QuotaSnapshot {
+        func reconciling(with saved: [String: UsageHistory], revision current: FileRevision?, baseline: [String: UsageHistory]?) -> QuotaSnapshot {
             guard revision == nil || revision != current else { return snapshot }
             var result = snapshot
             for index in result.windows.indices {
                 let key = RelayHistory.key(provider: result.provider.rawValue, window: result.windows[index].id)
-                if let checked = saved[key]?.amountCheckedAt, checked == result.fetchedAt {
+                guard let primary = saved[key], primary.amountCheckedAt == result.fetchedAt else { continue }
+                let previous = baseline?[key]
+                let hour = UsageHistory.hourStart(result.fetchedAt)
+                if previous?.amountCheckedAt != primary.amountCheckedAt || previous?.amountUnit != primary.amountUnit
+                    || previous?.amountPoints.last(where: { $0.date == hour })?.remaining != primary.amountPoints.last(where: { $0.date == hour })?.remaining {
                     result.windows[index].amount = nil
                 }
             }
@@ -105,18 +122,34 @@ final class HistoryStore {
         var claimed: [String: Date]
         var waiting: Set<String>
 
-        func apply(to weeks: inout [String: UsageHistory], revision: FileRevision?) {
-            let saved = weeks
+        func reconciled(with saved: [String: UsageHistory], file: URL?) -> [QuotaSnapshot] {
+            let current = FileRevision(file)
+            var baselines: [FileRevision: [String: UsageHistory]] = [:]
+            return samples.map { observation in
+                if let stamp = observation.revision, stamp != current, baselines[stamp] == nil, let file {
+                    let reference = stamp.reference(in: file.deletingLastPathComponent())
+                    if FileRevision(reference) == stamp,
+                       case .value(let base) = HistoryStore.read([String: UsageHistory].self, from: reference) {
+                        baselines[stamp] = HistoryStore.migrated(base)
+                    } else {
+                        baselines[stamp] = [:]
+                    }
+                }
+                return observation.reconciling(with: saved, revision: current, baseline: observation.revision.flatMap { baselines[$0] })
+            }
+        }
+
+        func apply(to weeks: inout [String: UsageHistory], file: URL?, now: Date? = nil) {
+            let time = max(clock, now ?? clock)
             var recovered: [String: UsageHistory] = [:]
-            for sample in samples {
-                let reading = sample.reconciling(with: saved, revision: revision)
-                _ = HistoryStore.fold(reading, into: &weeks, now: clock)
-                _ = HistoryStore.fold(reading, into: &recovered, now: clock)
+            for reading in reconciled(with: weeks, file: file) {
+                _ = HistoryStore.fold(reading, into: &weeks, now: time)
+                _ = HistoryStore.fold(reading, into: &recovered, now: time)
             }
             for (key, history) in recovered where history.amountUnit == weeks[key]?.amountUnit {
                 weeks[key]?.restoreMissingAmounts(from: history)
             }
-            let cutoff = clock.addingTimeInterval(-Double(UsageHistory.capacity) * UsageHistory.step)
+            let cutoff = time.addingTimeInterval(-Double(UsageHistory.capacity) * UsageHistory.step)
             weeks = weeks.filter { $0.value.end > cutoff }
         }
     }
@@ -126,11 +159,11 @@ final class HistoryStore {
         return migrated(saved)
     }
 
-    private nonisolated static func diskWeeks(from directory: URL?, claimed: inout Set<String>) -> [String: UsageHistory] {
+    private nonisolated static func diskWeeks(from directory: URL?, now: Date, claimed: inout Set<String>) -> [String: UsageHistory] {
         var weeks = load(from: directory)
         switch read(Recovery.self, from: directory?.appendingPathComponent(recoveryName)) {
         case .value(let recovery):
-            recovery.apply(to: &weeks, revision: FileRevision(directory?.appendingPathComponent(fileName)))
+            recovery.apply(to: &weeks, file: directory?.appendingPathComponent(fileName), now: now)
             claimed = Set(recovery.claimed.keys)
         case .unavailable:
             if let directory {
@@ -173,10 +206,10 @@ final class HistoryStore {
         }
         unloaded = false
         let saved = Self.load(from: fileURL?.deletingLastPathComponent())
-        let revision = FileRevision(fileURL)
-        for sample in unsaved { record(sample.reconciling(with: saved, revision: revision), now: clock) }
+        let journal = Recovery(clock: clock, samples: unsaved, claimed: taken, waiting: held)
+        for sample in journal.reconciled(with: saved, file: fileURL) { record(sample, now: clock) }
         var restored = saved
-        Recovery(clock: clock, samples: unsaved, claimed: taken, waiting: held).apply(to: &restored, revision: revision)
+        journal.apply(to: &restored, file: fileURL)
         weeks = restored
         unloaded = true
         recoveryOnDisk = true
@@ -191,7 +224,7 @@ final class HistoryStore {
             case .unavailable:
                 if !unsaved.isEmpty, case .value(let saved) = Self.read([String: UsageHistory].self, from: fileURL), let fileURL {
                     var updated = Self.migrated(saved)
-                    Recovery(clock: clock, samples: unsaved, claimed: [:], waiting: []).apply(to: &updated, revision: FileRevision(fileURL))
+                    Recovery(clock: clock, samples: unsaved, claimed: [:], waiting: []).apply(to: &updated, file: fileURL)
                     do {
                         if updated != saved { try RelayEnvelope.encoder.encode(updated).write(to: fileURL, options: .atomic) }
                         weeks = updated
@@ -221,7 +254,7 @@ final class HistoryStore {
         case .unavailable: return false
         }
         var restored = Self.migrated(saved)
-        recovery.apply(to: &restored, revision: FileRevision(fileURL))
+        recovery.apply(to: &restored, file: fileURL)
         do {
             if restored != saved, let fileURL {
                 try RelayEnvelope.encoder.encode(restored).write(to: fileURL, options: .atomic)
@@ -234,6 +267,7 @@ final class HistoryStore {
         } catch {
             return false
         }
+        removeRecoveryBases()
         weeks = restored
         unloaded = false
         recoveryOnDisk = false
@@ -256,7 +290,19 @@ final class HistoryStore {
         }
         let sample = QuotaSnapshot(provider: snapshot.provider, usedPercent: 0, fetchedAt: snapshot.fetchedAt,
                                    primaryTitle: "", windows: windows)
-        let observation = Observation(snapshot: sample, revision: FileRevision(fileURL))
+        let stamp = FileRevision(fileURL)
+        if let fileURL, let stamp, unsaved.last?.revision != stamp {
+            let reference = stamp.reference(in: fileURL.deletingLastPathComponent())
+            if !FileManager.default.fileExists(atPath: reference.path) {
+                try? FileManager.default.createDirectory(at: reference.deletingLastPathComponent(), withIntermediateDirectories: true)
+                fileURL.withUnsafeFileSystemRepresentation { from in
+                    reference.withUnsafeFileSystemRepresentation { to in
+                        if let from, let to { _ = link(from, to) }
+                    }
+                }
+            }
+        }
+        let observation = Observation(snapshot: sample, revision: stamp)
         if unsaved.last != observation {
             unsaved.append(observation)
         }
@@ -531,7 +577,7 @@ final class HistoryStore {
 
     nonisolated static func loadWithPending(from directory: URL?, now: Date) -> [String: UsageHistory] {
         var claimed = Set<String>()
-        var weeks = diskWeeks(from: directory, claimed: &claimed)
+        var weeks = diskWeeks(from: directory, now: now, claimed: &claimed)
         for snapshot in pending(in: directory, excluding: claimed) {
             _ = fold(snapshot, into: &weeks, now: now)
         }
@@ -540,7 +586,9 @@ final class HistoryStore {
 
     func takePending(now: Date = .now) {
         guard let directory = fileURL?.deletingLastPathComponent() else { return }
+        if unloaded { clock = max(clock, now) }
         _ = loadSavedIfUnloaded()
+        if unloaded { prune(now: now) }
         guard !recoveryUnreadable else { return }
         let taking = directory.appendingPathComponent(Self.takingFolderName, isDirectory: true)
         let queued = Self.queuedFiles(in: directory.appendingPathComponent(Self.pendingFolderName)) ?? []
