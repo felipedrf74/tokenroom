@@ -9,28 +9,84 @@ final class HistoryStore {
     private var dirty = false
     private var taken: [String: Date] = [:]
     private var held: Set<String> = []
+    private var hasExposedConflict = false
     private var lastClaim = 0
+    private var unloaded = false
+    private var unsaved: [QuotaSnapshot] = []
+    private var nextUnsavedPrune = Date.distantPast
+    private var clock = Date.distantPast
     private let fileURL: URL?
 
     init(directory: URL?) {
         fileURL = directory?.appendingPathComponent(Self.fileName)
-        let saved = Self.loadSaved(from: directory)
-        weeks = Self.migrated(saved)
-        dirty = weeks != saved
+        switch Self.saved(in: directory) {
+        case .weeks(let saved):
+            weeks = Self.migrated(saved)
+            dirty = weeks != saved
+        case .missing:
+            break
+        case .unavailable:
+            unloaded = true
+        }
     }
 
     nonisolated static let fileName = "history.json"
 
     nonisolated static func load(from directory: URL?) -> [String: UsageHistory] {
-        migrated(loadSaved(from: directory))
+        guard case .weeks(let saved) = saved(in: directory) else { return [:] }
+        return migrated(saved)
     }
 
-    private nonisolated static func loadSaved(from directory: URL?) -> [String: UsageHistory] {
-        guard let url = directory?.appendingPathComponent(fileName),
-              let data = try? Data(contentsOf: url),
-              let saved = try? RelayEnvelope.decoder.decode([String: UsageHistory].self, from: data)
-        else { return [:] }
-        return saved
+    private enum Saved {
+        case weeks([String: UsageHistory])
+        case missing
+        case unavailable
+    }
+
+    private nonisolated static func saved(in directory: URL?) -> Saved {
+        guard let url = directory?.appendingPathComponent(fileName) else { return .missing }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile {
+            return .missing
+        } catch {
+            return .unavailable
+        }
+        guard let saved = try? RelayEnvelope.decoder.decode([String: UsageHistory].self, from: data) else { return .unavailable }
+        return .weeks(saved)
+    }
+
+    private func loadSavedIfUnloaded() -> Bool {
+        guard unloaded else { return true }
+        switch Self.saved(in: fileURL?.deletingLastPathComponent()) {
+        case .weeks(let saved):
+            var restored = Self.migrated(saved)
+            for snapshot in unsaved {
+                _ = Self.fold(snapshot, into: &restored, now: clock)
+            }
+            weeks = restored
+            dirty = restored != saved
+        case .missing:
+            dirty = !weeks.isEmpty
+        case .unavailable:
+            return false
+        }
+        unloaded = false
+        unsaved = []
+        return true
+    }
+
+    private func keepUnsaved(_ snapshot: QuotaSnapshot, now: Date) {
+        clock = max(clock, now)
+        if clock >= nextUnsavedPrune {
+            let cutoff = clock.addingTimeInterval(-Double(UsageHistory.capacity) * UsageHistory.step)
+            unsaved.removeAll { $0.fetchedAt < cutoff }
+            nextUnsavedPrune = clock.addingTimeInterval(UsageHistory.step)
+        }
+        if unsaved.last != snapshot {
+            unsaved.append(snapshot)
+        }
     }
 
     private nonisolated static func migrated(_ saved: [String: UsageHistory]) -> [String: UsageHistory] {
@@ -57,6 +113,9 @@ final class HistoryStore {
     @discardableResult
     func record(_ snapshot: QuotaSnapshot, now: Date) -> Bool {
         guard Self.accepts(snapshot, now: now) else { return false }
+        if unloaded {
+            keepUnsaved(snapshot, now: now)
+        }
         if Self.fold(snapshot, into: &weeks, now: now) {
             dirty = true
         }
@@ -123,6 +182,7 @@ final class HistoryStore {
 
     nonisolated static let pendingFolderName = "history-pending"
     nonisolated static let takingFolderName = "history-taking"
+    nonisolated static let heldExtension = "held"
 
     nonisolated static func pending(in directory: URL?) -> [QuotaSnapshot] {
         guard let directory else { return [] }
@@ -143,21 +203,33 @@ final class HistoryStore {
             .map(\.snapshot)
     }
 
-    nonisolated static func queue(_ snapshots: [QuotaSnapshot], in directory: URL?, now: Date = .now) {
-        guard !snapshots.isEmpty, let directory else { return }
+    @discardableResult
+    nonisolated static func queue(_ snapshots: [QuotaSnapshot], in directory: URL?, now: Date = .now) -> HistoryQueueOutcome {
+        var outcome = HistoryQueueOutcome()
+        guard !snapshots.isEmpty else { return outcome }
+        guard let directory else {
+            outcome.failures = snapshots.map { .init($0, CocoaError(.fileNoSuchFile)) }
+            return outcome
+        }
         let folder = directory.appendingPathComponent(pendingFolderName, isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         for snapshot in snapshots {
             let hour = Int(UsageHistory.hourStart(snapshot.fetchedAt).timeIntervalSince1970)
             let url = folder.appendingPathComponent("\(snapshot.provider.rawValue)-\(hour).json")
             if let queued = queuedSnapshot(at: url), queued.fetchedAt > snapshot.fetchedAt { continue }
-            guard let data = try? RelayEnvelope.encoder.encode(snapshot) else { continue }
-            try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            do {
+                let data = try RelayEnvelope.encoder.encode(snapshot)
+                try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+                outcome.queued.append(snapshot)
+            } catch {
+                outcome.failures.append(.init(snapshot, error))
+            }
         }
         let cutoff = now.addingTimeInterval(-Double(UsageHistory.capacity) * UsageHistory.step)
         for file in queuedFiles(in: folder) ?? [] where (file.hour ?? .distantPast) < cutoff {
             try? FileManager.default.removeItem(at: file.url)
         }
+        return outcome
     }
 
     private struct QueuedFile {
@@ -187,10 +259,14 @@ final class HistoryStore {
         }
 
         func savedName(at time: Date) -> String {
-            "\(slot).\(claim).\(time.timeIntervalSinceReferenceDate.bitPattern).saved.json"
+            "\(slot).\(claim).\(time.timeIntervalSinceReferenceDate.bitPattern).saved.\(HistoryStore.heldExtension)"
         }
 
         var name: String { url.lastPathComponent }
+
+        var isHeld: Bool { url.pathExtension == HistoryStore.heldExtension }
+
+        var heldURL: URL { url.deletingPathExtension().appendingPathExtension(HistoryStore.heldExtension) }
 
         var hour: Date? {
             guard let dash = slot.lastIndex(of: "-"), let seconds = TimeInterval(slot[slot.index(after: dash)...]) else { return nil }
@@ -201,7 +277,7 @@ final class HistoryStore {
     private nonisolated static func queuedFiles(in folder: URL) -> [QueuedFile]? {
         do {
             return try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
-                .filter { $0.pathExtension == "json" }.map(QueuedFile.init)
+                .filter { $0.pathExtension == "json" || $0.pathExtension == heldExtension }.map(QueuedFile.init)
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile {
             return []
         } catch {
@@ -280,6 +356,7 @@ final class HistoryStore {
 
     func takePending(now: Date = .now) {
         guard let directory = fileURL?.deletingLastPathComponent() else { return }
+        _ = loadSavedIfUnloaded()
         let taking = directory.appendingPathComponent(Self.takingFolderName, isDirectory: true)
         let queued = Self.queuedFiles(in: directory.appendingPathComponent(Self.pendingFolderName)) ?? []
         if !queued.isEmpty {
@@ -305,6 +382,7 @@ final class HistoryStore {
         var readings: [(file: QueuedFile, snapshot: QuotaSnapshot)] = []
         var saved: [QueuedFile] = []
         var waiting: Set<String> = []
+        var exposed: Set<String> = []
         for file in files {
             if (file.hour ?? .distantPast) < cutoff {
                 discard(file)
@@ -327,6 +405,7 @@ final class HistoryStore {
                 taken[file.name] = nil
             case .unreadable:
                 waiting.insert(file.slot)
+                if !hold(file) { exposed.insert(file.slot) }
             }
         }
         readings.sort { ($0.snapshot.fetchedAt, $0.file.claim) < ($1.snapshot.fetchedAt, $1.file.claim) }
@@ -338,8 +417,11 @@ final class HistoryStore {
         for (file, snapshot) in readings {
             let behind = floors[file.slot].map { Self.isBehind($0, time: snapshot.fetchedAt, claim: file.claim) } ?? false
             if behind || latest[file.slot] != file.name {
-                if !discard(file) { waiting.insert(file.slot) }
-            } else if taken[file.name] == nil, record(snapshot, now: now) {
+                if !discard(file) {
+                    waiting.insert(file.slot)
+                    if !hold(file) { exposed.insert(file.slot) }
+                }
+            } else if !exposed.contains(file.slot), taken[file.name] == nil, record(snapshot, now: now) {
                 taken[file.name] = snapshot.fetchedAt
             }
         }
@@ -347,6 +429,17 @@ final class HistoryStore {
             discard(file)
         }
         held = waiting
+        hasExposedConflict = files.contains { exposed.contains($0.slot) && taken[$0.name] != nil }
+    }
+
+    private func hold(_ file: QueuedFile) -> Bool {
+        guard !file.isHeld else { return true }
+        let held = file.heldURL
+        guard Self.move(file.url, to: held) == 0 else { return false }
+        if let time = taken.removeValue(forKey: file.name) {
+            taken[held.lastPathComponent] = time
+        }
+        return true
     }
 
     @discardableResult
@@ -414,6 +507,7 @@ final class HistoryStore {
 
     @discardableResult
     func saveIfNeeded() -> Bool {
+        guard !hasExposedConflict, loadSavedIfUnloaded() else { return false }
         if dirty {
             guard let fileURL else { return false }
             try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)

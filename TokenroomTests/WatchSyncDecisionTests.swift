@@ -270,7 +270,7 @@ final class WatchSyncDecisionTests: XCTestCase {
 
     func testALiveActivityGoesStaleAnHourAfterItsCheckWhenThatComesBeforeTheReset() {
         let reset = now.addingTimeInterval(4 * 3600)
-        XCTAssertEqual(LiveActivityFreshness.staleDate(resetsAt: reset, checkedAt: now), now.addingTimeInterval(3600))
+        XCTAssertEqual(LiveActivityFreshness.staleDate(resetsAt: reset, checkedAt: now), now.addingTimeInterval(3601))
         XCTAssertEqual(LiveActivityFreshness.staleDate(resetsAt: now.addingTimeInterval(1800), checkedAt: now), now.addingTimeInterval(1800))
     }
 

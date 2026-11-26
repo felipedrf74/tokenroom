@@ -775,7 +775,7 @@ final class HistoryQueueDurabilityTests: XCTestCase {
     }
 
     private func savedNames(in folder: URL) -> [String] {
-        queuedFiles(in: folder).map(\.lastPathComponent).filter { $0.hasSuffix(".saved.json") }
+        queuedFiles(in: folder).map(\.lastPathComponent).filter { $0.hasSuffix(".saved.\(HistoryStore.heldExtension)") }
     }
 
     private func queuedFiles(in folder: URL) -> [URL] {

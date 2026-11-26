@@ -12,7 +12,7 @@ struct SessionActivityState: Codable, Hashable, Sendable {
 enum LiveActivityFreshness {
     static func staleDate(resetsAt: Date, checkedAt: Date?) -> Date {
         guard let checkedAt else { return resetsAt }
-        return min(resetsAt, checkedAt.addingTimeInterval(ReadingFreshness.staleAfter))
+        return min(resetsAt, ReadingFreshness.stalePresentationDate(checkedAt: checkedAt))
     }
 
     static let checkStep: TimeInterval = 5 * 60
@@ -35,7 +35,7 @@ extension SessionActivityState {
             result.awaitingReading = true
             return result
         }
-        let aged = checkedAt.map { now.timeIntervalSince($0) >= ReadingFreshness.staleAfter } ?? false
+        let aged = checkedAt.map { now.timeIntervalSince($0) > ReadingFreshness.staleAfter } ?? false
         if activityIsStale || aged {
             result.isStale = true
         }

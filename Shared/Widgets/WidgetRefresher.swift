@@ -25,7 +25,8 @@ enum WidgetRefresher {
         let cached = PhoneCacheAccess.load(at: ReadingCache.defaultURL, defaults: AppGroup.defaults)?
             .applyingLocalBudgetReferences(in: AppGroup.defaults)
         if !force, let cached, !cached.needsWidgetRefresh(at: now, maxAge: maxAge) {
-            return WidgetRefreshResult(cache: cached)
+            let waiting = HistoryQueueRetry.widgets.queue([], in: AppGroup.containerURL, generation: cached.accountGeneration, now: now)
+            return WidgetRefreshResult(cache: cached, retryAt: waiting.retryDate(after: nil, now: now))
         }
         let task = running.withLock { running -> Task<WidgetRefreshResult, Never> in
             if let running {
@@ -70,12 +71,13 @@ enum WidgetRefresher {
             PhoneCacheAccess.invalidate(in: defaults)
             generation = PhoneCacheAccess.generation(in: defaults)
         }
-        let retryAt = WidgetRefreshResult.retryDate(cloudRetryAt: relayResult.retryAt,
-                                                   keyFailures: Array(failures.values), now: now)
+        let readRetryAt = WidgetRefreshResult.retryDate(cloudRetryAt: relayResult.retryAt,
+                                                       keyFailures: Array(failures.values), now: now)
+        let retryAt = HistoryQueueRetry.widgets.queue(readings, in: AppGroup.containerURL, generation: generation, now: now)
+            .retryDate(after: readRetryAt, now: now)
         guard contents != nil || !fresh.isEmpty || signedOut || (previous != nil && !failures.isEmpty) else {
             return WidgetRefreshResult(cache: nil, retryAt: retryAt)
         }
-        HistoryStore.queue(readings, in: AppGroup.containerURL)
 
         let ownRecord = contents?.sources.first { $0.id == ownID }?.envelope
         let previousOwn = previous?.localSource?.envelope.providers

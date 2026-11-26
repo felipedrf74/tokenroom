@@ -6,6 +6,10 @@ enum ReadingFreshness {
     static let expiresAfter: TimeInterval = 7 * 86_400
     static let staleMessagePrefix = "Last successful check "
 
+    static func stalePresentationDate(checkedAt: Date) -> Date {
+        checkedAt.addingTimeInterval(staleAfter + 1)
+    }
+
     static func present(_ provider: RelayProvider, fallback: Date, now: Date) -> RelayProvider? {
         let checked = provider.checkedAt ?? provider.fetchedAt ?? fallback
         guard now.timeIntervalSince(checked) <= expiresAfter else { return nil }
@@ -97,7 +101,7 @@ extension ReadingCache {
         let dates = items.flatMap { item -> [Date] in
             let checked = item.provider.checkedAt ?? item.provider.fetchedAt ?? savedAt
             return item.provider.windows.compactMap(\.resetsAt) + [
-                checked.addingTimeInterval(ReadingFreshness.staleAfter + 1),
+                ReadingFreshness.stalePresentationDate(checkedAt: checked),
                 checked.addingTimeInterval(ReadingFreshness.expiresAfter + 1)
             ]
         }
