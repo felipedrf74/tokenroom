@@ -1,7 +1,6 @@
 import Foundation
 
 extension APIKeyClient {
-    /// This month's Copilot usage with a fine-grained token; `planName` is the plan picked with it.
     static func copilotSnapshot(key: String, planName: String?, now: Date = .now) async throws -> QuotaSnapshot {
         let plan = CopilotBilling.plan(named: planName)
         let user = try await copilotGet(URL(string: "https://api.github.com/user")!, key: key)
@@ -34,10 +33,6 @@ extension APIKeyClient {
         }
     }
 
-    /// GitHub answers a primary or secondary rate limit with 403 as well as 429: it says so with
-    /// `x-ratelimit-remaining: 0` (until `x-ratelimit-reset`, in seconds since 1970) or with
-    /// `retry-after`, or, for some secondary limits, only in its message. Nil for a 403 that's a
-    /// token without the permission.
     static func githubRateLimit(_ response: HTTPURLResponse, body: Data = Data(), now: Date = .now) -> ProviderError? {
         let retryAfter = response.value(forHTTPHeaderField: "Retry-After")
         let remaining = response.value(forHTTPHeaderField: "X-RateLimit-Remaining")?.trimmingCharacters(in: .whitespaces)

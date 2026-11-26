@@ -3,7 +3,6 @@ import SwiftUI
 
 struct PopoverView: View {
     @Bindable var store: QuotaStore
-    /// Opens Settings, on the given page or the last one shown.
     var onSettings: (SettingsTab?) -> Void
     var onNews: (NewsSection) -> Void
     @State private var showsDisconnected = false
@@ -40,13 +39,14 @@ struct PopoverView: View {
             }
 
             let providers = store.popoverProviders
+            let detail = detailProvider
+            let connected = providers.isEmpty || detail != nil ? [] : store.connectedProviders
             if providers.isEmpty {
                 emptyProviders
                     .padding(.horizontal, TokenroomTokens.cardPadding)
                     .padding(.bottom, 8)
             } else {
-                if let provider = detailProvider {
-                    // A short page sits at its own height, so a balance doesn't float in space.
+                if let provider = detail {
                     ViewThatFits(in: .vertical) {
                         providerDetail(provider)
                             .fixedSize(horizontal: false, vertical: true)
@@ -59,11 +59,10 @@ struct PopoverView: View {
                     .id(provider)
                 } else {
                     ViewThatFits(in: .vertical) {
-                        providerList
+                        providerList(connected)
                             .fixedSize(horizontal: false, vertical: true)
                         ScrollView {
-                            // Room under the last row, so the fade never covers it for good.
-                            providerList.padding(.bottom, 24)
+                            providerList(connected).padding(.bottom, 24)
                         }
                         .mask(Self.scrollFade)
                     }
@@ -71,7 +70,7 @@ struct PopoverView: View {
                 }
             }
 
-            highlights
+            highlights(connected)
                 .padding(.horizontal, sideInset)
                 .padding(.top, 10)
 
@@ -90,7 +89,6 @@ struct PopoverView: View {
         .transaction { $0.animation = nil }
     }
 
-    /// Fades what scrolls under the footer, so a row is never cut through by a hard line.
     private static var scrollFade: some View {
         VStack(spacing: 0) {
             Color.black
@@ -98,16 +96,16 @@ struct PopoverView: View {
         }
     }
 
-    /// One edge for the header, rows, and footer.
     private var sideInset: CGFloat { isClassic ? TokenroomTokens.cardPadding : 20 }
 
     private func providerDetail(_ provider: Provider) -> some View {
-        PopoverProviderView(card: providerCard(provider, expanded: true), style: style, showsDetails: true)
+        PopoverProviderView(card: providerCard(provider, expanded: true, compact: false), style: style, showsDetails: true)
     }
 
-    private var providerList: some View {
-        VStack(spacing: TokenroomTokens.cardGap) {
-            cards(store.connectedProviders)
+    private func providerList(_ connected: [Provider]) -> some View {
+        let compact = isClassic && connected.count > 5
+        return VStack(spacing: TokenroomTokens.cardGap) {
+            cards(connected, compact: compact)
             let disconnected = store.disconnectedProviders
             if !disconnected.isEmpty {
                 Button {
@@ -127,25 +125,20 @@ struct PopoverView: View {
                 .padding(.horizontal, sideInset)
                 .accessibilityLabel("Not connected, \(disconnected.count) providers")
                 if showsDisconnected {
-                    cards(disconnected)
+                    cards(disconnected, compact: compact)
                 }
             }
         }
     }
 
-    /// More than five connected providers: one line each until clicked.
-    private var isCompact: Bool {
-        store.connectedProviders.count > 5
-    }
-
-    private func cards(_ providers: [Provider]) -> some View {
-        VStack(spacing: isClassic ? (isCompact ? 6 : TokenroomTokens.cardGap) : 0) {
+    private func cards(_ providers: [Provider], compact: Bool) -> some View {
+        VStack(spacing: isClassic ? (compact ? 6 : TokenroomTokens.cardGap) : 0) {
             ForEach(providers, id: \.self) { provider in
                 let isExpanded = expanded.contains(provider)
                 if isClassic {
-                    providerCard(provider, expanded: isExpanded)
+                    providerCard(provider, expanded: isExpanded, compact: compact)
                 } else {
-                    PopoverProviderView(card: providerCard(provider, expanded: false), style: style) {
+                    PopoverProviderView(card: providerCard(provider, expanded: false, compact: false), style: style) {
                         selectedProvider = provider
                     }
                     if provider != providers.last { Divider().padding(.horizontal, 20) }
@@ -155,12 +148,12 @@ struct PopoverView: View {
         .padding(.horizontal, isClassic ? TokenroomTokens.cardPadding : 0)
     }
 
-    private func providerCard(_ provider: Provider, expanded: Bool) -> ProviderCard {
+    private func providerCard(_ provider: Provider, expanded: Bool, compact: Bool) -> ProviderCard {
         ProviderCard(
             provider: provider, status: store.presentationStatus(for: provider), checkedAt: store.lastChecked(provider),
             pace: store.pace(for: provider, now: store.presentationNow),
             windowPaces: expanded ? store.windowPaces(for: provider, now: store.presentationNow) : [:],
-            weeks: store.weeks(for: provider), isExpanded: expanded, isCompact: isClassic && isCompact,
+            weeks: store.weeks(for: provider), isExpanded: expanded, isCompact: compact,
             onToggleExpanded: { if isClassic { toggle(provider) } else { selectedProvider = provider } },
             signInPhase: store.signIn.phase, onSignIn: { store.signIn.signIn(provider) },
             onCancelSignIn: { store.signIn.cancel() }, onInstall: { store.signIn.openInstallPage(provider) },
@@ -176,16 +169,13 @@ struct PopoverView: View {
         }
     }
 
-    /// Banked resets and news at a glance: "2 banked resets · 3 new models · 5 updates".
     @ViewBuilder
-    private var highlights: some View {
-        // A provider's page lists its own banked resets, and another's don't belong on it.
-        let banked: (count: Int, providers: [Provider]) = showsBankedPill ? store.bankedResets : (0, [])
+    private func highlights(_ connected: [Provider]) -> some View {
+        let banked = shownBanked(store.bankedResets(among: connected))
         let news = store.settings.newsEnabled ? store.news : nil
         let models = news?.unseenModelCount ?? 0
         let updates = news?.unseenReleaseCount ?? 0
         if banked.count > 0 || models > 0 || updates > 0 {
-            // Full labels when they fit, shorter ones when all three show.
             ViewThatFits(in: .horizontal) {
                 highlightPills(banked: banked, models: models, updates: updates, short: false)
                 highlightPills(banked: banked, models: models, updates: updates, short: true)
@@ -193,9 +183,8 @@ struct PopoverView: View {
         }
     }
 
-    /// Hidden once the cards that list the resets are open: it only opens them.
-    private var showsBankedPill: Bool {
-        detailProvider == nil && !(isClassic && !store.bankedResets.providers.isEmpty && store.bankedResets.providers.allSatisfy(expanded.contains))
+    private func shownBanked(_ banked: (count: Int, providers: [Provider])) -> (count: Int, providers: [Provider]) {
+        isClassic && !banked.providers.isEmpty && banked.providers.allSatisfy(expanded.contains) ? (0, []) : banked
     }
 
     private func highlightPills(banked: (count: Int, providers: [Provider]), models: Int, updates: Int, short: Bool) -> some View {
@@ -235,7 +224,6 @@ struct PopoverView: View {
                 .font(.system(size: TokenroomTokens.captionSize))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            // Headroom's own login item can't be read or carried over; this takes its place.
             Toggle("Launch Tokenroom at login", isOn: $store.settings.launchAtLogin)
                 .toggleStyle(.checkbox)
                 .font(.system(size: TokenroomTokens.captionSize))
@@ -286,9 +274,6 @@ struct PopoverView: View {
         )
     }
 
-    /// When sending to iCloud failed: said in the header, where it's seen, rather than only in
-    /// Settings. States someone chose (sync off, no iCloud account on this Mac, Tokenroom's data
-    /// deleted in iCloud settings) and unsigned builds stay in Settings, so nothing nags for good.
     var syncProblem: String? {
         guard let relay = store.relay else { return nil }
         switch relay.state {
@@ -300,7 +285,6 @@ struct PopoverView: View {
     var checkedHeaderText: String {
         if store.isRefreshing { return "Checking…" }
         if let detailProvider { return "Checked \(RelativeTime.ago(store.lastChecked(detailProvider), now: store.presentationNow))" }
-        // A signed-out provider keeps its last check from before; it isn't on show to be current.
         let shown = store.popoverProviders.filter { !(store.statuses[$0] ?? .loading).isDisconnected }
         let oldestCheck = shown.compactMap { store.lastChecked($0) }.min()
         return "Checked \(RelativeTime.ago(oldestCheck, now: store.presentationNow))"
@@ -325,7 +309,6 @@ struct PopoverView: View {
                 HStack(spacing: 5) {
                     Text(checkedHeaderText)
                     if let relay = store.relay, case .sent(let date) = relay.state {
-                        // Quiet when the iPhone is getting readings: a mark, with when as its tooltip.
                         Image(systemName: "checkmark.icloud")
                             .imageScale(.small)
                             .help("Sent to your iPhone and Watch \(RelativeTime.ago(date, now: store.presentationNow))")
@@ -396,7 +379,6 @@ struct PopoverView: View {
             }
             .buttonStyle(.plain)
             Spacer()
-            // Quit is one click further, as in the system's own extras: rarely wanted, never lost.
             Menu {
                 Button("Quit Tokenroom") {
                     NSApp.terminate(nil)
@@ -419,7 +401,6 @@ struct PopoverView: View {
     }
 }
 
-/// A small action in the popover's footer strip.
 private struct HighlightPill: View {
     var title: String
     var systemImage: String

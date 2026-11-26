@@ -15,7 +15,6 @@ final class FoundationTests: XCTestCase {
         super.tearDown()
     }
 
-    /// Unique to this run (`TestDefaults`), so two runs at once don't share a suite.
     private func makeDefaults() -> UserDefaults {
         let (name, defaults) = TestDefaults.make(owner: "\(Self.self)", index: suites.count)
         suites.append(name)
@@ -39,8 +38,6 @@ final class FoundationTests: XCTestCase {
             windows: [QuotaWindow(id: "weekly", kind: .weekly, title: "Weekly", usedPercent: used, resetsAt: nil)]
         )
     }
-
-    // MARK: Settings
 
     func testDisabledGrokBotStaysDisabledAcrossLaunches() {
         let defaults = makeDefaults()
@@ -94,8 +91,6 @@ final class FoundationTests: XCTestCase {
         XCTAssertEqual(defaults.dictionary(forKey: "budgets") as? [String: Double], ["futureBot": 20.0])
     }
 
-    // MARK: Blocking I/O
-
     func testProcessOutputLargerThanPipeBufferDoesNotDeadlock() {
         let output = BlockingIO.runProcess(
             URL(fileURLWithPath: "/bin/sh"),
@@ -106,12 +101,9 @@ final class FoundationTests: XCTestCase {
         XCTAssertEqual(output.stdout.count, 300_000)
     }
 
-    /// A child left running keeps stdout open, so EOF never comes. What the process wrote before
-    /// it exited still counts, and the read stops instead of waiting for the child.
     func testProcessOutputSurvivesAChildThatKeepsStdoutOpen() throws {
         let pidFile = try makeFolder().appendingPathComponent("child.pid")
         defer {
-            // The child holding stdout doesn't outlive the test.
             if let text = try? String(contentsOf: pidFile, encoding: .utf8),
                let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
                 kill(pid, SIGKILL)
@@ -142,8 +134,6 @@ final class FoundationTests: XCTestCase {
         let thrown = try await BlockingIO.run { () throws -> Int in 21 * 2 }
         XCTAssertEqual(thrown, 42, "The throwing overload too")
     }
-
-    // MARK: HTTP
 
     func testStatusMapping() {
         let now = Date(timeIntervalSince1970: 1_000)
@@ -187,8 +177,6 @@ final class FoundationTests: XCTestCase {
         XCTAssertTrue(QuotaStore.usageEqual(earlier, bridged), "The same values from another source aren't, so sources don't take turns")
     }
 
-    // MARK: Snapshot cache
-
     func testCacheKeepsGoodEntriesWhenOthersAreBad() throws {
         let good = try JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot(.claude)))
         let payload: [String: Any] = [
@@ -225,8 +213,6 @@ final class FoundationTests: XCTestCase {
         XCTAssertEqual(cache.load(), saved)
     }
 
-    // MARK: Headroom migration
-
     func testMigrationImportsHeadroomSettingsAndCacheOnce() throws {
         let defaults = makeDefaults()
         let legacy = makeDefaults()
@@ -259,8 +245,6 @@ final class FoundationTests: XCTestCase {
         XCTAssertEqual(defaults.array(forKey: "enabledProviders") as? [String], ["cursor"])
     }
 
-    // MARK: Sessions
-
     func testExpiredGrokAccessIsNotUsedWithoutRefresh() throws {
         let now = Date(timeIntervalSince1970: 1_000_000)
         let live = CredentialReaders.GrokAuth(accessToken: "tok", expiresAt: now.addingTimeInterval(3600), userID: nil)
@@ -281,8 +265,6 @@ final class FoundationTests: XCTestCase {
         XCTAssertNil(CredentialReaders.claudeVersion(of: URL(fileURLWithPath: "/nonexistent/bin/claude")))
         XCTAssertEqual(CredentialReaders.claudeUserAgent(forCLI: nil), "claude-cli (external, cli)")
     }
-
-    // MARK: Store
 
     @MainActor
     func testExpiredSessionKeepsLastReadingFaded() async throws {
@@ -320,8 +302,6 @@ final class FoundationTests: XCTestCase {
         XCTAssertEqual(client.calls, 1, "Claude's usage endpoint allows about one call every few minutes")
     }
 
-    /// The menu stays on "Updating…" for as long as this check runs. A local read that never
-    /// returns (the keychain deadlock did this) still has to let the check finish.
     @MainActor
     func testARestingReadThatHangsStillFinishesTheCheck() async throws {
         let client = HungBetweenClient(snapshot: snapshot(.claude))
@@ -339,8 +319,6 @@ final class FoundationTests: XCTestCase {
     }
 
     func testKeychainWorkRunsOneAtATime() {
-        // A refresh calls the gate from BlockingIO, never the main thread. The main thread
-        // runs a call itself so SecItem cannot deadlock, and XCTest is on that thread.
         let counts = OverlapCounts()
         let finished = expectation(description: "background keychain calls finished")
         DispatchQueue.global(qos: .userInitiated).async {
@@ -388,7 +366,6 @@ final class FoundationTests: XCTestCase {
         let first = Date(timeIntervalSince1970: 1_000)
         let second = Date(timeIntervalSince1970: 2_000)
         let reset = Date(timeIntervalSince1970: 90_000)
-        // Cursor has no minimum interval, so both refreshes call it.
         let client = ScriptedClient(provider: .cursor, results: [
             .success(snapshot(.cursor, fetchedAt: first, resetsAt: reset)),
             .success(snapshot(.cursor, fetchedAt: second, resetsAt: reset)),
@@ -440,7 +417,6 @@ final class FoundationTests: XCTestCase {
             return XCTFail("Expected live, got \(String(describing: store.statuses[.claude]))")
         }
 
-        // A refused session may have reached the server, so it keeps the spacing.
         let refused = ScriptedClient(provider: .claude, results: [.failure(.expired(Provider.claude.expiredHint)), .success(snapshot(.claude))])
         let other = QuotaStore(settings: AppSettings(defaults: makeDefaults()), clients: [refused], cache: SnapshotCache(directory: try makeFolder()))
         await other.refresh(force: true)
@@ -610,7 +586,6 @@ final class FoundationTests: XCTestCase {
         let relayed = try XCTUnwrap(store.relayEnvelope(at: now).providers.first { $0.id == "claude" })
         XCTAssertEqual(relayed.category, "subscription")
         let weekly = try XCTUnwrap(relayed.windows.first { $0.id == "weekly" })
-        // 70% in half a week: the last 30% takes a day and a half.
         let runsOut = try XCTUnwrap(weekly.pace?.runsOutAt)
         XCTAssertEqual(runsOut.timeIntervalSince(now), 1.5 * 86_400, accuracy: 60)
         XCTAssertNil(relayed.windows.first { $0.id == "credits" }?.pace, "A balance has no pace")
@@ -637,7 +612,6 @@ final class FoundationTests: XCTestCase {
         }
         let defaults = makeDefaults()
         let news = NewsStore(defaults: defaults, directory: try makeFolder(), fetch: { await NewsFetcher.refresh($0.cache, sources: $0.sources, following: $0.vendors, maxAge: $0.maxAge, now: $0.now, forcedSources: $0.forcedSources, isAllowed: $0.isAllowed) }, notify: { _, _, _ in })
-        // Feeds are fetched in parallel; the model list alone keeps the stub's record simple.
         news.followedSources = []
         let store = QuotaStore(
             settings: AppSettings(defaults: defaults),
@@ -690,6 +664,33 @@ final class FoundationTests: XCTestCase {
         await store.refresh(force: true)
         XCTAssertEqual(store.bankedResets.count, 2)
         XCTAssertEqual(store.bankedResets.providers, [.openai])
+    }
+
+    @MainActor
+    func testBankedResetsCountedFromAGivenListMatchTheStoresOwn() throws {
+        let defaults = makeDefaults()
+        defaults.set(["openai", "claude", "cursor", "grok"], forKey: "enabledProviders")
+        let store = QuotaStore(settings: AppSettings(defaults: defaults), clients: [], cache: SnapshotCache(directory: try makeFolder()))
+        var codex = snapshot(.openai, used: 20)
+        codex.banked = BankedResets(available: 2)
+        var claude = snapshot(.claude, used: 80)
+        claude.banked = BankedResets(available: 1)
+        var grok = snapshot(.grok, used: 50)
+        grok.banked = BankedResets(available: 0)
+        store.statuses = [
+            .openai: .live(codex), .claude: .live(claude), .grok: .live(grok),
+            .cursor: .signedOut(Provider.cursor.signInHint),
+        ]
+        let connected = store.connectedProviders
+        XCTAssertEqual(connected, [.claude, .grok, .openai], "Most used first")
+        let counted = store.bankedResets(among: connected)
+        XCTAssertEqual(counted.count, store.bankedResets.count)
+        XCTAssertEqual(counted.providers, store.bankedResets.providers)
+        XCTAssertEqual(counted.count, 3)
+        XCTAssertEqual(counted.providers, [.claude, .openai], "The pill opens the first provider in the popover's order")
+        XCTAssertEqual(store.bankedResets(among: [.openai, .claude]).providers, [.openai, .claude], "The order is the list's, not the store's")
+        XCTAssertEqual(store.bankedResets(among: []).count, 0, "A provider's detail and an empty popover count nothing")
+        XCTAssertEqual(store.bankedResets(among: []).providers, [])
     }
 
     func testABankedResetPastItsExpiryIsNoLongerCounted() {
@@ -758,8 +759,6 @@ final class FoundationTests: XCTestCase {
         XCTAssertEqual(preferences.thresholds, [95])
     }
 
-    // MARK: Settings: new providers
-
     func testOrganizationKeysNeverTurnOnByThemselves() {
         let settings = AppSettings(defaults: makeDefaults(), detectsSession: { _ in true })
         for provider in Provider.allCases {
@@ -797,8 +796,6 @@ final class FoundationTests: XCTestCase {
         XCTAssertEqual(relaunched.alertPreferences, settings.alertPreferences)
     }
 
-    // MARK: Snapshot cache: check times
-
     func testCheckTimesRoundTripAndSkipUnknownProviders() throws {
         let cache = SnapshotCache(directory: try makeFolder())
         XCTAssertTrue(cache.loadChecked().isEmpty)
@@ -814,8 +811,6 @@ final class FoundationTests: XCTestCase {
     }
 }
 
-/// Returns queued results in order, then repeats the last one. Between calls it answers with
-/// `between`, like Claude's status line.
 private final class OverlapCounts: @unchecked Sendable {
     private let lock = NSLock()
     private var current = 0
@@ -835,7 +830,6 @@ private final class OverlapCounts: @unchecked Sendable {
     }
 }
 
-/// Claude's second check reads locally. This one never answers until the check gives up.
 private final class HungBetweenClient: ProviderClient, @unchecked Sendable {
     let provider: Provider = .claude
     let snapshot: QuotaSnapshot
@@ -857,7 +851,6 @@ private final class HungBetweenClient: ProviderClient, @unchecked Sendable {
     }
 }
 
-/// A client whose calls wait until `release()`, to hold a check in flight.
 private final class GatedClient: ProviderClient, @unchecked Sendable {
     let provider: Provider
     private let lock = NSLock()
@@ -925,7 +918,6 @@ private final class ScriptedClient: ProviderClient, @unchecked Sendable {
         lock.withLock { count }
     }
 
-    /// The previous readings `fetchBetweenCalls` was given.
     var betweenCalls: [QuotaSnapshot?] {
         lock.withLock { previousSnapshots }
     }
@@ -946,7 +938,6 @@ private final class ScriptedClient: ProviderClient, @unchecked Sendable {
 
     private var changes = 0
 
-    /// How many times `credentialsChanged` was called.
     var credentialChanges: Int {
         lock.withLock { changes }
     }

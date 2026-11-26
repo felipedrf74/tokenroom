@@ -2,7 +2,6 @@ import ActivityKit
 import SwiftUI
 import WidgetKit
 
-/// The Live Activity on the Lock Screen, and on Apple Watch in the Smart Stack (`small`).
 struct SessionLockScreenView: View {
     var attributes: SessionActivityAttributes
     var state: SessionActivityAttributes.ContentState
@@ -11,7 +10,6 @@ struct SessionLockScreenView: View {
     var body: some View {
         let color = TokenroomTokens.usageColor(usedPercent: state.used, isStale: state.isStale)
         if family == .small {
-            // The Apple Watch Smart Stack.
             HStack(spacing: 8) {
                 ProviderMark(providerID: attributes.providerID, monogram: attributes.monogram, tint: attributes.tint, size: 24)
                 VStack(alignment: .leading, spacing: 2) {
@@ -56,7 +54,6 @@ struct SessionLockScreenView: View {
 }
 
 extension SessionActivityAttributes {
-    /// Where an even pace would be when the view is drawn, from the window's length.
     func paceMark(for state: ContentState) -> Double? {
         guard state.awaitingReading != true, !state.isStale, state.resetsAt > .now,
               let length = windowSeconds, length > 0 else { return nil }
@@ -71,8 +68,6 @@ struct SessionResetCaption: View {
         if state.awaitingReading == true {
             Text("Reset · awaiting reading")
         } else if state.isStaleBeforeReset, let checkedAt = state.checkedAt {
-            // Faded before the reset: the last reading is over an hour old, said with its time
-            // and the reset's, rather than as a reset.
             Text("As of \(Text(checkedAt, style: .time)) · resets \(Text(state.resetsAt, style: .time))")
         } else {
             Countdown(resetsAt: state.resetsAt)
@@ -80,12 +75,10 @@ struct SessionResetCaption: View {
     }
 }
 
-/// "Resets in 2:10:33", counting down on its own; "Reset" once it's passed.
 struct Countdown: View {
     var resetsAt: Date
 
     var body: some View {
-        // One reading of the clock, so the range can't come out reversed.
         let now = Date.now
         if resetsAt > now {
             Text("Resets in \(Text(timerInterval: now...resetsAt, countsDown: true))")

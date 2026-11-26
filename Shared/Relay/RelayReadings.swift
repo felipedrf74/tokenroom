@@ -1,7 +1,5 @@
 import Foundation
 
-/// Readings straight from iCloud, for devices that read no provider themselves: the Watch and
-/// its complications. Every collector's record counts, the iPhone's included.
 enum RelayReadings {
     #if os(watchOS)
     static var accountDefaults: UserDefaults? { AppGroup.defaults }
@@ -15,15 +13,11 @@ enum RelayReadings {
     }
     enum Outcome: Sendable {
         case readings(ReadingCache)
-        /// No iCloud account on this device.
         case noAccount
-        /// This build has no iCloud container (not signed for it).
         case unavailable
-        /// iCloud didn't answer.
         case failed
     }
 
-    /// The account alone, for a Watch launched only to take a handover: no zone read.
     static func accountCheck() async -> RelayAccountCheck {
         guard let container = RelayAvailability.containerIdentifier else { return .unavailable }
         guard let status = try? await CloudRelay.shared(containerIdentifier: container).accountStatus() else { return .failed }
@@ -61,7 +55,6 @@ enum RelayReadings {
                                removed: RelaySourceRefresh.removals(of: snapshot, after: read, now: readAt)))
     }
 
-    /// Nil when this build has no iCloud container, there's no account, or iCloud didn't answer.
     static func fetch(now: Date = .now) async -> ReadingCache? {
         if case .readings(let cache) = await read(now: now) {
             return cache
@@ -80,14 +73,12 @@ enum RelayReadings {
                                                  removed: removed))
     }
 
-    /// The cache, or a fresh read when it's older than `maxAge`, within `budget` seconds.
     static func cache(at url: URL?, maxAge: TimeInterval, budget: TimeInterval, now: Date = .now) async -> ReadingCache? {
         let known = cached(at: url)
         return await cache(at: url, maxAge: maxAge, budget: budget, now: now,
                            defaults: accountDefaults, readOutcome: { await read(now: now, known: known) })
     }
 
-    /// Production and regression source share the outcome path, including durable sign-out.
     static func cache(
         at url: URL?, maxAge: TimeInterval, budget: TimeInterval, now: Date,
         defaults: UserDefaults?, readOutcome: @escaping @Sendable () async -> Outcome
@@ -107,8 +98,6 @@ enum RelayReadings {
             return merged.presented(at: now)
         case .noAccount:
             if let defaults, !WatchCacheAccess.confirmNoAccount(in: defaults, at: now) {
-                // Still signed out since the sign-out recorded: the iPhone's handovers the Watch
-                // took since then stay (`WatchHandoffAcceptance`).
                 return WatchCacheAccess.load(at: url, defaults: defaults)?.presented(at: now)
                     ?? ReadingCache(savedAt: now, isSample: false, items: [])
             }
@@ -121,7 +110,6 @@ enum RelayReadings {
         }
     }
 
-    /// Optional-reading compatibility for existing regression source.
     static func cache(
         at url: URL?, maxAge: TimeInterval, budget: TimeInterval, now: Date,
         read: @escaping @Sendable () async -> ReadingCache?
@@ -131,17 +119,11 @@ enum RelayReadings {
     }
 
     #if DEBUG
-    /// Screenshots: a sample cache saved on the Watch stays until real readings replace it. The
-    /// iPhone doesn't hand samples over any more; release builds let an old one age out.
     static let keepsSamples = true
     #else
     static let keepsSamples = false
     #endif
 
-    /// Whether `cached` can be shown without reading iCloud first. Outside debug builds a sample
-    /// cache ages like any other, so it doesn't outlive sample mode.
-    /// One saved recently that holds a live reading about to go stale isn't recent: it's read
-    /// again (`ReadingCache.nearsStale`).
     static func isRecent(_ cached: ReadingCache, maxAge: TimeInterval, now: Date, keepsSamples: Bool = RelayReadings.keepsSamples) -> Bool {
         (keepsSamples && cached.isSample)
             || ((0..<maxAge).contains(now.timeIntervalSince(cached.savedAt)) && !cached.nearsStale(at: now))

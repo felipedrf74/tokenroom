@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""Write a synthetic News fixture (news.json, skills.json) for screenshots.
-
-Everything here is made up for layout review: no live feed, account, or person's data. Usage:
-    scripts/ui-snapshot-fixture.py <folder>
-"""
 import json
 import re
 import sys
@@ -80,9 +75,6 @@ cache = {
 }
 (folder / "news.json").write_text(json.dumps(cache))
 
-# The same News for the exception states: a source that failed; every followed feed checked with
-# no stories (quiet); no feed checked yet (pending); and every feed's first check failed
-# (unreachable). A fixture store follows the whole catalog, read here from the Swift source.
 variants = {
     "failed": dict(cache, unreadable=["openai-news"], sourceChecks=dict(checks, **{"openai-news": {"failedAt": now - 300, "failures": 2}})),
     "quiet": dict(cache, items={}, models=[], sourceChecks={feed: {"succeededAt": now - 120} for feed in catalog}),

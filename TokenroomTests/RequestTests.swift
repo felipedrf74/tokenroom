@@ -1,8 +1,6 @@
 import XCTest
 @testable import Tokenroom
 
-/// Calls through `TokenroomHTTP` answered by a stub: what a status means, paging, and what each
-/// request carries.
 final class RequestTests: XCTestCase {
     private let now = Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 25, hour: 12))!
 
@@ -25,7 +23,6 @@ final class RequestTests: XCTestCase {
         TokenroomHTTP.overrideSession(URLSession(configuration: configuration))
     }
 
-    /// The error a GET answered with `status` throws, or nil when it succeeds.
     private func failure(_ status: Int, headers: [String: String] = [:]) async -> ProviderError? {
         stub(headers: headers) { _ in (status, Data("{}".utf8)) }
         do {
@@ -39,10 +36,6 @@ final class RequestTests: XCTestCase {
     private func query(_ request: URLRequest) -> [URLQueryItem] {
         request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.queryItems } ?? []
     }
-
-    // MARK: Statuses
-
-    // MARK: Budgets
 
     func testASlowCheckIsGivenUpOnAtItsBudget() async {
         let started = Date()
@@ -100,16 +93,12 @@ final class RequestTests: XCTestCase {
         }
     }
 
-    // MARK: User-Agent
-
     func testUserAgentNamesTokenroomAndWhereToLearnMore() {
         let agent = TokenroomIdentity.userAgent
         XCTAssertEqual(agent, "Tokenroom/\(TokenroomIdentity.version) (+\(TokenroomIdentity.repositoryURL.absoluteString))")
         XCTAssertNotNil(agent.range(of: #"^Tokenroom/[0-9A-Za-z.\-]+ \(\+https://[^ ()]+\)$"#, options: .regularExpression), agent)
         XCTAssertEqual(TokenroomHTTP.defaultSession.configuration.httpAdditionalHeaders?["User-Agent"] as? String, agent, "Every provider call sends it")
     }
-
-    // MARK: Organization cost paging
 
     func testOpenAICostsAddUpEveryPage() async throws {
         let first = fixture("openai-costs-page1")
@@ -136,7 +125,7 @@ final class RequestTests: XCTestCase {
     }
 
     func testCostPagingStopsAfterThreePages() async throws {
-        let endless = fixture("openai-costs-page1") // always says there's more
+        let endless = fixture("openai-costs-page1")
         stub { _ in (200, endless) }
         do {
             _ = try await APIKeyClient.orgSnapshot(for: .openaiOrg, key: "placeholder", now: now)
@@ -158,8 +147,6 @@ final class RequestTests: XCTestCase {
         XCTAssertEqual(request.value(forHTTPHeaderField: "anthropic-version"), "2023-06-01")
         XCTAssertEqual(query(request).first { $0.name == "starting_at" }?.value, "2026-09-01T00:00:00Z")
     }
-
-    // MARK: xAI key check
 
     func testAnXAIKeyThatCanWriteComesWithAWarning() async throws {
         let invoice = fixture("xai-invoice-preview")
@@ -186,8 +173,6 @@ final class RequestTests: XCTestCase {
         XCTAssertEqual(StubURLProtocol.requests.last?.url?.host, "api.deepseek.com")
     }
 
-    /// A prepaid-only team has no invoice, so its credits stand in for the reading. A monthly
-    /// budget measures spend: it mustn't read $25 of credits left as $975 spent.
     func testAMonthlyBudgetLeavesAPrepaidTeamsCreditsAlone() async throws {
         let validation = fixture("xai-validation")
         let prepaid = fixture("xai-prepaid-balance")
@@ -204,8 +189,6 @@ final class RequestTests: XCTestCase {
         XCTAssertEqual(budgeted, snapshot, "Still $25 of credits, not a meter")
         XCTAssertFalse(budgeted.windows.first?.isMetered ?? true)
     }
-
-    // MARK: Copilot with a fine-grained token
 
     func testCopilotTokenReadsThisMonthsAICredits() async throws {
         let usage = fixture("copilot-ai-credit-usage")
@@ -246,8 +229,6 @@ final class RequestTests: XCTestCase {
         XCTAssertEqual(snapshot.usedPercent, 100, "600.5 of 300 requests")
     }
 
-    /// The Mac reads Copilot with the GitHub login its tools keep. When that login is missing or
-    /// refused and a fine-grained token was pasted, the token answers; an outage stays an outage.
     func testCopilotFallsBackToAPastedTokenOnlyWhenTheLoginCantBeUsed() async throws {
         let config = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let empty = config.appendingPathComponent("empty", isDirectory: true)
@@ -267,7 +248,6 @@ final class RequestTests: XCTestCase {
             try? keys.remove(for: .copilot)
             try? FileManager.default.removeItem(at: config)
         }
-        // Only these folders, never this Mac's own GitHub login.
         setenv("XDG_CONFIG_HOME", config.path, 1)
         CopilotCredentials.invalidate()
         let client = CopilotClient(keys: keys)
@@ -320,7 +300,6 @@ final class RequestTests: XCTestCase {
         XCTAssertEqual(outage, .failure(.unreachable), "An outage isn't a refused login")
         XCTAssertEqual(StubURLProtocol.requests.count, 1)
 
-        // The private endpoint turning the login down: no Copilot on it, or the endpoint moved.
         for status in [400, 404, 422] {
             CopilotCredentials.invalidate()
             stub { request in
@@ -347,8 +326,6 @@ final class RequestTests: XCTestCase {
         XCTAssertFalse(StubURLProtocol.requests.contains { $0.url?.path == "/copilot_internal/user" })
     }
 
-    /// GitHub answers a rate limit with 403 too. That's a wait, honoured, not a token without the
-    /// permission, which would tell the user to make a new one.
     func testAGitHubRateLimitAnsweredWith403IsAWaitNotAMissingPermission() async {
         let reset = now.addingTimeInterval(1800)
         let cases: [([String: String], Date?)] = [
@@ -378,7 +355,6 @@ final class RequestTests: XCTestCase {
         }
     }
 
-    /// GitHub's secondary limits may come as a 403 that says so only in its message.
     func testAGitHubRateLimit403WithoutHeadersIsStillAWait() async {
         for message in ["You have exceeded a secondary rate limit. Please wait a few minutes before you try again.", "API rate limit exceeded for user ID 1."] {
             let body = Data("{\"message\":\"\(message)\"}".utf8)
@@ -419,7 +395,6 @@ final class RequestTests: XCTestCase {
     }
 }
 
-/// Answers after `delay`, within a 0.2-second budget of its own.
 private struct PausingClient: ProviderClient {
     var delay: TimeInterval
     var provider: Provider { .openrouter }

@@ -51,7 +51,6 @@ struct RootView: View {
                     .tint(TokenroomTokens.control)
             }
         }
-        // The selected tab in ink: usage colours are for readings, and the bar is always on screen.
         .tint(.primary)
         .sheet(isPresented: $showsOnboarding, onDismiss: { store.hasOnboarded = true }) {
             OnboardingView(store: store)
@@ -59,11 +58,9 @@ struct RootView: View {
         .onAppear {
             showsOnboarding = !store.hasOnboarded
             #if DEBUG
-            // Screenshots and simulator checks: `-TokenroomOpen tokenroom://provider/claude`.
             if let link = UserDefaults.standard.string(forKey: "TokenroomOpen").flatMap(URL.init(string:)) {
                 open(link)
             }
-            // `-TokenroomFollow claude` starts that provider's Live Activity, for checks.
             if store.allowsExternalEffects, let id = UserDefaults.standard.string(forKey: "TokenroomFollow") {
                 let provider = store.reading(id: id)?.provider
                 let window = provider.flatMap { LiveActivities.candidate(in: $0) }
@@ -82,21 +79,16 @@ struct RootView: View {
             #endif
         }
         .onOpenURL(perform: open)
-        // The Watch asked for the connect screen (only sent while it's on).
         .onReceive(NotificationCenter.default.publisher(for: WatchLink.openConnectRequest)) { _ in
             open(DeepLink.connect.url)
         }
         .onChange(of: tab, initial: true) { _, _ in updateVisit() }
-        // Leaving the app ends a News visit too, so a check in the background doesn't count what
-        // it finds as seen; coming back to News starts the next one. A passing interruption
-        // (Control Center, a call) doesn't end it.
         .onChange(of: scenePhase) { _, phase in
             updateVisit()
             if phase != .active { store.flushWidgetArrangementReload() }
         }
     }
 
-    /// A News visit lasts while the News tab is selected and the app is in front.
     private func updateVisit() {
         if tab == .news, scenePhase != .background { news.beginVisit() } else { news.endVisit() }
     }
@@ -123,7 +115,6 @@ struct RootView: View {
             tab = .settings
             settingsPath = [.widgets]
         case .connect:
-            // Only while the connect screen is on; otherwise Settings, as for an unknown screen.
             tab = .settings
             settingsPath = store.connectOnIPhone ? [.connect] : []
         }

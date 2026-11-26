@@ -2,8 +2,6 @@ import XCTest
 @testable import Tokenroom
 
 final class GrokBotCredentialsTests: XCTestCase {
-    // OpenSSL AES-128-CBC vector, PBKDF2-HMAC-SHA1 / saltysalt / 1003 rounds.
-    // Both the plaintext and password are invented fixtures.
     private let encrypted = "djEwL+PF0gBeypY11339V7VI43FYCzwQgJSOf6EJ+RmQj0Y="
     private let password = "fixture-storage-password"
     private var folders: [URL] = []
@@ -55,7 +53,7 @@ final class GrokBotCredentialsTests: XCTestCase {
     func testTheAuthorizedSessionSurvivesSignInInvalidationWithoutASecondKeychainRead() throws {
         let file = try writeStore(active: "active-fixture")
         let first = try GrokBotCredentials.read(file: file, password: { password })
-        CredentialReaders.invalidateCaches() // SignInCoordinator.finishSuccess does this.
+        CredentialReaders.invalidateCaches()
         let reread = try GrokBotCredentials.read(file: file, password: {
             XCTFail("Allow Once already authorized this unchanged native access token")
             return nil

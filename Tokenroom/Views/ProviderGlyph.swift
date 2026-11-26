@@ -1,7 +1,5 @@
 import SwiftUI
 
-/// Menu-bar marks. Brand logos as template images so they tint with the extra;
-/// Claude stays as a path.
 struct ProviderGlyph: View {
     var provider: Provider
     var size: CGFloat = 11
@@ -31,7 +29,6 @@ struct ProviderGlyph: View {
                         .stroke(style: StrokeStyle(lineWidth: max(1.2, size * 0.12), lineCap: .round))
                         .padding(size * 0.08)
                 default:
-                    // Providers without a drawn mark get their monogram ("GH"), tinted like the rest.
                     Text(provider.monogram)
                         .font(.system(size: size * (provider.monogram.count > 1 ? 0.46 : 0.62), weight: .bold, design: .rounded))
                         .minimumScaleFactor(0.5)

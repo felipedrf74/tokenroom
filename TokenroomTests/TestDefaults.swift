@@ -1,8 +1,5 @@
 import Foundation
 
-/// UserDefaults suites for tests. Each name carries a token for this run, so two runs at once
-/// (Xcode and a terminal, say) never share a suite, and `remove` deletes the suite's file too,
-/// so the token doesn't leave one behind per run.
 enum TestDefaults {
     static let run = UUID().uuidString.prefix(8).lowercased()
 
@@ -10,7 +7,6 @@ enum TestDefaults {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Preferences", isDirectory: true)
     }
 
-    /// A fresh, empty suite: `owner` names the test class, `index` tells its suites apart.
     static func make(owner: String, index: Int) -> (name: String, defaults: UserDefaults) {
         _ = sweep
         let name = "tokenroom.tests.\(owner).\(run).\(index)"
@@ -21,16 +17,10 @@ enum TestDefaults {
 
     static func remove(_ name: String) {
         UserDefaults(suiteName: name)?.removePersistentDomain(forName: name)
-        // The emptied suite is written out after a removal; flushed first, its file stays deleted.
         CFPreferencesAppSynchronize(name as CFString)
         try? FileManager.default.removeItem(at: preferences.appendingPathComponent("\(name).plist"))
     }
 
-    /// The preferences daemon can still write an emptied suite back after `remove`. Once a run,
-    /// such files from earlier runs are deleted: this helper's names, and the per-test suites
-    /// other tests name with a UUID (`tokenroom.tests.news-qa.<UUID>`, `app.tokenroom.tests.<UUID>`),
-    /// which `removePersistentDomain` empties but leaves on disk. Only ones an hour old, so a
-    /// run going on at the same time keeps its own.
     private static let sweep: Void = {
         let patterns = [
             #/^tokenroom\.tests\.[A-Za-z]+\.[0-9a-f]{8}\.[0-9]+\.plist$/#,

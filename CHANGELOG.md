@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.6.5 for Mac / 1.3.8 for iPhone
+
+- On iPhone, Usage prepares all visible plan percentages, pace indicators and close-to-limit warnings together. This reduces CPU time and temporary allocations when several plans are connected.
+- On Mac, the menu bar updates during bursts of provider readings. The Classic popover spends less CPU time ordering a long list of plans, and provider icons use less memory when several are shown.
+- News on Mac and iPhone sorts and deduplicates the combined feeds once for all three Today sections. Future-dated items stay in the archive and become eligible for the headline or recent models when their publication date arrives.
+- The app and widgets recover more usage history after an interrupted save or restart. When the main history file cannot be read, the app keeps new readings separately and reconciles them when the file becomes readable again.
+
 ## 2.6.4 for Mac — released 21 November 2026 / 1.3.7 for iPhone — submitted 21 November 2026
 
 Readings and News say what they know, on every device (#80). Mac 2.6.4 is [public](https://github.com/felipedrf74/tokenroom/releases/tag/v2.6.4); iPhone, widgets and Watch 1.3.7 (1) was submitted on 21 November at 10:42 UTC and is Waiting for Review, with automatic release after approval to all users. [The delivery record](docs/release-delivery-20261121.md) has the packages, the upload and the submission.

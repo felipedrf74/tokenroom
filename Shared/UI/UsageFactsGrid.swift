@@ -1,19 +1,14 @@
 import SwiftUI
 
-/// `UsageFacts` as a quiet grid: a small label, the value, and a line under it. Space separates
-/// the facts; their surroundings are already a card or a page, so they add no box of their own.
 struct UsageFactsGrid: View {
     var facts: [UsageFact]
-    /// Each fact as wide as its text, on one line, rather than in equal columns.
     var fitsContent = false
     var columns = 2
     var labelFont: Font = .caption2.weight(.medium)
     var valueFont: Font = .subheadline.weight(.semibold)
     var detailFont: Font = .caption2
     var spacing: CGFloat = 12
-    /// Lines a fact's detail may take.
     var detailLines = 2
-    /// A last reading rather than a current one: its figures fade like every other stale figure.
     var isStale = false
 
     var body: some View {

@@ -1,16 +1,11 @@
 import Foundation
 
-/// Coding-plan keys that tools on this Mac already hold: Claude Code pointed at Z.ai, MiniMax, or
-/// Kimi; the Kimi Code CLI's login; OpenCode's Go key. Read in place on every check, never copied,
-/// refreshed, or rewritten. All of it blocks: call through `BlockingIO`.
 enum LocalKeys {
-    /// The key to use when none was pasted. Throws when one was found but can't be used.
     static func credential(for provider: Provider) throws -> APIKeyCredential? {
         guard let found = find(provider) else { return nil }
         return try found.credential.get()
     }
 
-    /// The file holding that key, so a sign-in can be noticed without reading the key into a stamp.
     static func sourceFile(for provider: Provider) -> URL? {
         find(provider)?.file
     }
@@ -33,7 +28,6 @@ enum LocalKeys {
         case .minimax:
             return claudeSettings(global: ["api.minimax.io"], china: ["api.minimaxi.com"], claudeDirectory: claudeDirectory)
         case .kimiCode:
-            // An expired CLI login gives way to a key Claude Code holds; with none, it says why.
             let cli = kimiCLI(home: kimiHome, now: now)
             if case .success = cli?.credential { return cli }
             return claudeSettings(global: ["api.kimi.ai"], china: ["api.kimi.com"], claudeDirectory: claudeDirectory) ?? cli
@@ -47,8 +41,6 @@ enum LocalKeys {
         }
     }
 
-    /// Claude Code configured with a coding plan's Anthropic-compatible endpoint. The host says
-    /// which region issued the key.
     private static func claudeSettings(global: [String], china: [String], claudeDirectory: URL) -> Found? {
         let file = claudeDirectory.appendingPathComponent("settings.json")
         for (region, hosts) in [("Global", global), ("China", china)] {
@@ -59,8 +51,6 @@ enum LocalKeys {
         return nil
     }
 
-    /// The Kimi Code CLI's login, used only while its access token is valid. The CLI refreshes it
-    /// the next time it runs; Tokenroom never touches the refresh token.
     private static func kimiCLI(home: URL, now: Date) -> Found? {
         let file = home.appendingPathComponent("credentials/kimi-code.json", isDirectory: false)
         guard let data = try? Data(contentsOf: file),
@@ -70,7 +60,6 @@ enum LocalKeys {
         if let expiresAt = JSONFlex.date(root["expires_at"]), expiresAt.timeIntervalSince(now) <= 60 {
             return Found(credential: .failure(.expired(Provider.kimiCode.expiredHint)), file: file)
         }
-        // The CLI signs in on kimi.com and reads usage there.
         return Found(credential: .success(APIKeyCredential(key: token, region: "China", source: "kimi-cli")), file: file)
     }
 
@@ -92,7 +81,6 @@ enum LocalKeys {
         return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/share/opencode", isDirectory: true)
     }
 
-    /// What Settings says about a key found on this Mac, shown when none was pasted.
     static func settingsCaption(for provider: Provider) -> String? {
         guard provider.access == .codingPlanKey, let found = find(provider) else { return nil }
         switch found.credential {
@@ -108,7 +96,6 @@ enum LocalKeys {
         }
     }
 
-    /// What the card says about a key Tokenroom didn't store itself.
     static func caption(forSource source: String?) -> String? {
         switch source {
         case "claude-settings": "Key from Claude Code settings"

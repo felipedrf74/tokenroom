@@ -1,14 +1,7 @@
 import Foundation
 import SQLite3
 
-/// Read-only access to the places other tools keep their logins. Nothing here writes, refreshes,
-/// or copies a credential into Tokenroom's storage. All of it blocks: call through `BlockingIO`.
 enum LocalSources {
-    // MARK: VS Code-style state databases (Cursor, Devin/Windsurf)
-
-    /// A value from a VS Code-style `state.vscdb` (`ItemTable`), read-only. Falls back to a
-    /// temporary copy only when the live database can't be read in place (a refused read-only
-    /// open, a lock); a missing row is just signed out, and nothing is copied.
     static func vscodeState(_ key: String, database: URL, copy: (URL) -> URL? = copyDatabase) -> String? {
         guard FileManager.default.fileExists(atPath: database.path) else { return nil }
         switch sqliteRead(key, path: database.path) {
@@ -23,12 +16,9 @@ enum LocalSources {
         }
     }
 
-    /// What reading one key found.
     enum SQLiteRead: Equatable {
         case value(String)
-        /// The database answered: no row, or an empty value.
         case missing
-        /// It couldn't be opened or queried.
         case unreadable
     }
 
@@ -90,7 +80,6 @@ enum LocalSources {
         }
     }
 
-    /// Changes when a file does: its modification date and size, never its contents.
     static func fileStamp(_ url: URL) -> String? {
         guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
               let modified = values.contentModificationDate
@@ -99,11 +88,6 @@ enum LocalSources {
         return "\(Int(modified.timeIntervalSince1970))-\(size)"
     }
 
-    // MARK: Claude Code settings (z.ai, MiniMax)
-
-    /// A coding-plan key that Claude Code is configured to use, found in `~/.claude/settings.json`
-    /// (`env.ANTHROPIC_AUTH_TOKEN` or `env.ANTHROPIC_API_KEY`) when `env.ANTHROPIC_BASE_URL` points
-    /// at one of `hosts`. Read in place on every refresh; never copied.
     static func claudeSettingsKey(forHosts hosts: [String], claudeDirectory: URL = defaultClaudeDirectory) -> String? {
         let url = claudeDirectory.appendingPathComponent("settings.json")
         guard let data = try? Data(contentsOf: url),
@@ -121,7 +105,6 @@ enum LocalSources {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude", isDirectory: true)
     }
 
-    /// A string at a key path in a JSON file, e.g. `["opencode-go", "key"]`.
     static func jsonString(at path: [String], in file: URL) -> String? {
         guard let data = try? Data(contentsOf: file), var current = try? JSONSerialization.jsonObject(with: data) else { return nil }
         for component in path {
@@ -132,11 +115,6 @@ enum LocalSources {
         return value
     }
 
-    // MARK: CLI JSON (Antigravity's agy)
-
-    /// `major.minor.patch` from `--version` output, e.g. "agy 1.1.12 (abc)" → [1, 1, 12], with any
-    /// further parts ("1.1.12.3") and a sentence's closing period allowed. Numbers shaped like a
-    /// date ("2026.09.25", a build stamp) aren't taken for the version.
     static func semanticVersion(in text: String) -> [Int]? {
         var rest = text[...]
         while let range = rest.range(of: #"(?<![\d.])\d+(\.\d+)+(?!\.?\d)"#, options: .regularExpression) {
@@ -158,8 +136,6 @@ enum LocalSources {
         return true
     }
 
-    /// Runs a CLI that prints JSON, in an empty temporary folder with no input, and returns its
-    /// output. Nil when it fails or times out.
     static func runJSONCommand(_ executable: URL, arguments: [String], timeout: TimeInterval = 20, maxOutput: Int = 1 << 20) -> Data? {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("TokenroomCLI-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

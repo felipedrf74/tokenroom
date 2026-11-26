@@ -1,11 +1,4 @@
 #!/bin/zsh
-# Build Tokenroom for Mac and install it to ~/Applications (and /Applications when writable).
-#
-#   ./scripts/build.sh [Debug|Release]
-#
-# Uses Xcode when it is installed, otherwise a swiftc fallback that only needs the
-# Command Line Tools. TOKENROOM_FORCE_SWIFTC=1 forces the fallback (CI uses this).
-# Signing follows Config/Local.xcconfig (adhoc by default; see Config/MacSigning.xcconfig).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -15,7 +8,6 @@ ARCH="$(uname -m)"
 APP_NAME="Tokenroom"
 ASSETS="$ROOT/Tokenroom/Assets.xcassets"
 
-# Value of KEY from an xcconfig file ("KEY = value"), empty if missing.
 xcconfig_value() {
   local file="$1" key="$2"
   [[ -f "$file" ]] || return 0
@@ -58,8 +50,6 @@ build_with_xcode() {
   export DEVELOPER_DIR="$1"
   local project="$ROOT/$APP_NAME.xcodeproj"
   local signing
-  # `|| true`: under pipefail, xcodebuild failing (or cut off when awk exits early) would end the
-  # script here with no message instead of falling back to ad-hoc signing.
   signing="$(xcodebuild -project "$project" -scheme "$APP_NAME" -configuration "$CONFIG" -showBuildSettings 2>/dev/null \
     | awk '$1 == "TOKENROOM_MAC_SIGNING" { print $3; exit }' || true)"
   signing="${signing:-adhoc}"
@@ -78,8 +68,6 @@ build_with_xcode() {
     "${provisioning[@]}" \
     build
 
-  # Xcode already signed the bundle with the right identity and entitlements.
-  # Never modify it afterwards: that would break a team signature.
   local app="$DERIVED/Build/Products/$CONFIG/$APP_NAME.app"
   codesign --verify --strict "$app"
   local authority
@@ -88,11 +76,8 @@ build_with_xcode() {
   install_app "$app"
 }
 
-# Copies every image set as loose files so NSImage can find them without Assets.car:
-# Name.svg, Name(@2x|@3x).png, and Name-32/-64.png as Name.png/Name@2x.png.
 copy_loose_images() {
   local res="$1" set name suffix
-  # The app's own images, and the provider icons every platform shares.
   for set in "$ASSETS"/*.imageset(N) "$ROOT/Shared/UI/ProviderIcons.xcassets"/*.imageset(N); do
     name="${set:t:r}"
     [[ -f "$set/$name.svg" ]] && cp "$set/$name.svg" "$res/$name.svg"
@@ -161,7 +146,6 @@ build_with_swiftc() {
   build_number="$(xcconfig_value "$ROOT/Config/Version.xcconfig" TOKENROOM_MAC_BUILD)"
   prefix="$(xcconfig_value "$ROOT/Config/Base.xcconfig" TOKENROOM_BUNDLE_PREFIX)"
 
-  # Mac sources plus the shared folders the Mac target compiles.
   local dirs=() dir
   for dir in Tokenroom Shared/Core Shared/Relay Shared/UI Shared/APIKeys; do
     [[ -d "$ROOT/$dir" ]] && dirs+=("$ROOT/$dir")
@@ -182,7 +166,6 @@ build_with_swiftc() {
   echo -n 'APPL????' > "$app/Contents/PkgInfo"
   write_info_plist "$app/Contents/Info.plist" "${prefix:-app.tokenroom}.mac" "${version:-0.0.0}" "${build_number:-1}"
 
-  # iconutil wants a folder named *.iconset; it goes inside the temporary folder, which is removed.
   local icon_tmp iconset
   icon_tmp="$(mktemp -d "${TMPDIR:-/tmp}/TokenroomIcon.XXXXXX")"
   iconset="$icon_tmp/AppIcon.iconset"

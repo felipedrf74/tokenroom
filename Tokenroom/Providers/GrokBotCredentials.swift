@@ -2,8 +2,6 @@ import CommonCrypto
 import Foundation
 import os
 
-/// Grok Bot's desktop login is independent of Cursor's. Read only the active account;
-/// never renew, copy to disk, or fall through to another account when it can't be read.
 enum GrokBotCredentials {
     struct Session: Sendable {
         var token: String
@@ -13,8 +11,6 @@ enum GrokBotCredentials {
     static let storageService = "Grok Bot Safe Storage"
     static let accessHint = "Couldn't read Grok Bot's login. Choose Sign In, then Always Allow in the Keychain dialog."
     private static let refused = OSAllocatedUnfairLock<Int?>(initialState: nil)
-    // Retain only the already-authorized access token, never the storage password.
-    // Re-read the native file before every use, including after Sign In invalidates caches.
     private struct AuthorizedToken {
         var file: URL
         var encrypted: String
@@ -95,8 +91,6 @@ enum GrokBotCredentials {
         return stored
     }
 
-    /// Electron/Chromium's macOS v10 format. Unknown formats fail closed.
-    /// https://chromium.googlesource.com/chromium/src/+/140.0.7339.0/components/os_crypt/sync/os_crypt_mac.mm
     static func decrypt(_ encoded: String, password: String) -> String? {
         guard let data = Data(base64Encoded: encoded), data.starts(with: Data("v10".utf8)),
               data.count > 3, (data.count - 3).isMultiple(of: kCCBlockSizeAES128)
@@ -124,8 +118,6 @@ enum GrokBotCredentials {
     static func noteRefused(_ token: String) { refused.withLock { $0 = token.hashValue } }
     static func wasRefused(_ token: String) -> Bool { refused.withLock { $0 == token.hashValue } }
 
-    /// Only the user's Sign In action may ask macOS for access. Nil means there is no
-    /// readable native login to authorize, so the coordinator opens the owning app instead.
     static func authorize() -> Bool? {
         guard let data = try? Data(contentsOf: CredentialReaders.grokBotSecretsURL),
               (try? encryptedToken(from: data)) != nil else { return nil }

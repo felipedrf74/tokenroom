@@ -7,7 +7,6 @@ import UniformTypeIdentifiers
 enum Kind {
     case lightOnDark
     case darkOnLight
-    /// A mark drawn in several greys, such as a cube's faces: each keeps its weight as opacity.
     case shadedOnDark
 }
 
@@ -163,7 +162,6 @@ func extract(_ image: CGImage, kind: Kind) -> CGImage? {
     var coreMinX = width, coreMinY = height, coreMaxX = 0, coreMaxY = 0
     for y in 0..<height {
         for x in 0..<width {
-            // A shaded mark's dim faces are part of it, so they set the bounds too.
             if alphaMap[y * width + x] > (kind == .shadedOnDark ? 0.3 : 0.7) {
                 coreMinX = min(coreMinX, x)
                 coreMinY = min(coreMinY, y)

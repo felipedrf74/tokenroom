@@ -97,7 +97,6 @@ struct MobileSettingsView: View {
 
                 Section {
                     LabeledContent("Version", value: BuildSigning.usesDevelopmentCloud ? "\(TokenroomIdentity.version) (development)" : TokenroomIdentity.version)
-                    // WidgetKit's budget is per widget, so the busiest one is what counts.
                     LabeledContent("Widget Updates", value: "\(store.widgetReloadCount) in 24 hours")
                         .accessibilityLabel("Busiest widget's updates, last 24 hours")
                         .accessibilityValue("\(store.widgetReloadCount)")
@@ -153,7 +152,6 @@ struct MobileSettingsView: View {
     }
 }
 
-/// A plain row that opens the browser, with the arrow that says so.
 private struct OutboundRow: View {
     var title: String
     var destination: URL
@@ -176,7 +174,6 @@ private struct OutboundRow: View {
     }
 }
 
-/// The rest of an explanation, a tap away, so a group's footer can stay one concise line.
 struct SettingsDisclosure: View {
     var title: String
     var text: String
@@ -197,7 +194,6 @@ struct SettingsDisclosure: View {
     }
 }
 
-/// A disclosure whose chevron matches the navigation rows around it.
 private struct QuietDisclosure: DisclosureGroupStyle {
     func makeBody(configuration: Configuration) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -224,7 +220,6 @@ private struct QuietDisclosure: DisclosureGroupStyle {
     }
 }
 
-/// A row's title beside a white symbol on a tinted tile, as the Settings app draws them.
 struct SettingsRowLabel: View {
     var title: String
     var symbol: String
@@ -260,7 +255,6 @@ struct SettingsTile: View {
     }
 }
 
-/// The top of Settings: whether readings are coming in, and from how many devices.
 private struct ReadingsStatusCard: View {
     var store: MobileStore
 
@@ -298,7 +292,6 @@ private struct ReadingsStatusCard: View {
         }
     }
 
-    /// "12 providers · checked 2m ago".
     private var detail: String? {
         guard !store.readings.isEmpty else { return nil }
         let count = store.readings.count == 1 ? "1 provider" : "\(store.readings.count) providers"
@@ -309,7 +302,6 @@ private struct ReadingsStatusCard: View {
     }
 }
 
-/// Providers this iPhone can read with a key, grouped like the Mac's settings.
 struct KeysView: View {
     @Bindable var store: MobileStore
     @State private var search = ""
@@ -376,7 +368,6 @@ struct KeyEditorView: View {
     @State private var budgetText = ""
     @State private var budgetError: String?
     @State private var budgetEdited = false
-    /// Set when the key's test found something to warn about (an xAI key with write access).
     @State private var warning: String?
 
     init(store: MobileStore, provider: Provider) {
@@ -491,7 +482,6 @@ struct KeyEditorView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             metadata = await store.metadata(for: provider)
-            // Replace Key starts from the choice saved with the key, such as its Copilot plan.
             if let metadata, let spec {
                 region = spec.initialChoice(saved: metadata)
             }
@@ -606,7 +596,6 @@ struct KeyEditorView: View {
     }
 }
 
-/// Where Tokenroom shows up outside the app, and how to add each.
 struct WidgetsHelpView: View {
     @Bindable var store: MobileStore
 
@@ -631,13 +620,10 @@ struct WidgetsHelpView: View {
         }
         .navigationTitle("Widgets & Watch")
         .navigationBarTitleDisplayMode(.inline)
-        // Drag handles stay out while the order is the app's own.
         .environment(\.editMode, .constant(store.widgetArrangement.order == .manual ? .active : .inactive))
     }
 }
 
-/// Which providers this iPhone's widgets show, and in what order: a switch for each, and, in
-/// the user's own order, a handle to drag it by.
 private struct WidgetProvidersSection: View {
     @Bindable var store: MobileStore
 
@@ -647,9 +633,6 @@ private struct WidgetProvidersSection: View {
         var mark: ProviderMark
     }
 
-    /// Every provider with a reading, and the ones switched off whose reading has gone since:
-    /// without a row there'd be no way to switch them back on. In the user's order when that's
-    /// the order widgets use, else most urgent first, as the widgets show them.
     private var rows: [Row] {
         let present = store.readings.map { Row(id: $0.id, name: $0.provider.name, mark: ProviderMark(provider: $0.provider, size: 28)) }
         let absent = store.widgetArrangement.hidden.subtracting(present.map(\.id)).sorted()
@@ -672,7 +655,6 @@ private struct WidgetProvidersSection: View {
                         Text("My Order").tag(WidgetArrangement.Order.manual)
                     }
                     .pickerStyle(.segmented)
-                    // Beside the choice, where it can't scroll out of sight under a long list.
                     Text(store.widgetArrangement.order == .manual ? "Drag a provider by its handle to move it." : "Limits reached come first, then the most urgent, then the most used.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -708,8 +690,6 @@ private struct WidgetProvidersSection: View {
         }
     }
 
-    /// An order of your own starts from the last one you set, with anything new after it in
-    /// the order on screen. A provider with no reading just now keeps the place it had.
     private func order(_ rows: [Row]) -> Binding<WidgetArrangement.Order> {
         Binding {
             store.widgetArrangement.order

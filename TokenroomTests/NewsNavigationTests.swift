@@ -3,7 +3,6 @@ import SwiftUI
 import XCTest
 @testable import Tokenroom
 
-/// Hosts the actual reader views with the same toolbar bridge as AppDelegate.
 @MainActor final class NewsNavigationTests: XCTestCase {
     func testPushedStoryOffersNativeBackToolbarItem() throws {
         let path = NewsTestNavigation(path: ["source", "story"])

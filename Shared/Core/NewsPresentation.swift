@@ -34,7 +34,18 @@ enum NewsCollection: String, CaseIterable, Identifiable, Hashable {
     case model = "Models", release = "Releases", voice = "Voices", status = "Status", retirement = "Retirements"
     var id: String { rawValue }
 }
+struct NewsTodayStories: Equatable {
+    var releases: [FeedItem]
+    var voices: [FeedItem]
+    var status: [FeedItem]
+}
+
 enum NewsDiscovery {
+    static func today(_ items: [FeedItem]) -> NewsTodayStories {
+        NewsTodayStories(releases: stories(items, collection: .release),
+                         voices: stories(items, collection: .voice),
+                         status: stories(items, collection: .status))
+    }
     static func familyIDs(for source: FeedSource) -> Set<String> {
         let product = source.partOf ?? source.id
         return Set((FeedSource.catalog + [source]).filter { ($0.partOf ?? $0.id) == product }.map(\.id))
@@ -49,11 +60,16 @@ enum NewsDiscovery {
         }
     }
     static func latestOfficial(_ items: [FeedItem], now: Date = .now) -> FeedItem? {
-        items.filter { ($0.kind ?? .officialAnnouncement) == .officialAnnouncement && now.timeIntervalSince($0.sortDate) <= NewsEditions.topStoryAge }
-            .sorted { $0.sortDate > $1.sortDate }.first
+        items.reduce(nil as FeedItem?) { latest, item in
+            guard (item.kind ?? .officialAnnouncement) == .officialAnnouncement,
+                  NewsEditions.isTopStoryDate(item.sortDate, now: now) else { return latest }
+            guard let latest, latest.sortDate >= item.sortDate else { return item }
+            return latest
+        }
     }
     static func stories(_ items: [FeedItem], collection: NewsCollection? = nil, query: String = "") -> [FeedItem] {
-        items.filter { item in
+        let searches = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return items.filter { item in
             let kind = item.kind ?? .officialAnnouncement
             let matches: Bool
             switch collection {
@@ -63,7 +79,7 @@ enum NewsDiscovery {
             case .model, .retirement: matches = false
             case nil: matches = true
             }
-            return matches && NewsSearch.matches(query, title: item.displayTitle, source: item.source)
+            return matches && (!searches || NewsSearch.matches(query, title: item.displayTitle, source: item.source))
         }
     }
 }
@@ -99,9 +115,6 @@ extension NewsCollectionHealth {
         return caption + " · " + (isVoice ? "Latest article " : "Latest update ") + latest.formatted(format)
     }
 
-    /// A source's line in Following: quiet when it's fine, saying so when it isn't. Every row here
-    /// is an official source, so its kind says nothing; a problem or a source awaiting its first
-    /// read does.
     var followingCaption: String? {
         problem ?? (uncheckedCount >= sourceCount ? "Not checked yet" : uncheckedCount > 0 ? caption : nil)
     }

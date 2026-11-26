@@ -2,15 +2,9 @@ import CloudKit
 import Foundation
 import Synchronization
 
-/// Readings for widgets: the app's cache, refreshed here when it's old, within a few seconds.
-/// Reads the relay and this iPhone's keys like the app does, but never writes to iCloud.
 enum WidgetRefresher {
-    /// A cache older than this is refreshed before a timeline is built.
     static let maxAge: TimeInterval = 15 * 60
-    /// The most time a widget spends fetching.
     static let budget: TimeInterval = 6
-    /// iCloud and each key provider get a second under the widget's own limit, so a slow one
-    /// doesn't cost the rest and there's time to put what came back together.
     static let readBudget = budget - 1
     static let completeShare: TimeInterval = 2
     static let localLabel = "This iPhone"
@@ -30,13 +24,10 @@ enum WidgetRefresher {
         }
         let cached = PhoneCacheAccess.load(at: ReadingCache.defaultURL, defaults: AppGroup.defaults)?
             .applyingLocalBudgetReferences(in: AppGroup.defaults)
-        // A cache saved minutes ago still waits for a read when a live reading in it is about to
-        // go stale: the reload asked for then (`WidgetSchedule`) is for that.
         if !force, let cached, !cached.needsWidgetRefresh(at: now, maxAge: maxAge) {
-            return WidgetRefreshResult(cache: cached)
+            let waiting = HistoryQueueRetry.widgets.queue([], in: AppGroup.containerURL, generation: cached.accountGeneration, now: now)
+            return WidgetRefreshResult(cache: cached, retryAt: waiting.retryDate(after: nil, now: now))
         }
-        // Widgets whose timelines are due together share one refresh, rather than each reading
-        // iCloud and calling every key provider.
         let task = running.withLock { running -> Task<WidgetRefreshResult, Never> in
             if let running {
                 return running
@@ -61,15 +52,11 @@ enum WidgetRefresher {
         return WidgetRefreshResult(cache: cache, retryAt: refreshed.retryAt)
     }
 
-    /// The refresh under way in this process.
     private static let running = Mutex<Task<WidgetRefreshResult, Never>?>(nil)
 
-    /// Saves what it read for the app and the other widgets.
     static func refresh(previous: ReadingCache?, now: Date) async -> WidgetRefreshResult {
         let defaults = AppGroup.defaults
         var generation = PhoneCacheAccess.generation(in: defaults)
-        // A refresh can start after the account changed but hold a cache captured before it.
-        // Never stamp that previous account's data with the new generation.
         let previous = previous.flatMap {
             !$0.isSample && PhoneCacheAccess.accepts($0, defaults: defaults) ? $0 : nil
         }
@@ -81,27 +68,22 @@ enum WidgetRefresher {
         let contents = relayResult.contents
         let signedOut = relayResult.signedOut
         if signedOut {
-            PhoneCacheAccess.invalidate(in: defaults)
+            PhoneCacheAccess.markSignedOut(in: defaults)
             generation = PhoneCacheAccess.generation(in: defaults)
+        } else if contents != nil {
+            generation = PhoneCacheAccess.markAvailable(in: defaults, expecting: generation)
         }
-        let retryAt = WidgetRefreshResult.retryDate(cloudRetryAt: relayResult.retryAt,
-                                                   keyFailures: Array(failures.values), now: now)
+        let readRetryAt = WidgetRefreshResult.retryDate(cloudRetryAt: relayResult.retryAt,
+                                                       keyFailures: Array(failures.values), now: now)
+        let retryAt = HistoryQueueRetry.widgets.queue(readings, in: AppGroup.containerURL, generation: generation, now: now)
+            .retryDate(after: readRetryAt, now: now)
         guard contents != nil || !fresh.isEmpty || signedOut || (previous != nil && !failures.isEmpty) else {
             return WidgetRefreshResult(cache: nil, retryAt: retryAt)
         }
-        // For the week's history: the app records these the next time it refreshes.
-        HistoryStore.queue(readings, in: AppGroup.containerURL)
 
-        // This iPhone's providers: what was just read, else the newer of its last relayed and
-        // cached readings.
         let ownRecord = contents?.sources.first { $0.id == ownID }?.envelope
         let previousOwn = previous?.localSource?.envelope.providers
             ?? previous?.items.filter { $0.source == localLabel }.map(\.provider) ?? []
-        // As in the app: only providers that still have a key or a plan session, and readings
-        // up to a week old. Widgets don't read sessions; the app's readings of them stand in.
-        // One dated ahead of the clock (saved before it was set back) is never the newer one.
-        // A plan the iPhone no longer signs in to (Claude) isn't its own, whatever an older app
-        // version saved.
         let listed = [
             defaults.array(forKey: "keyedProviders") as? [String],
             (defaults.array(forKey: "sessionProviders") as? [String])?.filter { Provider(rawValue: $0).map(PhoneConnect.productionAllowlist.contains) ?? false },
@@ -135,8 +117,6 @@ enum WidgetRefresher {
         }
         var histories = contents?.histories ?? [:]
         if contents == nil, !signedOut, let previous {
-            // iCloud didn't answer in time: the other devices' readings from last time stay,
-            // rather than leaving only this iPhone's.
             for carried in previous.carriedSources(excluding: localLabel) {
                 sources.append(carried.source)
                 histories[carried.source.id] = carried.history
@@ -179,8 +159,6 @@ enum WidgetRefresher {
         provider.checkedAt ?? provider.fetchedAt
     }
 
-    /// Nil without iCloud, or when it doesn't answer within its share of the widget's seconds;
-    /// `refresh` then keeps the other devices' last readings beside this iPhone's fresh ones.
     private struct RelayResult: Sendable {
         var contents: CloudRelay.Contents?
         var signedOut = false
@@ -224,9 +202,6 @@ enum WidgetRefresher {
         }
     }
 
-    /// Providers read with this iPhone's keys, and the readings themselves (with budgets) for
-    /// history. Failed attempts downgrade their retained reading; providers resting between
-    /// calls (spacing, a 429) retain their previous measurement and state.
     private static func readKeys(defaults: UserDefaults, now: Date) async -> (providers: [RelayProvider], readings: [QuotaSnapshot], failures: [Provider: ProviderError]) {
         let keys = APIKeyStore(accessGroup: AppGroup.keychainGroup)
         let gate = KeyFetchGate(defaults: defaults)

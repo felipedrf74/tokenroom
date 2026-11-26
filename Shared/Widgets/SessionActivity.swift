@@ -2,10 +2,7 @@ import ActivityKit
 import AppIntents
 import Foundation
 
-/// A Live Activity that follows one window to its reset.
 struct SessionActivityAttributes: ActivityAttributes {
-    /// In Shared/Core (`SessionActivityState`), so its stale rules are tested on the Mac. The
-    /// encoding is the same as when it was declared here.
     typealias ContentState = SessionActivityState
 
     var providerID: String
@@ -15,14 +12,10 @@ struct SessionActivityAttributes: ActivityAttributes {
     var tint: String
     var windowID: String
     var windowTitle: String
-    /// The window's length, for the pace tick. Nil in activities started before 2.1.
     var windowSeconds: Double? = nil
 }
 
-/// Starting, updating, and ending the usage Live Activities. Starting only works in the app
-/// (and intents it runs); updates arrive whenever the app refreshes.
 enum LiveActivities {
-    /// How long an ended activity stays on the Lock Screen.
     static let lingering: TimeInterval = 15 * 60
 
     static func candidate(in provider: RelayProvider, preferring window: String? = nil, now: Date = .now) -> RelayWindow? {
@@ -33,29 +26,20 @@ enum LiveActivities {
         ActivityAuthorizationInfo().areActivitiesEnabled
     }
 
-    /// Activities still on screen. Past its stale date (the reset, or an hour after its reading's
-    /// check, `LiveActivityFreshness.staleDate`) ActivityKit marks one `stale`, and it stays on
-    /// the Lock Screen until it's updated or ended.
     private static var shown: [Activity<SessionActivityAttributes>] {
         Activity<SessionActivityAttributes>.activities.filter { $0.activityState == .active || $0.activityState == .stale }
     }
 
-    /// The activity following a provider, unless its window has already reset.
     static func activity(for providerID: String, now: Date = .now) -> Activity<SessionActivityAttributes>? {
         shown.first { $0.attributes.providerID == providerID && $0.content.state.resetsAt > now }
     }
 
-    /// One activity per provider; following it again keeps the one there is. One whose window
-    /// reset, still on screen or lingering after it ended, makes way for the new one first. On
-    /// the main actor, so two Follows at once (a double tap, the button and the Control) start
-    /// one.
     @MainActor
     @discardableResult
     static func start(_ provider: RelayProvider, window: RelayWindow, now: Date = .now) async throws -> Bool {
         guard isEnabled, let resetsAt = window.resetsAt, resetsAt > now else { return false }
         if activity(for: provider.id, now: now) != nil { return true }
         await stop(provider.id)
-        // Again: another Follow may have started one while those ended.
         if activity(for: provider.id, now: now) != nil { return true }
         let attributes = SessionActivityAttributes(
             providerID: provider.id,
@@ -74,7 +58,6 @@ enum LiveActivities {
         return true
     }
 
-    /// Follows the most urgent window that qualifies, from the readings saved for widgets.
     static func startMostUrgent(now: Date = .now) async throws -> Bool {
         guard let next = savedReadings?.mostUrgentToFollow(at: now) else { return false }
         return try await start(next.provider, window: next.window)
@@ -86,11 +69,6 @@ enum LiveActivities {
 
     static let sampleDataMessage = "Couldn't follow sample data. Turn off Sample Data in Settings to follow your own usage."
 
-    /// Moves each activity to the latest reading, with an alert as it crosses 80% and 95% (when
-    /// those alerts are on, and outside quiet hours but for 95%), and ends the ones whose window
-    /// has reset, stale ones included.
-    /// - Parameter samples: recent readings by provider id, then window id, for the pace of readings
-    ///   without a measured one (the iPhone's own).
     static func update(with providers: [RelayProvider], preferences: AlertPreferences, samples: [String: [String: [(date: Date, used: Double)]]] = [:], now: Date = .now) async {
         for activity in shown {
             let old = activity.content.state
@@ -101,9 +79,6 @@ enum LiveActivities {
                     || AlertRules.isSmallMove(from: old.resetsAt, to: resetsAt, usedBefore: old.used, usedNow: window.used,
                                               length: window.periodSec ?? AlertRules.typicalLength(kind: window.kind))
             else {
-                // Reset (even if no newer reading has come in yet), or a new window: done. A
-                // reset time the provider moved, with the window still going, is the same
-                // window, even when the move is only seen after the old time.
                 if old.resetsAt <= now || window?.resetsAt != nil {
                     await end(activity, resetAt: old.resetsAt, now: now)
                 }
@@ -112,8 +87,6 @@ enum LiveActivities {
             let checkedAt = provider.checkedAt ?? provider.fetchedAt
             var state = SessionActivityAttributes.ContentState(used: window.used, resetsAt: resetsAt, isStale: !provider.isLive,
                                                                warnedRunsOut: old.warnedRunsOut, checkedAt: checkedAt)
-            // A newer check alone moves the stale date forward, so it's an update too, once it
-            // has moved a few minutes.
             guard LiveActivityFreshness.needsUpdate(from: old, to: state) else { continue }
             let crossed = (provider.isLive && old.awaitingReading != true ? [95, 80] : []).first { level in
                 preferences.thresholds(for: window).contains(level) && old.used < Double(level) && window.used >= Double(level)
@@ -126,7 +99,6 @@ enum LiveActivities {
                     sound: .default
                 )
             }
-            // The pace alert, when its switch is on: once, and not in the same update as a level.
             if alert == nil, old.warnedRunsOut != true,
                let runsOut = AlertRules.runsOut(provider, window: window, preferences: preferences, samples: samples[provider.id]?[window.id] ?? [], now: now),
                runsOut.isUrgent || !preferences.isQuiet(at: now) {
@@ -146,7 +118,6 @@ enum LiveActivities {
         await activity.end(ActivityContent(state: final, staleDate: nil), dismissalPolicy: .after(now.addingTimeInterval(lingering)))
     }
 
-    /// Ends a provider's activities at once, ones lingering after they ended included.
     static func stop(_ providerID: String) async {
         for activity in Activity<SessionActivityAttributes>.activities where activity.attributes.providerID == providerID && activity.activityState != .dismissed {
             await activity.end(nil, dismissalPolicy: .immediate)
@@ -154,13 +125,11 @@ enum LiveActivities {
     }
 }
 
-/// For Shortcuts, the Action button, and the Control Center control.
 struct FollowUsageIntent: LiveActivityIntent {
     static let title: LocalizedStringResource = "Follow Usage on Lock Screen"
     static let description = IntentDescription("Shows your most urgent limit that resets within 8 hours on the Lock Screen and in the Dynamic Island, until it resets.")
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        // As the Follow button says it: otherwise this would read as nothing to follow.
         guard LiveActivities.isEnabled else {
             return .result(dialog: "Live Activities are off for Tokenroom. Turn them on in Settings › Tokenroom.")
         }
@@ -168,7 +137,6 @@ struct FollowUsageIntent: LiveActivityIntent {
             return .result(dialog: "\(LiveActivities.sampleDataMessage)")
         }
         let started = try await LiveActivities.startMostUrgent()
-        // What `windowToFollow` takes: a 5-hour limit, or another limit at 80% or more.
         return .result(dialog: started ? "Following it until it resets." : "Nothing to follow: no 5-hour limit, or limit at 80% or more, resets within 8 hours.")
     }
 }

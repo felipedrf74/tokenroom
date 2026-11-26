@@ -1,9 +1,5 @@
 import Foundation
 
-// Plan usage parsers, shared so the iPhone can read the plans it signs in to. Pure: the
-// answer in, a reading out. Each drops the account's email, names, and IDs it doesn't read.
-
-/// Claude usage from `api.anthropic.com/api/oauth/usage`. Keys with codenames are ignored.
 enum ClaudeParser {
     private static let week: Double = 7 * 86_400
 
@@ -44,7 +40,6 @@ enum ClaudeParser {
             )
         }
 
-        // Model weekly caps, when the plan has them.
         for (key, title) in [("seven_day_opus", "Opus weekly"), ("seven_day_sonnet", "Sonnet weekly")] {
             if let object = JSONFlex.dictionary(root[key]), let percent = JSONFlex.number(object["utilization"]) {
                 windows.append(
@@ -60,7 +55,6 @@ enum ClaudeParser {
             }
         }
 
-        // Other model-scoped weekly caps. Unscoped entries repeat the weekly and session windows.
         for (index, item) in (JSONFlex.array(root["limits"]) ?? []).enumerated() {
             guard let limit = JSONFlex.dictionary(item),
                   (limit["is_active"] as? Bool) != false,
@@ -93,7 +87,6 @@ enum ClaudeParser {
         )
     }
 
-    /// Paid usage past the plan. Amounts arrive in minor units (`decimal_places`).
     private static func extraUsage(from object: [String: Any]?) -> ExtraUsage? {
         guard let object, (object["is_enabled"] as? Bool) == true,
               let rawLimit = JSONFlex.number(object["monthly_limit"]), rawLimit > 0,
@@ -109,8 +102,6 @@ enum ClaudeParser {
     }
 }
 
-/// Codex usage from `chatgpt.com/backend-api/wham/usage`. The response also carries the
-/// account's email and IDs; they are never read.
 enum OpenAIParser {
     private static let weekSeconds: Double = 6 * 24 * 60 * 60
 
@@ -120,7 +111,6 @@ enum OpenAIParser {
         let primary = window(from: JSONFlex.dictionary(rateLimit["primary_window"]))
         let secondary = window(from: JSONFlex.dictionary(rateLimit["secondary_window"]))
 
-        // Decide by window length, not position: a weekly-only plan reports its week as primary.
         let candidates = [primary, secondary].compactMap { $0 }
         guard let weekly = candidates.first(where: { $0.limitSeconds >= weekSeconds }) ?? secondary ?? primary else {
             throw ProviderError.parse
@@ -145,7 +135,6 @@ enum OpenAIParser {
                     window(from: JSONFlex.dictionary(nested["secondary_window"])),
                     window(from: JSONFlex.dictionary(nested["primary_window"])),
                 ].compactMap { $0 }
-                // Named limits only earn a line once they're in use.
                 if let used = parts.first(where: { $0.used >= 1 }) {
                     windows.append(makeWindow(used, id: "extra-\(index)", title: name))
                 }
@@ -169,8 +158,6 @@ enum OpenAIParser {
         )
     }
 
-    /// Expiry dates of reset credits that are still available, soonest first.
-    /// From `wham/rate-limit-reset-credits`; titles, images, and IDs are ignored.
     static func availableResetExpiries(from data: Data, now: Date = .now) throws -> [Date] {
         let root = try JSONFlex.object(from: data)
         return (JSONFlex.array(root["credits"]) ?? []).compactMap { item -> Date? in
@@ -215,7 +202,6 @@ enum OpenAIParser {
         )
     }
 
-    /// `spend_control.individual_limit`: a dollar cap an admin set for this seat.
     private static func spendWindow(from object: [String: Any]?) -> QuotaWindow? {
         guard let object else { return nil }
         let limit = JSONFlex.number(object["limit"])
@@ -262,7 +248,6 @@ enum OpenAIParser {
 }
 
 enum GrokParser {
-    /// Plan name from `/v1/settings`; the rest of that response is ignored.
     static func planLabel(fromSettings data: Data) -> String? {
         guard let root = try? JSONFlex.object(from: data),
               let label = JSONFlex.string(root["subscription_tier_display"])?.trimmingCharacters(in: .whitespaces),

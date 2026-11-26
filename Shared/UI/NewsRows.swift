@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// A new model: lab, name, context and prices. Opens OpenRouter's page for it.
 struct ModelReleaseRow: View {
     var release: ModelRelease
     var isNew = false
@@ -36,7 +35,6 @@ struct ModelReleaseRow: View {
         }
         .padding(.vertical, 2)
         if let link = release.link {
-            // Links tint their labels; rows keep their own colors.
             Link(destination: link) { row }
                 .foregroundStyle(.primary)
                 .multilineTextAlignment(.leading)
@@ -45,7 +43,6 @@ struct ModelReleaseRow: View {
         }
     }
 
-    /// "1M context · $4 in, $20 out per million tokens".
     private var details: String? {
         var parts: [String] = []
         if let context = release.contextLength, context > 0 {
@@ -61,16 +58,13 @@ struct ModelReleaseRow: View {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    /// "$4", "$0.10", "$0.075".
     static func price(_ value: Double) -> String {
-        // Per-token prices times a million carry float noise: 0.1 arrives as 0.0999….
         let value = (value * 1000).rounded() / 1000
         let digits = value == value.rounded() ? 0 : (value < 0.1 ? 3 : 2)
         return value.formatted(.currency(code: "USD").precision(.fractionLength(digits)))
     }
 }
 
-/// Marks an item published since News was last opened.
 struct NewBadge: View {
     var body: some View {
         Text("New")

@@ -1,8 +1,5 @@
 import XCTest
 
-/// Every iPhone screen from sample data, as real screenshots, written to the folder in
-/// `TOKENROOM_SNAPSHOT_DIR`. Run by `./scripts/ui-snapshots.sh`; without the folder it skips, so it
-/// can't fail anywhere else. `TOKENROOM_SNAPSHOT_FIXTURE` is the synthetic News fixture.
 final class UISnapshotTests: XCTestCase {
     private var output: URL!
     private var fixture = ""
@@ -126,7 +123,6 @@ final class UISnapshotTests: XCTestCase {
                     shoot("iphone-news-skills-end\(look.suffix)")
                 }
             }
-            // A story collection, then a model collection: each reached from Today's "See All".
             tap(app, "Today")
             for (index, name) in ["releases", "models"].enumerated() {
                 let links = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH[c] 'See All'"))
@@ -143,8 +139,6 @@ final class UISnapshotTests: XCTestCase {
         }
     }
 
-    /// News's exceptions: nothing to show, a collection with a failed source, one a search emptied
-    /// (its actions disabled), and one at a large text size, where its header stacks.
     func testNewsExceptions() {
         let folder = URL(fileURLWithPath: fixture).deletingLastPathComponent()
         let normal = fixture
@@ -227,7 +221,6 @@ final class UISnapshotTests: XCTestCase {
             Thread.sleep(forTimeInterval: 0.8)
             shoot("iphone-widgets-home-scrolled\(look.suffix)")
         }
-        // Each style at every size, the smallest iPhone's sizes, two providers, and the exceptions.
         for page in ["list", "tiles", "compact", "few", "states"] {
             let app = launch(["-onboarded", "YES", "-TokenroomGallery", page], look: .dark)
             shoot("iphone-widgets-\(page)-dark")
@@ -251,8 +244,6 @@ final class UISnapshotTests: XCTestCase {
         shoot("iphone-settings-widgets-dark")
         tap(settings, "My Order")
         shoot("iphone-settings-widgets-own-order-dark")
-        // One provider switched off, then everything back as it was for the next run. A row's
-        // switch answers at its knob, toward the trailing edge, not at the row's middle.
         tap(settings, "Most Urgent First")
         let first = settings.switches.firstMatch
         if first.waitForExistence(timeout: 3) {

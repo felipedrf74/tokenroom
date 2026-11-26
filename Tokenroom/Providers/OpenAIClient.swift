@@ -4,7 +4,6 @@ import os
 struct OpenAIClient: ProviderClient {
     var provider: Provider { .openai }
 
-    /// Reset-credit expiries change rarely; look them up at most every six hours.
     private static let expiryCache = OSAllocatedUnfairLock<ExpiryEntry?>(initialState: nil)
     private static let expiryTTL: TimeInterval = 6 * 3_600
 
@@ -14,8 +13,6 @@ struct OpenAIClient: ProviderClient {
         var at: Date
     }
 
-    /// The cached expiries while they are for `count` banked resets and younger than `ttl`. A
-    /// redeemed or newly banked reset changes the count, so the old dates no longer fit.
     static func cachedExpiries(_ entry: ExpiryEntry?, count: Int, now: Date, ttl: TimeInterval = .infinity) -> [Date]? {
         guard let entry, entry.count == count, now.timeIntervalSince(entry.at) < ttl,
               !entry.expiries.contains(where: { $0 <= now })
@@ -23,7 +20,6 @@ struct OpenAIClient: ProviderClient {
         return entry.expiries
     }
 
-    /// Another account's banked resets aren't this one's.
     func credentialsChanged() {
         Self.expiryCache.withLock { $0 = nil }
     }
@@ -40,7 +36,6 @@ struct OpenAIClient: ProviderClient {
         }
     }
 
-    /// One retry when the server refuses the access token and a renewal can replace it.
     private func usage(_ auth: CredentialReaders.CodexAuth) async throws -> QuotaSnapshot {
         do {
             return try await usageReading(auth)
@@ -74,7 +69,6 @@ struct OpenAIClient: ProviderClient {
         return snapshot
     }
 
-    /// Best effort: a failure here never fails the usage reading.
     private func expiries(count: Int, token: String, headers: [String: String]) async -> [Date] {
         if let cached = Self.cachedExpiries(Self.expiryCache.withLock { $0 }, count: count, now: Date(), ttl: Self.expiryTTL) {
             return cached

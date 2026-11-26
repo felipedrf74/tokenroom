@@ -3,18 +3,12 @@ import AppKit
 import CloudKit
 import SwiftUI
 
-/// `-TokenroomSnapshots <folder>`: renders the popover, Settings, and News with sample data to
-/// PNGs, then quits. For README images and layout checks. It uses its own settings and a
-/// throwaway folder, so real readings, keys, and settings are never read or changed.
-/// `-TokenroomSnapshotNews <news.json>` adds a saved News cache.
 @MainActor
 enum DebugSnapshots {
     private static var previewWindow: NSWindow?
     private static var previewObservers: [NSObjectProtocol] = []
     private static var previewStatusItem: StatusItemController?
 
-    /// A real, interactive News window over input-only fixtures. This path
-    /// returns before status items, migrations and production collectors start.
     static func showNewsPreviewIfRequested() -> Bool {
         guard UserDefaults.standard.bool(forKey: "TokenroomNewsPreview") else { return false }
         guard let path = UserDefaults.standard.string(forKey: "TokenroomSnapshotNews"),
@@ -107,7 +101,6 @@ enum DebugSnapshots {
         settings.newsEnabled = true
         settings.showsAlertsOnMac = true
         settings.setBudget(1000, for: .anthropicOrg)
-        // Sample data only: a check here would put live feeds on the page and move it between runs.
         let news = NewsStore(defaults: defaults, directory: scratch, now: now.addingTimeInterval(-2 * 86_400),
                              fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
         if UserDefaults.standard.string(forKey: "TokenroomSnapshotNews") != nil {
@@ -124,8 +117,6 @@ enum DebugSnapshots {
         }
         store.lastAttempt = now.addingTimeInterval(-60)
 
-        // The selected design's four-provider overview and its actual detail route, in every
-        // saved style. Synthetic Grok Bot data is independent of all native credentials.
         let bot = try! QuotaSnapshot.headlined(by: [QuotaWindow(id: "weekly", kind: .weekly, title: "Weekly", usedPercent: 12,
             resetsAt: now.addingTimeInterval(3 * 86_400), windowSeconds: 7 * 86_400)], provider: .grokBot, fetchedAt: now)
         store.statuses[.grokBot] = .live(bot)
@@ -194,8 +185,6 @@ enum DebugSnapshots {
             store.statuses[.openai] = .live(openai)
         }
         if UserDefaults.standard.bool(forKey: "TokenroomPopoverPreview") {
-            // A real NSPopover, but over sample-only settings/history and no provider clients.
-            // No sign-in path is offered by these four live fixture providers.
             settings.newsEnabled = false
             previewStatusItem = StatusItemController(store: store, onSettings: { _ in }, onNews: { _ in })
             previewStatusItem?.showPopover()
@@ -210,8 +199,6 @@ enum DebugSnapshots {
             render(PopoverView(store: store, onSettings: { _ in }), width: TokenroomTokens.popoverWidth, appearance: appearance, to: output.appendingPathComponent("popover\(suffix).png"))
             render(PopoverView(store: store, onSettings: { _ in }, expanded: [.openai, .deepseek]), width: TokenroomTokens.popoverWidth, appearance: appearance, to: output.appendingPathComponent("popover-expanded\(suffix).png"))
         }
-        // The page needs a relay. Its own store, so the popover shots above show no sync line, and
-        // a stand-in for iCloud that goes nowhere, over the throwaway defaults.
         let relay = RelayPublisher(defaults: defaults, cloud: SnapshotCloud())
         let relayStore = QuotaStore(settings: settings, clients: [], cache: SnapshotCache(directory: scratch), relay: relay, news: news)
         Task { await relay.publish(store.relayEnvelope(at: now), force: true, now: now.addingTimeInterval(-120)) }
@@ -225,7 +212,6 @@ enum DebugSnapshots {
                              to: output.appendingPathComponent("settings-\(tab.rawValue)\(appearance == .aqua ? "" : "-dark").png"))
             }
         }
-        // What a copy without iCloud shows, as an ad-hoc build does.
         let unavailable = SettingsTabRequest()
         unavailable.tab = .iPhone
         let localStore = QuotaStore(settings: settings, clients: [], cache: SnapshotCache(directory: scratch),
@@ -248,12 +234,9 @@ enum DebugSnapshots {
             render(NewsStoryDetail(item: item, library: NewsLibrary(directory: nil)), width: 720, height: 660, appearance: .aqua, to: output.appendingPathComponent("news-story-detail.png"))
         }
 
-        // Every provider's icon (or its monogram), light and dark: providers outside the sample
-        // data, such as Grok Bot, show here too.
         render(ProviderIconSheet(), width: 560, appearance: .aqua, to: output.appendingPathComponent("provider-icons.png"))
         render(ProviderIconSheet(), width: 560, appearance: .darkAqua, to: output.appendingPathComponent("provider-icons-dark.png"))
 
-        // The menu bar in each style, on a light and a dark bar. A few providers, as people keep it.
         let meters = store.menuMeters.filter { [.claude, .openai, .cursor, .copilot].contains($0.provider) }
         for style in MenuBarStyle.allCases {
             for appearance in [NSAppearance.Name.aqua, .darkAqua] {
@@ -268,7 +251,6 @@ enum DebugSnapshots {
         return true
     }
 
-    /// iCloud for the iPhone & Watch capture: it accepts everything and keeps nothing.
     private struct SnapshotCloud: RelayCloud {
         func accountStatus() async throws -> CKAccountStatus { .available }
         func accountFingerprint() async throws -> String { "" }
@@ -285,7 +267,6 @@ enum DebugSnapshots {
         func resetZone() async {}
     }
 
-    /// Each provider's mark at the popover's size and the sidebar's, with its name.
     private struct ProviderIconSheet: View {
         var body: some View {
             LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 10) {
@@ -320,8 +301,6 @@ enum DebugSnapshots {
         render(bar, width: nil, height: 24, appearance: .aqua, to: url)
     }
 
-    /// A view in a real titled window with a unified toolbar, as Settings opens: a split view's
-    /// sidebar, its search field, and the toolbar only lay out there.
     private static func renderWindow<Content: View>(_ view: Content, size: NSSize, appearance: NSAppearance.Name = .aqua, title: String = "Tokenroom", showsTitle: Bool = true, to url: URL) {
         let hosting = NSHostingController(rootView: view.environment(\.controlActiveState, .key).environment(\.appearsActive, true))
         hosting.sceneBridgingOptions = [.toolbars, .title]
@@ -332,15 +311,10 @@ enum DebugSnapshots {
         window.titleVisibility = showsTitle ? .visible : .hidden
         window.appearance = NSAppearance(named: appearance)
         window.setContentSize(size)
-        // Past every screen, so a run doesn't flash windows, but on screen as far as AppKit knows:
-        // a split view's sidebar only lays out and draws in an ordered-in window.
         window.setFrameOrigin(NSPoint(x: -20_000, y: -20_000))
         window.orderFrontRegardless()
-        // Nothing focused, as a window opens: a field that took focus would turn the sidebar's
-        // selection grey on some pages and leave it blue on others.
         window.makeFirstResponder(nil)
         RunLoop.main.run(until: Date().addingTimeInterval(1.2))
-        // A text field that took the keyboard would show its selection, and differ between runs.
         if window.firstResponder is NSText {
             window.makeFirstResponder(nil)
             RunLoop.main.run(until: Date().addingTimeInterval(0.1))
@@ -354,20 +328,13 @@ enum DebugSnapshots {
         window.orderOut(nil)
     }
 
-    /// The window as WindowServer composites it. A process may always read its own windows, so
-    /// this needs no Screen Recording permission. `cacheDisplay` leaves a glass sidebar's contents
-    /// out, which is why it's only the fallback. Looked up at run time: the SDK hides the call.
     private static func composited(_ window: NSWindow) -> CGImage? {
         typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
         guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
         let capture = unsafeBitCast(symbol, to: Capture.self)
-        // .optionIncludingWindow, .boundsIgnoreFraming | .bestResolution
         return capture(.null, 1 << 3, CGWindowID(window.windowNumber), 1 << 0 | 1 << 3)?.takeRetainedValue()
     }
 
-    /// Draws as the active window, as it is in use: an inactive one greys out its controls, which
-    /// makes every switch read as off. The last two are what those controls ask; AppKit doesn't
-    /// publish them.
     private final class ActiveSnapshotWindow: NSWindow {
         override var isKeyWindow: Bool { true }
         override var isMainWindow: Bool { true }
@@ -387,9 +354,7 @@ enum DebugSnapshots {
         window.contentView = hosting
         hosting.frame = NSRect(origin: .zero, size: size)
         hosting.layoutSubtreeIfNeeded()
-        // One turn of the run loop so lists and layout settle.
         RunLoop.main.run(until: Date().addingTimeInterval(0.3))
-        // Twice the points, for Retina screens.
         guard let rep = NSBitmapImageRep(
             bitmapDataPlanes: nil, pixelsWide: Int(size.width * 2), pixelsHigh: Int(size.height * 2),
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,

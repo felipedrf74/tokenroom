@@ -1,7 +1,5 @@
 import Foundation
 
-/// Runtime composition keeps screenshot/test hosts inert and stores device-local saves
-/// separately from the usage relay and the transient public catalog.
 @MainActor enum NewsRuntime {
     static let isolatedDefaults: UserDefaults = {
         let name = "TokenroomInertNewsHost"
@@ -32,14 +30,11 @@ import Foundation
             #else
             let fixture: NewsCache? = nil
             #endif
-            // Fixtures are inputs only. A refresh/navigation must not rewrite them.
             return NewsStore(defaults: inertDefaults ?? isolatedDefaults, directory: nil,
                              initialCache: fixture, fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
         }
         return liveNewsStore()
     }
-    /// The app's own News: a new install follows `NewsVoice.newInstallFollows`; an update never
-    /// adds a follow. The Mac passes its standard defaults and Application Support folder.
     static func liveNewsStore(defaults: UserDefaults = AppGroup.defaults,
                               directory: URL? = AppGroup.containerURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first) -> NewsStore {
         NewsStore(defaults: defaults, directory: directory, newInstallVoices: NewsVoice.newInstallFollows)
@@ -60,7 +55,6 @@ import Foundation
             })
             return SkillsStore(fetch: { request in
                 guard let url = request.url else { return .unreachable }
-                // Trending has its own endpoint, without a `sort`.
                 let sort = url.lastPathComponent == "trending" ? SkillSort.trending.apiValue
                     : URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "sort" })?.value
                 return sort.flatMap { bodies[$0] }.map { .body($0) } ?? .unreachable
@@ -68,7 +62,6 @@ import Foundation
         }
         #endif
         if isInert() { return SkillsStore(fetch: { _ in .unreachable }) }
-        // The last good lists stay beside the saved library, on this device only.
         return SkillsStore(directory: libraryDirectory)
     }
 }

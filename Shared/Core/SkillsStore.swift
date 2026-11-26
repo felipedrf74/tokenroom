@@ -2,15 +2,9 @@ import Foundation
 import Observation
 
 @Observable @MainActor final class SkillsStore {
-    /// `tooLarge`: an answer past `SkillFeed.sizeLimit`. `offline`: no network to ask on
-    /// (`TokenroomHTTP.meansOffline`), which isn't ClawHub's failure.
     enum Answer: Sendable { case body(Data), status(Int, retryAfter: String?), unreachable, tooLarge, offline }
-    /// One absolute deadline per physical request, shared by every reader waiting on it.
     static let budget: TimeInterval = 20
-    /// After a server error (5xx) a ranking isn't asked for again by itself before this; Retry
-    /// still asks. Longer after a second one in a row.
     static let serverErrorBackoff: [TimeInterval] = [5 * 60, 15 * 60]
-    /// The last good list of each ranking, kept on the device so a launch shows it at once.
     static let cacheFileName = "skills.json"
     private(set) var listings: [SkillListing] = []
     private(set) var sort: SkillSort = .trending
@@ -25,8 +19,6 @@ import Observation
     @ObservationIgnored private let beforeDispatch: @Sendable () async -> Void
     @ObservationIgnored private let monotonicClock: @Sendable () -> TimeInterval
     @ObservationIgnored private let limitAnswer: @Sendable (TimeInterval, Task<Answer, Never>) async -> Answer?
-    // onCancel runs outside MainActor. Record cancellation synchronously so a queued
-    // completion cannot publish while its queued MainActor cleanup is still waiting.
     private final class Waiter: @unchecked Sendable {
         private let lock = NSLock()
         private var cancelled = false
@@ -52,11 +44,9 @@ import Observation
     private var results: [SkillSort: (items: [SkillListing], date: Date)] = [:]
     private var problems: [SkillSort: String] = [:]
     private var retries: [SkillSort: Date] = [:]
-    /// Server errors in a row per ranking, and when it may be asked for again by itself.
     private var backoffs: [SkillSort: (until: Date, failures: Int)] = [:]
     @ObservationIgnored private let directory: URL?
 
-    /// What `cacheFileName` holds: each ranking's last good list and when it was checked.
     struct Saved: Codable, Equatable {
         var items: [SkillListing]
         var checkedAt: Date
@@ -101,8 +91,6 @@ import Observation
         let now = clock()
         if let retry = retries[selected], retry > now { return }
         if !force, let backoff = backoffs[selected], backoff.until > now { return }
-        // Join an active forced check before consulting the cache. Re-entry must keep its
-        // progress visible, even when the last successful result is still fresh.
         if running[selected] == nil, !force, let result = results[selected], now.timeIntervalSince(result.date) < 15 * 60 { return }
         let waiter = UUID(), interest = Waiter()
         let task: Task<Answer, Never>
@@ -115,8 +103,6 @@ import Observation
         else {
             let fetch = fetch, beforeDispatch = beforeDispatch, monotonic = monotonicClock, limit = limitAnswer
             let id = UUID(), receipt = Receipt(), deadline = monotonic() + Self.budget
-            // Start on MainActor so the live owner/cancellation check and fetch invocation
-            // have no intervening actor suspension. The optional dispatch hook precedes it.
             let physical = Task { @MainActor [weak self] in
                 await beforeDispatch()
                 guard !Task.isCancelled, self?.prepareDispatch(sort: selected, requestID: id) == true else {
@@ -124,16 +110,12 @@ import Observation
                     return Answer.unreachable
                 }
                 let answer = await fetch(SkillFeed.request(sort: selected))
-                // Publish once, before releasing the slot. A waiter never writes a body or
-                // clears cooldown, so its later resumption cannot overwrite a newer check.
                 self?.completed(answer, sort: selected, requestID: id)
                 return answer
             }
-            // One answer and one absolute budget belong to the physical request. A reader
-            // joining later observes this answer rather than starting another budget.
             task = Task.detached { [weak self] in
                 if let answer = await limit(max(0, deadline - monotonic()), physical) { return answer }
-                receipt.expire() // fence a body before waiting for MainActor cleanup
+                receipt.expire()
                 physical.cancel()
                 await self?.expired(sort: selected, requestID: id)
                 return Answer.unreachable
@@ -149,8 +131,6 @@ import Observation
             interest.cancel()
             Task { @MainActor [weak self] in self?.releaseWaiter(waiter, sort: selected, requestID: requestID) }
         }
-        // Only a still-pending request can time out here. Physical completion already owns
-        // its result/error; an obsolete waiter must not alter a subsequent request.
         if !Task.isCancelled, case .unreachable = answer, let request = running[selected], request.id == requestID, request.issued {
             problems[selected] = "Couldn't reach ClawHub. Check your connection and retry."
         }
@@ -180,7 +160,6 @@ import Observation
     private func releaseWaiter(_ waiter: UUID, sort selected: SkillSort, requestID: UUID) {
         guard var request = running[selected], request.id == requestID, request.waiters.removeValue(forKey: waiter) != nil else { return }
         if !request.waiters.values.contains(where: { $0.isLive }) { request.task.cancel() }
-        // Keep the physical slot until its worker ends, including after timeout/cancellation.
         running[selected] = request
         presentSelection()
     }
@@ -206,7 +185,6 @@ import Observation
             case .status(let code, _):
                 problems[selected] = "ClawHub is unavailable. Try again later."
                 if (500..<600).contains(code) {
-                    // A server that's down isn't asked again on every visit.
                     let failures = (backoffs[selected]?.failures ?? 0) + 1
                     let wait = Self.serverErrorBackoff[min(failures, Self.serverErrorBackoff.count) - 1]
                     backoffs[selected] = (clock().addingTimeInterval(wait), failures)
@@ -214,7 +192,6 @@ import Observation
             case .unreachable: problems[selected] = "Couldn't reach ClawHub. Check your connection and retry."
             case .tooLarge: problems[selected] = "Couldn't read ClawHub's ranking: it was larger than Tokenroom reads (2 MB)."
             case .offline:
-                // Not ClawHub's failure: the last list stays, without a "Couldn't".
                 problems[selected] = hasRetainedRows ? nil : "Skills will load when you're online."
             }
         } else if hasLiveWaiter {
@@ -242,9 +219,6 @@ import Observation
         return await download(request)
     }
 
-    /// Off the main actor and a buffer at a time, as `NewsFetcher.download` reads: a hop to the
-    /// main actor for every byte made a large answer take seconds. News's session, whose whole
-    /// download may take longer than a provider check's, within `budget`.
     @concurrent nonisolated static func download(_ request: URLRequest, session: URLSession = NewsFetcher.session) async -> Answer {
         do {
             let (bytes, response) = try await session.bytes(for: request)

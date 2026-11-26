@@ -2,7 +2,6 @@ import SwiftUI
 
 #if os(macOS)
 extension EnvironmentValues {
-    /// Supplied by the containing scroll viewport, independent of child widths.
     @Entry var macNewsAvailableWidth: CGFloat = 600
 }
 
@@ -31,7 +30,8 @@ struct MacNewsReaderContent: View {
             MacNewsHeader(title: "Today")
             MacNewsFreshnessView(news: news, library: library)
         }
-        let stories = NewsDiscovery.stories(news.allAnnouncements, collection: .release)
+        let sections = NewsDiscovery.today(news.allAnnouncements)
+        let stories = sections.releases
         let latest = NewsDiscovery.latestOfficial(stories)
         let edition = NewsEditions.today(models: news.models(), announcements: stories, retiring: news.retiringModels(), since: news.visitBaseline)
         let updates = stories.filter { $0.stableID != latest?.stableID }
@@ -51,8 +51,6 @@ struct MacNewsReaderContent: View {
         } else if let model = edition.topStory {
             MacNewsModelCard(model: model, news: news, library: library)
         }
-        // Each story has one position in the briefing; the full collection is
-        // always available through See all rather than repeating the lead.
         let remaining = latest == nil ? updates : Array(updates.dropFirst(3))
         if !remaining.isEmpty {
             MacNewsPanel {
@@ -69,9 +67,9 @@ struct MacNewsReaderContent: View {
                 }
             }
         }
-        let voices = NewsDiscovery.stories(news.allAnnouncements, collection: .voice)
+        let voices = sections.voices
         if !voices.isEmpty { storyPanel("From voices you follow", collection: .voice, items: Array(voices.prefix(4))) }
-        let status = NewsDiscovery.stories(news.allAnnouncements, collection: .status)
+        let status = sections.status
         if !status.isEmpty { storyPanel("Provider status", collection: .status, items: Array(status.prefix(3))) }
         let retiring = edition.retiring
         if !retiring.isEmpty {
@@ -114,7 +112,6 @@ struct MacNewsReaderContent: View {
     }
     @ViewBuilder private func storyColumns(_ items: [FeedItem]) -> some View {
         if availableWidth >= 680 {
-            // Rows pair across the columns, so the hairlines line up however the titles wrap.
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 32, alignment: .top), count: 2), alignment: .leading, spacing: 0) {
                 ForEach(Array(items.enumerated()), id: \.element.stableID) { index, item in
                     VStack(alignment: .leading, spacing: 0) {

@@ -1,5 +1,3 @@
-// Screenshots of the iPhone app from sample data, for design review. Not part of CI or the
-// TokenroomMobile scheme; `./scripts/ui-snapshots.sh` runs it.
 #include "Version.xcconfig"
 
 SDKROOT = iphoneos

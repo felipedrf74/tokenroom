@@ -1,17 +1,4 @@
 #!/bin/zsh
-# Build a notarized Developer ID release of Tokenroom for Mac.
-#
-#   ./scripts/release.sh
-#
-# Needs:
-#   - Config/Local.xcconfig with TOKENROOM_TEAM_ID (the team that owns the iCloud container).
-#   - Xcode signed in to that team. Export uses Xcode's cloud-managed Developer ID
-#     certificate when none is installed (Account Holder or Admin role).
-#   - Notarization credentials saved once in the Keychain:
-#       xcrun notarytool store-credentials tokenroom-notary --apple-id <you> --team-id <TEAM>
-#     (override the profile name with TOKENROOM_NOTARY_PROFILE).
-#
-# Output: build/release/Tokenroom-<version>.zip (+ .sha256), stapled and ready to upload.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -101,7 +88,6 @@ spctl --assess --type execute --verbose=2 "$APP"
 rm -f "$OUT/notarize.zip"
 
 ditto -c -k --keepParent "$APP" "$ZIP"
-# Named without the folder, so `shasum -c` works next to the download and no local path leaks.
 (cd "$OUT" && shasum -a 256 "${ZIP:t}") | tee "$ZIP.sha256"
 echo "Ready: $ZIP"
 echo "Draft a GitHub release with: gh release create v$VERSION \"$ZIP\" --draft --title \"Tokenroom $VERSION\""

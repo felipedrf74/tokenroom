@@ -1,8 +1,6 @@
 import XCTest
 @testable import Tokenroom
 
-/// Providers add fields without notice. Every parser that reads JSON must read the same thing
-/// when unknown keys appear anywhere in a response.
 final class ParserRobustnessTests: XCTestCase {
     private let now = Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 25, hour: 12))!
 
@@ -10,8 +8,6 @@ final class ParserRobustnessTests: XCTestCase {
         try! Data(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/\(name).json"))
     }
 
-    /// Parses `name` as is and with extra keys in every object, for several seeds, and expects
-    /// the same result, or the same error, each time.
     private func assertIgnoresExtraKeys<Value: Equatable>(
         _ name: String,
         file: StaticString = #filePath,
@@ -36,8 +32,6 @@ final class ParserRobustnessTests: XCTestCase {
             return .failure(.parse)
         }
     }
-
-    // MARK: Signed-in apps and CLIs
 
     func testClaude() throws {
         try assertIgnoresExtraKeys("claude-usage-full") { try ClaudeParser.snapshot(from: $0, fetchedAt: now) }
@@ -82,8 +76,6 @@ final class ParserRobustnessTests: XCTestCase {
         try assertIgnoresExtraKeys("antigravity-remote") { try AntigravityParser.snapshot(from: $0, fetchedAt: now) }
     }
 
-    // MARK: Coding plans
-
     func testZai() throws {
         for name in ["zai-quota", "zai-idle-session", "zai-no-plan"] {
             try assertIgnoresExtraKeys(name) { try ZaiParser.snapshot(from: $0, fetchedAt: now) }
@@ -105,8 +97,6 @@ final class ParserRobustnessTests: XCTestCase {
         try assertIgnoresExtraKeys("opencode-go-usage") { try OpenCodeGoParser.snapshot(from: $0, fetchedAt: now) }
     }
 
-    // MARK: API keys
-
     func testOpenRouter() throws {
         try assertIgnoresExtraKeys("openrouter-limited") { try OpenRouterParser.snapshot(from: $0, fetchedAt: now) }
         try assertIgnoresExtraKeys("openrouter-unlimited") { try OpenRouterParser.snapshot(from: $0, fetchedAt: now) }
@@ -124,8 +114,6 @@ final class ParserRobustnessTests: XCTestCase {
     func testVercel() throws {
         try assertIgnoresExtraKeys("vercel-credits") { try VercelGatewayParser.snapshot(from: $0, fetchedAt: now) }
     }
-
-    // MARK: Organization spend
 
     func testOpenAICosts() throws {
         for name in ["openai-costs-page1", "openai-costs-page2"] {
@@ -154,8 +142,6 @@ final class ParserRobustnessTests: XCTestCase {
         try assertIgnoresExtraKeys("xai-prepaid-balance") { try XAIBillingParser.prepaidCredits(from: $0) }
     }
 
-    // MARK: The injector itself
-
     func testExtraKeysAreDeterministicAndReachNestedObjects() throws {
         let original = fixture("claude-usage")
         XCTAssertEqual(try ExtraKeys.added(to: original, seed: 7), try ExtraKeys.added(to: original, seed: 7))
@@ -167,7 +153,6 @@ final class ParserRobustnessTests: XCTestCase {
     }
 }
 
-/// Two values compared together, for parsers that return tuples or plain structs.
 private struct Pair<First: Equatable, Second: Equatable>: Equatable {
     var first: First
     var second: Second
@@ -178,8 +163,6 @@ private struct Pair<First: Equatable, Second: Equatable>: Equatable {
     }
 }
 
-/// Adds keys no provider sends to every JSON object, at every depth. Arrays keep their elements
-/// (an extra element would be a different response), but objects inside them grow too.
 enum ExtraKeys {
     static let prefix = "tokenroomExtra"
 
@@ -231,7 +214,6 @@ enum ExtraKeys {
     }
 }
 
-/// SplitMix64: the same numbers for the same seed, on every run.
 struct SeededGenerator: RandomNumberGenerator {
     private var state: UInt64
 

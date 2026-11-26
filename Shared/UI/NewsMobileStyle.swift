@@ -2,14 +2,12 @@ import SwiftUI
 
 #if os(iOS)
 enum MobileNewsPalette {
-    /// The grouped background, as Usage and Settings have, so the tabs share one page colour.
     static let canvas = Color(uiColor: .systemGroupedBackground)
     static let actionFill = Color(red: 177 / 255, green: 84 / 255, blue: 42 / 255)
     static let secondary = Color(light: (100, 100, 100), dark: (170, 170, 170))
 }
 
 struct MobileNewsPanel<Content: View>: View {
-    /// Rows bring their own space, so a list sits closer to the card's edge than a single block.
     var verticalPadding: CGFloat = 16
     @ViewBuilder var content: () -> Content
     var body: some View {
@@ -20,8 +18,6 @@ struct MobileNewsPanel<Content: View>: View {
     }
 }
 
-/// A sub-page's title with the one filter over it, in plain ink: the News sections above it are
-/// the page's selector, so a second row of segments would only compete with them.
 struct MobileNewsPageHeading<Choices: View>: View {
     var title: String
     var filterName: String
@@ -122,7 +118,6 @@ struct MobileNewsHero: View {
     @ScaledMetric(relativeTo: .title2) private var headlineSize = 22.0
     var body: some View {
         MobileNewsPanel {
-            // The art shares a line with the byline, never the headline, which keeps the width.
             HStack(alignment: .top, spacing: 12) {
                 byline.frame(maxWidth: .infinity, alignment: .leading)
                 Image("NewsEditorialArt").resizable().scaledToFill()
@@ -135,9 +130,6 @@ struct MobileNewsHero: View {
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
             }.buttonStyle(.plain)
-            // At the accessibility sizes the excerpt moves below the actions: it can run under the
-            // tab bar, the page's one coloured control can't. The excerpt moves rather than the
-            // actions, so Save keeps one owner, and a pending Undo, when the text size changes.
             if !typeSize.isAccessibilitySize { heroExcerpt }
             heroActions
             if typeSize.isAccessibilitySize { heroExcerpt }
@@ -182,8 +174,6 @@ struct MobileNewsStoryRow: View {
     @Bindable var library: NewsLibrary
     @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
-        // The actions share the short date line, so the title has the row's full width. The same
-        // two children either way: one Save owns its Undo state across a text-size change.
         let stacked = typeSize >= .xxLarge
         let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(ZStackLayout(alignment: .bottomTrailing))
         layout {
@@ -221,7 +211,6 @@ struct MobileNewsStoryList: View {
     }
 }
 
-/// A model on its own, for a day with no lead story.
 struct MobileNewsModelCard: View {
     var model: ModelRelease
     @Bindable var news: NewsStore

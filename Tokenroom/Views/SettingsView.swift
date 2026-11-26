@@ -11,7 +11,6 @@ enum SettingsTab: String, CaseIterable {
     case iPhone
 }
 
-/// Which tab Settings shows; the app sets it before opening Settings from elsewhere.
 @Observable
 @MainActor
 final class SettingsTabRequest {
@@ -44,8 +43,6 @@ struct SettingsView: View {
                 }
             }
             .listStyle(.sidebar)
-            // The keyboard starts here, as in System Settings: left alone, the window gives it to
-            // the page's first text field, which then opens with a caret or its text selected.
             .focused($sidebarFocused)
             .defaultFocus($sidebarFocused, true)
             .searchable(text: $search, placement: .sidebar, prompt: "Search settings")
@@ -63,7 +60,6 @@ struct SettingsView: View {
             }
         }
         .onChange(of: search) { _, text in
-            // Jump to the first page that matches, as System Settings does.
             if !text.isEmpty, let first = SettingsPage.groups.flatMap(\.pages).first(where: { $0.matches(text) && ($0.tab != .iPhone || store.relay != nil) }) {
                 request.tab = first.tab
             }
@@ -80,8 +76,6 @@ struct SettingsView: View {
         case .news: NewsSettings(store: store)
         case .menuBar: MenuBarSettings(store: store)
         case .iPhone:
-            // The app always has a relay; only tests and captures run without one, and the sidebar
-            // hides the page then. The form stays, so the pane is never bare.
             Form {
                 SettingsHeaderSection()
                 if let relay = store.relay {
@@ -92,14 +86,12 @@ struct SettingsView: View {
         }
     }
 
-    /// A short count on the page's header card, like "9 of 17 on".
     private func summary(for tab: SettingsTab) -> String? {
         switch tab {
         case .providers:
             let personal = Provider.allCases.filter { $0.category != .orgSpend }
             return "\(personal.filter { store.settings.isEnabled($0) }.count) of \(personal.count) on"
         case .news, .menuBar:
-            // Their first control already says so.
             return nil
         case .iPhone:
             guard let relay = store.relay else { return nil }
@@ -125,8 +117,6 @@ struct SettingsView: View {
     }
 }
 
-/// One page in the Settings sidebar: its symbol tile, title, the line under the header, and the
-/// words search finds it by.
 struct SettingsPage: Identifiable {
     var tab: SettingsTab
     var title: String
@@ -173,7 +163,6 @@ struct SettingsPage: Identifiable {
     }
 }
 
-/// A white symbol on a rounded tile, as System Settings draws its sidebar.
 struct SettingsIcon: View {
     var symbol: String
     var tint: Color
@@ -189,9 +178,6 @@ struct SettingsIcon: View {
     }
 }
 
-/// The top of a Settings page: its tile, title, what it's for, and a short count. No card of its
-/// own: the window's title and the sidebar already name the page, and the groups below are the
-/// boxes. Its edge is theirs.
 private struct SettingsPageHeader: View {
     var page: SettingsPage
     var summary: String?
@@ -225,15 +211,12 @@ private struct SettingsHeaderKey: EnvironmentKey {
 }
 
 extension EnvironmentValues {
-    /// The page header the Settings window puts at the top of each page's form.
     var settingsHeader: SettingsHeaderInfo? {
         get { self[SettingsHeaderKey.self] }
         set { self[SettingsHeaderKey.self] = newValue }
     }
 }
 
-/// The first section of every Settings page: its header, scrolling with the page, and anything
-/// that belongs to the whole page, such as its search field.
 struct SettingsHeaderSection<Accessory: View>: View {
     @Environment(\.settingsHeader) private var header
     private var accessory: Accessory
@@ -251,7 +234,6 @@ struct SettingsHeaderSection<Accessory: View>: View {
                     SettingsPageHeader(page: header.page, summary: header.summary)
                     accessory
                 }
-                // A section header sits on the rows' inset; this one takes the group's edge.
                 .padding(.horizontal, -10)
                 .padding(.bottom, 4)
             }
@@ -265,8 +247,6 @@ extension SettingsHeaderSection where Accessory == EmptyView {
     }
 }
 
-/// A section's title. Under `SettingsHeaderSection`, a group draws its header small and tight
-/// against the page's: these match the titles further down, with their air.
 struct SettingsSectionTitle: View {
     var text: String
 
@@ -282,7 +262,6 @@ struct SettingsSectionTitle: View {
     }
 }
 
-/// The small capsule on a page's header: "11 of 16 on".
 struct SettingsTag: View {
     var text: String
 
@@ -297,8 +276,6 @@ struct SettingsTag: View {
     }
 }
 
-/// AppKit's search field: the leading magnifier, the clear button, and Escape to clear. A
-/// `TextField` in a grouped form reads as a row label with a stray caret.
 private struct SettingsSearchField: NSViewRepresentable {
     var prompt: String
     @Binding var text: String
@@ -311,7 +288,6 @@ private struct SettingsSearchField: NSViewRepresentable {
         let field = Field()
         field.placeholderString = prompt
         field.setAccessibilityLabel(prompt)
-        // Every keystroke, and the clear button, arrive as this one action.
         field.sendsSearchStringImmediately = true
         field.target = context.coordinator
         field.action = #selector(Coordinator.changed(_:))
@@ -325,8 +301,6 @@ private struct SettingsSearchField: NSViewRepresentable {
         }
     }
 
-    /// An opening window offers its first text field the keyboard, which would start the page with
-    /// a caret here. A click, Tab, or VoiceOver takes it.
     private final class Field: NSSearchField {
         override func becomeFirstResponder() -> Bool {
             let asked = NSWorkspace.shared.isVoiceOverEnabled
@@ -349,7 +323,6 @@ private struct SettingsSearchField: NSViewRepresentable {
     }
 }
 
-/// The rest of an explanation, one click away, so a page's scanning path keeps one concise line.
 private struct SettingsDetails: View {
     var title: String
     var text: String
@@ -364,8 +337,6 @@ private struct SettingsDetails: View {
         }
     }
 }
-
-// MARK: General
 
 private struct GeneralSettings: View {
     @Bindable var store: QuotaStore
@@ -408,17 +379,12 @@ private struct GeneralSettings: View {
     }
 }
 
-// MARK: Providers
-
 private struct ProvidersSettings: View {
     @Bindable var store: QuotaStore
     var onManageKeys: () -> Void
-    /// Providers signed in or configured on this Mac, checked off the main thread.
     @State private var detected: Set<Provider> = []
     @State private var search = ""
 
-    /// Said once on the page rather than as a tag on nearly every row, under the first section
-    /// that has such a provider; each row's tooltip and VoiceOver label say it too.
     private static let unofficialNote = "Tools you sign in to are read from the same endpoints their own apps use: unofficial, and they can change without notice."
 
     var body: some View {
@@ -463,7 +429,6 @@ private struct ProvidersSettings: View {
                     }
                 }
             }
-            // A grouped form draws a section's header and footer even with no rows left.
             if !orgSpend.isEmpty {
                 Section {
                     ForEach(orgSpend) { providerRow($0) }
@@ -532,26 +497,21 @@ private struct ProvidersSettings: View {
             }
         }
         .help(provider.isUnofficial ? "Unofficial: read from the same endpoint \(provider.toolName) uses. It can change without notice." : "")
-        // The switch speaks for the whole row.
         .accessibilityHidden(true)
     }
 
     private func providerToggle(_ provider: Provider) -> some View {
         Toggle(isOn: Binding(
             get: { store.settings.isEnabled(provider) },
-            // Through the store: one turned on is checked now, and iCloud hears of either.
             set: { store.setEnabled(provider, $0) }
         )) {
             Text(provider.displayName)
         }
         .labelsHidden()
         .toggleStyle(.switch)
-        // The caption goes in the label: as the value it would replace the switch's on or off.
         .accessibilityLabel("\(provider.displayName), \(caption(provider))\(provider.isUnofficial ? ", unofficial source" : "")")
     }
 
-    /// How a row connects, when that isn't what the section's note says: nearly every provider
-    /// is a login read unofficially, so only the others say anything.
     private func connection(_ provider: Provider) -> String? {
         switch provider.access {
         case .localLogin: provider.descriptor.fallbackKey == nil ? nil : "Login or token"
@@ -574,7 +534,6 @@ private struct ProvidersSettings: View {
         return ["Sign in with \(provider.installToolName)", connection].compactMap(\.self).joined(separator: " · ")
     }
 
-    /// What a row needs next, beside its switch rather than under it, so it stays one row tall.
     @ViewBuilder
     private func rowActions(_ provider: Provider) -> some View {
         if provider.usesAPIKey {
@@ -638,12 +597,9 @@ private struct ProvidersSettings: View {
     }
 }
 
-// MARK: API keys
-
 private struct KeysSettings: View {
     @Bindable var store: QuotaStore
     @State private var keySheet: Provider?
-    /// Counts closed key sheets; rows read their key again when it changes.
     @State private var closedSheets = 0
     @State private var budgetRegions: [Provider: String] = [:]
     @State private var budgetClears: [Provider: Int] = [:]
@@ -658,7 +614,6 @@ private struct KeysSettings: View {
                     } onAdd: {
                         keySheet = provider
                     } onRemoved: {
-                        // A key the coding tool keeps may still be there.
                         Task { await store.credentialsChanged(for: provider) }
                     }
                     .padding(.vertical, 2)
@@ -710,7 +665,6 @@ private struct KeysSettings: View {
         .sheet(item: $keySheet, onDismiss: { closedSheets += 1 }) { provider in
             AddKeySheet(provider: provider, keys: CredentialReaders.apiKeys) {
                 store.settings.setEnabled(provider, true)
-                // Checked now, not after the old key's spacing or a 429 it earned.
                 Task { await store.credentialsChanged(for: provider) }
             }
         }
@@ -774,14 +728,10 @@ private struct KeysSettings: View {
     }
 }
 
-/// A provider's row of keys: its name, then `•••• a1b2` with Replace and Remove, or Add Key, on the
-/// trailing edge. Warnings and messages stay under it.
 private struct KeyRow<RowLabel: View>: View {
     var provider: Provider
     var keys: APIKeyStore
-    /// Changes when a key sheet closes, so a key saved there shows.
     var reload = 0
-    /// Only sample captures read this: they show a key on what's turned on, and touch no Keychain.
     var isEnabled = false
     var onMetadata: ((APIKeyStore.Metadata?) -> Void)? = nil
     @ViewBuilder var label: () -> RowLabel
@@ -870,7 +820,6 @@ private struct KeyRow<RowLabel: View>: View {
     }
 }
 
-/// A warning in a row: colour belongs to readings, so it's ink, stronger than the captions around it.
 private struct SettingsWarning: View {
     var text: String
 
@@ -886,7 +835,6 @@ private struct SettingsWarning: View {
     }
 }
 
-/// An amount in the key's currency; empty means no reference or budget.
 private struct BudgetField: View {
     var label: String
     var currency: String
@@ -933,7 +881,6 @@ private struct BudgetField: View {
     }
 }
 
-/// Paste → Test & Save: one call with the key before it's stored.
 private struct AddKeySheet: View {
     var provider: Provider
     var keys: APIKeyStore
@@ -947,7 +894,6 @@ private struct AddKeySheet: View {
     @State private var message: String?
     @State private var offerSaveAnyway = false
     @State private var acknowledgedAdmin = false
-    /// Set when a test shows the key can change things (an xAI key with write access).
     @State private var warning: String?
 
     init(provider: Provider, keys: APIKeyStore, onSaved: @escaping () -> Void) {
@@ -972,7 +918,6 @@ private struct AddKeySheet: View {
                 let picker = Picker(provider.keySpec?.choiceLabel ?? "Account", selection: $region) {
                     ForEach(regions, id: \.self) { Text($0).tag($0) }
                 }.disabled(saving)
-                // Two regions fit side by side; Copilot's seven plans don't fit the sheet that way.
                 if regions.count > 2 {
                     picker.pickerStyle(.menu)
                 } else {
@@ -1033,7 +978,6 @@ private struct AddKeySheet: View {
         .onChange(of: region) { _, _ in invalidateValidation() }
         .onDisappear { invalidateValidation() }
         .task {
-            // Replacing a key starts from the choice saved with it, such as its Copilot plan.
             guard let spec = provider.keySpec, !spec.regions.isEmpty else { return }
             let keys = self.keys
             let provider = self.provider
@@ -1113,8 +1057,6 @@ private struct AddKeySheet: View {
 
 }
 
-// MARK: Alerts
-
 private struct AlertsSettings: View {
     @Bindable var store: QuotaStore
     @State private var denied = false
@@ -1123,7 +1065,6 @@ private struct AlertsSettings: View {
         store.settings.alertPreferences
     }
 
-    /// Alerts reach the iPhone only through iCloud; without it, this Mac is the only place.
     private var iPhoneNote: String {
         if store.sendsAlertsToiCloud {
             return "Your iPhone gets these through iCloud either way, once each, whichever device sees them first."
@@ -1207,7 +1148,6 @@ private struct AlertsSettings: View {
         }
         .formStyle(.grouped)
         .task {
-            // Pick up changes made on the iPhone.
             _ = await store.currentAlertPreferences()
         }
     }
@@ -1223,7 +1163,6 @@ private struct AlertsSettings: View {
         binding(get: { $0[keyPath: keyPath] }, set: set)
     }
 
-    /// One level (80, 95) of a list of levels, on or off.
     private func levelBinding(_ level: Int, _ keyPath: WritableKeyPath<AlertPreferences, [Int]>) -> Binding<Bool> {
         binding(
             get: { $0[keyPath: keyPath].contains(level) },
@@ -1242,8 +1181,6 @@ private struct AlertsSettings: View {
         return date.formatted(date: .omitted, time: .shortened)
     }
 }
-
-// MARK: News
 
 private struct NewsSettings: View {
     @Bindable var store: QuotaStore
@@ -1311,8 +1248,6 @@ private struct NewsSettings: View {
     }
 }
 
-// MARK: Menu bar
-
 private struct MenuBarSettings: View {
     @Bindable var store: QuotaStore
 
@@ -1336,7 +1271,6 @@ private struct MenuBarSettings: View {
                         Text(style.title).tag(style)
                     }
                 }
-                // Through the store, so the new interval starts now rather than after the old wait.
                 Picker("Refresh every", selection: Binding(
                     get: { store.settings.refreshMinutes },
                     set: { store.setRefreshMinutes($0) }
@@ -1375,8 +1309,6 @@ private struct MenuBarSettings: View {
     }
 }
 
-// MARK: iPhone & Apple Watch
-
 private struct RelaySettingsSection: View {
     @Bindable var relay: RelayPublisher
     @State private var sendingTest = false
@@ -1412,14 +1344,11 @@ private struct RelaySettingsSection: View {
     }
 }
 
-/// Opt-in: read Claude usage from Claude Code's own status line.
 private struct ClaudeBridgeRow: View {
-    /// Nil until `~/.claude/settings.json` has been read, off the main thread like every change to it.
     @State private var isOn: Bool?
     @State private var working = false
     @State private var message: String?
     @State private var overrides: [String] = []
-    /// Where settings.json linked before Tokenroom 2.0.0 replaced the link with a file.
     @State private var replacedLink: String?
 
     var body: some View {
@@ -1482,7 +1411,6 @@ private struct ClaudeBridgeRow: View {
                     }
                     return (bridge.isInstalled, nil, bridge.replacedLink())
                 } catch let error as ClaudeStatusLineBridge.BridgeError {
-                    // What was wrong with the file: not JSON, two status lines, a link, read-only.
                     return (bridge.isInstalled, error.errorDescription, bridge.replacedLink())
                 } catch {
                     return (bridge.isInstalled, "Couldn't change ~/.claude/settings.json.", bridge.replacedLink())

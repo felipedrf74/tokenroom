@@ -1,8 +1,6 @@
 import XCTest
 @testable import Tokenroom
 
-/// Compact surfaces lead with the window that needs attention. A measured run-out survives
-/// the hour after which a reading is stale, and a key check is claimed once across callers.
 final class CompactSurfaceTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 

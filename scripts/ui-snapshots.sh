@@ -1,13 +1,4 @@
 #!/bin/zsh
-# Render every Tokenroom screen from sample data to PNGs, for design review. Nothing here reads a
-# login, a key, or iCloud, and nothing is installed over the real app.
-#
-#   ./scripts/ui-snapshots.sh <folder> [mac] [iphone] [watch]
-#
-# Screens go to <folder>/{mac,iphone,watch}. With no platform named, all three run. The iPhone and
-# Watch screens are XCUITest screenshots on a Simulator, so their Liquid Glass is the real thing.
-# TOKENROOM_SNAPSHOT_ONLY=testNews runs one iPhone capture test; DERIVED_DATA_PATH keeps two
-# checkouts apart; TOKENROOM_SNAPSHOT_IPHONE and TOKENROOM_SNAPSHOT_WATCH pick the Simulators.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -42,8 +33,6 @@ for platform in "${PLATFORMS[@]}"; do
       xcodebuild build-for-testing -project "$ROOT/Tokenroom.xcodeproj" -scheme TokenroomUISnapshots \
         -destination "platform=iOS Simulator,name=$IPHONE" -derivedDataPath "$DERIVED" \
         CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO TOKENROOM_CK_CONTAINER= -quiet
-      # The iOS 27 Simulator applies a new appearance only after it boots again, so each look gets
-      # its own boot and its own run, and the test keeps only the captures of the look it was given.
       udid="$(xcrun simctl list devices available -j | python3 -c '
 import json, sys
 name = sys.argv[1]
@@ -58,7 +47,6 @@ print(chosen[0]["udid"], chosen[0].get("state", "")) if chosen else print("")
         echo "Couldn't find a shut-down or booted Simulator named $IPHONE" >&2
         exit 2
       fi
-      # Put the Simulator back as it was found: its appearance, and booted only if it was.
       original_look=""
       restore_iphone() {
         if [[ "$udid_state" == "Booted" && "$original_look" != light && "$original_look" != dark ]]; then return; fi

@@ -1,5 +1,3 @@
-// Unit tests hosted in Tokenroom for iPhone: what only the iPhone app does (its store, the
-// widgets' shared state). Shared logic is tested on the Mac in TokenroomTests.
 #include "Version.xcconfig"
 
 SDKROOT = iphoneos

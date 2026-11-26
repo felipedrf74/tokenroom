@@ -1,9 +1,7 @@
 import AppIntents
 import WidgetKit
 
-/// How a Home Screen widget lays out its readings. Lock Screen widgets have one layout.
 enum WidgetStyleOption: String, AppEnum {
-    /// Tiles on Small, where there's room for a second window; the list on Medium and Large.
     case recommended
     case list
     case tiles
@@ -15,7 +13,6 @@ enum WidgetStyleOption: String, AppEnum {
         .tiles: DisplayRepresentation(title: "Tiles", subtitle: "A tile per provider, with a second limit"),
     ]
 
-    /// Whether this style draws tiles at this size.
     func usesTiles(isSmall: Bool) -> Bool {
         switch self {
         case .recommended: isSmall
@@ -25,7 +22,6 @@ enum WidgetStyleOption: String, AppEnum {
     }
 }
 
-/// Which provider a widget leads with.
 enum ProviderOption: String, AppEnum {
     case automatic
     case claude, openai, grok, grokBot, cursor, copilot, antigravity, devin
@@ -57,7 +53,6 @@ enum ProviderOption: String, AppEnum {
         .xaiOrg: "xAI API",
     ]
 
-    /// Nil when the widget follows the app's order (Settings › Widgets).
     var providerID: String? {
         self == .automatic ? nil : rawValue
     }
@@ -73,7 +68,6 @@ struct SelectProviderIntent: WidgetConfigurationIntent {
     @Parameter(title: "Style", default: .recommended)
     var style: WidgetStyleOption
 
-    /// Lock Screen widgets have one layout, so they aren't asked for a style.
     static var parameterSummary: some ParameterSummary {
         When(widgetFamily: .oneOf, [.systemSmall, .systemMedium, .systemLarge]) {
             Summary {
@@ -95,7 +89,6 @@ struct SelectProviderIntent: WidgetConfigurationIntent {
     }
 }
 
-/// The refresh button on medium and large widgets.
 struct RefreshReadingsIntent: AppIntent {
     static let title: LocalizedStringResource = "Refresh Usage"
     static let description = IntentDescription("Checks your usage again.")

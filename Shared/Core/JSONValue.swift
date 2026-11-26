@@ -1,7 +1,5 @@
 import Foundation
 
-/// Any JSON value, for keeping fields a newer Tokenroom wrote that this one doesn't know, so
-/// saving a record here doesn't drop them.
 enum JSONValue: Codable, Equatable, Sendable {
     case null
     case bool(Bool)
@@ -40,7 +38,6 @@ enum JSONValue: Codable, Equatable, Sendable {
     }
 }
 
-/// A coding key made from any string, for reading and writing keys not known at compile time.
 struct AnyCodingKey: CodingKey, Hashable {
     var stringValue: String
     var intValue: Int? { nil }

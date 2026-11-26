@@ -1,6 +1,5 @@
 import Foundation
 
-/// How to sign in to a provider on this Mac: the CLI to run or the app to open.
 struct ProviderLogin: Sendable {
     var cliExecutable: String?
     var loginArguments: [String] = []
@@ -11,7 +10,6 @@ struct ProviderLogin: Sendable {
 }
 
 extension Provider {
-    /// Nil for providers read with a pasted API key.
     var login: ProviderLogin? {
         switch self {
         case .grok:
@@ -82,7 +80,6 @@ extension Provider {
     var loginArguments: [String] { login?.loginArguments ?? [] }
     var installToolName: String { login?.installToolName ?? displayName }
 
-    /// The app or CLI whose usage endpoint Tokenroom reads, as people call it.
     var toolName: String {
         switch self {
         case .grok: "Grok Build"
@@ -109,11 +106,8 @@ struct MenuMeter: Equatable, Identifiable, Sendable {
     var isPlaceholder: Bool
     var isAwaitingReading = false
     var attention: String? = nil
-    /// Set when the extra is showing a window other than the provider's primary one.
     var windowLabel: String? = nil
-    /// Higher means this provider's shown window needs the menu bar sooner.
     var urgency: Int = 0
-    /// When the shown window was measured to run out, if it does before the reset.
     var runsOutAt: Date? = nil
     var lastReading: String? = nil
 

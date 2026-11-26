@@ -9,8 +9,6 @@ struct CursorClient: ProviderClient {
             do {
                 return .success(try await usage(token))
             } catch ProviderError.expired(let hint) {
-                // The Keychain's token was refused; an older Cursor may keep a working one in
-                // its database.
                 guard let saved = await BlockingIO.run({ CredentialReaders.cursorTokenAfterRefusal(of: token) }) else {
                     throw ProviderError.expired(hint)
                 }

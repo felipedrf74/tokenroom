@@ -2,8 +2,6 @@ import Foundation
 import Security
 @testable import TokenroomMobile
 
-/// Missing credentials in memory. A random service prefix alone still calls the system
-/// Keychain; these operation closures guarantee the mobile store suite never does.
 final class MobileFixtureKeychain: @unchecked Sendable {
     private let lock = NSLock()
     private var copies = 0

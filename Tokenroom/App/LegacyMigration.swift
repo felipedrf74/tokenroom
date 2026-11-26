@@ -1,20 +1,15 @@
 import AppKit
 import Foundation
 
-/// One-time import from Headroom 1.x, which Tokenroom 2.0 replaces.
 enum LegacyMigration {
     static let migratedKey = "migratedFromHeadroom"
     static let dismissedNoticeKey = "dismissedHeadroomNotice"
-    /// Launch at login isn't one of them: Headroom's login item belongs to Headroom, and another
-    /// app's can't be read. The Headroom notice offers Tokenroom's own instead.
     private static let settingKeys = [
         AppSettings.Keys.enabled,
         AppSettings.Keys.refreshMinutes,
         AppSettings.Keys.menuStyle,
     ]
 
-    /// Copies Headroom's settings and snapshot cache once, before anything reads them.
-    /// Never overwrites values Tokenroom already has.
     static func runIfNeeded(
         defaults: UserDefaults = .standard,
         legacyDefaults: UserDefaults? = UserDefaults(suiteName: TokenroomIdentity.legacyBundleID),
@@ -44,7 +39,6 @@ enum LegacyMigration {
         }
     }
 
-    /// Headroom.app is still installed or running next to Tokenroom, and the notice wasn't dismissed.
     static func shouldShowNotice(defaults: UserDefaults = .standard) -> Bool {
         guard !defaults.bool(forKey: dismissedNoticeKey) else { return false }
         return isLegacyAppRunning || legacyAppURL != nil

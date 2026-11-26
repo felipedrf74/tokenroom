@@ -7,53 +7,37 @@ import os
 @MainActor
 final class QuotaStore {
     var statuses: [Provider: ProviderStatus] = [:] { didSet { schedulePresentationClock() } }
-    /// Last successful fetch per provider, even when usage didn't change.
     var checkedAt: [Provider: Date] = [:] { didSet { schedulePresentationClock() } }
-    /// Presentation time advances independently of network polling and publishes reset/age changes.
     private(set) var presentationNow = Date.now
     var lastAttempt: Date?
-    /// When the timer's next check is due. Nil until `start`.
     private(set) var nextTimedCheck: Date?
     var isRefreshing = false
     var settings: AppSettings
     var showsLegacyNotice: Bool
-    /// Set by "Add Key" in the popover; Settings opens its key sheet and clears it.
     var pendingKeyProvider: Provider?
     let signIn: SignInCoordinator
-    /// Sends readings to iCloud for iPhone and Apple Watch. Nil in tests.
     let relay: RelayPublisher?
-    /// A week of hourly usage per window, next to the snapshot cache.
     let history: HistoryStore
-    /// New models and announcements for the News window, fetched only when turned on. Nil in tests.
     let news: NewsStore?
     private var alertLedger: AlertLedger
 
     private let clients: [Provider: any ProviderClient]
     private let cache: SnapshotCache
     private var rateLimitedUntil: [Provider: Date] = [:]
-    /// When each provider's endpoint was last called, successful or not; spacing counts from it.
     private var lastAttemptAt: [Provider: Date] = [:]
-    /// Readings before a budget was applied, so a new budget shows at once.
     private var rawSnapshots: [Provider: QuotaSnapshot] = [:]
     private var loopTask: Task<Void, Never>?
     private var presentationTask: Task<Void, Never>?
     private var wakeTask: Task<Void, Never>?
     private var sleepTask: Task<Void, Never>?
     private var timeZoneTask: Task<Void, Never>?
-    /// This Mac's time zone now, for quiet hours to follow (`followTimeZone`). Foundation keeps
-    /// the zone it first read for the life of the process, so it's read again each time: a Mac
-    /// that travelled takes its new zone on the next sync, without a relaunch. Tests pin it.
     @ObservationIgnored var currentTimeZone: () -> TimeZone = {
         NSTimeZone.resetSystemTimeZone()
         return .current
     }
-    /// The check running now.
     private var inFlight: Task<Void, Never>?
-    /// One more check after the running one, shared by the forced refreshes asked for meanwhile,
-    /// for every provider they asked for (nil: all of them).
     private var followUp: Task<Void, Never>?
     private var followUpProviders: Set<Provider>? = []
-    /// Sending readings, history, and alerts to iCloud after a check.
     private var sharing: Task<Void, Never>?
     private var deferredSharing: Task<Void, Never>?
     private(set) var maintenance: Task<Void, Never>?
@@ -62,23 +46,13 @@ final class QuotaStore {
     @ObservationIgnored var waitBeforeSharing: @Sendable (TimeInterval) async throws -> Void = {
         try await Task.sleep(for: .seconds($0))
     }
-    /// Keeps News current while its window is open.
     private var liveNews: Task<Void, Never>?
-    /// Checks News by itself, apart from usage checks and iCloud sharing, at each kind's
-    /// background interval (`NewsCadence`). Sleep cancels it and the pass it started.
     private var newsLoop: Task<Void, Never>?
-    /// Waits until the News loop's next pass (returning early, throwing, when cancelled). Tests
-    /// stand in.
     @ObservationIgnored var waitForNextNewsCheck: @Sendable (TimeInterval) async throws -> Void = {
         try await Task.sleep(for: .seconds($0))
     }
-    /// The one check more after a check that couldn't reach the network at all.
     private(set) var offlineRetry: Task<Void, Never>?
-    /// How long after a check where no call reached the network it's tried once more: the Mac
-    /// woke before its Wi-Fi, and the timer's next check can be half an hour away.
     nonisolated static let offlineRetryDelay: TimeInterval = 45
-    /// Waits out `offlineRetryDelay` before that check (returning early when cancelled). Tests
-    /// hold it until they're ready instead.
     var waitBeforeOfflineRetry: @Sendable () async -> Void = {
         try? await Task.sleep(nanoseconds: UInt64(QuotaStore.offlineRetryDelay * 1_000_000_000))
     }
@@ -126,7 +100,6 @@ final class QuotaStore {
         loopTask = Task { [weak self] in
             await self?.refresh(force: true)
             #if DEBUG
-            // `-TokenroomSendTestAlert YES` sends one test alert to the iPhone after launch.
             if UserDefaults.standard.bool(forKey: "TokenroomSendTestAlert") {
                 await self?.relay?.sendTestAlert()
             }
@@ -138,9 +111,7 @@ final class QuotaStore {
         wakeTask = Task { [weak self] in
             let notifications = NSWorkspace.shared.notificationCenter.notifications(named: NSWorkspace.didWakeNotification)
             for await _ in notifications {
-                // News first, on its own: it doesn't wait for the usage check.
                 self?.startNewsLoop()
-                // Forced: however short the sleep, what it cut short is checked again.
                 await self?.refresh(force: true)
             }
         }
@@ -153,14 +124,12 @@ final class QuotaStore {
         timeZoneTask = Task { [weak self] in
             let notifications = NotificationCenter.default.notifications(named: .NSSystemTimeZoneDidChange)
             for await _ in notifications {
-                // Times shown (resets, run-outs, quiet hours) follow the new zone without a relaunch.
                 NSTimeZone.resetSystemTimeZone()
                 self?.ageReadings(at: .now)
             }
         }
     }
 
-    /// A check every "Refresh every", until cancelled.
     private func checkOnTimer() async {
         while !Task.isCancelled {
             let interval = max(settings.refreshInterval, 60)
@@ -171,23 +140,16 @@ final class QuotaStore {
         }
     }
 
-    /// A new "Refresh every" starts the timer's wait over at once, instead of after the wait
-    /// under way, which could be the old 30 minutes.
     func setRefreshMinutes(_ minutes: Int) {
         guard settings.refreshMinutes != minutes else { return }
         settings.refreshMinutes = minutes
         guard loopTask != nil else { return }
-        // A timer check under way finishes: its calls are out, and cancelling it here doesn't
-        // reach them.
         loopTask?.cancel()
         loopTask = Task { [weak self] in
             await self?.checkOnTimer()
         }
     }
 
-    /// Calls cut off by sleep would come back as failures. Cancelled, they don't count, and the
-    /// refresh on waking checks again. News's loop stops, with the pass under way, whoever started
-    /// it; waking starts the loop again.
     func willSleep() {
         inFlight?.cancel()
         followUp?.cancel()
@@ -203,9 +165,6 @@ final class QuotaStore {
         news?.cancelPass()
     }
 
-    /// News's own loop: a pass now, then one whenever the next source comes due
-    /// (`NewsCadence.nextCheck`), while News is on. A pass under way when one comes due (the
-    /// window's live check, Check Now) is waited for rather than dropped.
     func startNewsLoop() {
         guard newsLoop == nil, news != nil else { return }
         newsLoop = Task { [weak self] in await self?.runNewsLoop() }
@@ -300,8 +259,6 @@ final class QuotaStore {
 
     func refresh(force: Bool = false, providers: [Provider]? = nil) async {
         if let followUp, followUp.isCancelled {
-            // Sleep cancelled this queued check. Let it release its own state before the new
-            // request joins or starts a check; it cannot satisfy a refresh requested on waking.
             await followUp.value
             await refresh(force: force, providers: providers)
             return
@@ -310,35 +267,23 @@ final class QuotaStore {
             if inFlight.isCancelled {
                 await inFlight.value
                 if self.inFlight == inFlight { self.inFlight = nil }
-                // The cut-short attempt does not satisfy even an ordinary timer check.
                 await refresh(force: true, providers: providers)
                 return
             }
-            // A check in flight finishes rather than being cancelled: its calls are already out,
-            // and calling a rate-limited provider again right away can earn a 429.
             guard force else {
                 await inFlight.value
                 return
             }
-            // Forced refreshes asked for meanwhile share one more check after it, for everything
-            // they asked for; the spacing rules keep just-checked providers resting.
             await joinFollowUp(after: inFlight, providers: providers).value
             return
         }
-        // A check moments ago is enough, unless the clock was set back since.
         if !force, let lastAttempt, (0..<15).contains(Date().timeIntervalSince(lastAttempt)) {
             return
         }
-        // Forced refreshes (a button, a sign-in, the tests) return once readings are shared;
-        // the timer's don't wait for iCloud and News, so a slow iCloud can't hold up checks.
         await check(providers, waitsForSharing: force)
     }
 
-    /// A sign-in finished, or a key was saved or removed: the provider is checked now, not after
-    /// its spacing or a Retry-After, which came from the old credentials.
     func credentialsChanged(for provider: Provider) async {
-        // After the check in flight, whose answer came from the old credentials: a 429 it earns
-        // mustn't hold the new ones off.
         if let inFlight {
             await inFlight.value
         }
@@ -348,11 +293,6 @@ final class QuotaStore {
         await refresh(force: true, providers: [provider])
     }
 
-    /// A provider turned on or off in Settings. One turned on is checked now rather than at the
-    /// timer's next check, within its usual spacing and Retry-After (the login didn't change).
-    /// Either way the iPhone's list changes with the next round sent to iCloud, which goes out
-    /// at once instead of waiting out the minute since the last send.
-    /// Returns the check and round it starts, nil when nothing changed.
     @discardableResult
     func setEnabled(_ provider: Provider, _ isOn: Bool) -> Task<Void, Never>? {
         guard settings.isEnabled(provider) != isOn else { return nil }
@@ -384,16 +324,13 @@ final class QuotaStore {
             let asked = self.followUpProviders
             self.followUp = nil
             self.followUpProviders = []
-            // Not when going to sleep or quitting.
             guard !Task.isCancelled else { return }
-            // Through `refresh`, in case another check started first.
             await self.refresh(force: true, providers: asked.map { Array($0) })
         }
         followUp = task
         return task
     }
 
-    /// Checks the providers asked for (nil: all), then shares what it found.
     private func check(_ providers: [Provider]?, waitsForSharing: Bool = true) async {
         let task = Task<Void, Never> { @MainActor [weak self] in
             guard let self else { return }
@@ -401,11 +338,9 @@ final class QuotaStore {
         }
         inFlight = task
         await task.value
-        // Another refresh may have started once this one finished.
         if inFlight == task {
             inFlight = nil
         }
-        // A check cut short (sleep, quitting) has nothing new to share.
         guard !task.isCancelled else { return }
         if waitsForSharing {
             await share()
@@ -414,15 +349,10 @@ final class QuotaStore {
         }
     }
 
-    /// Sends readings, history, and alerts to iCloud, one round at a time and outside the check,
-    /// so a slow iCloud doesn't hold up the next check. A check that finishes meanwhile leaves one
-    /// more round, with the newest readings then. News has its own loop (`startNewsLoop`).
     func share() async {
         deferredSharing?.cancel()
         deferredSharing = nil
         if let sharing {
-            // A round going to sleep cancelled doesn't go round again: this request gets a round
-            // of its own once that one has ended (or joins one another request started).
             if sharing.isCancelled {
                 await sharing.value
                 await share()
@@ -491,14 +421,10 @@ final class QuotaStore {
         var due: [Provider] = []
         var resting: [Provider] = []
         for provider in providers ?? Provider.allCases where settings.isEnabled(provider) {
-            // Times from before the clock was set back don't hold calls off.
             let sinceLast = lastAttemptAt[provider].map { now.timeIntervalSince($0) }
             if let until = rateLimitedUntil[provider], until > now, until.timeIntervalSince(now) <= ProviderStatus.longestRetry {
-                // No call before its Retry-After, but a cheap local reading (Claude's status
-                // line) still counts meanwhile.
                 resting.append(provider)
             } else if let sinceLast, sinceLast >= 0, sinceLast < provider.minimumInterval {
-                // Spacing counts from the last call, so failures don't bring the next one closer.
                 resting.append(provider)
             } else {
                 due.append(provider)
@@ -516,14 +442,10 @@ final class QuotaStore {
             var unreachable: [Provider] = []
             var signedOut: Set<Provider> = []
             for await (provider, result) in group {
-                // Cut short (the Mac went to sleep, or Tokenroom is quitting): not a failure, and
-                // not an attempt, so the next refresh asks again.
                 if Task.isCancelled, case .failure = result {
                     lastAttemptAt[provider] = earlierAttempts[provider]
                     continue
                 }
-                // No login at all: nothing was called, so the next check isn't spaced out. (An
-                // expired session may have been refused by the server, which keeps the spacing.)
                 if case .failure(.signedOut) = result {
                     lastAttemptAt[provider] = earlierAttempts[provider]
                     signedOut.insert(provider)
@@ -533,10 +455,6 @@ final class QuotaStore {
                 }
                 apply(provider: provider, result: result)
             }
-            // Every call failed, nothing answered meanwhile, and the network said it wasn't there:
-            // the Mac was offline (awake before its Wi-Fi), so none of them was a call to space out.
-            // A server's error or a slow answer keeps its spacing. A missing login made no call,
-            // so it cannot prevent the providers that did try the network from recovering.
             let networkAfter = TokenroomHTTP.networkTally
             let offline = networkAfter.answers == networkBefore.answers && networkAfter.offline > networkBefore.offline
             let called = due.filter { clients[$0] != nil && !signedOut.contains($0) }
@@ -550,16 +468,12 @@ final class QuotaStore {
         guard !Task.isCancelled else { return }
         for provider in resting {
             guard !Task.isCancelled else { return }
-            // The kept reading dates from when its values first appeared; a between-calls
-            // reading has to be newer than the last check.
             var previous = statuses[provider]?.snapshot
             if let kept = previous?.fetchedAt, let checked = checkedAt[provider], checked > kept {
                 previous?.fetchedAt = checked
             }
             guard let client = clients[provider] else { continue }
             let baseline = previous
-            // Same budget as a full check. This read is local and usually instant; if it
-            // doesn't return, the last reading stays and the menu leaves "Updating…".
             guard let snapshot = await TimeLimit.run(client.fetchBudget, otherwise: nil, {
                 await client.fetchBetweenCalls(previous: baseline)
             }) else { continue }
@@ -570,19 +484,12 @@ final class QuotaStore {
         history.saveIfNeeded()
     }
 
-    /// No call connected (the Mac woke before its Wi-Fi): these are checked once more a little
-    /// later, rather than showing and sharing the readings from before the sleep until the
-    /// timer's next check. Once: a retry that can't connect either leaves it to the timer.
     private func retryOnceOnline(_ providers: [Provider]) {
         guard offlineRetry == nil else { return }
         let wait = waitBeforeOfflineRetry
         offlineRetry = Task { [weak self] in
             await wait()
-            // Cancelled by sleep or quitting: whoever cancelled it already let it go.
             guard let self, !Task.isCancelled else { return }
-            // An ordinary check of those providers: each one's spacing and Retry-After hold (a
-            // provider called meanwhile rests), and no login is renewed unless it's due. `force`
-            // only keeps it from folding into a check in flight or one moments ago.
             await self.refresh(force: true, providers: providers)
             if !Task.isCancelled {
                 self.offlineRetry = nil
@@ -590,8 +497,6 @@ final class QuotaStore {
         }
     }
 
-    /// While the News window is open: current on open, then checked every
-    /// `NewsFetcher.liveInterval` (5 minutes) by itself, as long as News stays on.
     func newsBecameVisible() {
         guard liveNews == nil, let news else { return }
         liveNews = Task { [weak self] in
@@ -607,17 +512,12 @@ final class QuotaStore {
         liveNews = nil
     }
 
-    /// Checks News when it's turned on; the fetcher only goes out when a feed is due.
-    /// `waitsForFollowUp`: Check Now's spinner lasts until a pass under way and its own are done.
     func refreshNews(force: Bool = false, now: Date = .now, waitsForFollowUp: Bool = false) async {
         guard settings.newsEnabled, let news else { return }
         await news.refresh(maxAge: force ? 0 : nil, preferences: settings.alertPreferences, notifies: settings.showsAlertsOnMac, now: now,
                            waitsForFollowUp: waitsForFollowUp)
     }
 
-    /// Alerts for crossings since the last refresh: to the iPhone through iCloud, and on this Mac
-    /// when turned on. Each goes out once, from whichever device saw it first. Alerts that can
-    /// wait hold until quiet hours end, and ones iCloud didn't take are retried next time.
     private func sendAlerts(for providers: [RelayProvider], now: Date) async {
         let preferences = await currentAlertPreferences(now: now)
         alertLedger.process(providers, preferences: preferences, now: now)
@@ -630,7 +530,6 @@ final class QuotaStore {
         if sendsAlertsToiCloud, let relay {
             delivery = await relay.sendAlerts(due, now: now)
         }
-        // Without iCloud there's nowhere else to send them: this Mac showed them, or nothing will.
         let shown = alertLedger.settle(due, delivery: delivery, showsHere: settings.showsAlertsOnMac, now: now)
         if !shown.isEmpty {
             MacAlerts.post(shown)
@@ -638,14 +537,10 @@ final class QuotaStore {
         alertLedger.save(to: cache.directory)
     }
 
-    /// Whether alerts this Mac sees go to the iPhone: only through iCloud, when this copy can use
-    /// it and sending is on.
     var sendsAlertsToiCloud: Bool {
         relay.map { $0.isAvailable && $0.isEnabled } ?? false
     }
 
-    /// This Mac's alert choices in step with the shared copy: takes what the iPhone changed, and
-    /// sends what was changed here (again, if iCloud was away), so Settings shows both.
     func currentAlertPreferences(now: Date = .now) async -> AlertPreferences {
         followTimeZone()
         let local = settings.alertPreferences
@@ -654,32 +549,22 @@ final class QuotaStore {
             if settings.alertPreferences == local {
                 settings.alertPreferences = preferences
             } else {
-                // Changed in Settings meanwhile: that change stays, on top of what came in.
                 settings.alertPreferences = AlertPreferences.merged(base: local, local: settings.alertPreferences, remote: preferences)
             }
         }
         return settings.alertPreferences
     }
 
-    /// Alert choices changed in Settings on this Mac: saved at once, and shared on top of the
-    /// newest copy in iCloud, so a choice made on the iPhone meanwhile isn't undone.
     func updateAlertPreferences(_ change: (inout AlertPreferences) -> Void, now: Date = .now) {
         var preferences = settings.alertPreferences
         change(&preferences)
         guard preferences != settings.alertPreferences else { return }
-        // Dated only: the time zone moves when this Mac's does (`followTimeZone`), not with a choice.
         preferences.updatedAt = now
         settings.alertPreferences = preferences
         guard relay != nil else { return }
         Task { _ = await currentAlertPreferences() }
     }
 
-    /// Quiet hours follow this Mac's time zone when it changes, as they follow the iPhone's: the
-    /// choices take the new zone, shared without dating it as a change of choices. Only when this
-    /// Mac's zone changes, so a Mac and an iPhone in different zones don't take turns rewriting
-    /// it. The first time, the zone is only noted, unless this Mac never shared its choices:
-    /// launching doesn't undo the zone the iPhone gave them. Runs before every sync of the
-    /// choices: each refresh, and when Settings opens.
     private func followTimeZone() {
         let zone = currentTimeZone().identifier
         let followed = settings.followedTimeZone
@@ -690,7 +575,6 @@ final class QuotaStore {
         settings.alertPreferences.timeZoneID = zone
     }
 
-    /// Pace of a provider's primary window, from its recent readings.
     func pace(for provider: Provider, now: Date = .now) -> Pace? {
         let status = presentationStatus(for: provider, at: now)
         guard let snapshot = status.snapshot, let window = snapshot.windows.first else { return nil }
@@ -706,7 +590,6 @@ final class QuotaStore {
         )
     }
 
-    /// Pace for every window of a provider, keyed by window ID.
     func windowPaces(for provider: Provider, now: Date = .now) -> [String: Pace] {
         let status = presentationStatus(for: provider, at: now)
         guard let snapshot = status.snapshot else { return [:] }
@@ -727,16 +610,18 @@ final class QuotaStore {
         return paces
     }
 
-    /// A week of hourly usage per window of a provider, keyed by window ID.
     func weeks(for provider: Provider) -> [String: UsageHistory] {
         history.weeks(for: provider)
     }
 
-    /// Banked resets across providers, for the popover's footer.
     var bankedResets: (count: Int, providers: [Provider]) {
+        bankedResets(among: connectedProviders)
+    }
+
+    func bankedResets(among connected: [Provider]) -> (count: Int, providers: [Provider]) {
         var count = 0
         var providers: [Provider] = []
-        for provider in connectedProviders {
+        for provider in connected {
             if let available = statuses[provider]?.snapshot?.availableBanked(at: presentationNow)?.available, available > 0 {
                 count += available
                 providers.append(provider)
@@ -745,12 +630,9 @@ final class QuotaStore {
         return (count, providers)
     }
 
-    /// Enabled providers as the iPhone and Watch will see them.
     func relayEnvelope(at now: Date) -> RelayEnvelope {
         let providers = Provider.allCases.filter { settings.isEnabled($0) }.map { provider in
             var relayed = RelayProvider(provider: provider, status: statuses[provider] ?? .loading, checkedAt: checkedAt[provider])
-            // The pace this Mac measured from its frequent readings, for readers with hourly
-            // history. Measured as of the newest reading, which can come after `now`.
             let at = max(now, checkedAt[provider] ?? now)
             let paces = windowPaces(for: provider, now: at)
             for index in relayed.windows.indices where relayed.windows[index].isMetered {
@@ -777,8 +659,6 @@ final class QuotaStore {
             case .signedOut, .notEntitled, .expired(_, nil), .unreachable(nil):
                 return nil
             case .loading, .rateLimited(_, nil):
-                // Connected, with no reading yet (a 429 can come before the first): a placeholder,
-                // so the menu bar lists what the popover does.
                 return MenuMeter(
                     provider: provider,
                     valueText: "--",
@@ -789,7 +669,6 @@ final class QuotaStore {
                 )
             case .live(let snapshot), .stale(let snapshot), .unreachable(let snapshot?),
                  .expired(_, let snapshot?), .rateLimited(_, let snapshot?):
-                // A balance with no limit has no percentage to show.
                 guard snapshot.windows.first?.isMetered ?? true else { return nil }
                 let relay = RelayProvider(provider: provider, status: status, checkedAt: lastChecked(provider))
                 let lead = UsageRanking.leadWindow(for: relay, now: now) { window in
@@ -831,7 +710,6 @@ final class QuotaStore {
         Provider.allCases.filter { settings.isEnabled($0) }
     }
 
-    /// Enabled providers with a reading (or still loading), shown first.
     var connectedProviders: [Provider] {
         let now = presentationNow
         return UsageRanking.sorted(popoverProviders.filter { !isDisconnected($0) }, provider: { provider in
@@ -842,7 +720,6 @@ final class QuotaStore {
         })
     }
 
-    /// Enabled providers waiting for a sign-in or key, collapsed at the bottom.
     var disconnectedProviders: [Provider] {
         popoverProviders.filter { isDisconnected($0) }
     }
@@ -875,20 +752,14 @@ final class QuotaStore {
         }
     }
 
-    /// Last successful check for a provider, falling back to when its reading was taken.
     func lastChecked(_ provider: Provider) -> Date? {
         checkedAt[provider] ?? statuses[provider]?.snapshot?.fetchedAt
     }
 
-    /// When a provider's usage last changed: its reading keeps the time it first appeared,
-    /// because an unchanged answer doesn't replace it.
     func lastChanged(_ provider: Provider) -> Date? {
         statuses[provider]?.snapshot?.fetchedAt
     }
 
-    /// Moonshot follows the key's selected account even when an old-region reading is retained.
-    /// Other providers use the reading's currency. Metadata is supplied by the asynchronous UI
-    /// key-row read; this accessor never reads a Keychain.
     func budgetUnit(for provider: Provider, region: String? = nil) -> String {
         BudgetReferencePreferences.editorUnit(for: provider, region: region,
             readingUnit: (rawSnapshots[provider] ?? statuses[provider]?.snapshot)?.budgetUnit)
@@ -898,9 +769,6 @@ final class QuotaStore {
         budgetUnit(for: provider, region: region).uppercased()
     }
 
-    /// Re-applies the provider's budget to the reading its status holds, whichever status that
-    /// is. A status without one stays without: an expired session's reading, once its 24 hours
-    /// are up, doesn't come back with a new budget.
     func budgetDidChange(for provider: Provider) {
         guard let raw = rawSnapshots[provider], statuses[provider]?.snapshot != nil else { return }
         let snapshot = raw.applyingBudget(reference: settings.budgetReference(for: provider))
@@ -970,22 +838,14 @@ final class QuotaStore {
         }
     }
 
-    /// Honors Retry-After, within one minute to six hours.
     nonisolated static func clampedRetry(_ until: Date?, now: Date) -> Date {
         ProviderStatus.clampedRetry(until, now: now)
     }
 
-    /// Whether a new reading says nothing the kept one doesn't: every field but when it was
-    /// fetched and where from, so a newly banked reset, credits, or extra usage replace it even
-    /// when the meters haven't moved, while the same values from Claude's status line and its
-    /// direct call don't take turns. The kept reading's `fetchedAt` stays the time its values
-    /// first appeared.
     nonisolated static func usageEqual(_ a: QuotaSnapshot, _ b: QuotaSnapshot) -> Bool {
         var a = a
         a.fetchedAt = b.fetchedAt
         a.source = b.source
-        // Claude's direct read gives reset times to the microsecond and its status line to the
-        // second: the same reset within a minute isn't a change.
         if sameMinute(a.resetsAt, b.resetsAt) {
             a.resetsAt = b.resetsAt
         }

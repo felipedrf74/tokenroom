@@ -104,8 +104,6 @@ final class APIKeyPersistenceTests: XCTestCase {
     }
 }
 
-/// Reproduces macOS's ambiguous legacy query: without the protection flag, a query can match
-/// either location, and a delete can remove both. Only placeholder data is held in memory.
 private final class LegacyAPIKeychain: @unchecked Sendable {
     private let lock = NSLock()
     var legacy: [String: Any]? = [kSecValueData as String: Data("placeholder-legacy".utf8)]

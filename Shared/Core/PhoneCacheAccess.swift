@@ -1,7 +1,5 @@
 import Foundation
 
-/// Shared by the iPhone app, widgets, and Watch handoff. Old cache files stay quarantined after
-/// an account change even if clearing the file fails or an old widget writes its result late.
 enum PhoneCacheAccess {
     static let generationKey = "phoneCacheAccountGeneration"
 
@@ -11,6 +9,21 @@ enum PhoneCacheAccess {
 
     static func invalidate(in defaults: UserDefaults) {
         defaults.set(UUID().uuidString, forKey: generationKey)
+    }
+
+    static func markSignedOut(in defaults: UserDefaults) {
+        let previous = generation(in: defaults)
+        if previous?.hasPrefix("signed-out:") != true {
+            defaults.set("signed-out:" + (previous ?? "initial"), forKey: generationKey)
+        }
+    }
+
+    static func markAvailable(in defaults: UserDefaults, expecting generation: String?) -> String? {
+        if generation?.hasPrefix("signed-out:") == true, generation == self.generation(in: defaults) {
+            invalidate(in: defaults)
+            return self.generation(in: defaults)
+        }
+        return generation
     }
 
     static func accepts(_ cache: ReadingCache, defaults: UserDefaults) -> Bool {
@@ -29,7 +42,6 @@ enum PhoneCacheAccess {
         cache.accountGeneration = generation
         cache.localSource?.accountGeneration = generation
         try cache.save(to: url)
-        // A late writer can leave a file, but that file's old generation is never accepted.
         return generation == self.generation(in: defaults)
     }
 }

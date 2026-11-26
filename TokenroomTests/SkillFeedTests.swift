@@ -2,7 +2,6 @@ import XCTest
 @testable import Tokenroom
 
 final class SkillFeedTests: XCTestCase {
-    /// Called from the main actor, as `SkillsStore` does, the body is still read off it.
     @MainActor func testADownloadKeepsEveryByteQuicklyAndStopsPastTheLimit() async throws {
         let body = Data((0..<300_000).map { UInt8(truncatingIfNeeded: $0) })
         StubURLProtocol.reset()
@@ -20,7 +19,6 @@ final class SkillFeedTests: XCTestCase {
         XCTAssertEqual(data, body, "Every byte, across buffer boundaries")
         XCTAssertLessThan(elapsed, .seconds(1), "A main-actor hop per byte took seconds for this size")
 
-        // November 2026: its own answer, not "Couldn't reach ClawHub".
         StubURLProtocol.handler = { _ in (200, Data(count: SkillFeed.sizeLimit + 1)) }
         guard case .tooLarge = await SkillsStore.download(request, session: session) else { return XCTFail("Past the size limit") }
     }
@@ -38,7 +36,6 @@ final class SkillFeedTests: XCTestCase {
         for _ in 0..<1000 { if response.value != nil { break }; await Task.yield() }
         guard let physical = response.value else { XCTFail("Fetch never started"); owner.cancel(); return }
         owner.cancel(); await owner.value
-        // Another waiter must share the physical request while it is still ending.
         let next = Task { await store.refresh(sort: .trending, force: true) }
         for _ in 0..<100 { await Task.yield() }
         XCTAssertEqual(calls.value, 1)
@@ -104,7 +101,6 @@ final class SkillFeedTests: XCTestCase {
     @MainActor func testCoalescingAndStaleSortCannotReplaceSelection() async {
         let calls = LockedBox<[String]>([])
         let store = SkillsStore(fetch: { request in
-            // Trending has its own endpoint, without a `sort`, since November 2026.
             let sort = request.url!.lastPathComponent == "trending" ? "trending"
                 : URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!.first { $0.name == "sort" }!.value!
             calls.value.append(sort)

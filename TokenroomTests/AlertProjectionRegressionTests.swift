@@ -50,7 +50,6 @@ final class AlertProjectionRegressionTests: XCTestCase {
         ledger.process([reading(used: 40, state: "live", runsOutIn: nil)], preferences: preferences, now: now)
         let raised = try XCTUnwrap(ledger.process([reading(state: "stale")], preferences: preferences, now: now).first)
         XCTAssertTrue(raised.isUrgent)
-        // A failed delivery can leave this pending through a relaunch.
         ledger = try RelayEnvelope.decoder.decode(AlertLedger.self, from: RelayEnvelope.encoder.encode(ledger))
         let later = now.addingTimeInterval(2 * 3600)
         let retried = AlertRules.refreshed(try XCTUnwrap(ledger.pending.first).alert, now: later)

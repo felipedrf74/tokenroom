@@ -1,7 +1,6 @@
 import XCTest
 @testable import Tokenroom
 
-/// How long a balance lasts, and where a month's spend is heading.
 final class ForecastTests: XCTestCase {
     private let now = Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 25, hour: 12))!
 
@@ -9,7 +8,6 @@ final class ForecastTests: XCTestCase {
         Calendar.gregorianUTC.date(from: DateComponents(year: year, month: month, day: day, hour: hour))!
     }
 
-    /// Hourly balances ending at `now`, oldest first.
     private func history(_ amounts: [Double]) -> UsageHistory {
         var history = UsageHistory(endingAt: now)
         for (index, amount) in amounts.enumerated() {
@@ -18,10 +16,7 @@ final class ForecastTests: XCTestCase {
         return history
     }
 
-    // MARK: Runway
-
     func testRunwayCountsOnlySinceTheLastTopUp() throws {
-        // Eight hours running low, a top-up to $50, then a dollar an hour for a day.
         let before = (0..<8).map { 30 - Double($0) }
         let after = (0...24).map { 50 - Double($0) }
         let week = history(before + after)
@@ -39,18 +34,15 @@ final class ForecastTests: XCTestCase {
     }
 
     func testASmallRiseIsntATopUp() throws {
-        // A dollar an hour for a day, with a cent refunded four hours ago.
         var amounts = (0...24).map { 50 - Double($0) }
         amounts[20] = amounts[19] + 0.01
         let days = try XCTUnwrap(Forecast.daysLeft(remaining: 26, unit: "usd", history: history(amounts), now: now), "The runway isn't hidden for half a day")
         XCTAssertEqual(days, 26.0 / 24, accuracy: 0.0001)
 
-        // Under a dollar, where a cent is more than 1% of the balance.
         var low = (0...24).map { 0.98 - Double($0) * 0.03 }
         low[20] = low[19] + 0.01
         XCTAssertEqual(try XCTUnwrap(Forecast.daysLeft(remaining: 0.26, unit: "usd", history: history(low), now: now)), 0.26 / 0.72, accuracy: 0.0001)
 
-        // A rise over a dollar and over 1% is a top-up.
         var topped = (0...24).map { 50 - Double($0) }
         topped[20] = topped[19] + 1.5
         XCTAssertNil(Forecast.daysLeft(remaining: 26, unit: "usd", history: history(topped), now: now), "Four hours since a top-up isn't a rate")
@@ -63,8 +55,6 @@ final class ForecastTests: XCTestCase {
         XCTAssertEqual(Forecast.runwayText(daysLeft: 0.01), "≈ 1 hour left at this week's rate", "Never zero hours")
         XCTAssertEqual(Forecast.runwayText(daysLeft: 90), "Lasts months at this week's rate")
     }
-
-    // MARK: Month projection
 
     func testProjectionWaitsForATenthOfTheMonth() throws {
         let start = utc(2026, 9, 1)
@@ -87,7 +77,6 @@ final class ForecastTests: XCTestCase {
     func testProjectionRunsToTheReadingAndSkipsOldOnes() throws {
         let start = utc(2026, 9, 1)
         let end = utc(2026, 10, 1)
-        // $100 read at midnight on 7 September, a fifth of the month in, and seen that evening.
         let read = utc(2026, 9, 7)
         let projected = try XCTUnwrap(Forecast.projectedSpend(spent: 100, startsAt: start, resetsAt: end, checkedAt: read, now: utc(2026, 9, 7, 20)))
         XCTAssertEqual(projected, 500, accuracy: 0.001, "The pace so far runs to the reading, not to the viewer's clock")
@@ -107,8 +96,6 @@ final class ForecastTests: XCTestCase {
         XCTAssertEqual(Forecast.projectionText(620, unit: "usd", budget: 500), "On track for \(AmountFormat.text(620, unit: "usd")) this month, over budget")
         XCTAssertEqual(Forecast.projectionText(620, unit: "cny", budget: nil), "On track for \(AmountFormat.text(620, unit: "cny")) this month")
     }
-
-    // MARK: Which windows get a forecast
 
     func testForecastLinePerKindOfWindow() throws {
         let balance = RelayWindow(id: "balance-usd", kind: "pool", title: "Balance", used: 0, resetsAt: nil, amount: QuotaAmount(remaining: 26, unit: "usd"), metered: false)

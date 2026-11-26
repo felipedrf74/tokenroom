@@ -1,8 +1,6 @@
 import SwiftUI
 import UserNotifications
 
-// SceneBuilder cannot branch between scene types. Choose the app configuration before
-// SwiftUI creates any scenes, so inert hosts never register a background task.
 @main
 enum TokenroomMobileEntry {
     @MainActor static func main() {
@@ -42,8 +40,6 @@ private struct MobileWindowScene: Scene {
                 .environment(\.mobileAllowsExternalEffects, store.allowsExternalEffects)
                 .environment(\.mobileShowsSampleData, store.sampleMode)
                 .task {
-                    // Also saves the push subscriptions, once iCloud answers. Not forced: when
-                    // coming forward already started one, this is that refresh.
                     guard store.allowsExternalEffects else { return }
                     await store.refresh()
                 }
@@ -53,9 +49,6 @@ private struct MobileWindowScene: Scene {
                     case .active:
                         store.becameActive()
                         Task {
-                            // News beside usage, not behind it: feeds older than 15 minutes, so the
-                            // badge is current. With News on screen, its own checks (`NewsView`)
-                            // start as the app comes forward.
                             await NewsLifecycle.cameForward(news: news, preferences: { store.alertPreferences }) {
                                 await store.refresh()
                             }
@@ -67,7 +60,6 @@ private struct MobileWindowScene: Scene {
                     }
                 }
                 .onChange(of: store.hasOnboarded, initial: true) { _, onboarded in
-                    // Ask once the person has chosen how to use Tokenroom, not on first sight.
                     guard store.allowsExternalEffects, onboarded, !store.sampleMode else { return }
                     Task { _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) }
                 }

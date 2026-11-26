@@ -2,27 +2,23 @@ import Foundation
 
 enum ReadingFreshness {
     static let staleAfter: TimeInterval = 3600
-    /// Widgets and complications reload this long before a live reading would go stale, and read
-    /// iCloud then, so a reading checked again meanwhile never shows faded first.
     static let staleLead: TimeInterval = 5 * 60
     static let expiresAfter: TimeInterval = 7 * 86_400
-    /// What every message `present` writes starts with, so a saved one is written again as the
-    /// reading ages rather than keeping the age it had when it was saved.
     static let staleMessagePrefix = "Last successful check "
+
+    static func stalePresentationDate(checkedAt: Date) -> Date {
+        checkedAt.addingTimeInterval(staleAfter + 1)
+    }
 
     static func present(_ provider: RelayProvider, fallback: Date, now: Date) -> RelayProvider? {
         let checked = provider.checkedAt ?? provider.fetchedAt ?? fallback
         guard now.timeIntervalSince(checked) <= expiresAfter else { return nil }
         var result = provider
-        // Older payloads have only an envelope timestamp; keep it with this provider.
         if result.checkedAt == nil, result.fetchedAt == nil { result.checkedAt = checked }
-        // A reading dated ahead of this clock (a collector's clock running fast) is as new as
-        // anything: just checked, until the clock passes its time.
         if result.isLive, now.timeIntervalSince(checked) > staleAfter {
             result.state = "stale"
             result.message = staleMessage(checked: checked, now: now)
         } else if result.state == "stale", result.message?.hasPrefix(staleMessagePrefix) == true {
-            // Aged here before, perhaps hours ago, and saved: said again with its age now.
             result.message = staleMessage(checked: checked, now: now)
         }
         return result
@@ -32,15 +28,10 @@ enum ReadingFreshness {
         staleMessagePrefix + RelativeTime.ago(checked, now: now) + "."
     }
 
-    /// `date` for working out which of two readings or caches is newer. One dated ahead of the
-    /// clock (a collector's clock running fast) is as new as anything, and no newer: now. Where two
-    /// tie, the one just arrived wins.
     static func ordering(_ date: Date, now: Date) -> Date {
         min(date, now)
     }
 
-    /// The same for this device's own times (its readings, its saves): one later than now was
-    /// taken before its clock was set back, so anything taken now is newer.
     static func ownOrdering(_ date: Date, now: Date) -> Date {
         date > now ? .distantPast : date
     }
@@ -57,8 +48,6 @@ extension RelayWindow {
 }
 
 extension ReadingCache {
-    /// Within this long of a reset, countdowns tick ("48:12") rather than read "23h" or "3d 1h":
-    /// a row of seconds running all day is noise, and the last hour is when they matter.
     static let countdownTicksWithin: TimeInterval = 3_600
 
     func presented(at date: Date) -> ReadingCache {
@@ -75,10 +64,6 @@ extension ReadingCache {
         return result
     }
 
-    /// Membership comes from the newest envelope; older envelopes may advance retained readings,
-    /// but cannot reintroduce removed providers or remove newly added ones. A cache or reading
-    /// dated ahead of `now` counts as now (`ReadingFreshness.ordering`), so a cache saved before
-    /// this clock was set back doesn't keep its membership against the next one.
     func mergingUpdate(_ incoming: ReadingCache, now: Date = .now) -> ReadingCache {
         guard !isSample, !incoming.isSample else { return incoming }
         if let reconciled = reconcilingSourceUpdate(incoming, now: now) { return reconciled }
@@ -96,8 +81,6 @@ extension ReadingCache {
         return result
     }
 
-    /// Whether a reading shown live at `date` is within `ReadingFreshness.staleLead` of going
-    /// stale: a cache saved minutes ago can still hold one, and is then read again.
     func nearsStale(at date: Date) -> Bool {
         presented(at: date).items.contains { item in
             guard item.provider.isLive, let checked = item.provider.checkedAt ?? item.provider.fetchedAt else { return false }
@@ -109,40 +92,28 @@ extension ReadingCache {
         presented(at: date).items.filter { !$0.provider.isLive }.count
     }
 
-    /// Predictable Watch reset boundaries used to request a Smart Stack refresh when the app
-    /// gets a background turn. WidgetKit may still defer the actual redraw.
     func resetDates(after start: Date, through end: Date) -> [Date] {
         Set(items.flatMap { $0.provider.windows.compactMap(\.resetsAt) }
             .filter { $0 > start && $0 <= end }).sorted()
     }
 
-    /// Timeline entries age readings even if WidgetKit postpones the next network reload: one
-    /// at each reset, and where each reading goes stale and then expires.
     func presentationDates(after now: Date, until horizon: Date) -> [Date] {
         let dates = items.flatMap { item -> [Date] in
             let checked = item.provider.checkedAt ?? item.provider.fetchedAt ?? savedAt
             return item.provider.windows.compactMap(\.resetsAt) + [
-                checked.addingTimeInterval(ReadingFreshness.staleAfter + 1),
+                ReadingFreshness.stalePresentationDate(checkedAt: checked),
                 checked.addingTimeInterval(ReadingFreshness.expiresAfter + 1)
             ]
         }
         return Set(dates.filter { $0 > now && $0 < horizon }).sorted()
     }
 
-    /// Where an iPhone widget's countdown changes: an hour before a reset it starts ticking
-    /// (`countdownTicksWithin`), and before that it's in words that `RelativeTime.remaining`
-    /// rounds to the nearest hour, so they move on ("23h" to "22h") on the half hours. Entries
-    /// here keep the words right between reloads. They come second to `presentationDates`: a
-    /// timeline short of room keeps what a reading is before how its countdown is worded.
-    /// - Parameter providers: the providers the widget shows; nil for all of them.
     func countdownDates(after now: Date, until horizon: Date, providers: Set<String>? = nil) -> [Date] {
         let shown = items.filter { providers?.contains($0.id) ?? true }
         let dates = Self.countdownDates(for: shown.flatMap { $0.provider.windows.compactMap(\.resetsAt) }, after: now, until: horizon)
         return Set(dates.starts + dates.wording).sorted()
     }
 
-    /// The same for these resets, apart: where each starts ticking, and where its words move on.
-    /// Past three days the words are whole days, which most half hours leave as they were.
     static func countdownDates(for resets: [Date], after now: Date, until horizon: Date) -> (starts: [Date], wording: [Date]) {
         let within = { (date: Date) in date > now && date < horizon }
         var starts = Set<Date>()
@@ -159,21 +130,10 @@ extension ReadingCache {
         return (starts.filter(within).sorted(), wording.filter(within).sorted())
     }
 
-    /// The countdown entries for a widget drawing `rows` (as presented at `now`, in its order),
-    /// at most `limit`. See `countdownEntries(at:until:limit:rows:)`.
     static func countdownEntries(for rows: [Item], after now: Date, until horizon: Date, limit: Int = 24) -> [Date] {
         countdownEntries(at: [now], until: horizon, limit: limit) { _ in rows }
     }
 
-    /// The countdown entries for a widget's timeline, at most `limit`. A row's countdown is its
-    /// lead window's, so where each of those starts ticking comes first, then where their
-    /// words move on, earliest first; what's left goes to the rows' other windows, which lead
-    /// only once the first resets. Providers the widget doesn't draw get none, so they can't
-    /// cost a row its countdown.
-    /// - Parameters:
-    ///   - dates: now, then each later entry at which the rows can change: a reset or a
-    ///     reading going stale can bring another provider into view.
-    ///   - rows: the rows the widget draws at one of those dates, as presented then.
     static func countdownEntries(at dates: [Date], until horizon: Date, limit: Int = 24, rows: (Date) -> [Item]) -> [Date] {
         var starts: [Date] = []
         var wording: [Date] = []
@@ -197,21 +157,14 @@ extension ReadingCache {
 }
 
 extension ReadingCache.Item {
-    /// The Watch's line saying where a reading came from. The Watch never collects, so the
-    /// iPhone's readings are "your iPhone" there, never "This iPhone".
     var watchOriginLine: String {
         source == SampleData.sourceLabel ? "Sample data" : resolvedOrigin.watchPhrase
     }
 }
 
-/// A durable local gate shared by the Watch app and complications. The gate stays closed if
-/// clearing or replacing the disk cache fails, and opens only after a validated read is saved.
 enum WatchCacheAccess {
     static let cutoffKey = "watchSignedOutAt"
     static let validationKey = "watchAccountNeedsValidation"
-    /// Set when a sign-out this device recorded was a confirmed `.noAccount`, and cleared once an
-    /// account is seen again or it changes. While it stands, another `.noAccount` isn't a new
-    /// sign-out: the iPhone's handovers saved since the cutoff (`WatchHandoffAcceptance`) stay.
     static let signedOutKey = "watchConfirmedNoAccount"
 
     static func invalidate(in defaults: UserDefaults, at date: Date) {
@@ -220,10 +173,6 @@ enum WatchCacheAccess {
         defaults.removeObject(forKey: signedOutKey)
     }
 
-    /// A confirmed `.noAccount`. Returns false, changing nothing, when this device is still
-    /// signed out since the last sign-out it recorded: no account came in between, so what was
-    /// saved since that cutoff belongs to no other account. Otherwise it's a sign-out: the gate
-    /// closes at `date`.
     @discardableResult
     static func confirmNoAccount(in defaults: UserDefaults, at date: Date) -> Bool {
         if isStillSignedOut(in: defaults) { return false }
@@ -236,21 +185,14 @@ enum WatchCacheAccess {
         defaults.bool(forKey: signedOutKey) && defaults.object(forKey: cutoffKey) is Date
     }
 
-    /// An account answered (an iCloud read went through): the next `.noAccount` is a sign-out.
     static func noteAccountAvailable(in defaults: UserDefaults) {
         defaults.removeObject(forKey: signedOutKey)
     }
 
-    /// What `accountStatus()` alone found (a cold launch to take a handover). An account that
-    /// answered ends "still signed out" just as a read does, so a later no-account is a sign-out
-    /// that hides what was taken meanwhile.
     static func note(_ check: RelayAccountCheck, in defaults: UserDefaults) {
         if check == .available { noteAccountAvailable(in: defaults) }
     }
 
-    /// Whether something read later (iCloud, the iPhone, the saved cache) may replace `current`.
-    /// A launch showing sample readings (`-sampleMode YES`) keeps them for the whole launch, so a
-    /// simulator without an iCloud account doesn't swap them for an empty account's.
     static func mayReplace(_ current: ReadingCache?, showsSample: Bool) -> Bool {
         !(showsSample && current?.isSample == true)
     }
@@ -262,7 +204,6 @@ enum WatchCacheAccess {
     }
 
     static func saveValidated(_ cache: ReadingCache, at url: URL?, defaults: UserDefaults, cutoff: Date?) throws {
-        // Account changes during a read invalidate that result, even if the new account is available.
         guard (defaults.object(forKey: cutoffKey) as? Date) == cutoff,
               cutoff.map({ cache.savedAt > $0 }) != false, let url else { return }
         try cache.save(to: url)
@@ -271,8 +212,6 @@ enum WatchCacheAccess {
     }
 }
 
-/// Reconcile a complication's validated write with an app process that stayed alive. A failed
-/// iCloud read must not leave its memory empty while a usable, gated reading exists on disk.
 enum WatchCacheRecovery {
     static func recover(_ memory: ReadingCache?, at url: URL?, defaults: UserDefaults) -> ReadingCache? {
         guard let saved = WatchCacheAccess.load(at: url, defaults: defaults) else { return memory }
@@ -280,9 +219,6 @@ enum WatchCacheRecovery {
     }
 }
 
-/// A phone handover can never restore readings saved before the last sign-out. Past that,
-/// `WatchHandoffAcceptance` decides from what this process knows of its account: an iCloud
-/// read (`validated`), or `account`.
 struct WatchAccountGate {
     private(set) var validated = false
     private(set) var signedOutAt: Date?
@@ -292,7 +228,6 @@ struct WatchAccountGate {
     mutating func invalidate() { validated = false; account = .unknown }
     mutating func confirmAvailable() { validated = true; account = .available }
     mutating func signOut(at date: Date) { validated = false; account = .unknown; signedOutAt = date }
-    /// What an account check or a failed read found. Never undoes an iCloud read's validation.
     mutating func note(_ knowledge: WatchAccountKnowledge) {
         guard !validated || knowledge == .noAccount else { return }
         account = knowledge

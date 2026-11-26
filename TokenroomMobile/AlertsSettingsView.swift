@@ -82,7 +82,6 @@ struct AlertsSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await checkPermission() }
         .onChange(of: scenePhase) { _, phase in
-            // Back from Settings with notifications turned on.
             if phase == .active {
                 Task { await checkPermission() }
             }

@@ -1,10 +1,5 @@
 import Foundation
 
-/// Links widgets, notifications, and the Watch open in the iPhone app:
-/// `tokenroom://provider/<id>`, `tokenroom://news`, `tokenroom://settings`, `tokenroom://keys`,
-/// `tokenroom://alerts`, `tokenroom://widgets` (which providers widgets show), and
-/// `tokenroom://connect` (the plans that need a Mac). The host `oauth`
-/// is kept for a future phone sign-in and isn't parsed.
 enum DeepLink: Equatable, Sendable {
     case provider(String)
     case news

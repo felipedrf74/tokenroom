@@ -1,8 +1,6 @@
 import Foundation
 import Security
 
-/// Runs blocking work (processes, SQLite, file reads, the Keychain CLI) off Swift's
-/// cooperative thread pool, which must never wait on I/O.
 enum BlockingIO {
     private static let queue = DispatchQueue(
         label: "app.tokenroom.blocking-io",
@@ -27,13 +25,6 @@ enum BlockingIO {
     }
 }
 
-/// One keychain operation at a time.
-///
-/// The legacy macOS keychain takes a process-wide lock and then waits on securityd.
-/// Overlapping `SecItem` calls deadlock that lock. The threads they occupy are the
-/// same pool Swift's timers use, so a check that should give up after a few seconds
-/// never does and the menu stays on "Updating…". Re-entrant, so a read that already
-/// holds the gate can update the same item.
 enum KeychainGate {
     private static let key = DispatchSpecificKey<UInt8>()
     private static let queue: DispatchQueue = {
@@ -43,9 +34,6 @@ enum KeychainGate {
     }()
 
     static func sync<T>(_ work: () throws -> T) rethrows -> T {
-        // The main thread runs the call itself. Waiting on this queue from there
-        // deadlocks when SecItem needs the main thread. Refresh calls come from
-        // BlockingIO, so they still run here one at a time.
         if DispatchQueue.getSpecific(key: key) != nil || Thread.isMainThread {
             return try work()
         }

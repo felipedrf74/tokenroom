@@ -101,7 +101,6 @@ struct MobileNewsFollowing: View {
         var name: String
         init(_ lab: (id: String, name: String)) { id = lab.id; name = lab.name }
     }
-    /// One card of rows split by hairlines, with the source's follow mark at each row's end.
     private func rows<Item: Identifiable, Row: View>(_ items: [Item], @ViewBuilder row: @escaping (Item) -> Row) -> some View {
         MobileNewsPanel(verticalPadding: 2) {
             VStack(spacing: 0) {
@@ -115,7 +114,6 @@ struct MobileNewsFollowing: View {
     private func heading(_ title: String) -> some View {
         Text(title).font(.headline).accessibilityAddTraits(.isHeader)
     }
-    /// The row's name. Tapping the row opens the source; the mark at its end follows it.
     private func rowTitle(_ name: String) -> some View {
         Text(name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
     }

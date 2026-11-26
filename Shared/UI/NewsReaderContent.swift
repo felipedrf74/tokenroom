@@ -89,15 +89,12 @@ struct NewsCollectionHealthView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             #if os(macOS)
-            // A caption with a link beside it, as Today's checks read: the page's heading leads.
             HStack(spacing: 12) {
                 Text(health.caption).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText)
                 checkButton.buttonStyle(.plain).font(.caption).fontWeight(.medium).foregroundStyle(TokenroomTokens.newsAction)
                     .underline(health.problem != nil)
             }
             #else
-            // One row, as Today's freshness line and the Mac's: the stories start sooner. At larger
-            // text the two stack, so neither wraps into a narrow column.
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(health.caption).font(.caption).foregroundStyle(NewsControlMetrics.secondaryText).fixedSize()

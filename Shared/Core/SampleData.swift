@@ -1,8 +1,5 @@
 import Foundation
 
-/// Readings for "Try sample data", previews, and screenshots: realistic, the same for a given
-/// moment, and labelled as samples wherever they show. Built through the same code as real
-/// readings.
 enum SampleData {
     static let sourceLabel = "Sample"
 
@@ -73,7 +70,6 @@ enum SampleData {
             snapshot(.deepseek, [
                 QuotaWindow(id: "balance-usd", kind: .pool, title: "Balance", usedPercent: 0, resetsAt: nil, amount: QuotaAmount(remaining: 12.4, unit: "usd"), metered: false),
             ]),
-            // Org spend reports only what's spent; the budget turns it into a meter.
             snapshot(.anthropicOrg, [
                 QuotaWindow(
                     id: "spend-month", kind: .monthly, title: "This month", usedPercent: 31.25, resetsAt: nextMonth, startsAt: monthStart,
@@ -83,8 +79,6 @@ enum SampleData {
         ]
     }
 
-    /// A week that climbs to each window's reading since it opened, busier by day, after the
-    /// previous window peaked and reset.
     static func history(for snapshot: QuotaSnapshot, now: Date) -> [String: UsageHistory] {
         var result: [String: UsageHistory] = [:]
         for window in snapshot.windows where !window.isMetered {
@@ -105,7 +99,6 @@ enum SampleData {
     static func week(current: Double, opened: Date, length: TimeInterval, previousPeak: Double, now: Date) -> UsageHistory {
         var history = UsageHistory(endingAt: now)
         let step = UsageHistory.step
-        // Hourly activity: busy from 08:00 to 23:00, a trickle overnight.
         func activity(_ date: Date) -> Double {
             (8..<23).contains(Calendar.gregorianUTC.component(.hour, from: date)) ? 1 : 0.12
         }
@@ -136,7 +129,6 @@ enum SampleData {
         return history
     }
 
-    /// A balance topped up four days ago and spent down steadily since, so its runway shows.
     static func balanceWeek(remaining: Double, now: Date) -> UsageHistory {
         var history = UsageHistory(endingAt: now)
         let toppedUp = now.addingTimeInterval(-4 * 86_400)
@@ -145,7 +137,6 @@ enum SampleData {
         while time <= now {
             let value: Double
             if time < toppedUp {
-                // Before the top-up: running low.
                 value = max(2, 9 - 7 * time.timeIntervalSince(history.start) / toppedUp.timeIntervalSince(history.start))
             } else {
                 value = startAmount - 17.6 * time.timeIntervalSince(toppedUp) / now.timeIntervalSince(toppedUp)

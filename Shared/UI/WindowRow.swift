@@ -1,12 +1,8 @@
 import SwiftUI
 
-/// One usage window as a compact block: title and headline, a thin meter with the pace tick, and
-/// a caption such as "resets in 2d 4h". Used in the Mac's expanded cards and on Apple Watch.
 struct WindowRow: View {
     var title: String
-    /// "64%", "$12.40 left".
     var headline: String
-    /// Nil for windows without a meter (a balance with no limit).
     var usedPercent: Double?
     var isStale: Bool
     var paceMark: Double? = nil

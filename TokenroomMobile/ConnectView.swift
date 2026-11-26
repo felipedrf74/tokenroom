@@ -1,12 +1,6 @@
 import SwiftUI
 
-/// The plans this iPhone reads by itself or can't: Codex, Grok Build, Cursor, and Grok Bot sign in
-/// here, with each one's own sign-in page (`PhoneSignIn`; Grok Bot rides on the Cursor sign-in);
-/// the rest, Claude included, need Tokenroom on a Mac, or a Mac already sends them. Providers read
-/// with a key (Copilot's fine-grained token included) aren't listed: they're on the key card and
-/// in API Keys.
 struct ConnectView: View {
-    /// What every plan says in a build that can't keep a sign-in; once is enough.
     private static let commonReason = "Needs Tokenroom on a Mac. This build of Tokenroom can't keep a sign-in on this iPhone."
 
     var store: MobileStore
@@ -15,13 +9,11 @@ struct ConnectView: View {
     @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
-        // A build that can't keep a sign-in (no app-id Keychain group) offers none.
         let list = store.connectList(now: date).map { entry in
             guard entry.action == .signIn, store.sessions == nil else { return entry }
             return (entry.provider, PhoneConnect.Action.needsMac(reason: Self.commonReason))
         }
         let signedIn = PhoneSignIn.providers.filter { store.sessionProviders.contains($0) }
-        // Plans whose sign-in exists but that aren't on its plan (Grok Bot without it on Cursor).
         let notOnPlan = PhoneSignIn.providers.filter { provider in
             let owner = PhoneSignIn.sessionOwner(for: provider)
             return owner != provider && store.sessionProviders.contains(owner) && !signedIn.contains(provider)
@@ -57,8 +49,6 @@ struct ConnectView: View {
                         Button {
                             signingIn = entry.provider
                         } label: {
-                            // At the largest text sizes "Sign In" goes under the row, so the name
-                            // isn't broken mid-word.
                             let layout = typeSize.isAccessibilitySize
                                 ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
                                 : AnyLayout(HStackLayout())
@@ -93,7 +83,6 @@ struct ConnectView: View {
                 Section {
                     ForEach(needsMac, id: \.provider) { entry in
                         if case .needsMac(let reason) = entry.action {
-                            // The header and footer cover what most have in common.
                             ConnectRow(provider: entry.provider, detail: reason == Self.commonReason ? nil : reason.replacingOccurrences(of: "Needs Tokenroom on a Mac. ", with: ""))
                         }
                     }
@@ -131,7 +120,6 @@ struct ConnectView: View {
         }
     }
 
-    /// What a plan's sign-in row says before signing in.
     static func pitch(for provider: Provider) -> String {
         switch provider {
         case .openai: "ChatGPT plan limits for Codex. Approve a code on OpenAI's page."
@@ -157,7 +145,6 @@ struct ConnectView: View {
     }
 }
 
-/// A plan signed in to on this iPhone: when, whether it still works, and signing out.
 struct PlanSessionView: View {
     var store: MobileStore
     var provider: Provider
@@ -213,7 +200,6 @@ struct PlanSessionView: View {
 }
 
 extension PlanSessionView {
-    /// The plans one sign-out ends: Cursor's ends Grok Bot's too.
     var signOutNames: String {
         PhoneSignIn.sharingSession(with: provider).map(\.displayName).joined(separator: " and ")
     }

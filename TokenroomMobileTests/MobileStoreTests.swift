@@ -6,10 +6,8 @@ import UserNotifications
 import XCTest
 @testable import TokenroomMobile
 
-/// What only the iPhone app does: its store, and the state it shares with its widgets. Shared
-/// logic is tested on the Mac in TokenroomTests.
 final class MobileStoreTests: XCTestCase {
-    private let now = Date(timeIntervalSince1970: 1_790_337_600) // 2026-09-25 12:00 UTC
+    private let now = Date(timeIntervalSince1970: 1_790_337_600)
     private var suites: [String] = []
     private var folders: [URL] = []
 
@@ -21,8 +19,6 @@ final class MobileStoreTests: XCTestCase {
         super.tearDown()
     }
 
-    /// A throwaway stand-in for the App Group's defaults, named by the class and a count so runs
-    /// reuse a few preferences files instead of leaving one behind per test.
     private func makeDefaults() -> UserDefaults {
         let name = "tokenroom.tests.\(Self.self).\(suites.count)"
         suites.append(name)
@@ -38,8 +34,6 @@ final class MobileStoreTests: XCTestCase {
         return folder
     }
 
-    /// A complete store pass with no iCloud, in-memory missing credentials, isolated storage
-    /// and inert device SDK effects. Refresh/cache/alert logic still executes.
     @MainActor
     private func makeStore(defaults: UserDefaults, folder: URL, platformEffects: MobilePlatformEffects = .inert) -> MobileStore {
         MobileStore(
@@ -49,12 +43,9 @@ final class MobileStoreTests: XCTestCase {
             directory: folder, connectOnIPhone: false,
             notificationScheduler: { _ in XCTFail("This fixture must not schedule a real notification") },
             platformEffects: platformEffects, launchDefaults: defaults,
-            // Never this device's real plan sign-ins.
             sessions: nil
         )
     }
-
-    // MARK: Store
 
     @MainActor
     func testInertPlatformAdapterPreservesRefreshPersistenceAndMockAlertDelivery() async throws {
@@ -123,8 +114,6 @@ final class MobileStoreTests: XCTestCase {
         XCTAssertEqual(second.filter { $0 == "activities" }.count, 2, "Activity updates still follow complete refreshes")
     }
 
-    /// A store with no iCloud whose widget reloads and Watch handovers are counted, as from the
-    /// background. The Mac's readings reach it as a widget's refresh saved them (`fromMac`).
     @MainActor
     private func countingStore(defaults: UserDefaults, folder: URL, calls: EffectCalls, background: Bool = true) -> MobileStore {
         let effects = MobilePlatformEffects(
@@ -555,8 +544,6 @@ final class MobileStoreTests: XCTestCase {
         let gate = KeyFetchGate(defaults: defaults, lockDirectory: nil)
         XCTAssertNil(gate.lastAttempt(provider), "Unreadable metadata must not consume a provider attempt")
 
-        // Recovery finds the same metadata. Keep the vendor resting so this fixture needs no
-        // bearer value or network transport; only discovery and membership are under test.
         status.withLock { $0 = errSecSuccess }
         gate.recordAttempt(provider, at: now)
         await store.refresh(force: true, now: now.addingTimeInterval(60))
@@ -664,8 +651,6 @@ final class MobileStoreTests: XCTestCase {
                     if attempt == 1 { throw CKError(code, userInfo: code == .requestRateLimited ? [CKErrorRetryAfterKey: 90.0] : [:]) }
                     return .available
                 }, contents: { contents })
-                // Background avoids a real scheduled recovery task; this test explicitly drives
-                // the same activation/manual boundary on a fixed clock.
                 var effects = MobilePlatformEffects.inert
                 effects.applicationIsBackground = { true }
                 let store = MobileStore(defaults: defaults, containerIdentifier: nil, keys: MobileFixtureKeychain().keys,
@@ -701,8 +686,6 @@ final class MobileStoreTests: XCTestCase {
         XCTAssertEqual(attempts.withLock { $0 }, 1, "Two seconds after the request began is still inside the response's Retry-After")
     }
 
-    /// Re-confirmed readings must periodically reach the Watch and widget timelines even when
-    /// the Mac's usage numbers stay unchanged.
     @MainActor
     func testHeartbeatsWithTheSameNumbersPeriodicallyRenewWidgetsAndWatchFromTheBackground() async throws {
         let defaults = makeDefaults()
@@ -720,8 +703,6 @@ final class MobileStoreTests: XCTestCase {
         XCTAssertEqual(calls.all.filter { $0 == "widgets" }.count, 4)
     }
 
-    /// The same from a Mac whose clock runs six minutes fast: its readings are live, not "dated
-    /// ahead", so each heartbeat isn't a reading come back to life.
     @MainActor
     func testHeartbeatsFromAMacWithAFastClockPeriodicallyRenewWidgetsAndWatch() async throws {
         let defaults = makeDefaults()
@@ -740,9 +721,6 @@ final class MobileStoreTests: XCTestCase {
         XCTAssertEqual(store.readings.first?.provider.state, "live")
     }
 
-    /// Widgets and the Watch were given the Mac's live reading; the Mac sleeps for 90 minutes, and
-    /// a refresh meanwhile saves it stale. When it wakes with the same numbers, live again, that's
-    /// one reload from the background and one handover.
     @MainActor
     func testAReadingLiveAgainWithTheSameNumbersReloadsWidgetsAndReachesTheWatch() async throws {
         let defaults = makeDefaults()
@@ -775,8 +753,6 @@ final class MobileStoreTests: XCTestCase {
         await store.refresh(force: true, now: now)
         XCTAssertEqual(store.readings.map(\.id), ["claude"])
 
-        // A widget/account observer closes the shared gate before this store's queued main
-        // actor accountChanged callback. A local UI rebuild must not reopen that gate.
         PhoneCacheAccess.invalidate(in: defaults)
         store.setBudget(50, for: .deepseek)
         XCTAssertTrue(store.readings.isEmpty)
@@ -785,8 +761,6 @@ final class MobileStoreTests: XCTestCase {
         store.accountChanged()
         XCTAssertTrue(store.readings.isEmpty)
         XCTAssertEqual(PhoneCacheAccess.load(at: url, defaults: defaults)?.items, [])
-        // A second process may observe the same event after the store. It must recover on its
-        // next rebuild, with cleared membership, rather than permanently failing every save.
         PhoneCacheAccess.invalidate(in: defaults)
         store.setBudget(60, for: .deepseek)
         XCTAssertEqual(PhoneCacheAccess.load(at: url, defaults: defaults)?.items, [])
@@ -824,7 +798,6 @@ final class MobileStoreTests: XCTestCase {
         let cacheURL = folder.appendingPathComponent(ReadingCache.fileName)
         try ReadingCache(savedAt: now, isSample: false, items: [ReadingCache.Item(provider: fromMac, source: "Mac")]).save(to: cacheURL)
 
-        // No iCloud in this store, like a launch that's offline.
         let store = makeStore(defaults: defaults, folder: folder)
         await store.refresh(force: true, now: now.addingTimeInterval(60))
         XCTAssertEqual(store.readings.map(\.id), ["claude"], "The Mac's reading stays until iCloud answers")
@@ -892,9 +865,6 @@ final class MobileStoreTests: XCTestCase {
         XCTAssertTrue(store.readings.isEmpty)
     }
 
-    /// While Usage is on screen: nothing before the first wait (coming forward already refreshed),
-    /// an ordinary refresh after each one, and nothing more once the wait is cancelled because the
-    /// tab or the app went away.
     @MainActor
     func testKeepCurrentRefreshesAfterEachWaitUntilCancelled() async throws {
         let store = makeStore(defaults: makeDefaults(), folder: try makeFolder())
@@ -938,15 +908,12 @@ final class MobileStoreTests: XCTestCase {
         XCTAssertEqual(store.alertPreferences.timeZoneID, TimeZone.current.identifier, "The shared choices take this iPhone's zone")
         XCTAssertNil(store.alertPreferences.updatedAt, "Not a change of choices")
 
-        // Another iPhone in its own zone set it since; this one hasn't moved.
         defaults.set(try JSONEncoder().encode(elsewhere), forKey: MobileStore.Keys.alertPreferences)
         let again = makeStore(defaults: defaults, folder: folder)
         await again.refresh(force: true)
         XCTAssertEqual(again.alertPreferences.timeZoneID, elsewhere.timeZoneID, "Two iPhones don't take turns rewriting it")
     }
 
-    /// Anthropic's report is 15 minutes apart: a budget changed before the next call shows on
-    /// the saved reading at once.
     @MainActor
     func testABudgetShowsOnASavedReadingAtOnce() throws {
         let defaults = makeDefaults()
@@ -1002,8 +969,6 @@ final class MobileStoreTests: XCTestCase {
         XCTAssertTrue(ReadingsEntry.make(cache, choice: .openai, date: now).items.isEmpty)
     }
 
-    /// WidgetKit refuses to archive a widget holding an image past its size limit, which leaves
-    /// the widget on its placeholder. A vector icon comes at the size its file declares.
     func testEveryProviderIconIsSmallEnoughForAWidget() throws {
         var checked = 0
         for provider in Provider.allCases {
@@ -1016,8 +981,6 @@ final class MobileStoreTests: XCTestCase {
         XCTAssertGreaterThan(checked, 10, "The icons are in the app's bundle")
     }
 
-    /// The widget reloads once after a run of changes, not once for each: a reload it makes
-    /// counts toward its day's allowance. Leaving the app sends the one that's waiting.
     @MainActor
     func testArrangingProvidersReloadsWidgetsOnceAndLeavingTheAppDoesntLoseIt() async throws {
         let defaults = makeDefaults()
@@ -1059,7 +1022,6 @@ final class MobileStoreTests: XCTestCase {
         XCTAssertEqual(entry.limitReached(beyond: 2)?.id, "zai", "Out of sight in a Medium of two rows, so the widget names it")
         XCTAssertNil(entry.limitReached(beyond: 3))
 
-        // Checked two hours ago, so stale: the last measurement isn't a limit reached now.
         var old = reading("zai", used: 100)
         old.provider.checkedAt = now.addingTimeInterval(-2 * 3600)
         let aged = ReadingCache(savedAt: now, isSample: false, items: [old, reading("cursor", used: 90), reading("claude", used: 50), reading("openai", used: 20)])
@@ -1117,8 +1079,6 @@ final class MobileStoreTests: XCTestCase {
         XCTAssertEqual(calls.withLock { $0 }, 2)
     }
 
-    // MARK: Shared with the widgets
-
     func testWidgetsSeeTheAppsCallsThroughTheSharedGate() {
         let defaults = makeDefaults()
         KeyFetchGate(defaults: defaults, lockDirectory: nil).recordAttempt(.anthropicOrg, at: now)
@@ -1158,7 +1118,6 @@ final class MobileStoreTests: XCTestCase {
             keys: MobileFixtureKeychain().keys, directory: folder, connectOnIPhone: false,
             notificationScheduler: { _ in
                 calls.withLock { $0 += 1 }
-                // The scheduler accepted the request as the background deadline expired.
                 withUnsafeCurrentTask { $0?.cancel() }
             }, platformEffects: .inert, launchDefaults: defaults)
         let delivery = Task { @MainActor in await store.deliverAlerts([alert], now: now) }
@@ -1247,7 +1206,6 @@ final class MobileStoreTests: XCTestCase {
                 let count = calls.withLock { calls in calls += 1; return calls }
                 await Task.yield()
                 if count == 1 { changing.store?.accountChanged() }
-                // iOS accepted the request even though the account changed while awaiting it.
             }, platformEffects: .inert, launchDefaults: defaults)
         changing.store = store
         let accepted = await store.deliverAlerts([alert], now: now)
@@ -1387,7 +1345,6 @@ final class MobileStoreTests: XCTestCase {
     }
 }
 
-/// What a store asked of the device, in order.
 private final class EffectCalls: Sendable {
     private let calls = Mutex<[String]>([])
     func append(_ call: String) { calls.withLock { $0.append(call) } }

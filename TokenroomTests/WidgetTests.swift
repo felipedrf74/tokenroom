@@ -1,8 +1,6 @@
 import XCTest
 @testable import Tokenroom
 
-/// What the widgets and complications decide, tested on the Mac: their time limits, when they
-/// reload, what the Smart Stack offers, and how long samples last.
 final class WidgetTests: XCTestCase {
     private let now = Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 25, hour: 12))!
     private var suites: [String] = []
@@ -16,8 +14,6 @@ final class WidgetTests: XCTestCase {
         super.tearDown()
     }
 
-    /// A throwaway stand-in for the App Group's defaults. A fixed name: macOS keeps an empty
-    /// preferences file for every name used.
     private func makeDefaults() -> UserDefaults {
         let name = "tokenroom.tests.\(Self.self).\(suites.count)"
         suites.append(name)
@@ -43,7 +39,6 @@ final class WidgetTests: XCTestCase {
         )
     }
 
-    /// The iPhone's handover is saved now even when it carries readings older than the Watch's.
     func testTheWatchKeepsNewerReadingsNotALaterSave() {
         func item(_ id: String, checked: Date) -> ReadingCache.Item {
             var provider = reading([window("weekly", used: 40, resetsIn: 86_400)])
@@ -59,8 +54,6 @@ final class WidgetTests: XCTestCase {
         XCTAssertTrue(ReadingCache(savedAt: now, isSample: false, items: []).isAtLeastAsFresh(as: own), "Nor does iCloud data deleted")
     }
 
-    /// MiniMax and OpenCode Go report seconds until the reset: worked out from the clock, the
-    /// reset lands a second either side of the hour it's on.
     func testAResetWorkedOutFromTheClockIsTheSameReset() {
         let onTheHour = Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 25, hour: 17))!
         func cache(resetsAt reset: Date) -> ReadingCache {
@@ -73,9 +66,6 @@ final class WidgetTests: XCTestCase {
         XCTAssertEqual(early.materialHash, late.materialHash, "Nor a send")
     }
 
-    /// Widgets were given a live reading, which they fade an hour later as they draw it. Three
-    /// hours on, the Mac wakes and sends the same numbers, live again: that's a change to reload
-    /// widgets for and hand the Watch, though nothing but check times moved.
     func testAReadingLiveAgainWithTheSameNumbersIsAChangeForWidgetsAndTheWatch() {
         func given(at date: Date) -> ReadingCache {
             var provider = reading([window("weekly", used: 40, resetsIn: 3 * 86_400)])
@@ -95,9 +85,6 @@ final class WidgetTests: XCTestCase {
         XCTAssertEqual(given(at: soon).reloadSignature(at: soon), earlier.reloadSignature(at: soon))
     }
 
-    /// The same on the Watch: complications drew the iPhone's live reading, then faded it. The
-    /// next handover or iCloud read has the same numbers, live again, and is merged in: that's a
-    /// change to reload complications for, from the background too.
     func testTheWatchReloadsComplicationsForAReadingLiveAgain() {
         func handover(at date: Date) -> ReadingCache {
             var provider = reading([window("weekly", used: 40, resetsIn: 3 * 86_400)])
@@ -119,8 +106,6 @@ final class WidgetTests: XCTestCase {
         XCTAssertFalse(unchanged.worthReload)
         XCTAssertTrue(drawn.changes(since: nil, at: now).shown, "A first cache is always shown")
 
-        // A Mac's unchanged heartbeats, every 30 minutes for four hours, each merged and saved:
-        // measured against the last one saved, never a change, so no reload is spent on them.
         var saved = drawn
         for beat in 1...8 {
             let date = now.addingTimeInterval(Double(beat) * 30 * 60)
@@ -131,7 +116,6 @@ final class WidgetTests: XCTestCase {
             saved = next
         }
 
-        // The same from a Mac whose clock runs six minutes fast.
         saved = handover(at: now.addingTimeInterval(6 * 60))
         for beat in 1...8 {
             let date = now.addingTimeInterval(Double(beat) * 30 * 60)
@@ -148,8 +132,6 @@ final class WidgetTests: XCTestCase {
         let provider = reading([window("weekly", used: used, resetsIn: 3 * 86_400)])
         return ReadingCache(savedAt: savedAt, isSample: isSample, items: [ReadingCache.Item(provider: provider, source: "Mac")])
     }
-
-    // MARK: Time limits
 
     func testACheckThatCarriesOnWhenCancelledIsGivenUpOnAtItsBudget() async {
         let started = Date()
@@ -207,8 +189,6 @@ final class WidgetTests: XCTestCase {
         XCTAssertNil(nothing, "Nil is an answer too, not a timeout")
     }
 
-    // MARK: Complications' cache
-
     func testComplicationsShowTheirCacheWhenICloudIsSlow() async throws {
         let url = makeCacheURL()
         let saved = cache(savedAt: now.addingTimeInterval(-3600), used: 40)
@@ -256,8 +236,6 @@ final class WidgetTests: XCTestCase {
         XCTAssertFalse(RelayReadings.isRecent(cache(savedAt: now.addingTimeInterval(-3600), used: 40), maxAge: maxAge, now: now, keepsSamples: true))
     }
 
-    // MARK: Reloads
-
     func testTheReloadLogCountsEachWidgetOnItsOwn() {
         let defaults = makeDefaults()
         for minute in 0..<20 {
@@ -298,7 +276,6 @@ final class WidgetTests: XCTestCase {
         while time < now.addingTimeInterval(3 * 86_400) {
             builds.append(time)
             let reloads = WidgetReloadLog.record("usage-systemSmall-automatic", at: time, defaults: defaults)
-            // A session at 90% that always resets within hours.
             let session = window("session", kind: "session", used: 90, resetsIn: 3 * 3600, from: time)
             time = WidgetSchedule.nextReload(after: time, items: [ReadingCache.Item(provider: reading([session]), source: "Mac")], reloads: reloads)
         }
@@ -306,8 +283,6 @@ final class WidgetTests: XCTestCase {
         XCTAssertLessThanOrEqual(busiestDay, 40, "WidgetKit's budget is about 40 a widget")
         XCTAssertGreaterThan(busiestDay, 24, "Still more often than hourly while busy")
     }
-
-    // MARK: Smart Stack
 
     func testTheSmartStackOffersABusyWeekBesideASessionResettingSoon() throws {
         let provider = reading([
@@ -337,7 +312,6 @@ final class WidgetTests: XCTestCase {
     }
 }
 
-/// Waits without noticing cancellation, like iCloud's account status.
 private func stubbornWait(_ seconds: TimeInterval) async {
     await withCheckedContinuation { continuation in
         DispatchQueue.global().asyncAfter(deadline: .now() + seconds) {
@@ -346,7 +320,6 @@ private func stubbornWait(_ seconds: TimeInterval) async {
     }
 }
 
-/// A check that carries on when cancelled.
 private struct StubbornClient: ProviderClient {
     var delay: TimeInterval
     var provider: Provider { .openrouter }
@@ -357,7 +330,6 @@ private struct StubbornClient: ProviderClient {
     }
 }
 
-/// A check that stops when cancelled, and says so.
 private struct SleepingClient: ProviderClient {
     var onCancel: @Sendable () -> Void
     var provider: Provider { .openrouter }

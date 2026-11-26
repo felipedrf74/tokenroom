@@ -2,11 +2,6 @@
 import SwiftUI
 import WidgetKit
 
-/// Every widget size from the current readings, drawn in the app for screenshots and checks
-/// without a Home Screen. Debug builds only: `-TokenroomGallery home` or `lock`, `list` or `tiles`
-/// for one style at every size, `compact` for the smallest iPhone's sizes, `few` for two
-/// providers, and `states` for the user's own order, a limit out of sight, a stale reading, a
-/// countdown in its last hour, and tinted widgets.
 struct WidgetGalleryView: View {
     var cache: ReadingCache
     var date: Date = .now
@@ -22,21 +17,16 @@ struct WidgetGalleryView: View {
         (.accessoryInline, CGSize(width: 250, height: 24)),
     ]
 
-    /// The smallest Home Screen sizes an iPhone on iOS 26 gives widgets.
     private let compactSizes: [(family: WidgetFamily, size: CGSize)] = [
         (.systemSmall, CGSize(width: 155, height: 155)),
         (.systemMedium, CGSize(width: 329, height: 155)),
         (.systemLarge, CGSize(width: 329, height: 345)),
     ]
 
-    /// `home` for the Home Screen sizes, `lock` for the Lock Screen and tinted ones.
     var page = "home"
 
-    /// The readings with what a sample day doesn't have: one provider's limit reached, one not
-    /// checked for two hours, and one resetting within the hour.
     private var eventful: ReadingCache {
         var result = cache
-        // The last provider with a meter: in the user's own order below, it's out of sight.
         let limit = result.items.lastIndex { $0.provider.windows.contains(where: \.isMetered) }
         for index in result.items.indices {
             if index == limit, index > 2 {
@@ -107,7 +97,6 @@ struct WidgetGalleryView: View {
                     card(.systemMedium, size: homeSizes[1].size, style: .tiles, cache: few)
                     card(.systemLarge, size: homeSizes[2].size, style: .list, cache: few)
                 } else if page == "states" {
-                    // The user's own order, as saved: the provider at its limit is last.
                     let own = WidgetArrangement(order: .manual, sequence: eventful.items.map(\.id), hidden: [eventful.items.first?.id ?? ""])
                     card(.systemMedium, size: homeSizes[1].size, style: .list, cache: eventful, arrangement: own)
                     card(.systemMedium, size: homeSizes[1].size, style: .tiles, cache: eventful, arrangement: own)
@@ -115,17 +104,14 @@ struct WidgetGalleryView: View {
                     card(.systemMedium, size: homeSizes[1].size, mode: .accented, style: .tiles, cache: eventful, arrangement: own)
                     card(.systemLarge, size: homeSizes[2].size, style: .list, cache: eventful, arrangement: own)
                     card(.systemLarge, size: homeSizes[2].size, style: .tiles, cache: eventful, arrangement: own)
-                    // A provider with two windows on Small: the tile's layout, beside the list's.
                     let twoWindows = WidgetArrangement(order: .manual, sequence: cache.items.filter { $0.provider.windows.filter(\.isMetered).count > 1 }.map(\.id))
                     HStack(spacing: 14) {
                         card(.systemSmall, size: homeSizes[0].size, style: .tiles, cache: cache, arrangement: twoWindows)
                         card(.systemSmall, size: homeSizes[0].size, style: .list, cache: cache, arrangement: twoWindows)
                     }
-                    // A balance first: an amount where the others have a percentage and a meter.
                     let balance = WidgetArrangement(order: .manual, sequence: eventful.items.filter { !$0.provider.windows.contains(where: \.isMetered) }.map(\.id))
                     card(.systemMedium, size: homeSizes[1].size, style: .list, cache: cache, arrangement: balance)
                     card(.systemMedium, size: homeSizes[1].size, style: .tiles, cache: cache, arrangement: balance)
-                    // The same balance, not checked for two hours: no meter to fade, so it says so.
                     var aged = cache
                     let _ = aged.items.indices.filter { !aged.items[$0].provider.windows.contains(where: \.isMetered) }.forEach { index in
                         aged.items[index].provider.checkedAt = date.addingTimeInterval(-2 * 3600)
@@ -146,7 +132,6 @@ struct WidgetGalleryView: View {
         .background(Color.gray.opacity(0.25))
     }
 
-    /// The first provider with a window worth following, as its Live Activity would show it.
     private var sampleActivity: (attributes: SessionActivityAttributes, state: SessionActivityAttributes.ContentState)? {
         for item in cache.items {
             let provider = item.provider

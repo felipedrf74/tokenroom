@@ -2,13 +2,11 @@ import Security
 import XCTest
 @testable import TokenroomMobile
 
-/// App-owned runtime isolation regressions.
 @MainActor final class MobileRuntimeTests: XCTestCase {
     private var suites: [String] = []
     private var launchArguments: [String: Any] = [:]
     override func setUp() {
         super.setUp()
-        // NSArgumentDomain belongs to the process, including across named suites.
         launchArguments = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
     }
     override func tearDown() {

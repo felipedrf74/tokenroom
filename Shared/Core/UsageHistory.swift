@@ -1,35 +1,20 @@
 import Foundation
 
-/// Hourly used-% for one window over the last seven days. Each bucket keeps the hour's highest
-/// reading; nil means there was no reading that hour. Balances also keep the hour's last amount
-/// left, for a burn rate, and every window keeps when it reset.
 struct UsageHistory: Codable, Equatable, Sendable {
     static let capacity = 168
     static let step: TimeInterval = 3_600
-    /// Readings of one window can report reset times this far apart.
     static let resetJitter: TimeInterval = 30 * 60
-    /// A reset used early shows as use falling by at least this many points, to half or less,
-    /// and to no more than `freshUse`: a window that just started.
     static let resetDrop = 10.0
     static let freshUse = 10.0
 
-    /// Start of the first bucket, on an hour boundary.
     var start: Date
     var used: [UInt8?]
-    /// Amount left at the end of each hour, for balances; nil for other windows.
     var amounts: [Double?]? = nil
-    /// Currency of this monetary segment. Nil in older records: a multi-currency provider's
-    /// unlabelled amounts cannot supply a runway or join newly labelled amounts.
     var amountUnit: String? = nil
-    /// Latest physical monetary reading, so a late sample from an old region cannot replace
-    /// this segment or overwrite the newest amount in its hour.
     var amountCheckedAt: Date? = nil
-    /// When the window reset during the week, oldest first.
     var resets: [Date]? = nil
-    /// The reset time the latest reading reported, to notice the next reset.
     var windowResetsAt: Date? = nil
 
-    /// An empty week whose last bucket is the hour containing `now`.
     init(endingAt now: Date) {
         start = Self.hourStart(now).addingTimeInterval(-Double(Self.capacity - 1) * Self.step)
         used = Array(repeating: nil, count: Self.capacity)
@@ -43,8 +28,6 @@ struct UsageHistory: Codable, Equatable, Sendable {
         start.addingTimeInterval(Double(used.count) * Self.step)
     }
 
-    /// Records a reading, moving the week forward when time has passed. Readings older than
-    /// the week are ignored. Returns whether a bucket changed.
     @discardableResult
     mutating func record(_ percent: Double, at date: Date) -> Bool {
         guard let index = bucket(for: date) else { return false }
@@ -55,8 +38,6 @@ struct UsageHistory: Codable, Equatable, Sendable {
         return true
     }
 
-    /// Records the amount left on a balance and its provenance; the hour keeps its latest value,
-    /// so a top-up shows. A later physical check advances provenance even if its amount is equal.
     @discardableResult
     mutating func recordAmount(_ remaining: Double, unit: String, at date: Date) -> Bool {
         let lastCheck = amountCheckedAt ?? amountPoints.last?.date
@@ -65,7 +46,6 @@ struct UsageHistory: Codable, Equatable, Sendable {
         guard let index = bucket(for: date) else { return false }
         let changedUnit = amountUnit != unit
         if changedUnit {
-            // Keep usage/reset history, but never treat dollars and yuan as one burn rate.
             amounts = nil
             amountUnit = unit
         }
@@ -78,8 +58,15 @@ struct UsageHistory: Codable, Equatable, Sendable {
         return true
     }
 
-    /// Monetary history from before units were stored can only migrate when that provider has
-    /// one documented currency. Clearing ambiguous amounts leaves percentages and resets intact.
+    mutating func restoreMissingAmounts(from history: UsageHistory) {
+        guard var values = amounts else { return }
+        for (date, remaining) in history.amountPoints where date >= start && date < end {
+            let index = Int(date.timeIntervalSince(start) / Self.step)
+            if values.indices.contains(index), values[index] == nil { values[index] = remaining }
+        }
+        amounts = values
+    }
+
     func migratingLegacyAmounts(for providerID: String) -> UsageHistory {
         guard amountUnit == nil, amounts != nil else { return self }
         var copy = self
@@ -94,13 +81,6 @@ struct UsageHistory: Codable, Equatable, Sendable {
         return copy
     }
 
-    /// Notes a reset when the reported reset time moves on to a later window. Returns whether
-    /// anything changed.
-    /// Some providers report a reset worked out from the current time, so it drifts by
-    /// seconds between checks; that alone doesn't count as a change.
-    /// - Parameters:
-    ///   - percent: the reading's used %, and `length` the window's. With both, a reset used
-    ///     before its time (a banked one) is noted too, not only one whose time has passed.
     @discardableResult
     mutating func recordResetTime(_ resetsAt: Date?, used percent: Double? = nil, length: TimeInterval? = nil, at date: Date) -> Bool {
         guard let resetsAt else { return false }
@@ -118,11 +98,6 @@ struct UsageHistory: Codable, Equatable, Sendable {
         return true
     }
 
-    /// When a window ending at `resetsAt` opened, if that was a reset used early: use fell
-    /// sharply since the last reading, to near nothing, and the new window has begun. Noise and
-    /// a provider's rounding move use by a point or two, and a window sliding as old use ages
-    /// out, or a plan changed mid-window, rarely drops to almost nothing at once. Nil when it
-    /// wasn't one.
     private func earlyReset(opening resetsAt: Date, used percent: Double?, length: TimeInterval?, at date: Date) -> Date? {
         guard let percent, let length, let before = usedBefore(date),
               before - percent >= Self.resetDrop, percent <= before / 2, percent <= Self.freshUse
@@ -132,9 +107,6 @@ struct UsageHistory: Codable, Equatable, Sendable {
         return min(opened, date)
     }
 
-    /// The highest use recorded in the hour of `date`, or the latest earlier hour with a reading
-    /// when that's higher: what the window was at before a reading at `date`, whether that
-    /// reading is recorded yet or not.
     private func usedBefore(_ date: Date) -> Double? {
         let hour = Int((Self.hourStart(date).timeIntervalSince(start) / Self.step).rounded())
         guard hour >= 0 else { return nil }
@@ -143,9 +115,6 @@ struct UsageHistory: Codable, Equatable, Sendable {
         return [own, earlier].compactMap { $0 }.max().map { Double($0) }
     }
 
-    /// The last `hours` buckets only, ending where this one ends: what the iPhone hands the
-    /// Watch when the whole week doesn't fit (`WatchHandoff.payloadLimit`). Nil when no hours are
-    /// kept. Resets before the shorter span are left out too.
     func trimmed(toLast hours: Int) -> UsageHistory? {
         guard hours > 0 else { return nil }
         guard used.count > hours else { return self }
@@ -158,8 +127,6 @@ struct UsageHistory: Codable, Equatable, Sendable {
         return copy
     }
 
-    /// The bucket for `date`, moving the week forward first when needed. A shorter span (one
-    /// handed to the Watch) is filled out to the week first.
     private mutating func bucket(for date: Date) -> Int? {
         if used.count < Self.capacity {
             let missing = Self.capacity - used.count
@@ -185,14 +152,12 @@ struct UsageHistory: Codable, Equatable, Sendable {
         return Array(values.dropFirst(shift)) + Array(repeating: nil, count: shift)
     }
 
-    /// Recorded hours, oldest first.
     var points: [(date: Date, used: Double)] {
         used.enumerated().compactMap { index, value in
             value.map { (start.addingTimeInterval(Double(index) * Self.step), Double($0)) }
         }
     }
 
-    /// Recorded balances, oldest first.
     var amountPoints: [(date: Date, remaining: Double)] {
         (amounts ?? []).enumerated().compactMap { index, value in
             value.map { (start.addingTimeInterval(Double(index) * Self.step), $0) }
@@ -204,8 +169,6 @@ struct UsageHistory: Codable, Equatable, Sendable {
     }
 }
 
-/// Every window's history from one collector, relayed hourly as the `History` record.
-/// Keys are `provider/window`, e.g. `claude/weekly`.
 struct RelayHistory: Codable, Equatable, Sendable {
     var v: Int = 1
     var series: [String: UsageHistory]

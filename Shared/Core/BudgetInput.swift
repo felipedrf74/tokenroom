@@ -9,7 +9,6 @@ enum BudgetInput {
 
     static let error = "Enter a positive amount, or leave this empty to clear it."
 
-    /// Full-string parsing: NumberFormatter alone can accept a valid prefix of invalid input.
     static func parse(_ text: String, locale: Locale = .current) -> Result {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return .clear }
@@ -30,8 +29,6 @@ enum BudgetInput {
                   (1...secondary).contains(groups[0].count) else { return .invalid }
             integer = groups.joined()
         }
-        // Decimal keyboards can emit the locale's native digits. Normalize only decimal
-        // numerals; other numeric characters (fractions, superscripts) remain invalid.
         let normalized = String((integer + (parts.count == 2 ? "." + parts[1] : "")).map { character -> Character in
             guard character.unicodeScalars.allSatisfy({ CharacterSet.decimalDigits.contains($0) }),
                   let digit = character.wholeNumberValue, (0...9).contains(digit) else { return character }

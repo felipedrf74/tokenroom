@@ -87,15 +87,11 @@ final class OrgSpendTests: XCTestCase {
         XCTAssertEqual(window.resetsAt, Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 10, day: 1)))
     }
 
-    /// A ledger spent past its credits (a positive total) has none left, not that many.
     func testAnOverspentXAILedgerHasNoCreditsLeft() throws {
         XCTAssertEqual(try XAIBillingParser.prepaidCredits(from: Data(#"{"total":{"val":"500"}}"#.utf8)), 0)
         XCTAssertEqual(try XAIBillingParser.prepaidCredits(from: Data(#"{"total":{"val":"-1250"}}"#.utf8)), 12.5, accuracy: 0.001)
     }
 
-    /// Only a team without an invoice (404) shows its prepaid credits instead. An invoice call
-    /// that's rate limited, down, or refused fails the check, so the spend meter stays, faded,
-    /// and a 429's wait is kept.
     func testXAIInvoiceFailuresAreNotAPrepaidOnlyTeam() async throws {
         defer {
             TokenroomHTTP.overrideSession(nil)
@@ -146,8 +142,6 @@ final class OrgSpendTests: XCTestCase {
         XCTAssertFalse(window.isMetered)
         XCTAssertEqual(ReadingText.amountHeadline(window.amount!)?.hasSuffix("spent"), true)
     }
-
-    // MARK: Budgets
 
     func testBudgetTurnsSpendAndBalancesIntoMeters() throws {
         let spend = OrgSpend.snapshot(.openaiOrg, window: OrgSpend.spendWindow(250, now: now), fetchedAt: now)
@@ -200,8 +194,6 @@ final class OrgSpendTests: XCTestCase {
         XCTAssertNil(ReadingText.amountHeadline(QuotaAmount(unit: "usd")))
     }
 
-    /// A saved reading standing in for a provider not read yet (Anthropic's report is 15 minutes
-    /// apart) shows a budget changed meanwhile, without a call.
     func testASavedReadingTakesANewBudget() throws {
         let balance = try DeepSeekParser.snapshot(from: fixture("deepseek-balance"))
         let saved = RelayProvider(provider: .deepseek, status: .live(balance.applyingBudget(50)), checkedAt: now)
@@ -236,7 +228,6 @@ final class OrgSpendTests: XCTestCase {
 
     @MainActor
     func testChangingABudgetUpdatesTheReadingAtOnce() async throws {
-        // A fixed name: macOS keeps an empty preferences file for every name used.
         let suite = "tokenroom.tests.\(Self.self)"
         defer { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
         let defaults = UserDefaults(suiteName: suite)!

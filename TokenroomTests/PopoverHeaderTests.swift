@@ -112,8 +112,6 @@ final class PopoverHeaderTests: XCTestCase {
         let store = try makeStore(clients: [client], enabled: [.cursor])
         defer { store.stop() }
         await store.refresh(force: true)
-        // The machine's clock moved back after the measurement. Presentation clamps its
-        // future check to "just now", instead of aging the newly failed attempt as success.
         store.ageReadings(at: attemptTime.addingTimeInterval(3_600))
         await store.refresh(force: true)
         XCTAssertEqual(client.calls, 2)

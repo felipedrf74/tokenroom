@@ -1,6 +1,5 @@
 import AppIntents
 
-/// Siri, Spotlight, and the Shortcuts app offer this without any setup.
 struct TokenroomShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(

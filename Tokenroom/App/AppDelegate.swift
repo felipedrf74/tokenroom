@@ -7,15 +7,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: StatusItemController?
     private var settingsWindow: NSWindow?
     private var newsWindow: NSWindow?
-    /// Set before Settings opens to show a tab other than the last one.
     let settingsTab = SettingsTabRequest()
-    /// Set each time News opens, to the section asked for.
     let newsPage = NewsPageRequest()
 
     override init() {
         #if DEBUG
         if UserDefaults.standard.string(forKey: "TokenroomSnapshots") != nil || UserDefaults.standard.bool(forKey: "TokenroomNewsPreview") {
-            // Rendering must not initialize migrations, real settings, or the real cache first.
             let name = "TokenroomSnapshotBootstrap"
             let defaults = UserDefaults(suiteName: name)!
             defaults.removePersistentDomain(forName: name)
@@ -26,8 +23,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         #endif
         if LaunchEnvironment.isUnitTestHost || SyncProbe.isRequested {
-            // Tests build their own stores with stubbed readers. This one reads nothing real:
-            // no logins, no Keychain, no iCloud, no migrations of the real settings.
             let name = SyncProbe.isRequested ? "TokenroomSyncProbe" : "TokenroomTestHost"
             let defaults = UserDefaults(suiteName: name)!
             defaults.removePersistentDomain(forName: name)
@@ -36,10 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             super.init()
             return
         }
-        // Headroom 1.x settings and cache must be in place before the store reads them.
         LegacyMigration.runIfNeeded()
-        // Sessions for providers new to this install are looked for after launch, off the main
-        // thread: they mean file, database, and Keychain reads.
         store = QuotaStore(
             settings: AppSettings(),
             relay: RelayPublisher(),
@@ -57,7 +49,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
         #endif
-        // The test host stays idle: no status item, no session detection, no checks.
         if LaunchEnvironment.isUnitTestHost { return }
         if SyncProbe.runIfRequested() { return }
         store.signIn.onAddKey = { [weak self] provider in
@@ -74,8 +65,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
         }
-        // Tokenroom 2.0.0 kept full copies of ~/.claude/settings.json (keys in env included) for
-        // the Claude bridge; they go whether Claude or the bridge is on or not.
         Task { await BlockingIO.run { ClaudeStatusLineBridge.standard.removeFullBackups() } }
         store.start()
         statusItem = StatusItemController(store: store, onSettings: { [weak self] tab in
@@ -114,13 +103,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if settingsWindow == nil {
             let hosting = NSHostingController(rootView: SettingsView(store: store, request: settingsTab))
-            // The sidebar's toolbar and each page's title come from SwiftUI, as in the News window.
             hosting.sceneBridgingOptions = [.toolbars, .title]
             let window = NSWindow(contentViewController: hosting)
             window.title = "Tokenroom Settings"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
             window.toolbarStyle = .unified
-            // Each page opens with its own header, so the bar doesn't say its name a third time.
             window.titleVisibility = .hidden
             window.setContentSize(NSSize(width: 820, height: 620))
             window.isReleasedWhenClosed = false
@@ -132,7 +119,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
-    /// The News window, on the given section. Opening it clears the popover's news counts.
     func openNews(_ section: NewsSection) {
         statusItem?.closePopover()
         NSApp.setActivationPolicy(.regular)
@@ -143,7 +129,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self?.openSettings(tab: .news)
             }
             let hosting = NSHostingController(rootView: view)
-            // The branded toolbar names the window; page headings live in the reader.
             hosting.sceneBridgingOptions = [.toolbars]
             let window = NSWindow(contentViewController: hosting)
             window.title = "News"
@@ -160,21 +145,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if newsWindow?.isMiniaturized == true { newsWindow?.deminiaturize(nil) }
         newsWindow?.makeKeyAndOrderFront(nil)
-        // Opened by hand, it's on screen, whatever its occlusion says before it's drawn.
         setNewsOnScreen(true)
     }
 
-    /// Whether the News window is where someone can see it: open, not in the Dock, not hidden
-    /// with the app, and not wholly covered.
     nonisolated static func newsIsOnScreen(isVisible: Bool, isMiniaturized: Bool, isOccluded: Bool, appIsHidden: Bool) -> Bool {
         isVisible && !isMiniaturized && !isOccluded && !appIsHidden
     }
 
     private var newsOnScreen = false
 
-    /// A News visit, and the window's 5-minute checks, last while it's on screen: minimized,
-    /// hidden with the app, or wholly covered, the visit ends and the checks pause, so nothing
-    /// arriving then is marked seen; back on screen, the next visit starts and checks resume.
     private func newsVisibilityChanged() {
         guard let window = newsWindow else { return }
         setNewsOnScreen(Self.newsIsOnScreen(isVisible: window.isVisible, isMiniaturized: window.isMiniaturized,
@@ -214,7 +193,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if closing === newsWindow {
             setNewsOnScreen(false)
         }
-        // Back to a menu-bar extra once no window is left.
         let others = [settingsWindow, newsWindow].compactMap { $0 }.filter { $0 !== closing && $0.isVisible }
         if others.isEmpty {
             NSApp.setActivationPolicy(.accessory)

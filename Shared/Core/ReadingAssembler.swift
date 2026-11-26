@@ -1,19 +1,11 @@
 import Foundation
 
-/// Puts together what the iPhone app and its widgets show: each provider's best reading across
-/// collectors (see `RelayMerge`), with that collector's history, most urgent first.
 enum ReadingAssembler {
     struct Output: Equatable, Sendable {
         var connected: [ReadingCache.Item]
-        /// Signed out or not on a plan, alphabetical.
         var disconnected: [ReadingCache.Item]
     }
 
-    /// - Parameters:
-    ///   - sources: every collector's envelope, this iPhone's included.
-    ///   - histories: each collector's history, by source ID.
-    /// A provider still waiting for its first check is in neither list: it isn't "not connected",
-    /// and has no reason to give yet.
     static func assemble(sources: [RelayMerge.Source], histories: [String: RelayHistory], now: Date = .now) -> Output {
         let items = RelayMerge.entries(from: sources, now: now).filter { !$0.provider.isAwaitingFirstReading }.map { entry in
             ReadingCache.Item(
@@ -38,7 +30,6 @@ enum ReadingAssembler {
         }.max { UsageRanking.urgency($0) < UsageRanking.urgency($1) }
     }
 
-    /// One provider's weeks from a collector's history, by window ID.
     static func history(for providerID: String, in relay: RelayHistory?) -> [String: UsageHistory] {
         guard let relay else { return [:] }
         let prefix = providerID + "/"
@@ -55,8 +46,6 @@ extension ReadingCache.Item {
         provider.primaryWindowID.flatMap { history[$0] }
     }
 
-    /// Keep the measured value and reset boundary. Presentation labels an elapsed window as
-    /// awaiting a reading, rather than inventing a new live zero.
     func rolledOver(at date: Date) -> ReadingCache.Item {
         self
     }

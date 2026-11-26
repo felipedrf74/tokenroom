@@ -1,7 +1,6 @@
 import XCTest
 @testable import Tokenroom
 
-/// Regression sources for QA3; not compiled or executed in the no-tests fix pass.
 final class NewsThirdQAFixTests: XCTestCase {
     private static let body = Data("{\"items\":[{\"ownerHandle\":\"owner\",\"slug\":\"tool\",\"displayName\":\"Tool\"}]}".utf8)
 
@@ -225,7 +224,6 @@ final class NewsThirdQAFixTests: XCTestCase {
         monotonic.value = 4
         let joined = Task { await store.refresh(sort: .trending, force: true) }
         await readers.waitFor(2)
-        // The budget is 20 seconds since November 2026.
         XCTAssertEqual(budgets.value, [SkillsStore.budget], "Joining does not create another budget")
         monotonic.value = SkillsStore.budget
         await deadlineGate.release(); await first.value; await joined.value
@@ -251,7 +249,7 @@ final class NewsThirdQAFixTests: XCTestCase {
         let store = SkillsStore(fetch: { _ in await gate.pause(); return .body(Self.body) }, monotonicClock: { monotonic.value }, limitAnswer: { _, task in await task.value })
         let reader = Task { await store.refresh(sort: .trending) }
         await gate.waitForPauses(1)
-        monotonic.value = SkillsStore.budget + 1 // Past the absolute deadline (20 seconds since November 2026).
+        monotonic.value = SkillsStore.budget + 1
         await gate.release(); await reader.value
         XCTAssertTrue(store.listings.isEmpty)
         XCTAssertNil(store.checkedAt)

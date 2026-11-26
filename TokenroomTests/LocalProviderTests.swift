@@ -1,7 +1,6 @@
 import XCTest
 @testable import Tokenroom
 
-/// Copilot, Cursor, Devin, and Antigravity: providers read with another tool's login on the Mac.
 final class LocalProviderTests: XCTestCase {
     private func fixture(_ name: String) -> Data {
         try! Data(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/\(name).json"))
@@ -26,8 +25,6 @@ final class LocalProviderTests: XCTestCase {
         folders.append(folder)
         return folder
     }
-
-    // MARK: Copilot
 
     func testCopilotFreeHidesThePremiumPlaceholder() throws {
         let snapshot = try CopilotParser.snapshot(from: fixture("copilot-user-free"), fetchedAt: now)
@@ -81,8 +78,6 @@ final class LocalProviderTests: XCTestCase {
         XCTAssertEqual(try CopilotParser.snapshot(from: fixture("copilot-user-free"), fetchedAt: now).windows.map(\.title), ["Chat", "Completions"], "Only the premium bucket is renamed")
     }
 
-    // MARK: Copilot billing API
-
     func testCopilotBillingSumsGrossQuantityAcrossModels() throws {
         XCTAssertEqual(try CopilotBilling.used(from: fixture("copilot-ai-credit-usage")), 600.5, accuracy: 0.0001, "What the plan covered counts too")
         XCTAssertEqual(try CopilotBilling.used(from: Data(#"{"usageItems":[]}"#.utf8)), 0)
@@ -124,7 +119,6 @@ final class LocalProviderTests: XCTestCase {
         XCTAssertEqual(december.end, utc(2027, 1, 1))
         XCTAssertEqual(december.year, 2026)
         XCTAssertEqual(december.month, 12)
-        // 00:30 on 1 October in Madrid is still September in UTC, and GitHub bills in UTC.
         let september = CopilotBilling.month(containing: Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 30, hour: 22, minute: 30))!)
         XCTAssertEqual(september.month, 9)
         XCTAssertEqual(september.end, utc(2026, 10, 1))
@@ -133,8 +127,6 @@ final class LocalProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.windows.first?.startsAt, utc(2026, 12, 1))
     }
 
-    /// A pasted token answers when the login is missing or refused, or when the private endpoint
-    /// turns it down; an outage or a rate limit doesn't send the token out.
     func testCopilotFallsBackOnlyWhenTheLoginCantBeUsed() {
         XCTAssertTrue(CopilotClient.fallsBack(after: .expired(Provider.copilot.expiredHint), status: 401))
         XCTAssertTrue(CopilotClient.fallsBack(after: .signedOut(Provider.copilot.signInHint), status: nil))
@@ -191,10 +183,6 @@ final class LocalProviderTests: XCTestCase {
         XCTAssertEqual(CopilotCredentials.decodeKeyring("placeholder"), "placeholder")
     }
 
-    // MARK: Cursor
-
-    /// A Keychain token past its expiry gives way to a current one in `state.vscdb`, which an
-    /// older Cursor keeps refreshing. Otherwise the Keychain's stays first, as before.
     func testAnExpiredCursorKeychainTokenGivesWayToACurrentDatabaseToken() throws {
         let folder = try makeFolder()
         let expired = Self.jwt(expiringAt: now.addingTimeInterval(-3600))
@@ -216,11 +204,7 @@ final class LocalProviderTests: XCTestCase {
         XCTAssertEqual(try token(keychain: expired, database: folder.appendingPathComponent("missing.vscdb")), expired)
     }
 
-    /// A Keychain token Cursor refused before its expiry (revoked) isn't tried first again: the
-    /// database's goes first until the Keychain holds another, so a check makes one call, not two.
     func testARefusedCursorKeychainTokenIsntTriedFirstAgain() throws {
-        // The token cache and the refusal are shared with the rest of the process, and with this
-        // test's next iteration.
         CredentialReaders.forgetCursorRefusal()
         defer {
             CredentialReaders.invalidateCaches()
@@ -257,7 +241,6 @@ final class LocalProviderTests: XCTestCase {
         XCTAssertFalse(CredentialReaders.tokenHasExpired("placeholder.not-base64.placeholder", now: now), "Claims that can't be read count as current")
     }
 
-    /// An unsigned, JWT-shaped placeholder that carries only an expiry.
     private static func jwt(expiringAt date: Date) -> String {
         func part(_ json: String) -> String {
             Data(json.utf8).base64EncodedString()
@@ -276,8 +259,6 @@ final class LocalProviderTests: XCTestCase {
         sqlite.waitUntilExit()
         XCTAssertEqual(sqlite.terminationStatus, 0)
     }
-
-    // MARK: Devin
 
     func testDevinRemainingPercentsAndOverage() throws {
         let snapshot = try DevinParser.snapshot(from: fixture("devin-user-status"), fetchedAt: now)
@@ -333,8 +314,6 @@ final class LocalProviderTests: XCTestCase {
         sqlite.waitUntilExit()
     }
 
-    // MARK: Antigravity
-
     func testAgyUsageKeepsUnknownFractionsUnknown() throws {
         let snapshot = try AntigravityParser.snapshot(from: fixture("agy-usage"), fetchedAt: now)
         XCTAssertEqual(snapshot.windows.map(\.id), ["gemini-weekly", "gemini-5h", "3p-5h"], "A bucket with no fraction is left out, not shown as 0% or 100%")
@@ -361,8 +340,6 @@ final class LocalProviderTests: XCTestCase {
             XCTAssertEqual(error as? ProviderError, .signedOut(Provider.antigravity.signInHint))
         }
     }
-
-    // MARK: Catalog
 
     @MainActor
     func testEveryProviderHasADescriptorAndAMacClient() {

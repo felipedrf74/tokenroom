@@ -15,7 +15,6 @@ struct GrokBotClient: ProviderClient {
             } catch ProviderError.expired {
                 let fresh: GrokBotCredentials.Session?
                 if session.isNative {
-                    // Grok Bot may have renewed or switched its own active login meanwhile.
                     fresh = try await BlockingIO.run { try readSession(false) }
                 } else {
                     fresh = await BlockingIO.run { cursorAfterRefusal(session.token).map {

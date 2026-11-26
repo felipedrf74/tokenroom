@@ -1,8 +1,5 @@
 import Foundation
 
-/// News as one edition: what's new since the last visit, one top story, the tools' own news
-/// grouped by tool, and models retiring soon. Built from what `NewsStore` holds; the iPhone's
-/// Today view and the Mac's News window both read it.
 struct NewsEdition: Equatable, Sendable {
     struct Digest: Equatable, Sendable {
         var models: Int
@@ -12,48 +9,39 @@ struct NewsEdition: Equatable, Sendable {
         var isEmpty: Bool { models == 0 && updates == 0 && retiring == 0 }
     }
 
-    /// One tool's announcements, newest first.
     struct Tool: Equatable, Sendable, Identifiable {
-        /// The feed's name, e.g. "Claude Code".
         var id: String { sourceID ?? source }
         var sourceID: String? = nil
         var source: String
         var provider: Provider?
-        /// "Changelog", "Releases", "News".
         var kind: String
         var items: [FeedItem]
-        /// Items that arrived since the last visit.
         var newCount: Int
     }
 
     var digest: Digest
-    /// The newest model from a followed lab, when it's recent enough to lead with.
     var topStory: ModelRelease?
     var moreModels: [ModelRelease]
     var tools: [Tool]
     var retiring: [ModelRelease]
 
-    /// Match the visible edition, not retirements outside Today's 30-day horizon.
     var isEmpty: Bool { topStory == nil && moreModels.isEmpty && tools.isEmpty && retiring.isEmpty }
 }
 
 enum NewsEditions {
-    /// A top story older than this isn't news any more; the edition leads with its tools instead.
     static let topStoryAge: TimeInterval = 14 * 86_400
-    /// Models retiring within this long are "soon".
     static let retiringHorizon: TimeInterval = 30 * 86_400
     static let moreModelsLimit = 8
     static let itemsPerTool = 3
 
-    static func isRecentModel(_ model: ModelRelease, now: Date = .now) -> Bool {
-        now.timeIntervalSince(model.created) <= topStoryAge
+    static func isTopStoryDate(_ date: Date, now: Date = .now) -> Bool {
+        (0...topStoryAge).contains(now.timeIntervalSince(date))
     }
 
-    /// - Parameters:
-    ///   - models: followed labs' models, newest first.
-    ///   - announcements: followed feeds' items, newest first, duplicates folded.
-    ///   - retiring: every model with an announced retirement, soonest first.
-    ///   - since: the last visit; newer items count as new.
+    static func isRecentModel(_ model: ModelRelease, now: Date = .now) -> Bool {
+        isTopStoryDate(model.created, now: now)
+    }
+
     static func today(models: [ModelRelease], announcements: [FeedItem], retiring: [ModelRelease], since: Date, now: Date = .now) -> NewsEdition {
         let soon = retiring.filter { expires in
             guard let date = expires.expires else { return false }
@@ -75,7 +63,6 @@ enum NewsEditions {
         )
     }
 
-    /// Announcements grouped by the feed that published them, the tool with the newest item first.
     static func tools(_ announcements: [FeedItem], since: Date) -> [NewsEdition.Tool] {
         var order: [String] = []
         var grouped: [String: [FeedItem]] = [:]
@@ -99,7 +86,6 @@ enum NewsEditions {
         }
     }
 
-    /// What a feed carries, from its address: GitHub releases, a changelog, or news.
     static func kind(of feed: FeedSource) -> String {
         let address = feed.url.absoluteString.lowercased()
         if address.contains("/releases.atom") { return "Releases" }
@@ -107,8 +93,6 @@ enum NewsEditions {
         return "News"
     }
 
-    /// The provider whose icon and tint stand for a lab in News: its own organization where
-    /// Tokenroom has one. Google has none, so its models show a monogram.
     static let labProviders: [String: Provider] = [
         "anthropic": .anthropicOrg, "openai": .openai, "x-ai": .xaiOrg, "z-ai": .zai,
         "moonshotai": .moonshot, "minimax": .minimax, "deepseek": .deepseek,
@@ -116,7 +100,6 @@ enum NewsEditions {
 }
 
 extension ModelRelease {
-    /// "1M", "400K".
     var contextText: String? {
         contextText(locale: .current)
     }
@@ -126,7 +109,6 @@ extension ModelRelease {
         return context.formatted(.number.notation(.compactName).locale(locale))
     }
 
-    /// Days until it retires, counting a part day as one.
     func daysUntilRetirement(now: Date = .now) -> Int? {
         guard let expires, expires > now else { return nil }
         return Int((expires.timeIntervalSince(now) / 86_400).rounded(.up))

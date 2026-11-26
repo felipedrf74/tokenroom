@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""feed-health.py without the network: the catalog it reads, and how it judges an answer."""
 import importlib.util
 from datetime import datetime, timezone
 from pathlib import Path
@@ -56,7 +55,7 @@ class AssessTests(unittest.TestCase):
         self.assertIn("over 80%", health.assess(near, 200, rss(), now=NOW).problems[0])
 
     def test_staleness_follows_each_kind(self):
-        old = rss("Mon, 14 Sep 2026 12:00:00 GMT")  # 54 days before NOW
+        old = rss("Mon, 14 Sep 2026 12:00:00 GMT")
         self.assertIn("nothing new since 2026-09-14", health.assess(self.official, 200, old, now=NOW).problems[0])
         self.assertEqual(health.assess(self.voice, 200, old, now=NOW).problems, [], "Voices have 60 days")
         self.assertEqual(health.assess(self.status, 200, rss("Mon, 01 Jun 2026 12:00:00 GMT"), now=NOW).problems, [], "A quiet status page is good news")

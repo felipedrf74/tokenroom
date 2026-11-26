@@ -2,7 +2,6 @@ import XCTest
 @testable import Tokenroom
 
 final class NewsDiscoveryTests: XCTestCase {
-    /// Treating a profile-only follow as a feed would fetch or badge an invented timeline.
     @MainActor func testProfileOnlyFollowDoesNotFetchBadgeOrNotify() async throws {
         let suite = "tokenroom.tests.profile-only." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -13,8 +12,6 @@ final class NewsDiscoveryTests: XCTestCase {
             requests.value.append(request)
             return .init(cache: request.cache, newModels: [])
         }, notify: { _, _, _ in notifications.value += 1 })
-        // The catalog's one profile-only voice was removed in November 2026; a follow it left
-        // behind, or a profile-only voice added later, is the same case.
         XCTAssertTrue(NewsVoice.catalog.allSatisfy { $0.feed != nil })
         let voiceID = "voice-embirico"
         let cache = news.cache
@@ -29,7 +26,6 @@ final class NewsDiscoveryTests: XCTestCase {
         XCTAssertEqual(notifications.value, 0)
     }
 
-    /// A catalog re-ranking must update Skills without changing News or scheduling its alerts.
     @MainActor func testSkillRankMovementDoesNotFetchBadgeOrNotifyNews() async throws {
         let suite = "tokenroom.tests.skill-news-isolation." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -93,6 +89,54 @@ final class NewsDiscoveryTests: XCTestCase {
         XCTAssertEqual(NewsDiscovery.latestOfficial([status, voice, release], now: now)?.id, "release")
         XCTAssertEqual(NewsDiscovery.stories([status, voice, release], collection: .status).map(\.id), ["status"])
         XCTAssertNil(NewsDiscovery.latestOfficial([voice, status], now: now))
+    }
+    func release(_ id: String, at date: Date) -> FeedItem {
+        .init(id: id, title: id, published: min(date, now), source: "Tool", kind: .officialAnnouncement, publisherPublishedAt: date)
+    }
+    func model(_ id: String, at date: Date) -> ModelRelease {
+        .init(id: "lab/" + id, name: id, vendor: "lab", created: date, contextLength: nil, promptPrice: nil, completionPrice: nil, expires: nil)
+    }
+    func testFutureDatedReleaseDoesNotLeadToday() {
+        let future = release("future", at: now.addingTimeInterval(10 * 365 * 86_400))
+        let today = release("today", at: now.addingTimeInterval(-3_600))
+        XCTAssertEqual(NewsDiscovery.latestOfficial([future, today], now: now)?.id, "today")
+        XCTAssertNil(NewsDiscovery.latestOfficial([future], now: now))
+        XCTAssertEqual(NewsDiscovery.stories([future, today], collection: .release).map(\.id), ["future", "today"])
+    }
+    func testLatestOfficialWindowIncludesBothEnds() {
+        let oldest = now.addingTimeInterval(-NewsEditions.topStoryAge)
+        XCTAssertEqual(NewsDiscovery.latestOfficial([release("now", at: now)], now: now)?.id, "now")
+        XCTAssertNil(NewsDiscovery.latestOfficial([release("ahead", at: now.addingTimeInterval(1))], now: now))
+        XCTAssertEqual(NewsDiscovery.latestOfficial([release("oldest", at: oldest)], now: now)?.id, "oldest")
+        XCTAssertNil(NewsDiscovery.latestOfficial([release("older", at: oldest.addingTimeInterval(-1))], now: now))
+    }
+    func testLatestOfficialKeepsInputOrderOnTies() {
+        let date = now.addingTimeInterval(-3_600)
+        let earlier = release("earlier", at: date.addingTimeInterval(-60))
+        let first = release("first", at: date), second = release("second", at: date)
+        XCTAssertEqual(NewsDiscovery.latestOfficial([first, second], now: now)?.id, "first")
+        XCTAssertEqual(NewsDiscovery.latestOfficial([second, first], now: now)?.id, "second")
+        XCTAssertEqual(NewsDiscovery.latestOfficial([earlier, second, first], now: now)?.id, "second")
+    }
+    func testRecentModelWindowIncludesBothEnds() {
+        let oldest = now.addingTimeInterval(-NewsEditions.topStoryAge)
+        XCTAssertTrue(NewsEditions.isRecentModel(model("now", at: now), now: now))
+        XCTAssertFalse(NewsEditions.isRecentModel(model("ahead", at: now.addingTimeInterval(1)), now: now))
+        XCTAssertFalse(NewsEditions.isRecentModel(model("future", at: now.addingTimeInterval(10 * 365 * 86_400)), now: now))
+        XCTAssertTrue(NewsEditions.isRecentModel(model("oldest", at: oldest), now: now))
+        XCTAssertFalse(NewsEditions.isRecentModel(model("older", at: oldest.addingTimeInterval(-1)), now: now))
+    }
+    func testFutureDatedModelDoesNotLeadTodayAndTiesKeepInputOrder() {
+        let date = now.addingTimeInterval(-86_400)
+        let future = model("future", at: now.addingTimeInterval(10 * 365 * 86_400))
+        let models = [future, model("first", at: date), model("second", at: date), model("archive", at: now.addingTimeInterval(-20 * 86_400))]
+        let edition = NewsEditions.today(models: models, announcements: [], retiring: [], since: now.addingTimeInterval(-30 * 86_400), now: now)
+        XCTAssertEqual(edition.topStory?.id, "lab/first")
+        XCTAssertEqual(edition.moreModels.map(\.id), ["lab/second"])
+        XCTAssertEqual(edition.digest.models, 2)
+        let alone = NewsEditions.today(models: [future], announcements: [], retiring: [], since: .distantPast, now: now)
+        XCTAssertNil(alone.topStory)
+        XCTAssertEqual(alone.digest.models, 0)
     }
     func testOldModelsExcludedFromNewShelf() {
         let edition = NewsEditions.today(models: [model(1), model(20)], announcements: [], retiring: [], since: now.addingTimeInterval(-30 * 86400), now: now)

@@ -25,7 +25,6 @@ final class APIKeyTests: XCTestCase {
     }
 
     private func makeDefaults() -> UserDefaults {
-        // Named by the class and a count: macOS keeps an empty preferences file for every name.
         let name = "tokenroom.tests.\(Self.self).\(suites.count)"
         suites.append(name)
         let defaults = UserDefaults(suiteName: name)!
@@ -38,8 +37,6 @@ final class APIKeyTests: XCTestCase {
         folders.append(folder)
         return folder
     }
-
-    // MARK: Parsers
 
     func testOpenRouterKeyLimitIsAMonthlyMeter() throws {
         let now = Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 25, hour: 12))!
@@ -89,7 +86,7 @@ final class APIKeyTests: XCTestCase {
     }
 
     func testOpenRouterPeriodsResetAtUTCMidnight() {
-        let now = Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 24, hour: 15))! // Thursday
+        let now = Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 24, hour: 15))!
         let daily = OpenRouterParser.period("daily", now: now, calendar: .gregorianUTC)
         XCTAssertEqual(daily.end, Calendar.gregorianUTC.date(from: DateComponents(year: 2026, month: 9, day: 25)))
         let weekly = OpenRouterParser.period("weekly", now: now, calendar: .gregorianUTC)
@@ -121,8 +118,6 @@ final class APIKeyTests: XCTestCase {
         XCTAssertEqual(snapshot.windows.first?.amount?.used ?? 0, 4.5, accuracy: 0.001)
     }
 
-    // MARK: Credential storage (in-memory Keychain operations)
-
     func testKeyStoreRoundTripShowsOnlyTheLastFour() throws {
         let store = APIKeyStore(servicePrefix: "app.tokenroom.tests.\(UUID().uuidString).", keychain: FakeKeychain().operations, usesDataProtection: false)
         stores.append(store)
@@ -151,8 +146,6 @@ final class APIKeyTests: XCTestCase {
         XCTAssertEqual(older.region, "China")
     }
 
-    /// Replace starts the key form on the plan or region saved with the key, so a Copilot token
-    /// saved with Max doesn't quietly go back to Pro.
     func testReplacingAKeyStartsFromTheChoiceSavedWithIt() throws {
         let copilot = try XCTUnwrap(Provider.copilot.keySpec)
         XCTAssertEqual(copilot.initialChoice(saved: nil), "Pro", "A new token starts on the first plan")
@@ -174,8 +167,6 @@ final class APIKeyTests: XCTestCase {
         let result = await APIKeyClient(provider: .deepseek, keys: store).fetch()
         XCTAssertEqual(result, .failure(.signedOut(Provider.deepseek.signInHint)))
     }
-
-    // MARK: Menu bar and popover
 
     @MainActor
     func testBalancesStayOutOfTheMenuBarAndHighestShowsOne() async throws {

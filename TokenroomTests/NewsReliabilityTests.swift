@@ -1,13 +1,10 @@
 import XCTest
 @testable import Tokenroom
 
-/// The News, Skills and Following reliability decision of 7 November 2026
-/// (`docs/news-reliability-council-20261107.md`): owner cancellation, waiting follow-ups, cadence
-/// tiers, background ordering, the Mac's News loop, Skills persistence, and new sources.
 final class NewsReliabilityTests: XCTestCase {
     private var suites: [String] = []
     private var folders: [URL] = []
-    private let now = Date(timeIntervalSince1970: 1_794_000_000) // 7 November 2026
+    private let now = Date(timeIntervalSince1970: 1_794_000_000)
 
     override func tearDown() {
         suites.forEach(TestDefaults.remove)
@@ -31,7 +28,6 @@ final class NewsReliabilityTests: XCTestCase {
         return folder
     }
 
-    /// Until `condition` holds, or five seconds.
     @MainActor private func eventually(_ condition: () -> Bool) async {
         for _ in 0..<1000 where !condition() { try? await Task.sleep(for: .milliseconds(5)) }
     }
@@ -55,10 +51,6 @@ final class NewsReliabilityTests: XCTestCase {
         XCTAssertTrue((cache.sourceChecks ?? [:]).values.allSatisfy { $0.failedAt == nil && $0.failures == nil }, file: file, line: line)
     }
 
-    // MARK: 2. Owner-scoped, opt-in cancellation
-
-    /// iPhone background expiry: the owner's cancellation takes its pass with it, and the requests
-    /// it cut short count no failure.
     @MainActor func testACancellableOwnersPassEndsWithItAndRecordsNoFailure() async {
         useHangingNetwork()
         let news = NewsStore(defaults: defaults(), directory: nil, fetch: Self.realFetch, notify: { _, _, _ in })
@@ -74,9 +66,6 @@ final class NewsReliabilityTests: XCTestCase {
         XCTAssertNil(news.problem(for: .today))
     }
 
-    /// The Mac going to sleep: the owner cancels whatever pass is under way, and what the owner
-    /// queued behind it (its loop's check) goes with it. A manual request another caller queued
-    /// (Check Now, a pull) still runs after it, and its caller waits until it has.
     @MainActor func testCancelPassStopsThePassAndWhatsQueued() async {
         let requests = LockedBox<[NewsFetcher.Request]>([]), sawCancel = LockedBox(false)
         let news = NewsStore(defaults: defaults(), directory: nil, fetch: { request in
@@ -89,7 +78,6 @@ final class NewsReliabilityTests: XCTestCase {
         }, notify: { _, _, _ in })
         let first = Task { await news.refresh(preferences: AlertPreferences(), notifies: false) }
         await eventually { requests.value.count == 1 }
-        // The owner's loop comes due meanwhile, and the person presses Check Now.
         let loop = Task { await news.refresh(preferences: AlertPreferences(), notifies: false, forcedSources: ["devin"], waitsForFollowUp: true, cancellable: true) }
         for _ in 0..<20 { await Task.yield() }
         let manualDone = LockedBox(false)
@@ -112,8 +100,6 @@ final class NewsReliabilityTests: XCTestCase {
         XCTAssertFalse(news.isRefreshing)
     }
 
-    /// A cancellable owner's own pass ending (the background refresh's time running out) leaves a
-    /// follow-up a foreground pull asked for meanwhile.
     @MainActor func testACancelledOwnersPassLeavesAnotherCallersFollowUp() async {
         let requests = LockedBox<[NewsFetcher.Request]>([])
         let news = NewsStore(defaults: defaults(), directory: nil, fetch: { request in
@@ -123,14 +109,13 @@ final class NewsReliabilityTests: XCTestCase {
         }, notify: { _, _, _ in })
         let owner = Task { await news.refresh(preferences: AlertPreferences(), notifies: false, cancellable: true) }
         await eventually { requests.value.count == 1 }
-        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false) // A pull, not waiting.
+        await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false)
         owner.cancel()
         await owner.value
         await eventually { requests.value.count == 2 && !news.isRefreshing }
         XCTAssertEqual(requests.value.map(\.maxAge), [nil, 0], "The pull's follow-up ran after the cancelled pass")
     }
 
-    /// The Mac's sleep cancels its News loop and the pass that loop started.
     @MainActor func testSleepCancelsTheMacNewsLoopAndItsPass() async {
         let prefs = defaults()
         let calls = LockedBox(0), sawCancel = LockedBox(false)
@@ -153,9 +138,6 @@ final class NewsReliabilityTests: XCTestCase {
         XCTAssertFalse(news.isRefreshing)
     }
 
-    // MARK: 3 and 5. Requests during a pass wait for their follow-up
-
-    /// A wake refresh (due checks only) during a pass used to be dropped by the coalescing rule.
     @MainActor func testAWakeRefreshDuringAPassWaitsForItAndIsntDropped() async {
         let gate = PassGate(), ages = LockedBox<[TimeInterval?]>([])
         let news = NewsStore(defaults: defaults(), directory: nil, fetch: { request in
@@ -163,7 +145,7 @@ final class NewsReliabilityTests: XCTestCase {
             if ages.value.count == 1 { await gate.hold() }
             return .init(cache: request.cache, newModels: [])
         }, notify: { _, _, _ in })
-        news.followedSources = [] // Nothing uncached, so only waiting queues it.
+        news.followedSources = []
         let first = Task { await news.refresh(preferences: AlertPreferences(), notifies: false) }
         await gate.waitUntilEntered()
         let returned = LockedBox(false)
@@ -180,7 +162,6 @@ final class NewsReliabilityTests: XCTestCase {
         XCTAssertNil(ages.value.last!, "Due checks only")
     }
 
-    /// Pull to refresh and Retry return once the pass they queued is done, so the spinner says so.
     @MainActor func testPullToRefreshAndRetryWaitForTheFollowUpTheyQueued() async {
         for retry in [false, true] {
             let gate = PassGate(), calls = LockedBox<[NewsFetcher.Request]>([])
@@ -207,15 +188,12 @@ final class NewsReliabilityTests: XCTestCase {
         }
     }
 
-    // MARK: 7. Cadence tiers
-
     func testEachKindHasItsOwnIntervals() {
         XCTAssertEqual(NewsCadence.intervals(for: .official), .init(background: 15 * 60, onScreen: 5 * 60))
         XCTAssertEqual(NewsCadence.intervals(for: .status), .init(background: 10 * 60, onScreen: 5 * 60))
         XCTAssertEqual(NewsCadence.intervals(for: .voices), .init(background: 3 * 3600, onScreen: 30 * 60))
         XCTAssertEqual(NewsCadence.intervals(for: .models), .init(background: 30 * 60, onScreen: 15 * 60))
         XCTAssertEqual(NewsCadence.activationMaxAge, 15 * 60, "Coming forward on any tab: 15 minutes, not 60")
-        // On screen (every 5 minutes), coming forward (15), in the background (nil), now (0).
         let expected: [(NewsCadence.Tier, TimeInterval?, TimeInterval)] = [
             (.official, 300, 300), (.status, 300, 300), (.voices, 300, 1800), (.models, 300, 900),
             (.official, 900, 900), (.status, 900, 600), (.voices, 900, 1800), (.models, 900, 900),
@@ -231,8 +209,6 @@ final class NewsReliabilityTests: XCTestCase {
         XCTAssertEqual(NewsCadence.tier(of: FeedSource.catalog[0]), .official)
     }
 
-    /// A live check reads official and status feeds every five minutes and leaves a voice to its
-    /// half hour; the background leaves all three to their own intervals.
     func testAPassChecksEachKindByItsOwnInterval() async {
         StubURLProtocol.reset()
         StubURLProtocol.handler = { _ in (304, Data()) }
@@ -254,8 +230,6 @@ final class NewsReliabilityTests: XCTestCase {
         XCTAssertEqual(Set(StubURLProtocol.requests.compactMap(\.url?.lastPathComponent)), ["s.xml"], "Status after 10 minutes; official after 15")
     }
 
-    /// Freshness is measured against each kind's interval: a voice read two hours ago is current,
-    /// a status feed read twenty minutes ago isn't.
     func testFreshnessIsMeasuredAgainstEachKindsInterval() {
         let official = FeedSource.catalog[0], status = NewsStatusSource.catalog[0], voice = NewsVoice.catalog.compactMap(\.feed).first!
         var cache = NewsCache()
@@ -272,9 +246,9 @@ final class NewsReliabilityTests: XCTestCase {
     func testTheNextBackgroundPassIsWhenTheSoonestSourceComesDue() {
         let official = FeedSource.catalog[0], status = NewsStatusSource.catalog[0]
         var cache = NewsCache()
-        cache.modelsFetchedAt = now.addingTimeInterval(-20 * 60)            // due in 10 minutes
-        cache.sourceChecks = [official.id: .init(succeededAt: now.addingTimeInterval(-9 * 60)), // due in 6
-                              status.id: .init(succeededAt: now.addingTimeInterval(-3 * 60))]  // due in 7
+        cache.modelsFetchedAt = now.addingTimeInterval(-20 * 60)
+        cache.sourceChecks = [official.id: .init(succeededAt: now.addingTimeInterval(-9 * 60)),
+                              status.id: .init(succeededAt: now.addingTimeInterval(-3 * 60))]
         XCTAssertEqual(NewsCadence.nextCheck(cache: cache, sources: [official, status], now: now), now.addingTimeInterval(6 * 60))
         cache.sourceChecks?[status.id] = .init(failedAt: now.addingTimeInterval(-60), failures: 1)
         XCTAssertEqual(NewsCadence.nextCheck(cache: cache, sources: [official, status], now: now), now.addingTimeInterval(4 * 60), "A failure's backoff")
@@ -284,8 +258,6 @@ final class NewsReliabilityTests: XCTestCase {
         cache.modelsFetchedAt = now
         XCTAssertEqual(NewsCadence.nextCheck(cache: cache, sources: [], now: now), now.addingTimeInterval(NewsCadence.longestWait))
     }
-
-    // MARK: 8. iPhone background and coming forward
 
     @MainActor func testBackgroundRefreshRunsUsageAndNewsSideBySide() async {
         let newsStarted = LockedBox(false), usageSawNews = LockedBox(false)
@@ -301,7 +273,6 @@ final class NewsReliabilityTests: XCTestCase {
         XCTAssertEqual(NewsLifecycle.backgroundBudget, 20)
     }
 
-    /// Past its budget the background News pass is cancelled, and counts no failure.
     @MainActor func testBackgroundNewsGivesWayAtItsBudgetWithoutFailures() async {
         useHangingNetwork()
         let news = NewsStore(defaults: defaults(), directory: nil, fetch: Self.realFetch, notify: { _, _, _ in })
@@ -328,8 +299,6 @@ final class NewsReliabilityTests: XCTestCase {
         XCTAssertTrue(usageSawNews.value, "News doesn't wait behind usage")
         XCTAssertEqual(ages.value, [NewsCadence.activationMaxAge])
     }
-
-    // MARK: 9. The Mac's News loop
 
     @MainActor func testSharingNoLongerChecksNews() async throws {
         let prefs = defaults(), calls = LockedBox(0)
@@ -369,8 +338,6 @@ final class NewsReliabilityTests: XCTestCase {
                        "Until the model list comes due, within the longest wait")
     }
 
-    // MARK: 10. Skills
-
     private static let trendingBody = Data("""
     {"generatedAt":"2026-11-07T08:40:03.745Z","kind":"skills","windowHours":24,"items":[
       {"rank":1,"slug":"file-drop","displayName":"File drop","summary":"Moves files","source":"clawhub","publisher":{"handle":"ada-tools","kind":"user"},
@@ -396,7 +363,6 @@ final class NewsReliabilityTests: XCTestCase {
         XCTAssertEqual(page.listings.first?.canonicalURL.absoluteString, "https://clawhub.ai/ada-tools/skills/file-drop")
         XCTAssertNil(page.listings.first?.downloads)
         XCTAssertFalse(SkillSort.trending.label.contains("7 days"), "The successor's window isn't seven days")
-        // An entry that doesn't say it's ClawHub's, or carries no verdict, is left out.
         let unlabelled = Data("""
         {"items":[
           {"rank":1,"slug":"no-source","displayName":"No source","publisher":{"handle":"cara-dev"},"trust":{"clawHubVerdict":"clean"}},
@@ -409,7 +375,6 @@ final class NewsReliabilityTests: XCTestCase {
         XCTAssertTrue(SkillFeed.communityNote.contains("doesn't review"))
     }
 
-    /// A launch shows each ranking's last good list, with when it was checked, before asking again.
     @MainActor func testTheLastGoodListIsSavedForEachRanking() async {
         let directory = folder(), calls = LockedBox(0)
         let first = SkillsStore(directory: directory, fetch: { request in
@@ -428,7 +393,6 @@ final class NewsReliabilityTests: XCTestCase {
         await relaunched.refresh(sort: .downloads)
         XCTAssertEqual(relaunched.listings.first?.owner, "alice")
         XCTAssertEqual(calls.value, 2, "Fresh lists aren't asked for again")
-        // A failure keeps the saved list.
         let later = SkillsStore(directory: directory, fetch: { _ in .status(503, retryAfter: nil) }, clock: { [now = self.now] in now.addingTimeInterval(3600) })
         await later.refresh(sort: .trending)
         XCTAssertEqual(later.listings.count, 2)
@@ -478,8 +442,6 @@ final class NewsReliabilityTests: XCTestCase {
         guard case .offline = answer else { return XCTFail("Not connected is offline, got \(answer)") }
     }
 
-    // MARK: 11. Sources, and what an update follows
-
     func testTheNewSourcesAreInTheCatalogAndTheProfileOnlyVoiceIsGone() throws {
         let voices = Set(NewsVoice.catalog.map(\.id))
         XCTAssertTrue(voices.isSuperset(of: ["voice-importai", "voice-interconnects", "voice-latentspace"]))
@@ -493,8 +455,6 @@ final class NewsReliabilityTests: XCTestCase {
         let mistral = try XCTUnwrap(FeedSource.catalog.first { $0.id == "mistral-news" })
         XCTAssertFalse(mistral.startsOnForUpgraders)
         XCTAssertEqual(mistral.kind, .officialAnnouncement)
-        // Discussion and voices live outside the catalog, so they're never swept into the rule
-        // that turns new catalog feeds on for upgraders.
         let catalogIDs = Set(FeedSource.catalog.map(\.id))
         XCTAssertTrue(catalogIDs.isDisjoint(with: voices))
         XCTAssertTrue(FeedSource.catalog.allSatisfy { $0.kind == .officialAnnouncement })
@@ -502,8 +462,6 @@ final class NewsReliabilityTests: XCTestCase {
         XCTAssertEqual(Set(all.map(\.id)).count, all.count, "IDs are unique")
         XCTAssertTrue(all.allSatisfy { $0.url.scheme == "https" })
         XCTAssertTrue(NewsVoice.catalog.allSatisfy { $0.profileURL.scheme == "https" && $0.evidenceURL.scheme == "https" })
-        // Sources added in November 2026 are publications: no personal name, and no personal X
-        // handle — a newsletter without its own account opens its website.
         let added = NewsVoice.catalog.filter { $0.verifiedAt == "2026-11-07" }
         XCTAssertEqual(Set(added.map(\.name)), ["Import AI", "Interconnects", "Latent Space", "Techmeme", "Hugging Face"])
         for id in ["voice-importai", "voice-interconnects"] {
@@ -517,7 +475,6 @@ final class NewsReliabilityTests: XCTestCase {
         XCTAssertTrue(NewsVoice.catalog.filter { $0.feed == nil }.allSatisfy { $0.listCaption == "Profile only" })
     }
 
-    /// PRIVACY.md lists every host News and Skills read.
     func testPrivacyListsEveryNewsHost() throws {
         let privacy = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("PRIVACY.md"), encoding: .utf8)
         let sources = FeedSource.catalog + NewsVoice.catalog.compactMap(\.feed) + NewsStatusSource.catalog
@@ -539,18 +496,17 @@ final class NewsReliabilityTests: XCTestCase {
         XCTAssertTrue(relaunched.newSources.isEmpty)
     }
 
-    /// An update follows nothing new: it suggests the new sources until dismissed.
     @MainActor func testAnUpdateFollowsNothingNewAndSuggestsTheNewSources() throws {
         for savedSources in [nil, ["claude-code", "cursor"]] as [[String]?] {
             let prefs = defaults()
-            prefs.set(1_790_000_000.0, forKey: NewsStore.Keys.seenAt) // Any earlier release saved this.
+            prefs.set(1_790_000_000.0, forKey: NewsStore.Keys.seenAt)
             if let savedSources {
                 prefs.set(savedSources, forKey: NewsStore.Keys.sources)
                 prefs.set(FeedSource.catalog.map(\.id).filter { $0 != "mistral-news" }, forKey: NewsStore.Keys.knownSources)
             }
             prefs.set(["status-openai"], forKey: NewsStore.Keys.status)
             let news = NewsRuntime.liveNewsStore(defaults: prefs, directory: nil)
-            news.allowsRefresh = { false } // A follow reads at once; not from a test.
+            news.allowsRefresh = { false }
             XCTAssertTrue(news.followedVoices.isEmpty, "No voice turned on silently")
             XCTAssertEqual(news.followedStatusSources, ["status-openai"])
             XCTAssertFalse(news.followedSources.contains("mistral-news"), "No feed turned on silently")
@@ -594,7 +550,6 @@ final class NewsReliabilityTests: XCTestCase {
     }
 }
 
-/// Answers nothing until the request is cancelled.
 private final class HangingProtocol: URLProtocol, @unchecked Sendable {
     static let started = LockedBox(0)
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -610,7 +565,6 @@ private final class NotConnectedProtocol: URLProtocol, @unchecked Sendable {
     override func stopLoading() {}
 }
 
-/// Holds a pass's fetch until released, and says when one has reached it.
 private actor PassGate {
     private var entered = 0
     private var held: [CheckedContinuation<Void, Never>] = []

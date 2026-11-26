@@ -1,7 +1,4 @@
 #!/bin/zsh
-# Typechecks Shared/ against every platform that compiles it (macOS, iOS, watchOS),
-# including watchOS before its targets exist. No Xcode project involved.
-# Shared/Widgets is only compiled by the iPhone app and its widgets.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

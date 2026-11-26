@@ -27,7 +27,6 @@ struct TokenroomWatchApp: App {
                 }
         }
         .backgroundTask(.appRefresh(WatchStore.backgroundTaskID)) {
-            // The next one first, so a refresh that runs out of time doesn't end them.
             await store.scheduleBackgroundRefresh()
             await store.refresh(force: true)
             await store.noteBackgroundRefresh(cutShort: Task.isCancelled)

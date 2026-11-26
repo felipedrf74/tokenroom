@@ -1,6 +1,5 @@
 import Foundation
 
-/// Money and credit amounts for captions: "$12.40", "¥80", "1,240 credits".
 enum AmountFormat {
     static func text(_ value: Double, unit: String, locale: Locale = .current) -> String {
         switch unit {

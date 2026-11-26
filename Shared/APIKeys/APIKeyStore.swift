@@ -1,34 +1,23 @@
 import Foundation
 import Security
 
-/// API keys the user pasted, one Keychain item per provider on this device.
-/// Never synchronized through iCloud Keychain and never sent to another device.
-/// Reads can block (a Keychain prompt on the Mac): call through `BlockingIO`.
 struct APIKeyStore: Sendable {
     enum KeyError: Error, Equatable {
         case empty
         case keychain(OSStatus)
     }
 
-    /// Kept next to the key; not secret. The key itself is only ever shown as `•••• last4`.
     struct Metadata: Codable, Equatable, Sendable {
         var last4: String
         var addedAt: Date
-        /// Moonshot's "Global" or "China" platform, or the Copilot plan picked with the token.
         var region: String?
-        /// Set when the key's test found something to warn about, e.g. write access.
         var warning: String? = nil
     }
 
-    /// Keychain access group shared with the widget extension on iPhone; nil on the Mac.
     var accessGroup: String? = nil
-    /// Tests use their own prefix so they never touch real keys.
     var servicePrefix = "app.tokenroom.key."
     var keychain: KeychainOperations = .system
     #if os(macOS)
-    /// Team-signed Mac builds keep keys in the data-protection keychain, tied to the team and
-    /// free of prompts. Ad-hoc builds can't, and use the login keychain; keys saved there are
-    /// copied to protected storage the first time a team build reads them.
     var usesDataProtection = KeychainAvailability.dataProtection
     #endif
 
@@ -61,8 +50,6 @@ struct APIKeyStore: Sendable {
         return nil
     }
 
-    /// Discovery distinguishes a missing item from one Security cannot read right now. It
-    /// reads only metadata; a locked or damaged item never means the user removed its key.
     enum Lookup: Equatable, Sendable {
         case found(Metadata)
         case none
@@ -111,15 +98,12 @@ struct APIKeyStore: Sendable {
     }
 
     #if os(macOS)
-    /// The same item in the login keychain, where ad-hoc builds and older versions saved it.
     private func legacyQuery(_ provider: Provider) -> [String: Any] {
         var query = baseQuery(provider)
         query.removeValue(forKey: kSecUseDataProtectionKeychain as String)
         return query
     }
 
-    /// The key and its metadata in one read, so both come from the same item even while another
-    /// read is moving it.
     private func readItem(_ base: [String: Any]) -> (key: String, metadata: Metadata?)? {
         var query = base
         query[kSecReturnData as String] = true
@@ -135,10 +119,6 @@ struct APIKeyStore: Sendable {
         return (key, metadata)
     }
 
-    /// Copies a legacy key into the data-protection keychain, keeping its metadata. The old
-    /// query can also match the protected item, so deleting it after the copy is unsafe; deleting
-    /// before it is durable can lose the only key if both the new add and restoration fail.
-    /// Keep the existing legacy copy until an explicit Remove clears both locations.
     private func migrate(_ provider: Provider, key: String, saved: Metadata?) {
         let metadata = Metadata(last4: String(key.suffix(4)), addedAt: saved?.addedAt ?? .now, region: saved?.region, warning: saved?.warning)
         _ = try? add(key, metadata: metadata, to: baseQuery(provider), for: provider)
@@ -159,8 +139,6 @@ struct APIKeyStore: Sendable {
             kSecAttrGeneric as String: try JSONEncoder().encode(metadata),
             kSecAttrLabel as String: "Tokenroom · \(provider.displayName) key",
         ]
-        // Replace atomically in place: a failed save must leave the last working key and its
-        // metadata intact. Add only when absent, and handle a concurrent first add with update.
         var status = keychain.update(query, attributes)
         if status == errSecItemNotFound {
             status = try add(trimmed, metadata: metadata, to: query, for: provider)
@@ -175,7 +153,6 @@ struct APIKeyStore: Sendable {
         attributes[kSecAttrGeneric as String] = try JSONEncoder().encode(metadata)
         attributes[kSecAttrLabel as String] = "Tokenroom · \(provider.displayName) key"
         #if !os(macOS)
-        // Readable by widgets and background refresh once the phone has been unlocked; stays on this device.
         attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         #endif
         return keychain.add(attributes)
@@ -213,8 +190,6 @@ struct APIKeyStore: Sendable {
 }
 
 extension KeySpec {
-    /// The choice a key form starts on: the one saved with the current key (its Copilot plan or
-    /// Moonshot region), else the first, so replacing a key doesn't quietly change it.
     func initialChoice(saved: APIKeyStore.Metadata?) -> String {
         if let region = saved?.region, regions.contains(region) {
             return region
@@ -224,8 +199,6 @@ extension KeySpec {
 }
 
 #if os(macOS)
-/// Whether this Mac build can use the data-protection keychain: only builds signed with an
-/// application identifier (team or Developer ID with a profile) can.
 enum KeychainAvailability {
     static let dataProtection: Bool = {
         guard let task = SecTaskCreateFromSelf(nil),

@@ -1,53 +1,32 @@
 import Foundation
 
-/// Whether usage is running ahead of the clock, and when it would run out.
-///
-/// Compares used % with the share of the window that has elapsed:
-/// halfway through a week with 70% used is 20 points ahead of an even pace.
 struct Pace: Equatable, Sendable {
     enum Verdict: Equatable, Sendable {
-        /// Within 10 points of an even pace.
         case onPace
-        /// At least 10 points under an even pace.
         case plentyLeft
-        /// At least 10 points over an even pace.
         case ahead
         case limitReached
     }
 
     enum Severity: Equatable, Sendable {
         case none
-        /// Runs out, but only in the last quarter of the window.
         case watch
-        /// Runs out earlier than that.
         case tight
-        /// Runs out within the hour, or already has.
         case critical
     }
 
     var verdict: Verdict
-    /// Used minus expected, in percentage points.
     var delta: Double
     var elapsedFraction: Double
     var resetsAt: Date
-    /// Projected moment usage reaches 100%, only when that comes before the reset.
     var runsOutAt: Date?
     var severity: Severity
-    /// The collector measured this run-out, and the reading has since gone stale.
-    /// The time is kept until the reset. It is not a new reading.
     var isProjected: Bool = false
 
     static let tolerance = 10.0
     static let minimumElapsed = 0.05
     static let minimumUsed = 5.0
 
-    /// - Parameters:
-    ///   - samples: recent `(time, used %)` readings, oldest first. Used for the run-out rate
-    ///     when there are enough inside the current window.
-    /// - Returns: nil when there's no reset time, the window is too young, or usage is tiny.
-    ///   A stale reading returns a pace only when the collector already measured a run-out
-    ///   before the reset. That pace is marked `isProjected`. A stale reading does not grow
-    ///   a new rate from a frozen percentage.
     static func evaluate(
         used: Double,
         kind: WindowKind,
@@ -66,11 +45,8 @@ struct Pace: Equatable, Sendable {
         else { return nil }
         if isStale {
             if let measured {
-                // A measured nil means the collector found no run-out before the reset.
                 return projected(resetsAt: resetsAt, length: length, measured: measured, now: now)
             }
-            // Samples are the collector's own recent readings. Judge them at the last one,
-            // not at the present, so the clock moving does not invent a new rate.
             guard let last = samples.last, last.date < now,
                   let then = evaluate(
                     used: last.used, kind: kind, resetsAt: resetsAt, startsAt: startsAt, windowSeconds: windowSeconds,
@@ -102,8 +78,6 @@ struct Pace: Equatable, Sendable {
 
         var runsOut: Date?
         if let measured {
-            // Measured by a collector with frequent readings (the Mac): better than hourly buckets.
-            // A run-out time that has passed since means it has run out by now, not that it won't.
             runsOut = measured.runsOutAt.flatMap { $0 < resetsAt ? max($0, now) : nil }
         } else if let rate = recentRate(samples: samples, since: start, kind: kind, now: now) ?? linearRate(used: used, elapsed: elapsed),
            rate > 0 {
@@ -129,7 +103,6 @@ struct Pace: Equatable, Sendable {
         return Pace(verdict: verdict, delta: delta, elapsedFraction: fraction, resetsAt: resetsAt, runsOutAt: runsOut, severity: severity)
     }
 
-    /// Keeps a run-out the collector measured. A frozen percentage is not turned into a new rate.
     private static func projected(resetsAt: Date, length: TimeInterval, measured: RelayPace?, now: Date) -> Pace? {
         guard let measuredAt = measured?.runsOutAt, measuredAt < resetsAt else { return nil }
         let start = resetsAt.addingTimeInterval(-length)
@@ -153,7 +126,6 @@ struct Pace: Equatable, Sendable {
         )
     }
 
-    /// The provider's own length, else reset minus start, else the usual length for the kind.
     static func windowLength(
         kind: WindowKind,
         resetsAt: Date,
@@ -182,8 +154,6 @@ struct Pace: Equatable, Sendable {
         }
     }
 
-    /// Least-squares slope (percent per second) of recent samples in the current window.
-    /// Sessions look at the last 30 minutes, longer windows at the last 6 hours.
     static func recentRate(samples: [(date: Date, used: Double)], since start: Date, kind: WindowKind, now: Date) -> Double? {
         let horizon: TimeInterval = kind == .session ? 30 * 60 : 6 * 3_600
         let recent = samples.filter { $0.date >= start && $0.date >= now.addingTimeInterval(-horizon) && $0.date <= now }
@@ -202,14 +172,12 @@ struct Pace: Equatable, Sendable {
         return numerator / denominator
     }
 
-    /// Average rate since the window started.
     private static func linearRate(used: Double, elapsed: TimeInterval) -> Double? {
         elapsed > 0 ? used / elapsed : nil
     }
 }
 
 extension Calendar {
-    /// Month arithmetic for billing cycles, independent of the device's time zone.
     static let gregorianUTC: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!
@@ -259,7 +227,6 @@ extension Pace {
         }
     }
 
-    /// "14:00" today, "Thu 14:00" within a week, "Oct 3" after that.
     static func shortMoment(_ date: Date, now: Date, timeZone: TimeZone) -> String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone

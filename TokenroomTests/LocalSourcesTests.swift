@@ -43,9 +43,6 @@ final class LocalSourcesTests: XCTestCase {
         XCTAssertFalse(LocalSources.version([1, 1, 10], isAtLeast: [1, 1, 11]))
     }
 
-    /// agy before 1.1.11 sends `/usage` to the model as a prompt, which spends quota. The read
-    /// path runs it only when `--version` parses and is at least `AntigravityClient.minimumVersion`.
-    /// (Finding and running agy itself isn't reachable without a real binary.)
     func testAgyIsOnlyRunWhenItsVersionIsKnownAndNewEnough() {
         func allowed(_ output: String) -> Bool {
             guard let version = LocalSources.semanticVersion(in: output) else { return false }
@@ -88,8 +85,6 @@ final class LocalSourcesTests: XCTestCase {
         XCTAssertNil(LocalSources.vscodeState("windsurfAuthStatus", database: database.deletingLastPathComponent().appendingPathComponent("none.vscdb")))
     }
 
-    /// A missing row is just signed out: the database is copied only when it can't be read in
-    /// place, never on every check.
     func testVSCodeStateCopiesOnlyADatabaseItCantRead() throws {
         let folder = try makeFolder()
         let database = folder.appendingPathComponent("state.vscdb")

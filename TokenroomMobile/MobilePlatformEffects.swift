@@ -3,8 +3,6 @@ import Foundation
 import UIKit
 import WidgetKit
 
-/// Device SDK effects are separate from collection and isolated store persistence. Tests can
-/// exercise complete refresh/delivery passes without touching widgets, the Watch or activities.
 @MainActor
 struct MobilePlatformEffects {
     typealias Samples = [String: [String: [(date: Date, used: Double)]]]
@@ -16,8 +14,6 @@ struct MobilePlatformEffects {
     var updateLiveActivities: @MainActor @Sendable ([RelayProvider], AlertPreferences, Samples, Date) async -> Void
     var makeKeyFetchGate: @MainActor @Sendable (UserDefaults) -> KeyFetchGate
     var scheduleBackgroundRefresh: @MainActor @Sendable (Date) async throws -> Void
-    /// Asks iOS for time to finish work begun in the foreground (a token renewal mid-request);
-    /// returns what ends it.
     var beginBackgroundWork: @MainActor @Sendable (String) -> @MainActor @Sendable () -> Void = { _ in {} }
 
     static let system = MobilePlatformEffects(
@@ -32,7 +28,6 @@ struct MobilePlatformEffects {
         scheduleBackgroundRefresh: { now in
             let request = BGAppRefreshTaskRequest(identifier: MobileStore.backgroundTaskID)
             request.earliestBeginDate = now.addingTimeInterval(MobileStore.backgroundInterval)
-            // Xcode 27 (Swift 6.4) has iOS 27's submitTaskRequest; Xcode 26 builds keep submit.
             #if compiler(>=6.4)
             if #available(iOS 27.0, *) {
                 try await BGTaskScheduler.shared.submitTaskRequest(request)
@@ -45,7 +40,6 @@ struct MobilePlatformEffects {
         },
         beginBackgroundWork: { name in
             let box = BackgroundTaskBox()
-            // iOS calls the expiration handler on the main thread.
             box.id = UIApplication.shared.beginBackgroundTask(withName: name) { MainActor.assumeIsolated { box.end() } }
             return { box.end() }
         }
@@ -59,7 +53,6 @@ struct MobilePlatformEffects {
     )
 }
 
-/// One background task's identifier, ended once.
 @MainActor
 private final class BackgroundTaskBox {
     var id: UIBackgroundTaskIdentifier = .invalid

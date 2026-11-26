@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Only an explicit prose-only diff may skip Apple builds."""
 import os
 from pathlib import PurePosixPath
 import re
@@ -20,7 +19,6 @@ def requires_build(files):
 def classify(event, base):
     if event not in {"pull_request", "push"} or not re.fullmatch(r"[0-9a-f]{40}", base) or base == "0" * 40:
         return True
-    # No rename detection: both sides of a move must be documentation.
     diff = subprocess.check_output([
         "git", "diff", "--no-ext-diff", "--no-renames", "--name-only", "-z", base, "HEAD", "--",
     ])

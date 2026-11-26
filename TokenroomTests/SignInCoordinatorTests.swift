@@ -91,7 +91,6 @@ final class SignInCoordinatorTests: XCTestCase {
     }
 }
 
-/// Deliberately ignores cancellation, like a credential read already running in BlockingIO.
 private actor SignInReadProbe {
     private var started = false
     private var startWaiter: CheckedContinuation<Void, Never>?

@@ -1,14 +1,10 @@
 import Foundation
 
-/// Merges what several collectors (Macs, an iPhone with API keys) published into one reading
-/// per provider.
 enum RelayMerge {
     struct Source: Sendable {
         var id: String
         var label: String
         var envelope: RelayEnvelope
-        /// What kind of device published it, when the reader knows: a record's `kind` after
-        /// iCloud answered, or the origin a cached reading kept.
         var kind: CollectorKind? = nil
     }
 
@@ -20,16 +16,8 @@ enum RelayMerge {
         var id: String { provider.id }
     }
 
-    /// Collectors silent for longer than this are left out.
     static let maxSourceAge: TimeInterval = 7 * 86_400
 
-    /// A live reading beats one that still has windows to show (stale, rate limited, expired
-    /// within its grace), which beats one with none (signed out, not on a plan, failed before a
-    /// first reading), which beats one still waiting for its first check; within each, the most
-    /// recently checked wins. So a collector that isn't signed in doesn't hide another's older
-    /// reading, which shows faded until it ages out; when that collector found it signed out,
-    /// expired, or off its plan after the faded reading was taken, the reading says so. Sorted
-    /// with the most used first.
     static func entries(from sources: [Source], now: Date = .now) -> [Entry] {
         var best: [String: (entry: Entry, rank: Int, checked: Date)] = [:]
         var signIn: [String: (message: String, checked: Date)] = [:]
@@ -67,9 +55,6 @@ enum RelayMerge {
 }
 
 extension ReadingCache {
-    /// Other devices' readings in this cache, as merge sources with their history. They stand in
-    /// while iCloud can't be read, so a reader doesn't drop to only this iPhone's providers; each
-    /// is dated by its own checks, so it ages out if iCloud stays away.
     func carriedSources(excluding localLabel: String) -> [(source: RelayMerge.Source, history: RelayHistory)] {
         guard !isSample else { return [] }
         let others = Dictionary(grouping: items.filter { $0.source != localLabel }, by: \.source)
@@ -83,8 +68,6 @@ extension ReadingCache {
             }
             let checkedAt = items.compactMap { $0.provider.checkedAt ?? $0.provider.fetchedAt }.max() ?? savedAt
             let envelope = RelayEnvelope(producer: "cache", appVersion: TokenroomIdentity.version, checkedAt: checkedAt, providers: items.map(\.provider))
-            // The producer is "cache" here, so the kind comes from what the cache kept, or, for a
-            // cache from before readings kept it, from the label.
             let kind = items.lazy.compactMap(\.origin).first ?? CollectorKind(legacyLabel: label, localLabel: localLabel)
             return (RelayMerge.Source(id: "previous-" + label, label: label, envelope: envelope, kind: kind), RelayHistory(series: series))
         }

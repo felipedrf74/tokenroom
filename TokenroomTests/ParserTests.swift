@@ -70,18 +70,15 @@ final class ParserTests: XCTestCase {
     }
 
     func testFlatMeterDrawsExactlyTheReading() {
-        // No minimum: 0% draws nothing, and 1% is a point of a hundred, with or without a pace.
         XCTAssertNil(FlatMeter.runs(used: 0, pace: nil, width: 100).fill)
         XCTAssertNil(FlatMeter.runs(used: 0, pace: 0.5, width: 100).fill)
         XCTAssertNil(FlatMeter.runs(used: 0, pace: 0.5, width: 100).ahead)
         XCTAssertEqual(FlatMeter.runs(used: 1, pace: nil, width: 100).fill?.upperBound, 1)
         XCTAssertEqual(FlatMeter.runs(used: 1, pace: 0.5, width: 100).fill?.upperBound, 1)
-        // Past the pace, the fill stops there and the lighter stretch carries on to the reading.
         let ahead = FlatMeter.runs(used: 78, pace: 0.5, width: 100)
         XCTAssertEqual(ahead.fill?.upperBound, 50)
         XCTAssertEqual(ahead.ahead?.lowerBound, 50)
         XCTAssertEqual(ahead.ahead?.upperBound, 78)
-        // Behind the pace, no stretch; a pace at the very start leaves only the stretch.
         XCTAssertNil(FlatMeter.runs(used: 40, pace: 0.5, width: 100).ahead)
         XCTAssertNil(FlatMeter.runs(used: 40, pace: 0, width: 100).fill)
     }
@@ -95,8 +92,6 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(MeterLayout.usedFraction(25), 0.25, accuracy: 0.0001)
     }
 
-    /// The drawn fill ends where the fraction does: a sliver isn't drawn as a dot several times
-    /// its size. The rounded end comes from the track's own cap.
     func testTheDrawnFillEndsAtTheFraction() {
         for height: CGFloat in [5, 6, 8, 10] {
             XCTAssertEqual(MeterLayout.drawnFillEnd(usedPercent: 0, total: 200, height: height), 0)
@@ -125,14 +120,11 @@ final class ParserTests: XCTestCase {
         }
         setenv("TOKENROOM_CURSOR_DB", db.path, 1)
         CredentialReaders.invalidateCaches()
-        // The Keychain comes first now; leave this Mac's real Cursor login out of it.
         XCTAssertEqual(try CredentialReaders.cursorAccessToken(keychain: { _ in nil }, usesCache: false), "tok-test-cursor", "TOKENROOM_CURSOR_DB points at the database")
         XCTAssertNotNil(CredentialReaders.sessionStamp(.cursor))
         XCTAssertNotNil(CredentialReaders.sessionStamp(.grokBot))
     }
 
-    /// Cursor 3.9 and later keep the token in the Keychain; `state.vscdb` may still hold an older
-    /// one that no longer works, so it's only the fallback.
     func testCursorKeychainTokenWinsOverTheDatabase() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -366,8 +358,6 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(accounts, ["tester", nil])
     }
 
-    /// The item found without this Mac's user name is filed under another account; renewing it
-    /// under the user name would add a second item and leave Claude Code's with a used-up token.
     func testAClaudeItemFoundWithoutTheAccountKeepsItsOwnAccount() throws {
         var lookedUp: [String] = []
         let secret = try XCTUnwrap(CredentialReaders.readClaudeSecret(
@@ -418,8 +408,6 @@ final class ParserTests: XCTestCase {
         XCTAssertFalse(auth.countsAsUsableSession(), "Expired, and not renewable here: Sign In runs a real login")
     }
 
-    /// The item a saved grant renews is read by its own service and account, never without the
-    /// account. Gone is nil (the grant has nowhere to go); not readable now throws (it waits).
     func testAClaudeItemIsReadByItsServiceAndAccount() throws {
         let trusted: (String) -> CredentialReaders.ClaudeKeyAccess = { _ in
             CredentialReaders.ClaudeKeyAccess(partitions: ["apple-tool:"], hasPartitionList: true)
@@ -460,10 +448,6 @@ final class ParserTests: XCTestCase {
         ))
     }
 
-    /// Can't be read now (a locked Keychain, the tool not answering) throws `unreachable`, and a
-    /// grant waits. There but not usable as it is throws `UnusableClaudeItem`: `notALogin`, which a
-    /// grant doesn't wait for, or `untrusted` (its access list, read, doesn't trust the tool),
-    /// which a grant waits for only while it can still rescue the item.
     func testAClaudeItemThatWontBeUsableIsToldApartFromOneNotReadableNow() {
         let trusted: (String) -> CredentialReaders.ClaudeKeyAccess = { _ in
             CredentialReaders.ClaudeKeyAccess(partitions: ["apple-tool:"], hasPartitionList: true, wasRead: true)
@@ -519,8 +503,6 @@ final class ParserTests: XCTestCase {
         XCTAssertNil(CredentialReaders.accountAttribute(inSecurityOutput: "security: SecKeychainSearchCopyNext: The specified item could not be found"))
     }
 
-    /// In a throwaway keychain: the account read from the item updates that item, where this
-    /// Mac's user name would have added a second one beside it.
     func testClaudeWriteUnderTheItemsOwnAccountUpdatesItInPlace() throws {
         let keychain = FileManager.default.temporaryDirectory.appendingPathComponent("tokenroom-claude-account-\(UUID().uuidString).keychain-db")
         let password = UUID().uuidString

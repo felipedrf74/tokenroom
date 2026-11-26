@@ -2,7 +2,6 @@ import Foundation
 import XCTest
 @testable import Tokenroom
 
-/// News keeps itself current while it's on screen, and what arrives then isn't news again later.
 final class NewsLiveTests: XCTestCase {
     private var suites: [String] = []
     private var folders: [URL] = []
@@ -42,7 +41,6 @@ final class NewsLiveTests: XCTestCase {
         let sleeps = LockedBox<[TimeInterval]>([])
         await news.keepCurrent(preferences: { AlertPreferences() }, sleep: { interval in
             sleeps.value.append(interval)
-            // The screen goes away after the third check.
             if sleeps.value.count == 3 { throw CancellationError() }
         })
         XCTAssertEqual(requests.value.count, 3, "On open, then every interval, without a pull or Check Now")
@@ -50,7 +48,6 @@ final class NewsLiveTests: XCTestCase {
         XCTAssertEqual(sleeps.value, Array(repeating: NewsFetcher.liveInterval, count: 3))
         XCTAssertEqual(NewsFetcher.liveInterval, 5 * 60, "On screen, News checks every five minutes")
         XCTAssertEqual(NewsFetcher.openInterval, 5 * 60, "Opening News shows feeds no older than five minutes")
-        // November 2026: each kind has its own background interval (`NewsCadence`).
         XCTAssertEqual(NewsFetcher.modelInterval, 30 * 60, "In the background, the model list every 30 minutes")
         XCTAssertEqual(NewsFetcher.announcementInterval, 15 * 60, "…and each official feed every 15")
     }
@@ -93,7 +90,6 @@ final class NewsLiveTests: XCTestCase {
         news.endVisit()
         XCTAssertEqual(news.unseenModelCount(now: arrived), 0, "Seen as it arrived, so no badge after closing News")
 
-        // Outside a visit, a check's finds still count.
         let later = arrived.addingTimeInterval(86_400)
         let closed = NewsStore(defaults: defaults, directory: folder, now: later, fetch: { request in
             var cache = request.cache
@@ -104,10 +100,6 @@ final class NewsLiveTests: XCTestCase {
         XCTAssertEqual(closed.unseenModelCount(now: later), 1)
     }
 
-    // MARK: QA regressions
-
-    /// A visit check that didn't bring an item doesn't mark it seen: one created during the
-    /// visit that only arrives afterwards still counts.
     @MainActor
     func testAVisitCheckThatBroughtNothingDoesNotMarkLaterArrivalsSeen() async throws {
         let opened = Date(timeIntervalSince1970: 1_800_000_000)
@@ -134,8 +126,6 @@ final class NewsLiveTests: XCTestCase {
         XCTAssertEqual(later.unseenModelCount(now: liveCheck.addingTimeInterval(60)), 1, "Created during the visit, but never on screen")
     }
 
-    /// The Mac's News window counts as on screen (a visit, 5-minute checks) only while someone can
-    /// see it.
     func testTheMacNewsWindowIsOnScreenOnlyWhenItCanBeSeen() {
         XCTAssertTrue(AppDelegate.newsIsOnScreen(isVisible: true, isMiniaturized: false, isOccluded: false, appIsHidden: false))
         XCTAssertFalse(AppDelegate.newsIsOnScreen(isVisible: true, isMiniaturized: true, isOccluded: false, appIsHidden: false), "In the Dock")
@@ -144,8 +134,6 @@ final class NewsLiveTests: XCTestCase {
         XCTAssertFalse(AppDelegate.newsIsOnScreen(isVisible: false, isMiniaturized: false, isOccluded: false, appIsHidden: false), "Closed")
     }
 
-    /// What a pass has taken in shows while it's still waiting on a slow feed, and a quiet read's
-    /// back catalog isn't new even then.
     @MainActor
     func testWhatArrivesShowsBeforeTheWholePassIsDone() async throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
@@ -160,7 +148,6 @@ final class NewsLiveTests: XCTestCase {
         let published = LockedBox(false)
         let news = NewsStore(defaults: defaults, directory: folder, now: now, fetch: { request in
             var partial = request.cache
-            // Cursor is read for the first time: its recent post is back catalog.
             partial.items["cursor"] = [FeedItem(id: "c", title: "Cursor post", link: URL(string: "https://example.com/c"), published: now.addingTimeInterval(-600), source: "Cursor", firstSeenAt: now.addingTimeInterval(-600))]
             await request.publish(partial)
             published.value = true
@@ -179,10 +166,6 @@ final class NewsLiveTests: XCTestCase {
         XCTAssertEqual(news.unseenAnnouncementCount, 0)
     }
 
-    /// Every catalog feed with 30 cached entries, and a pass that has brought 30 newer ones to
-    /// each, so folding goes over 1,320 entries: the most the catalog's feeds can give it. Claude
-    /// Code's changelog and its GitHub releases share versions, Google's two blogs share titles,
-    /// and every entry has a link and an excerpt.
     private static func fullCatalog(now: Date) -> (cached: NewsCache, arrived: NewsCache, entries: Int) {
         func items(for source: FeedSource, _ numbers: Range<Int>) -> [FeedItem] {
             numbers.map { n in
@@ -223,9 +206,6 @@ final class NewsLiveTests: XCTestCase {
         Double(duration.components.seconds) * 1000 + Double(duration.components.attoseconds) / 1e15
     }
 
-    /// Showing what a pass has taken in folds the whole store, about 1,300 entries at most. That
-    /// runs off the main actor, both while the pass is under way and for its own result. How long
-    /// a publish takes is printed, not asserted: a shared machine's timers can stall.
     @MainActor
     func testShowingAFullCatalogFoldsOffTheMainActor() async throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
@@ -237,7 +217,6 @@ final class NewsLiveTests: XCTestCase {
         defer { NewsStore.foldRan = nil }
         let timing = LockedBox<(publish: Duration, held: Duration)?>(nil)
         let news = NewsStore(defaults: makeDefaults(), directory: folder, now: now, fetch: { request in
-            // The main actor ticks every millisecond; the longest gap is how long it was held.
             let ticking = LockedBox(true)
             let longest = LockedBox(Duration.zero)
             let ticker = Task { @MainActor in
@@ -265,8 +244,6 @@ final class NewsLiveTests: XCTestCase {
         XCTAssertEqual(folds.value, [false, false], "What arrived, then the pass's result, folded off the main thread")
     }
 
-    /// A feed read seven minutes ago, while the next 5-minute check is under way, is still
-    /// current; one read twenty minutes ago is delayed.
     func testSourcesStayCurrentWhileTheNextCheckIsUnderWay() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let sources = Array(FeedSource.catalog.prefix(2))
@@ -278,16 +255,12 @@ final class NewsLiveTests: XCTestCase {
         XCTAssertGreaterThan(NewsSourceFreshness.currentInterval, NewsFetcher.liveInterval + NewsFetcher.downloadTimeout)
     }
 
-    /// A live check under way (it doesn't notify) when a notifying background refresh comes in:
-    /// the models the live check finds are taken off the list, so it notifies them, unless News
-    /// is on screen.
     @MainActor
     func testANotifyingRefreshDuringALiveCheckIsntLost() async throws {
         for newsOnScreen in [false, true] {
             let held = LockedBox(true)
             let entered = LockedBox(false)
             let notified = LockedBox<[[String]]>([])
-            // Everything checked before, so the background refresh asks for nothing fresher.
             let folder = try makeFolder()
             var checked = NewsCache()
             checked.modelsFetchedAt = Date(timeIntervalSince1970: 1_800_000_000)
@@ -307,15 +280,13 @@ final class NewsLiveTests: XCTestCase {
             let live = Task { await news.refresh(maxAge: NewsFetcher.liveInterval, preferences: preferences, notifies: false) }
             for _ in 0..<1000 where !entered.value { try await Task.sleep(for: .milliseconds(5)) }
             XCTAssertTrue(entered.value, "The pass reached its fetch")
-            await news.refresh(preferences: preferences, notifies: true) // The background refresh.
+            await news.refresh(preferences: preferences, notifies: true)
             held.value = false
             await live.value
             XCTAssertEqual(notified.value, newsOnScreen ? [] : [["anthropic/claude-new"]], newsOnScreen ? "News on screen doesn't notify" : "The background refresh's notification isn't lost")
         }
     }
 
-    /// News opened while another check runs still gets its 5-minute check right after it,
-    /// without turning notifications on, and without losing an asked-for check of everything.
     @MainActor
     func testALiveCheckAskedForDuringAnotherPassFollowsIt() async throws {
         let folder = try makeFolder()
@@ -347,7 +318,6 @@ final class NewsLiveTests: XCTestCase {
         XCTAssertEqual(ages.value, [nil, NewsFetcher.liveInterval])
         XCTAssertEqual(notified.value, 0, "The live check doesn't notify")
 
-        // A check of everything asked for meanwhile isn't shortened to the live interval.
         ages.value = []
         held.value = true
         entered.value = false
@@ -361,8 +331,6 @@ final class NewsLiveTests: XCTestCase {
         XCTAssertEqual(ages.value, [nil, 0])
     }
 
-    /// A check time or a last look saved while the clock was ahead doesn't hold News back until
-    /// the clock catches up.
     @MainActor
     func testDatesSavedAheadOfTheClockDontHoldNewsBack() throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
@@ -380,9 +348,6 @@ final class NewsLiveTests: XCTestCase {
         XCTAssertTrue(news.isNew(now.addingTimeInterval(60)), "So what comes next is new")
     }
 
-    /// The iPhone ends a visit when the app goes to the background with News selected
-    /// (`RootView.updateVisit`): what a background check finds then is badged, and marked New
-    /// when the app comes back to News.
     @MainActor
     func testABackgroundCheckAfterLeavingNewsLeavesItsFindsNew() async throws {
         let opened = Date(timeIntervalSince1970: 1_800_000_000)
@@ -399,15 +364,14 @@ final class NewsLiveTests: XCTestCase {
             return NewsFetcher.Result(cache: cache, newModels: [])
         }, notify: { _, _, _ in })
         news.beginVisit(now: opened)
-        news.endVisit() // To the background, News still selected.
+        news.endVisit()
         let background = opened.addingTimeInterval(3600)
         await news.refresh(preferences: AlertPreferences(), now: background)
         XCTAssertEqual(news.unseenModelCount(now: background), 1, "Nobody saw it, so it's badged")
-        news.beginVisit(now: background.addingTimeInterval(600)) // Back to the app, on News.
+        news.beginVisit(now: background.addingTimeInterval(600))
         XCTAssertTrue(news.isNew(background), "…and marked New when News is back on screen")
     }
 
-    /// Turning News on with the Mac's window open (a visit already under way) marks nothing new.
     @MainActor
     func testTheFirstCheckMarksNothingNewWithNewsOpen() async throws {
         let installed = Date(timeIntervalSince1970: 1_800_000_000)
@@ -418,15 +382,13 @@ final class NewsLiveTests: XCTestCase {
             cache.modelsFetchedAt = request.now
             return NewsFetcher.Result(cache: cache, newModels: [])
         }, notify: { _, _, _ in })
-        news.beginVisit(now: turnedOn.addingTimeInterval(-60)) // The window opened, then News was turned on.
+        news.beginVisit(now: turnedOn.addingTimeInterval(-60))
         await news.refresh(maxAge: 0, preferences: AlertPreferences(), notifies: false, now: turnedOn)
         XCTAssertEqual(news.visitBaseline, turnedOn)
         XCTAssertFalse(news.isNew(news.models().first?.created), "Released since install, but there before News was on")
         XCTAssertEqual(news.unseenModelCount(now: turnedOn), 0)
     }
 
-    /// A feed that failed waits out its backoff during a visit, as it does in the background; a
-    /// pull or Check Now still goes out at once.
     func testAFailedFeedWaitsItsBackoffDuringAVisit() {
         let failedAt = Date(timeIntervalSince1970: 1_800_000_000)
         XCTAssertEqual(NewsFetcher.retryIntervals, [5 * 60, 15 * 60, 30 * 60, 3600])

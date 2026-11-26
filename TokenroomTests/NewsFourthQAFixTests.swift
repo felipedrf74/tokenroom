@@ -1,7 +1,6 @@
 import XCTest
 @testable import Tokenroom
 
-/// QA4 regression sources only: not compiled or executed in the no-tests fix pass.
 @MainActor final class NewsFourthQAFixTests: XCTestCase {
     private var suites: [String] = []
     override func tearDown() {
@@ -81,7 +80,6 @@ import XCTest
         XCTAssertTrue(undo.remove(id: group.stableID, aliases: group.aliasIDs, from: library))
         XCTAssertTrue(library.saved.isEmpty); XCTAssertEqual(undo.items.count, 2)
         XCTAssertTrue(undo.restore(in: library)); XCTAssertEqual(library.saved.count, 2)
-        // Persist all identities onto the remaining raw item when the sibling rotates out.
         var next = NewsCache(); next.items = [primary.id: [a], sibling.id: []]
         next.retainFoldedIdentities(from: cache, sources: [primary, sibling])
         XCTAssertTrue(next.announcements(from: [primary, sibling]).first!.aliasIDs.isSuperset(of: group.aliasIDs))

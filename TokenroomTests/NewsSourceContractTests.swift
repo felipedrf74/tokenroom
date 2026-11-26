@@ -66,8 +66,6 @@ final class NewsSourceContractTests: XCTestCase {
         XCTAssertEqual(FeedParser.items(from: Data(xml.utf8), source: feed).count, 2)
     }
 
-    /// Losing prior incident observations, duplicating a repeated check, or using its
-    /// newest update as its publication/first-seen date must fail this contract.
     func testStatusKeepsFiveDistinctObservedUpdatesWithoutChangingOriginalDates() throws {
         var feed = source("status")
         feed.kind = .officialStatus
@@ -143,7 +141,6 @@ final class NewsSourceContractTests: XCTestCase {
         cache.save(to: folder)
         let store = NewsStore(defaults: defaults, directory: folder, now: Date(timeIntervalSince1970: 1_800_000_000),
                               fetch: { .init(cache: $0.cache, newModels: []) }, notify: { _, _, _ in })
-        // Feeds added since November 2026 are offered in Following instead of turned on.
         let addedSince = Set(FeedSource.catalog.filter(\.startsOnForUpgraders).map(\.id)).subtracting(NewsStore.firstCatalog)
         XCTAssertEqual(store.followedSources, Set(["codex-releases"]).union(addedSince), "The saved choice, plus feeds added since 2.0")
         XCTAssertTrue(store.followedVoices.isEmpty)

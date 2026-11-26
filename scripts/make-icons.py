@@ -1,32 +1,16 @@
 #!/usr/bin/env python3
-"""Builds Tokenroom's app icons from one drawing: a "T" made of two usage meters, white on orange.
-
-  scripts/make-icons.py
-
-Writes Icon Composer files, from which the system draws Liquid Glass and the dark, tinted, and
-clear looks:
-
-  TokenroomMobile/AppIcon.icon   iPhone
-  TokenroomWatch/AppIcon.icon    Apple Watch (a smaller T, so it clears the round mask)
-  Tokenroom/AppIcon.icon         Mac, for Xcode builds (Xcode also makes the macOS 15 sizes from it)
-
-Then renders the Mac file with Icon Composer's ictool, each size drawn at that size, into the PNG
-set the swiftc fallback in build.sh uses (Tokenroom/Assets.xcassets/AppIcon.appiconset) and into
-docs/images/icon.png. Needs Xcode 26 or later.
-"""
 import json, os, shutil, subprocess, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ICTOOL = "/Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool"
-TOP, BOTTOM = "#FFB347", "#DE4F0A"  # background, top to bottom; the app's accent orange sits between
+TOP, BOTTOM = "#FFB347", "#DE4F0A"
 
-# The T on a 1024 canvas: a horizontal meter over a vertical one, each a track with a white fill.
-BAR = 176                                  # thickness of both meters
-CROSS_X, CROSS_Y, CROSS_W = 160, 204, 704  # crossbar
-CROSS_FILL = 512                           # 73% used
-STEM_Y, STEM_H = 420, 416                  # stem, centered, 40 below the crossbar
-STEM_FILL = 232                            # 56% used, filled from the bottom
-WATCH_SCALE, WATCH_SHIFT = 0.84, -8        # the Watch's round icon needs room at the edges
+BAR = 176
+CROSS_X, CROSS_Y, CROSS_W = 160, 204, 704
+CROSS_FILL = 512
+STEM_Y, STEM_H = 420, 416
+STEM_FILL = 232
+WATCH_SCALE, WATCH_SHIFT = 0.84, -8
 
 
 def color(hex_value):
@@ -55,8 +39,6 @@ def drawings(scale=1.0, shift=0):
 
 
 def icon_json(platforms):
-    # The fills are their own glass group in front, nearly opaque so they read white; the tracks
-    # sit behind, faint and more translucent. The system tints both in the dark and tinted looks.
     return {
         "fill": {"linear-gradient": [color(TOP), color(BOTTOM)]},
         "groups": [
@@ -87,8 +69,6 @@ def write_icon(folder, platforms, scale=1.0, shift=0):
         f.write("\n")
 
 
-# Places an ictool render on the classic macOS grid: the shape at 824 of 1024, centered, with a
-# soft shadow below, in sRGB.
 COMPOSE = r'''
 import AppKit
 import UniformTypeIdentifiers
@@ -113,7 +93,6 @@ for job in stride(from: 0, to: args.count, by: 3) {
 
 
 def mac_pngs(icon, outputs):
-    """outputs: [(canvas size, path)]. Renders each at its own size: a 16-pixel icon from the vectors."""
     with tempfile.TemporaryDirectory() as tmp:
         jobs = []
         for size, path in outputs:

@@ -59,7 +59,6 @@ struct WatchRootView: View {
                 if let item = store.item(id: id, at: date) {
                     WatchDetailView(item: item, date: date)
                 } else {
-                    // Gone since it was opened (signed out of iCloud, aged out): say so, not a blank page.
                     Text("Couldn't find a reading for this provider.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -68,7 +67,6 @@ struct WatchRootView: View {
             }
         }
         .onOpenURL { url in
-            // Complications and the Smart Stack link to a provider; the rest open the list.
             if case .provider(let id) = DeepLink(url) {
                 store.openedProvider = id
             } else {
@@ -76,7 +74,6 @@ struct WatchRootView: View {
                 path = []
             }
         }
-        // Opened from a complication or the Smart Stack; if the readings aren't in yet, once they are.
         .onChange(of: store.openedProvider, initial: true) { _, _ in openRequestedProvider() }
         .onChange(of: items.map(\.id)) { _, _ in openRequestedProvider() }
     }
@@ -117,7 +114,6 @@ private struct WatchEmptyView: View {
         }
     }
 
-    /// Only on the plain empty state, while the iPhone offers its connect screen and is reachable.
     private var offersConnect: Bool {
         store.problem == nil && store.canOpenConnectOnPhone
     }
@@ -157,7 +153,6 @@ private struct WatchRow: View {
         let window = provider.leadWindow(now: date, history: item.history)
         HStack(spacing: 10) {
             if let window, window.isMetered {
-                // The provider's icon in the ring; the row reads its name, so the ring has no label.
                 UsageRing(used: window.used, isStale: !provider.isLive || window.isAwaitingReading(at: date), label: "",
                           paceMark: UsageRanking.pace(for: window, isStale: !provider.isLive, history: item.history[window.id], now: date)?.elapsedFraction,
                           isAwaitingReading: window.isAwaitingReading(at: date))
@@ -167,7 +162,6 @@ private struct WatchRow: View {
                 ProviderMark(provider: provider, size: 36)
             }
             VStack(alignment: .leading, spacing: 1) {
-                // A balance's amount is too wide to share the name's line: it takes its own.
                 let names = window?.isMetered == false
                     ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0))
                     : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 6))
@@ -234,7 +228,6 @@ struct WatchDetailView: View {
                             }
                         }
                     }
-                    // The whole row's width, so what matters stays on two lines at most.
                     if let pace, let note = ReadingText.watchPaceNote(pace, now: date) {
                         Text(note)
                             .font(.caption2)
@@ -246,7 +239,6 @@ struct WatchDetailView: View {
                 .accessibilityElement(children: .combine)
             }
             if let lead = shown, !lead.isMetered {
-                // The amount leads, as a ring's figure does.
                 VStack(alignment: .leading, spacing: 1) {
                     Text(ReadingText.headline(lead, now: date))
                         .font(.system(.title3, design: .rounded, weight: .semibold))
@@ -305,7 +297,6 @@ struct WatchDetailView: View {
         .navigationTitle(provider.shortName)
     }
 
-    /// "resets in 2h 10m · Ahead of pace".
     private func detail(_ window: RelayWindow, pace: Pace?) -> String? {
         var parts: [String] = []
         if let reset = ReadingText.reset(window, now: date) {
@@ -324,8 +315,6 @@ private func headlineColor(_ window: RelayWindow?, isLive: Bool, now: Date = .no
 }
 
 #if DEBUG
-/// Every complication and the Smart Stack card, drawn in the app for screenshots:
-/// `-TokenroomGallery YES`.
 private struct WatchComplicationGallery: View {
     var date: Date
     private var items: [ReadingCache.Item] { SampleData.cache(now: date).items }

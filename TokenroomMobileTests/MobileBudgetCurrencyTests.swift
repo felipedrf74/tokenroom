@@ -2,8 +2,6 @@ import Security
 import XCTest
 @testable import TokenroomMobile
 
-/// Hosted iPhone coverage with isolated preferences/storage, mocked Keychain calls, nil CloudKit
-/// and an inert external-effects policy. Nothing reads a device credential or provider endpoint.
 final class MobileBudgetCurrencyTests: XCTestCase {
     private var suites: [String] = []
     private var folders: [URL] = []

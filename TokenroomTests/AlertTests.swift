@@ -30,7 +30,6 @@ final class AlertTests: XCTestCase {
         )
     }
 
-    /// A DeepSeek balance measured against a $20 reference, as a collector relays it.
     private func balance(remaining: Double, reference: Double = 20) -> RelayProvider {
         RelayProvider(
             id: "deepseek", name: "DeepSeek", shortName: "DeepSeek", monogram: "DS", tint: "#4D6BFE", state: "live",
@@ -42,7 +41,6 @@ final class AlertTests: XCTestCase {
         )
     }
 
-    /// This month's organization spend against a $1,000 budget.
     private func spend(_ spent: Double, resetsAt: Date) -> RelayProvider {
         RelayProvider(
             id: "anthropicOrg", name: "Anthropic API", shortName: "Anthropic API", monogram: "AN", tint: "#B85C38", state: "live",
@@ -68,8 +66,6 @@ final class AlertTests: XCTestCase {
         folders.append(folder)
         return folder
     }
-
-    // MARK: Rules
 
     func testFirstSightRaisesNothing() {
         XCTAssertTrue(AlertRules.alerts(previous: nil, current: reading(used: 97), preferences: preferences, now: now).isEmpty)
@@ -155,8 +151,6 @@ final class AlertTests: XCTestCase {
         XCTAssertEqual(AlertRules.instance(nil), "open")
     }
 
-    // MARK: Balances and budgets
-
     func testBalancesRaiseLowBalanceInsteadOfThresholds() throws {
         let alerts = AlertRules.alerts(previous: balance(remaining: 6), current: balance(remaining: 3), preferences: preferences, now: now)
         XCTAssertEqual(alerts.map(\.kind), [.lowBalance], "Money never raises a percent threshold")
@@ -201,18 +195,14 @@ final class AlertTests: XCTestCase {
         XCTAssertEqual(first.map(\.kind), [.lowBalance])
         ledger.markSent(first.map(\.id), at: now.addingTimeInterval(600))
 
-        // Topped up and spent down again the same day: the same alert, already sent.
         ledger.process([balance(remaining: 18)], preferences: preferences, now: now.addingTimeInterval(3600))
         XCTAssertTrue(ledger.process([balance(remaining: 2.8)], preferences: preferences, now: now.addingTimeInterval(2 * 3600)).isEmpty)
 
-        // The next day it can warn again.
         ledger.process([balance(remaining: 18)], preferences: preferences, now: now.addingTimeInterval(86_400))
         let nextDay = ledger.process([balance(remaining: 3)], preferences: preferences, now: now.addingTimeInterval(86_400 + 3600))
         XCTAssertEqual(nextDay.map(\.kind), [.lowBalance])
         XCTAssertNotEqual(nextDay.first?.id, first.first?.id)
     }
-
-    // MARK: Delivery
 
     func testNonUrgentAlertsWaitOutQuietHours() throws {
         let late = utc(2026, 9, 25, 23)
@@ -257,7 +247,6 @@ final class AlertTests: XCTestCase {
         var ledger = AlertLedger()
         ledger.process([reading(used: 70)], preferences: preferences, now: now)
         let raised = ledger.process([reading(used: 82)], preferences: preferences, now: now)
-        // iCloud never took it.
         ledger.process([], preferences: preferences, now: now.addingTimeInterval(17 * 3600))
         XCTAssertEqual(ledger.pending.map(\.alert.id), raised.map(\.id))
         ledger.process([], preferences: preferences, now: now.addingTimeInterval(19 * 3600))
@@ -286,16 +275,13 @@ final class AlertTests: XCTestCase {
         XCTAssertEqual(first.count, 1)
         XCTAssertEqual(first.map(\.id), second.map(\.id), "Two Macs make the same record, so iCloud notifies once")
 
-        // Still waiting to go out: dipping under 80% and crossing again doesn't queue a second one.
         XCTAssertTrue(mac.process([reading(used: 75)], preferences: preferences, now: now).isEmpty)
         XCTAssertTrue(mac.process([reading(used: 82)], preferences: preferences, now: now).isEmpty)
         XCTAssertEqual(mac.pending.map(\.alert.id), first.map(\.id))
         mac.markSent(first.map(\.id), at: now)
 
-        // Stale in between: judged against the last live reading.
         XCTAssertTrue(mac.process([reading(used: 10, state: "stale")], preferences: preferences, now: now).isEmpty)
         XCTAssertEqual(mac.lastSeen["claude"]?.windows.first?.used, 82)
-        // Once sent, never again for the same week.
         XCTAssertTrue(mac.process([reading(used: 75)], preferences: preferences, now: now).isEmpty)
         XCTAssertTrue(mac.process([reading(used: 84)], preferences: preferences, now: now).isEmpty, "Crossing 80% again in the same week was already sent")
         XCTAssertTrue(mac.pending.isEmpty)
@@ -321,8 +307,6 @@ final class AlertTests: XCTestCase {
         queued.save(to: folder)
         XCTAssertEqual(AlertLedger.load(from: folder), queued, "Held alerts survive a relaunch")
     }
-
-    // MARK: Preferences
 
     func testQuietHours() {
         var preferences = self.preferences
@@ -403,8 +387,6 @@ final class AlertTests: XCTestCase {
         XCTAssertTrue(usage.isEmpty, "Usage windows follow the usage levels")
     }
 
-    // MARK: Held alerts
-
     func testAHeldEightyDoesNotFollowTheNinetyFive() {
         let late = utc(2026, 9, 25, 23)
         var ledger = AlertLedger()
@@ -427,7 +409,6 @@ final class AlertTests: XCTestCase {
         var ledger = AlertLedger()
         ledger.process([reading(used: 70, resetsAt: reset)], preferences: preferences, now: late)
         let eighty = try XCTUnwrap(ledger.process([reading(used: 82, resetsAt: reset)], preferences: preferences, now: late).first)
-        // The provider moved the reset three hours on; the week goes on and crosses 95%.
         let ninetyFive = ledger.process([reading(used: 96, resetsAt: reset.addingTimeInterval(3 * 3600))], preferences: preferences, now: late.addingTimeInterval(1800))
         XCTAssertEqual(ninetyFive.map(\.level), [95])
         XCTAssertNotEqual(AlertRules.id(of: eighty, atLevel: 95), ninetyFive.first?.id, "Named by different reset times")
@@ -514,9 +495,7 @@ final class AlertTests: XCTestCase {
     func testABalanceCrossingAnnouncedUnderTheNeighbouringDayStaysQuietOnTheMac() async throws {
         var awake = preferences
         awake.quietHours = false
-        // Another device announced the crossing before midnight (UTC)…
         let before = try XCTUnwrap(AlertRules.alerts(previous: balance(remaining: 6), current: balance(remaining: 3), preferences: awake, now: utc(2026, 9, 25, 23, 30)).first)
-        // …and after a top-up this Mac sees it cross again just after, under the next day's name.
         let afterMidnight = utc(2026, 9, 26, 0, 30)
         func crossing() -> (AlertLedger, [UsageAlert]) {
             var ledger = AlertLedger()
@@ -526,7 +505,6 @@ final class AlertTests: XCTestCase {
             XCTAssertNotEqual(again.first?.id, before.id)
             return (ledger, ledger.due(preferences: awake, now: afterMidnight))
         }
-        // iCloud as this Mac's relay finds it, holding these alert records.
         func send(_ due: [UsageAlert], records: Set<String>) async -> AlertLedger.Delivery {
             await RelayPublisher.send(due, wentOutOnANeighbouringDay: { !records.isDisjoint(with: AlertRules.neighbouringDayIDs(of: $0)) },
                                       save: { !records.contains($0.id) }, stops: { _ in false })
@@ -538,15 +516,12 @@ final class AlertTests: XCTestCase {
         XCTAssertTrue(ledger.settle(due, delivery: delivery, showsHere: true, now: afterMidnight).isEmpty, "A second crossing within a day is quiet on the Mac too")
         XCTAssertNotNil(ledger.sent[due[0].id], "And it counts as sent")
 
-        // Announced nowhere: iCloud takes it and the Mac shows it, once.
         (ledger, due) = crossing()
         let fresh = await send(due, records: [])
         XCTAssertEqual(fresh, AlertLedger.Delivery(saved: due.map(\.id), announced: []))
         XCTAssertEqual(ledger.settle(due, delivery: fresh, showsHere: true, now: afterMidnight).map(\.id), due.map(\.id))
         XCTAssertTrue(ledger.settle(due, delivery: fresh, showsHere: true, now: afterMidnight).isEmpty, "Shown here once")
     }
-
-    // MARK: Sharing the choices
 
     func testChoicesMadeOnEachDeviceBothStay() {
         let utc = TimeZone(identifier: "UTC")!
@@ -612,9 +587,6 @@ final class AlertTests: XCTestCase {
         XCTAssertEqual(AlertPreferencesSync.resolve(base: fewer, local: removed, remote: added).preferences.thresholds, [80], "80% added there, 95% removed here")
     }
 
-    /// A copy dated before the base is still the shared copy: its device's clock may run behind,
-    /// or an older Tokenroom dated it by that clock. (A read that began before the iPhone's own
-    /// save finished is the iPhone's to skip, by when the read began.)
     func testACopyDatedBeforeTheBaseIsStillTaken() {
         let utc = TimeZone(identifier: "UTC")!
         var base = preferences
@@ -636,11 +608,9 @@ final class AlertTests: XCTestCase {
     func testChoicesSentAreNeverDatedBeforeTheCopyTheyBuildOn() {
         let utc = TimeZone(identifier: "UTC")!
         var base = preferences
-        // From a device whose clock runs ahead…
         base.touch(now: now.addingTimeInterval(600), timeZone: utc)
         var local = base
         local.quietHours = false
-        // …changed on one whose clock runs behind.
         local.touch(now: now, timeZone: utc)
         let resolution = AlertPreferencesSync.resolve(base: base, local: local, remote: base)
         XCTAssertTrue(resolution.needsPublish)
@@ -686,7 +656,6 @@ final class AlertTests: XCTestCase {
             (reading(used: 10, banked: later), reading(used: 10, banked: later)),
             (balance(remaining: 6), balance(remaining: 3)),
             (balance(remaining: 6), balance(remaining: 0.5)),
-            // 60% of a session 2.5 hours in: on course to run out before its reset.
             (session(used: 55, resetsAt: now.addingTimeInterval(2.5 * 3600 + 600)), session(used: 60, resetsAt: now.addingTimeInterval(2.5 * 3600))),
         ]
         var raised: [UsageAlert] = []
@@ -707,13 +676,8 @@ final class AlertTests: XCTestCase {
         }
     }
 
-    // MARK: Quiet hours on a Mac
-
-    /// A Mac in `zone` with these choices saved, on defaults of its own. With `sharedBefore`, its
-    /// iCloud sync (with no container, so nothing leaves the test) was last in step with them.
     @MainActor
     private func mac(_ choices: AlertPreferences, in zone: TimeZone, sharedBefore: Bool) throws -> QuotaStore {
-        // A fixed name: macOS keeps an empty preferences file for every name used.
         let suite = "tokenroom.tests.\(Self.self)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
@@ -733,7 +697,6 @@ final class AlertTests: XCTestCase {
     func testAMacOnItsOwnTakesItsNewTimeZoneForQuietHours() async throws {
         let lisbon = try XCTUnwrap(TimeZone(identifier: "Europe/Lisbon"))
         let newYork = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
-        // Set up in Lisbon, with no iPhone.
         var choices = preferences
         choices.timeZoneID = lisbon.identifier
         choices.quietHours = false
@@ -742,7 +705,6 @@ final class AlertTests: XCTestCase {
         _ = await store.currentAlertPreferences()
         XCTAssertEqual(store.settings.followedTimeZone, lisbon.identifier)
 
-        // Moved to New York: the next refresh takes its zone, without dating it as a choice.
         store.currentTimeZone = { newYork }
         let moved = await store.currentAlertPreferences()
         XCTAssertEqual(moved.timeZoneID, newYork.identifier)
@@ -762,7 +724,6 @@ final class AlertTests: XCTestCase {
     func testAChoiceChangedOnAMacKeepsTheIPhonesTimeZone() async throws {
         let newYork = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
         let tokyo = try XCTUnwrap(TimeZone(identifier: "Asia/Tokyo"))
-        // The shared copy has the iPhone's zone; this Mac noted New York's long ago.
         var shared = preferences
         shared.timeZoneID = tokyo.identifier
         shared.updatedAt = now
@@ -788,7 +749,6 @@ final class AlertTests: XCTestCase {
         let lisbon = try XCTUnwrap(TimeZone(identifier: "Europe/Lisbon"))
         let newYork = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
         let tokyo = try XCTUnwrap(TimeZone(identifier: "Asia/Tokyo"))
-        // A Mac that has shared the choices before, updated to a build that follows its zone.
         var shared = preferences
         shared.timeZoneID = tokyo.identifier
         shared.updatedAt = now
@@ -798,7 +758,6 @@ final class AlertTests: XCTestCase {
         XCTAssertEqual(launched.timeZoneID, tokyo.identifier, "Launching doesn't undo the iPhone's zone")
         XCTAssertEqual(store.settings.followedTimeZone, newYork.identifier, "Noted, so a later move is followed")
 
-        // One that never shared them: its own copy takes its zone at once.
         var own = preferences
         own.timeZoneID = lisbon.identifier
         let alone = try mac(own, in: newYork, sharedBefore: false)

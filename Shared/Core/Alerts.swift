@@ -1,71 +1,40 @@
 import Foundation
 
-/// One usage alert. Updated collectors coordinate reset-based deliveries in private iCloud;
-/// bucketed IDs remain compatible with existing Event records and older queued alerts.
 struct UsageAlert: Codable, Equatable, Sendable, Identifiable {
     enum Kind: String, Codable, Sendable {
-        /// A window crossed 80% or 95%.
         case threshold
-        /// A window that was at least 80% used has reset.
         case reset
-        /// A banked reset became available.
         case bankedNew
-        /// A banked reset expires soon.
         case bankedExpiring
-        /// A balance or a spend budget crossed 80% or 95% of its reference.
         case lowBalance
-        /// A window is on course to run out before it resets: a 5-hour limit at all, a longer one
-        /// at least a day early.
         case runsOut
     }
 
     var id: String
     var provider: String
     var kind: Kind
-    /// The threshold for crossings (80, 95); hours left for expiring resets (48, 6); 0 otherwise.
     var level: Int
     var title: String
     var body: String
     var resetsAt: Date?
-    /// Worth interrupting quiet hours for: 95% and above, or a reset expiring within 6 hours.
     var isUrgent: Bool
-    /// The window it's about, and that window's instance (`AlertRules.instance`). Nil in alerts
-    /// raised by 2.0.0, and for banked resets.
     var window: String? = nil
     var instance: String? = nil
-    /// The window's kind (`session`, `weekly`…), so a held alert follows the switches for its
-    /// kind of limit. Nil in alerts raised before 2.1.
     var windowKind: String? = nil
-    /// A budget alert's text before its countdown, so a held alert can say how long is left
-    /// when it goes out rather than when it was raised.
     var detail: String? = nil
-    /// When a live run-out alert says the window runs out, as of its latest reading, so one held
-    /// long past it is dropped rather than sent quoting a time already gone
-    /// (`AlertRules.runsOutDeadline`). Nil in older alerts, and in a stale reading's, which has
-    /// `projectedRunsOutAt`.
     var runsOutAt: Date? = nil
-    /// A stale reading's measured run-out. Kept for retry-time urgency and the deadline; absent
-    /// in older alerts and live alerts, whose existing urgency stays unchanged.
     var projectedRunsOutAt: Date? = nil
-    /// The logical reset that owns this alert. For a reset notice this is the ended window,
-    /// while `resetsAt` continues to describe the next reset in its presentation.
     var identityResetAt: Date? = nil
-    /// The provider's reported period, when present; legacy Event rounding used this ahead
-    /// of the window kind. Retained for migration, never used to create a forecast.
     var identityPeriodSec: TimeInterval? = nil
 
-    /// The key on the record of an alert an iPhone showed itself. No subscription lists it, so
-    /// the record never comes back to it as a push.
     var shownKey: String {
         "shown:" + key
     }
 
-    /// The instance part of the ID: the reset time bucket, or `d<day>` for a window without one.
     var instanceName: String {
         instance ?? id.components(separatedBy: "-").last ?? ""
     }
 
-    /// What the iPhone's subscription filters on: `threshold-80`, `reset`, `bankedExpiring-48`.
     var key: String {
         switch kind {
         case .threshold, .lowBalance, .bankedExpiring:
@@ -75,40 +44,25 @@ struct UsageAlert: Codable, Equatable, Sendable, Identifiable {
         }
     }
 
-    /// Whether it's about a session (a 5-hour limit), for the switches that treat those apart.
     var isSession: Bool {
         windowKind == WindowKind.session.rawValue
     }
 }
 
-/// Shared by the iPhone and the Mac through iCloud; whichever changed them last wins.
 struct AlertPreferences: Codable, Equatable, Sendable {
-    /// Levels for weekly, monthly, and other longer limits. Tokenroom before 2.1 applies them to
-    /// sessions too.
     var thresholds: [Int] = [80, 95]
-    /// Levels for sessions (5-hour limits). Saved copies without them take `thresholds`.
     var sessionThresholds: [Int] = [80, 95]
-    /// Alert when a session is on course to run out before it resets.
     var sessionRunsOut = true
-    /// Alert when a longer limit is on course to run out at least a day before it resets.
     var limitRunsOut = true
     var resets = true
     var banked = true
-    /// Balances and spend budgets crossing 80% or 95% of the reference the user set.
     var lowBalance = true
-    /// New models from the labs News follows.
     var newModels = true
     var quietHours = true
     var quietStartHour = 22
     var quietEndHour = 8
-    /// The zone quiet hours keep. A device gives the shared copy its zone when that zone changes
-    /// (the iPhone also when a choice changes there; a Mac's choice keeps the zone), so a Mac
-    /// elsewhere keeps the same quiet hours.
     var timeZoneID = TimeZone.current.identifier
-    /// When they were last changed, on either device.
     var updatedAt: Date? = nil
-    /// Choices a newer Tokenroom saved that this one doesn't know, kept as they came so saving
-    /// here doesn't drop them from the shared copy.
     private var unknown: [String: JSONValue] = [:]
 
     static let supportedThresholds = [80, 95]
@@ -119,12 +73,10 @@ struct AlertPreferences: Codable, Equatable, Sendable {
 
     init() {}
 
-    /// Missing keys keep their defaults, so preferences saved by an older build still read.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = AlertPreferences()
         thresholds = try container.decodeIfPresent([Int].self, forKey: .thresholds) ?? defaults.thresholds
-        // Choices saved before sessions had their own levels meant the same levels for both.
         sessionThresholds = try container.decodeIfPresent([Int].self, forKey: .sessionThresholds) ?? thresholds
         sessionRunsOut = try container.decodeIfPresent(Bool.self, forKey: .sessionRunsOut) ?? defaults.sessionRunsOut
         limitRunsOut = try container.decodeIfPresent(Bool.self, forKey: .limitRunsOut) ?? defaults.limitRunsOut
@@ -164,33 +116,24 @@ struct AlertPreferences: Codable, Equatable, Sendable {
         try container.encodeIfPresent(updatedAt, forKey: AnyCodingKey(CodingKeys.updatedAt.rawValue))
     }
 
-    /// Marks a change made on the iPhone, which gives quiet hours its time zone with it. A Mac
-    /// dates its change only and gives its zone when that changes (`QuotaStore.followTimeZone`),
-    /// so a choice made there keeps the iPhone's.
     mutating func touch(now: Date = .now, timeZone: TimeZone = .current) {
         updatedAt = now
         timeZoneID = timeZone.identifier
     }
 
-    /// The copy changed last; on a tie (two copies never changed), the first, the shared copy,
-    /// so a Mac keeps following an iPhone that set choices before they were dated.
     static func newest(_ shared: AlertPreferences?, _ local: AlertPreferences) -> AlertPreferences {
         guard let shared else { return local }
         return (shared.updatedAt ?? .distantPast) >= (local.updatedAt ?? .distantPast) ? shared : local
     }
 
-    /// Kinds the iPhone's alert subscription lets through, as `UsageAlert.key` values.
     var subscribedKeys: [String] {
         var keys: [String] = []
-        // Sessions and longer limits share the key, so older Macs' alerts still come through;
-        // the device that raises an alert applies the kind's own levels.
         for level in Self.supportedThresholds where thresholds.contains(level) || sessionThresholds.contains(level) {
             keys.append("threshold-\(level)")
         }
         if sessionRunsOut || limitRunsOut {
             keys.append("runsOut")
         }
-        // Balances have their own switch, at both levels, whatever the usage levels are.
         if lowBalance {
             keys += Self.supportedThresholds.map { "lowBalance-\($0)" }
         }
@@ -204,7 +147,6 @@ struct AlertPreferences: Codable, Equatable, Sendable {
         return keys
     }
 
-    /// When quiet hours next end after `date`, for holding back a notification that can wait.
     func quietEnd(after date: Date) -> Date? {
         guard isQuiet(at: date) else { return nil }
         var calendar = Calendar(identifier: .gregorian)
@@ -212,7 +154,6 @@ struct AlertPreferences: Codable, Equatable, Sendable {
         return calendar.nextDate(after: date, matching: DateComponents(hour: quietEndHour, minute: 0), matchingPolicy: .nextTime)
     }
 
-    /// Whether `date` falls in quiet hours, which can run past midnight (22:00–08:00).
     func isQuiet(at date: Date) -> Bool {
         guard quietHours, quietStartHour != quietEndHour else { return false }
         var calendar = Calendar(identifier: .gregorian)
@@ -223,13 +164,10 @@ struct AlertPreferences: Codable, Equatable, Sendable {
             : hour >= quietStartHour || hour < quietEndHour
     }
 
-    /// Alerts to send now: urgent ones always, the rest outside quiet hours.
     func shouldSend(_ alert: UsageAlert, at date: Date) -> Bool {
         alert.isUrgent || !isQuiet(at: date)
     }
 
-    /// Whether these choices still want this kind of alert; one held back for quiet hours is
-    /// dropped when its switch is turned off meanwhile.
     func allows(_ alert: UsageAlert) -> Bool {
         switch alert.kind {
         case .threshold: (alert.isSession ? sessionThresholds : thresholds).contains(alert.level)
@@ -240,28 +178,21 @@ struct AlertPreferences: Codable, Equatable, Sendable {
         }
     }
 
-    /// The levels that apply to a window: the session levels for a 5-hour limit, else the rest.
     func thresholds(for window: RelayWindow) -> [Int] {
         window.windowKind == .session ? sessionThresholds : thresholds
     }
 
-    /// The same choices, whenever they were made. A saved copy's `updatedAt` can come back a
-    /// hair off (dates are stored as seconds since 1970), so syncing compares choices only.
     func sameChoices(as other: AlertPreferences?) -> Bool {
         guard var other else { return false }
         other.updatedAt = updatedAt
         return self == other
     }
 
-    /// How long quiet hours last, or 0 when they're off.
     var quietLength: TimeInterval {
         guard quietHours, quietStartHour != quietEndHour else { return 0 }
         return TimeInterval((quietEndHour - quietStartHour + 24) % 24) * 3600
     }
 
-    /// `remote` with the choices this device changed since `base`, its last copy that matched
-    /// iCloud, so two devices changing different choices both keep theirs. Choices only
-    /// `remote` knows (from a newer Tokenroom) stay.
     static func merged(base: AlertPreferences, local: AlertPreferences, remote: AlertPreferences) -> AlertPreferences {
         guard let baseFields = fields(of: base), let localFields = fields(of: local), var result = fields(of: remote) else {
             return local
@@ -271,7 +202,6 @@ struct AlertPreferences: Codable, Equatable, Sendable {
             result[key] = value
         }
         guard var merged = decoded(result) else { return local }
-        // Levels merge one by one: 80% turned off here and 95% there both stay off.
         func levels(_ keyPath: KeyPath<AlertPreferences, [Int]>) -> [Int] {
             let added = Set(local[keyPath: keyPath]).subtracting(base[keyPath: keyPath])
             let removed = Set(base[keyPath: keyPath]).subtracting(local[keyPath: keyPath])
@@ -283,8 +213,6 @@ struct AlertPreferences: Codable, Equatable, Sendable {
         return merged
     }
 
-    /// Every choice `local` has, laid over `remote`: for a device new to syncing whose copy is
-    /// newer. Choices only `remote` knows (from a newer Tokenroom) stay.
     static func overlaying(_ local: AlertPreferences, on remote: AlertPreferences) -> AlertPreferences {
         guard let localFields = fields(of: local), var result = fields(of: remote) else { return local }
         for (key, value) in localFields {
@@ -304,14 +232,9 @@ struct AlertPreferences: Codable, Equatable, Sendable {
     }
 }
 
-/// Keeps one device's alert choices in step with the shared copy in iCloud. `base` is the copy
-/// this device last knew to match iCloud; whatever changed here since then is this device's own
-/// change, laid over the shared copy, so a choice made on another device meanwhile isn't undone.
 enum AlertPreferencesSync {
     struct Resolution: Equatable, Sendable {
-        /// What this device should use now.
         var preferences: AlertPreferences
-        /// Whether iCloud needs these, because they hold a change made here.
         var needsPublish: Bool
     }
 
@@ -320,7 +243,6 @@ enum AlertPreferencesSync {
         var revision: Revision
     }
 
-    /// Re-read and re-merge every conflict. Keep the original base/local delta throughout.
     static func synchronize<Revision: Sendable>(
         base: AlertPreferences?, local: AlertPreferences,
         read: @Sendable () async throws -> Versioned<Revision>,
@@ -344,12 +266,10 @@ enum AlertPreferencesSync {
 
     static func resolve(base: AlertPreferences?, local: AlertPreferences, remote: AlertPreferences?) -> Resolution {
         guard let remote else {
-            // Nothing shared (never yet, or deleted since): share choices someone made.
             guard local.updatedAt != nil else { return Resolution(preferences: local, needsPublish: false) }
             return publishing(local, over: [base])
         }
         guard let base else {
-            // Never in step (a device new to syncing): the newer copy wins, as before.
             if AlertPreferences.newest(remote, local) == remote {
                 return Resolution(preferences: remote, needsPublish: false)
             }
@@ -364,8 +284,6 @@ enum AlertPreferencesSync {
         return publishing(AlertPreferences.merged(base: base, local: local, remote: remote), over: [base])
     }
 
-    /// Choices to send, dated no earlier than the copies they build on, so a device whose clock
-    /// runs behind doesn't make them look older than they are where the newest copy wins.
     private static func publishing(_ preferences: AlertPreferences, over others: [AlertPreferences?]) -> Resolution {
         var preferences = preferences
         preferences.updatedAt = ([preferences.updatedAt] + others.map { $0?.updatedAt }).compactMap { $0 }.max()
@@ -374,25 +292,13 @@ enum AlertPreferencesSync {
 }
 
 enum AlertRules {
-    /// A reset is worth a "fresh headroom" alert only after heavy use.
     static let resetWorthyUse = 80.0
-    /// Readings of the same window instance can report slightly different reset times.
     static let resetJitter: TimeInterval = 30 * 60
-    /// A reset longer ago than this (a device asleep for days) isn't news anymore.
     static let resetNewsWindow: TimeInterval = 12 * 3600
-    /// A fall in use this large means the window started over (a banked reset used early),
-    /// not a provider moving its reset time.
     static let resetDrop = 10.0
-    /// A run-out alert waits until at least this much is used: early in a window one busy
-    /// stretch projects a run-out that rarely comes.
     static let runsOutMinimumUse = 50.0
-    /// A limit longer than a session alerts about a run-out only this far ahead of its reset.
     static let runsOutLongLead: TimeInterval = 86_400
 
-    /// Alerts raised going from `previous` to `current` for one provider. A provider seen for the
-    /// first time raises nothing, so installing or restarting never floods notifications.
-    /// - Parameter samples: the provider's recent readings by window id, for the pace of a reading
-    ///   that carries no measured one (the iPhone reading its own sessions).
     static func alerts(previous: RelayProvider?, current: RelayProvider, preferences: AlertPreferences, samples: [String: [(date: Date, used: Double)]] = [:], now: Date = .now) -> [UsageAlert] {
         guard let previous, current.isLive else { return [] }
         var alerts: [UsageAlert] = []
@@ -400,16 +306,13 @@ enum AlertRules {
             guard let before = previous.windows.first(where: { $0.id == window.id }) else { continue }
             let sameInstance = isSameInstance(before: before, current: window, now: now)
             let isMoney = isMoneyWindow(window)
-            // Balances follow their own switch; usage windows, the levels for their kind.
             let levels = isMoney ? (preferences.lowBalance ? AlertPreferences.supportedThresholds : []) : preferences.thresholds(for: window)
-            // Only the highest threshold crossed in one step.
             let crossed = levels.sorted(by: >).first { level in
                 window.used >= Double(level) && (!sameInstance || before.used < Double(level))
             }
             if let level = crossed {
                 alerts.append(isMoney ? lowBalance(current, window: window, level: level, now: now) : threshold(current, window: window, level: level, now: now))
             } else if !isMoney, let alert = runsOut(current, window: window, preferences: preferences, samples: samples[window.id] ?? [], now: now) {
-                // Not in the same step as a threshold: one notification per reading and window.
                 alerts.append(alert)
             }
             if preferences.resets, !isMoney, !sameInstance, before.used >= resetWorthyUse, let oldReset = before.resetsAt,
@@ -467,7 +370,6 @@ enum AlertRules {
         return alerts
     }
 
-    /// A balance or spend in money, measured against a reference or budget the user set.
     static func isMoneyWindow(_ window: RelayWindow) -> Bool {
         guard let unit = window.amount?.unit else { return false }
         return unit == "usd" || unit == "cny"
@@ -491,11 +393,6 @@ enum AlertRules {
         )
     }
 
-    /// "Claude: 5-hour limit runs out at 10:18 AM" / "86% used, 35 min before it resets." Raised
-    /// once per window instance, when its switch is on, when at least half is used and the pace
-    /// (a Mac's measured run-out, else the recent `samples`, else the rate so far) runs out before
-    /// the reset: at all for a session, a day early for a longer limit. Past 95% the 95% alert has
-    /// said it.
     static func runsOut(_ provider: RelayProvider, window: RelayWindow, preferences: AlertPreferences, samples: [(date: Date, used: Double)] = [], now: Date) -> UsageAlert? {
         let isSession = window.windowKind == .session
         guard !isMoneyWindow(window),
@@ -508,9 +405,6 @@ enum AlertRules {
         return runsOut(provider, window: window, pace: pace, runsOutAt: runsOutAt, preferences: preferences, now: now)
     }
 
-    /// A held run-out alert brought up to a newer reading of its window: when the window runs out
-    /// as of now, or nil once it no longer runs out before its reset (the pace eased, or it's used
-    /// up). It keeps the held alert's ID, so it stays the one alert for that window.
     static func runsOut(updating alert: UsageAlert, provider: RelayProvider, window: RelayWindow, preferences: AlertPreferences, samples: [(date: Date, used: Double)] = [], now: Date) -> UsageAlert? {
         guard let pace = UsageRanking.pace(for: window, isStale: !provider.isLive, samples: samples, now: now),
               let runsOutAt = pace.runsOutAt
@@ -521,7 +415,6 @@ enum AlertRules {
         return updated
     }
 
-    /// The run-out alert for this pace, worded as of now.
     private static func runsOut(_ provider: RelayProvider, window: RelayWindow, pace: Pace, runsOutAt: Date, preferences: AlertPreferences, now: Date) -> UsageAlert {
         let name = instance(window.resetsAt, window: window, now: now)
         let zone = TimeZone(identifier: preferences.timeZoneID) ?? .current
@@ -550,22 +443,15 @@ enum AlertRules {
         )
     }
 
-    /// The last moment a held run-out alert can still go out: an hour after the run-out it says,
-    /// as of its latest reading. That's the hour it stays urgent, so one iCloud didn't take is
-    /// still retried; later it would quote a time long gone. Nil for older alerts, which don't
-    /// say when.
     static func runsOutDeadline(_ alert: UsageAlert) -> Date? {
         guard alert.kind == .runsOut, let runsOutAt = alert.runsOutAt ?? alert.projectedRunsOutAt else { return nil }
         return runsOutAt.addingTimeInterval(3600)
     }
 
-    /// "Resets in 3h 20m."
     private static func resetSentence(_ resetsAt: Date?, now: Date) -> String? {
         resetsAt.flatMap { RelativeTime.resets($0, now: now) }.map { $0.prefix(1).uppercased() + $0.dropFirst() + "." }
     }
 
-    /// An alert as it goes out: one held back for quiet hours says how long is left now, not when
-    /// it was raised.
     static func refreshed(_ alert: UsageAlert, now: Date) -> UsageAlert {
         guard let resetsAt = alert.resetsAt, resetsAt > now else { return alert }
         var alert = alert
@@ -587,9 +473,6 @@ enum AlertRules {
         return alert
     }
 
-    /// For an alert about a window without a reset (a balance), named by the day (UTC) it was
-    /// seen: the same alert's names the day before and the day after. Two devices on either side
-    /// of midnight name one crossing by different days, so each checks the other's first.
     static func neighbouringDayIDs(of alert: UsageAlert) -> [String] {
         let name = alert.instanceName
         guard alert.resetsAt == nil, name.hasPrefix("d"), let day = Int(name.dropFirst()), alert.id.hasSuffix(name) else { return [] }
@@ -597,7 +480,6 @@ enum AlertRules {
         return [stem + "d\(day - 1)", stem + "d\(day + 1)"]
     }
 
-    /// The same alert at a higher level, e.g. the 95% one for an 80% one.
     static func id(of alert: UsageAlert, atLevel level: Int) -> String? {
         guard let window = alert.window, let instance = alert.instance else { return nil }
         switch alert.kind {
@@ -607,8 +489,6 @@ enum AlertRules {
         }
     }
 
-    /// "DeepSeek balance is low: $4.20 left of your $20.00 reference." A spend budget with a
-    /// monthly reset reads as spend instead.
     private static func lowBalance(_ provider: RelayProvider, window: RelayWindow, level: Int, now: Date) -> UsageAlert {
         let amount = window.amount
         let unit = amount?.unit ?? "usd"
@@ -654,10 +534,6 @@ enum AlertRules {
         )
     }
 
-    /// A window instance, named by its reset time. Short windows round to 10 minutes, a day or
-    /// longer to the hour. These legacy names can disagree across a rounding boundary; updated
-    /// writers use AlertDeliveryCoordinator to agree on the immutable logical reset instead.
-    /// A balance has no reset: its instance is the day, so a top-up re-arms it the next day.
     static func instance(_ resetsAt: Date?, window: RelayWindow? = nil, now: Date = .now) -> String {
         guard let resetsAt else {
             return window.map { _ in "d\(Int(now.timeIntervalSince1970 / 86_400))" } ?? "open"
@@ -667,7 +543,6 @@ enum AlertRules {
         return String(Int((resetsAt.timeIntervalSince1970 / bucket).rounded()) * Int(bucket / 600))
     }
 
-    /// Rough length by kind when the provider doesn't say; only picks the rounding above.
     static func typicalLength(kind: String) -> TimeInterval {
         switch WindowKind(rawValue: kind) {
         case .session: 5 * 3600
@@ -689,54 +564,33 @@ enum AlertRules {
         }
     }
 
-    /// Whether two readings of a window belong to one instance: the same reset time, give or take
-    /// `resetJitter`, or a reset time the provider moved while the window went on (the old time
-    /// hasn't come and use didn't fall). A moved reset isn't a new window with new alerts.
     static func isSameInstance(before: RelayWindow, current: RelayWindow, now: Date) -> Bool {
         isSameInstance(before.resetsAt, current.resetsAt)
             || isMovedReset(from: before.resetsAt, to: current.resetsAt, usedBefore: before.used, usedNow: current.used,
                             length: current.periodSec ?? typicalLength(kind: current.kind), now: now)
     }
 
-    /// A reset time that changed while the window kept going: the old time is still ahead, it
-    /// moved by no more than a quarter of the window, and use didn't drop the way it does when a
-    /// window starts over. Further than that, it's a different window.
     static func isMovedReset(from old: Date?, to new: Date?, usedBefore: Double, usedNow: Double, length: TimeInterval?, now: Date) -> Bool {
         guard let old, let new, old > now else { return false }
         return isSmallMove(from: old, to: new, usedBefore: usedBefore, usedNow: usedNow, length: length)
     }
 
-    /// A reset time that moved by no more than a quarter of the window (or `resetJitter`), with
-    /// use not dropping the way it does when a window starts over.
     static func isSmallMove(from old: Date, to new: Date, usedBefore: Double, usedNow: Double, length: TimeInterval?) -> Bool {
         abs(new.timeIntervalSince(old)) <= max(resetJitter, (length ?? 0) / 4) && usedNow > usedBefore - resetDrop
     }
 }
 
-/// What this device last saw and already sent, so each alert goes out once. Kept next to the
-/// readings cache; percentages and IDs only.
 struct AlertLedger: Codable, Equatable, Sendable {
-    /// An alert that's been raised but not delivered yet: quiet hours, or iCloud didn't answer.
     struct Pending: Codable, Equatable, Sendable {
         var alert: UsageAlert
         var raisedAt: Date
     }
 
-    /// The last reading per provider, for spotting crossings.
     var lastSeen: [String: RelayProvider] = [:]
-    /// Alert IDs already sent, with when, pruned after two weeks.
     var sent: [String: Date] = [:]
-    /// Raised, waiting to go out.
     var pending: [Pending] = []
-    /// Alerts already shown as notifications on this device, so one waiting for iCloud isn't
-    /// shown twice.
     var shownHere: [String: Date] = [:]
-    /// The highest level sent for each window and kind (`provider/window/kind`), with when, so a
-    /// lower one held back for quiet hours doesn't follow it, even when the window's reset time
-    /// moved between them and their names differ.
     var levelsSent: [String: LevelSent] = [:]
-    /// The window at its first raised run-out, so a moved reset does not give that same alert a
-    /// second rounded ID. Retained for pending and delivered alerts, independently of lastSeen.
     private var runOutInstances: [String: RelayWindow] = [:]
 
     struct LevelSent: Codable, Equatable, Sendable {
@@ -745,7 +599,6 @@ struct AlertLedger: Codable, Equatable, Sendable {
     }
 
     static let memory: TimeInterval = 14 * 86_400
-    /// A held alert older than this has lost its point.
     static let pendingLifetime: TimeInterval = 18 * 3600
     static let fileName = "alerts.json"
 
@@ -761,14 +614,6 @@ struct AlertLedger: Codable, Equatable, Sendable {
         runOutInstances = (try? container.decodeIfPresent([String: RelayWindow].self, forKey: .runOutInstances)) ?? [:]
     }
 
-    /// Raises alerts for these readings and queues them; returns the ones raised now. Readings
-    /// that aren't live (stale, expired) don't move `lastSeen`, so a crossing is judged against
-    /// the last real one, and a window a live reading leaves out stays as it was last seen until
-    /// its reset passes (`remembering`), and a held run-out follows each live reading
-    /// (`refreshHeldRunOuts`). A stale reading can still raise the run-out alert once,
-    /// from a run-out the collector already measured, after this ledger has seen the provider
-    /// live. It does not raise a threshold, reset, or balance alert. `samples` holds recent
-    /// readings by provider id, then window id, for the pace of readings without a measured one.
     @discardableResult
     mutating func process(_ providers: [RelayProvider], preferences: AlertPreferences, samples: [String: [String: [(date: Date, used: Double)]]] = [:], now: Date = .now) -> [UsageAlert] {
         var fresh: [UsageAlert] = []
@@ -799,12 +644,6 @@ struct AlertLedger: Codable, Equatable, Sendable {
         return fresh
     }
 
-    /// Brings run-outs held for this provider up to its latest live reading: one whose window
-    /// still runs out before its reset says when as of now (and is urgent if that's within the
-    /// hour), so it goes out current after quiet hours or a failed save; one whose window no
-    /// longer does (the pace eased, or it's used up) is dropped, and the window can raise a new
-    /// one if it gets back on course. A window that started over, and one with no newer reading
-    /// an hour past the run-out it last said (`AlertRules.runsOutDeadline`), are left to `prune`.
     private mutating func refreshHeldRunOuts(_ provider: RelayProvider, previous: RelayProvider?, preferences: AlertPreferences, samples: [String: [(date: Date, used: Double)]], now: Date) {
         var dropped: [String] = []
         pending = pending.compactMap { item in
@@ -824,10 +663,6 @@ struct AlertLedger: Codable, Equatable, Sendable {
         }
     }
 
-    /// A live reading to remember, with the windows the last one had and this one leaves out
-    /// (Claude's status line carries no Opus or Sonnet window, say) until their reset passes, so
-    /// a crossing made while a window was missing still alerts when it comes back rather than
-    /// counting as its first sight. A window without a reset isn't kept.
     private static func remembering(_ provider: RelayProvider, over previous: RelayProvider?, now: Date) -> RelayProvider {
         guard let previous else { return provider }
         let present = Set(provider.windows.map(\.id))
@@ -838,15 +673,11 @@ struct AlertLedger: Codable, Equatable, Sendable {
         return remembered
     }
 
-    /// Other alert kinds keep their existing IDs. A run-out is raised once for the logical
-    /// window, even if a reset move crosses an ID bucket before or after delivery.
     private mutating func reserveRunOutInstance(for alert: UsageAlert, provider: RelayProvider, now: Date) -> Bool {
         guard alert.kind == .runsOut, let id = alert.window,
               let window = provider.windows.first(where: { $0.id == id }) else { return true }
         let key = provider.id + "/" + id
         if runOutInstances[key] == nil {
-            // Older ledgers have no snapshot. A pending alert retains its reset; a delivered
-            // alert can be recognized from the live baseline and that instance's sent ID.
             if let held = pending.first(where: { $0.alert.kind == .runsOut && $0.alert.provider == provider.id && $0.alert.window == id }),
                let reset = held.alert.resetsAt {
                 var before = lastSeen[provider.id]?.windows.first(where: { $0.id == id }) ?? window
@@ -866,10 +697,6 @@ struct AlertLedger: Codable, Equatable, Sendable {
         return true
     }
 
-    /// Queued alerts that should go out now: urgent ones always, the rest once quiet hours end.
-    /// One waiting behind a higher level for the same window (80% held overnight, then 95%)
-    /// doesn't follow it, a run-out past its deadline (an hour after the time it says) doesn't go
-    /// out, and held ones say how long is left as they go out.
     func due(preferences: AlertPreferences, now: Date = .now) -> [UsageAlert] {
         let ready = pending.map { item in
             var item = item
@@ -882,15 +709,11 @@ struct AlertLedger: Codable, Equatable, Sendable {
             .map(\.alert)
     }
 
-    /// Whether the same window's alert at a higher level went out after this one was raised, or
-    /// is going out now.
     private static func isSuperseded(_ item: Pending, sent: [String: Date], levelsSent: [String: LevelSent], going: [UsageAlert]) -> Bool {
         let alert = item.alert
         if let key = levelKey(alert), let higher = levelsSent[key], higher.level > alert.level, higher.sentAt >= item.raisedAt {
             return true
         }
-        // A run-out held for quiet hours says nothing the window's 95% alert hasn't, whether that
-        // went out since or goes out with it now.
         if alert.kind == .runsOut, let window = alert.window {
             if let sent95 = levelsSent["\(alert.provider)/\(window)/\(UsageAlert.Kind.threshold.rawValue)"], sent95.level >= 95, sent95.sentAt >= item.raisedAt {
                 return true
@@ -905,19 +728,15 @@ struct AlertLedger: Codable, Equatable, Sendable {
         }
     }
 
-    /// Whether a held run-out is past its deadline (`AlertRules.runsOutDeadline`): sent now, it
-    /// would quote a run-out long gone.
     private static func isPastRunOut(_ alert: UsageAlert, now: Date) -> Bool {
         AlertRules.runsOutDeadline(alert).map { $0 <= now } ?? false
     }
 
-    /// Crossings of a window's levels: `provider/window/kind`, for thresholds and budgets.
     private static func levelKey(_ alert: UsageAlert) -> String? {
         guard let window = alert.window, alert.kind == .threshold || alert.kind == .lowBalance else { return nil }
         return "\(alert.provider)/\(window)/\(alert.kind.rawValue)"
     }
 
-    /// Delivered: never send these again.
     mutating func markSent(_ ids: [String], at now: Date = .now) {
         let delivered = Set(ids)
         for id in delivered {
@@ -930,17 +749,11 @@ struct AlertLedger: Codable, Equatable, Sendable {
         pending.removeAll { delivered.contains($0.alert.id) }
     }
 
-    /// What iCloud did with alerts sent to it: the IDs it took (or already had), and of those the
-    /// ones another device had already announced, which this device doesn't show either.
     struct Delivery: Equatable, Sendable {
         var saved: [String] = []
         var announced: Set<String> = []
     }
 
-    /// Records how these due alerts went out from a Mac and returns the ones to show on it. With
-    /// iCloud (`delivery`), what it took counts as sent and the rest wait for the next try;
-    /// without, this Mac's notifications are all there is, so every one counts. Shown here: the
-    /// ones not shown here yet and not already announced by another device.
     mutating func settle(_ due: [UsageAlert], delivery: Delivery?, showsHere: Bool, now: Date = .now) -> [UsageAlert] {
         let announced = delivery?.announced ?? []
         let shown = showsHere ? due.filter { shownHere[$0.id] == nil && !announced.contains($0.id) } : []
@@ -949,23 +762,17 @@ struct AlertLedger: Codable, Equatable, Sendable {
         return shown
     }
 
-    /// Shown as notifications on this device.
     mutating func markShownHere(_ ids: [String], at now: Date = .now) {
         for id in ids {
             shownHere[id] = now
         }
     }
 
-    /// Drops held alerts that no longer mean anything: too old, turned off since, overtaken by a
-    /// higher level, a run-out past its deadline, or their window already reset. A run-out
-    /// dropped at its deadline without having gone out (`releaseRunOutInstance`) no longer holds
-    /// its window, so the window can still warn if it's on course again.
     private mutating func prune(preferences: AlertPreferences, now: Date) {
         sent = sent.filter { now.timeIntervalSince($0.value) < Self.memory }
         shownHere = shownHere.filter { now.timeIntervalSince($0.value) < Self.memory }
         levelsSent = levelsSent.filter { now.timeIntervalSince($0.value.sentAt) < Self.memory }
         runOutInstances = runOutInstances.filter { $0.value.resetsAt.map { now.timeIntervalSince($0) < Self.memory } ?? false }
-        // Held through at least one whole stretch of quiet hours, however long it is.
         let lifetime = max(Self.pendingLifetime, preferences.quietLength + 3600)
         let delivered = sent
         let shown = shownHere
@@ -992,8 +799,6 @@ struct AlertLedger: Codable, Equatable, Sendable {
         }
     }
 
-    /// Frees the window a run-out held (`reserveRunOutInstance`), as long as the hold is still
-    /// that alert's instance and not a newer one's.
     private mutating func releaseRunOutInstance(of alert: UsageAlert, now: Date) {
         guard let window = alert.window else { return }
         let key = alert.provider + "/" + window

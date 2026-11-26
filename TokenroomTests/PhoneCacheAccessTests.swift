@@ -1,7 +1,6 @@
 import XCTest
 @testable import Tokenroom
 
-/// The account fence must work independently of replacing or deleting the shared cache file.
 final class PhoneCacheAccessTests: XCTestCase {
     private var suites: [String] = []
     private var folders: [URL] = []
@@ -38,8 +37,6 @@ final class PhoneCacheAccessTests: XCTestCase {
         try old.save(to: storage.url)
         PhoneCacheAccess.invalidate(in: storage.defaults)
 
-        // Leave the file untouched, as when deleting or replacing it fails. The durable fence
-        // must reject it without depending on the clearing operation succeeding.
         XCTAssertEqual(ReadingCache.load(from: storage.url), old)
         XCTAssertNil(PhoneCacheAccess.load(at: storage.url, defaults: storage.defaults))
     }
@@ -103,8 +100,6 @@ final class PhoneCacheAccessTests: XCTestCase {
 
         PhoneCacheAccess.invalidate(in: storage.defaults)
         XCTAssertNil(PhoneCacheAccess.load(at: storage.url, defaults: storage.defaults))
-        // A write that had passed its preflight before the change may finish afterward. Its
-        // stamped generation still quarantines the result, even with a freshly written file.
         try old.save(to: storage.url)
         XCTAssertTrue(FileManager.default.fileExists(atPath: storage.url.path))
         XCTAssertNil(PhoneCacheAccess.load(at: storage.url, defaults: storage.defaults))

@@ -10,7 +10,6 @@ struct SavedSkillMetadata: Codable, Equatable, Sendable {
     var checkedAt: Date?
 }
 
-/// The UI retains its last reversible removal until another persistence operation succeeds.
 @MainActor struct NewsRemovalUndo {
     private(set) var items: [NewsBookmark] = []
     var item: NewsBookmark? { items.first }
@@ -46,7 +45,6 @@ struct NewsBookmark: Codable, Equatable, Sendable, Identifiable {
     var skill: SavedSkillMetadata? = nil
 }
 
-/// Device-local reading metadata. It has no relay or network dependency.
 @Observable @MainActor final class NewsLibrary {
     static let fileName = "news-library.json"
     static let sizeLimit = 4 * 1024 * 1024
@@ -57,7 +55,6 @@ struct NewsBookmark: Codable, Equatable, Sendable, Identifiable {
     private let directory: URL?
     @ObservationIgnored private let writer: (Data, URL) throws -> Void
     private(set) var problem: String?
-    /// A damaged library is a shared problem; failed actions belong to their controls.
     var loadProblem: String? { blocksWrites ? problem : nil }
     var saved: [NewsBookmark] { document.saved.sorted { $0.savedAt > $1.savedAt } }
 
@@ -123,8 +120,6 @@ struct NewsBookmark: Codable, Equatable, Sendable, Identifiable {
         var candidate = document
         let group = connected(to: raw.aliases.union([raw.id]))
         if let first = group.indices.first {
-            // Keep the original snapshot/date; fold every record connected through aliases
-            // in a single transaction. Validation rejects overflow without truncating IDs.
             let retainedID = candidate.saved[first].id
             candidate.saved[first].aliases.formUnion(group.ids.subtracting([retainedID]))
             for index in group.indices.dropFirst().reversed() { candidate.saved.remove(at: index) }
@@ -148,7 +143,6 @@ struct NewsBookmark: Codable, Equatable, Sendable, Identifiable {
         }
         return (ids, indices.sorted())
     }
-    /// A displayed folded story can bridge previously independent saved copies.
     @discardableResult func remove(id: String, aliases: Set<String>) -> [NewsBookmark]? {
         let group = connected(to: aliases.union([id]))
         guard !group.indices.isEmpty else { return nil }
@@ -157,8 +151,6 @@ struct NewsBookmark: Codable, Equatable, Sendable, Identifiable {
         for index in group.indices.reversed() { candidate.saved.remove(at: index) }
         return persist(candidate) ? removed : nil
     }
-    /// Restore exact snapshots together, preserving savedAt and any newer unrelated saves.
-    /// An exact-ID conflict or capacity/write failure leaves both the library and Undo intact.
     @discardableResult func restore(_ items: [NewsBookmark]) -> Bool {
         guard !items.isEmpty else { return false }
         var candidate = document

@@ -7,7 +7,6 @@ import UIKit
 #endif
 
 extension Color {
-    /// A colour for light and dark appearances, as 0–255 sRGB components. The Watch is always dark.
     init(light: (Double, Double, Double), dark: (Double, Double, Double)) {
         #if os(macOS)
         self.init(nsColor: NSColor(name: nil) { appearance in
@@ -31,18 +30,11 @@ enum TokenroomTokens {
 
     static let tight = Color(red: 196 / 255, green: 122 / 255, blue: 44 / 255)
     static let critical = Color(red: 194 / 255, green: 59 / 255, blue: 34 / 255)
-    /// `tight` and the accent as small text: the brand orange is 3.4:1 on white, this 5.7:1 there
-    /// and 6.5:1 on dark cells. The orange stays for controls, large numbers, and marks.
     static let accentText = Color(light: (154, 85, 24), dark: (217, 143, 74))
     #if os(macOS)
-    /// Desktop News action fill: white labels have 4.9:1 contrast in either appearance.
-    /// accentText remains the token for orange text on the reader's surfaces.
     static let newsActionFill = Color(red: 177 / 255, green: 84 / 255, blue: 42 / 255)
-    /// Small reader metadata stays legible on the white and subtle card surfaces.
     static let newsSecondaryText = Color(light: (100, 100, 100), dark: (170, 170, 170))
     #endif
-    /// `critical` as small text: the same red in light, lighter in dark (6.0:1 on dark cells,
-    /// where the red is 3.2:1).
     static let criticalText = Color(light: (194, 59, 34), dark: (255, 107, 79))
     static let usageHealthy = Color(red: 110 / 255, green: 196 / 255, blue: 245 / 255)
     static let usageWatch = Color(red: 242 / 255, green: 196 / 255, blue: 22 / 255)
@@ -77,8 +69,6 @@ enum TokenroomTokens {
         if isStale {
             return Color.secondary.opacity(staleOpacity)
         }
-        // Figures stay ink: the meter beside them says the level, and a screen of orange numbers
-        // reads as an alarm. Only a critical reading colours its figure.
         if remaining <= criticalRemaining {
             return criticalText
         }
@@ -100,25 +90,16 @@ enum TokenroomTokens {
         return usageHealthy
     }
 
-    /// A fill in its level's colour: a slightly lighter tint where a meter or ring starts, the
-    /// colour itself where it ends. The colour says the level; the tint only gives it travel.
     static func usageTones(usedPercent: Double) -> (start: Color, end: Color) {
         let end = usageColor(usedPercent: usedPercent, isStale: false)
         return (end.mix(with: .white, by: 0.14), end)
     }
 
-    /// The controls' accent, spelled out: `Color.accentColor` follows the nearest `.tint`, so under
-    /// the tab bar's ink it would turn filled buttons into white on white.
     static let control = Color(light: (0, 122, 255), dark: (10, 132, 255))
 
-    /// News's text actions. News reads in ink, with Read article its one coloured control, so these
-    /// are ink at a medium weight: not caption grey, and not a level's hue.
     static let newsAction = Color.primary
 
-    /// Where a chart's line and area sit: neutral, so a week of history never competes with the
-    /// level colour on the meter beside it.
     static let chartLine = Color.secondary
     static let chartArea = Color.primary.opacity(0.06)
-    /// The pace mark: there when you look for it, never the sharpest thing on screen.
     static let paceMark = Color.primary.opacity(0.5)
 }

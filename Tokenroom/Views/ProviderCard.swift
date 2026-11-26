@@ -3,16 +3,11 @@ import SwiftUI
 struct ProviderCard: View {
     var provider: Provider
     var status: ProviderStatus
-    /// Last successful check; stale captions use it instead of when the value first appeared.
     var checkedAt: Date?
-    /// The primary window's pace.
     var pace: Pace?
-    /// Pace for every window, keyed by window ID, for the expanded card.
     var windowPaces: [String: Pace] = [:]
-    /// A week of hourly usage per window ID.
     var weeks: [String: UsageHistory] = [:]
     var isExpanded = false
-    /// One line per provider when many are connected; a click expands it like the full card.
     var isCompact = false
     var onToggleExpanded: (() -> Void)? = nil
     var signInPhase: SignInCoordinator.Phase = .idle
@@ -20,10 +15,7 @@ struct ProviderCard: View {
     var onCancelSignIn: () -> Void = {}
     var onInstall: () -> Void = {}
     var date: Date = .now
-    /// In a popover style's own list, which has its rows and edges: no surface of its own, and its
-    /// content lines up with the rows around it.
     var isPlain = false
-    /// The pointer over a card or row: it lifts a little, as a list row does on macOS.
     @State private var isHovered = false
 
     var body: some View {
@@ -90,14 +82,11 @@ struct ProviderCard: View {
         .onHover { isHovered = onToggleExpanded != nil && $0 }
     }
 
-    /// The card's surface: a light fill on the popover's material, a little brighter under the
-    /// pointer. No edge: the fill already says where the card is.
     private func cardSurface(cornerRadius: CGFloat) -> some View {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
             .fill(Color.primary.opacity(isHovered ? 0.07 : 0.04))
     }
 
-    /// Readings that can collapse to one line: nothing to sign in to.
     private var compactSnapshot: QuotaSnapshot? {
         switch status {
         case .live(let snapshot), .stale(let snapshot), .rateLimited(_, let snapshot?), .unreachable(let snapshot?):
@@ -126,8 +115,6 @@ struct ProviderCard: View {
                             .foregroundStyle(limitWarning == nil ? Color.secondary : TokenroomTokens.criticalText)
                             .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     } else if let reset = compactReset(snapshot) {
-                        // The window's name too when it fits; "resets in" always, so the time
-                        // can't be read as how long the quota lasts.
                         ViewThatFits(in: .horizontal) {
                             Text(reset.full)
                             Text(reset.short)
@@ -152,7 +139,6 @@ struct ProviderCard: View {
                 } else {
                     Spacer(minLength: 0)
                 }
-                // Held open in every row, so all the meters end at one edge.
                 Color.clear
                     .frame(width: 10, height: 10)
                     .overlay {
@@ -186,16 +172,12 @@ struct ProviderCard: View {
         .accessibilityHint("Shows every window and the last 7 days")
     }
 
-    /// "Weekly · resets in 3d 1h" under a one-line name, or "resets in 3d 1h" when the window's
-    /// name ("Premium requests") leaves no room.
     private func compactReset(_ snapshot: QuotaSnapshot) -> (full: String, short: String)? {
         guard let primary = snapshot.windows.first, let resetsAt = primary.resetsAt, resetsAt > date else { return nil }
         let short = "resets in \(UsageFacts.countdown(to: resetsAt, now: date))"
         return (ReadingText.caption(RelayWindow(primary), now: date), short)
     }
 
-    /// What a one-line row says about a reading that isn't current, besides graying it: a symbol
-    /// with this text as its tooltip, and the text for VoiceOver.
     static func compactNote(_ status: ProviderStatus, provider: Provider, checkedAt: Date?, now: Date = .now) -> (symbol: String, text: String)? {
         switch status {
         case .rateLimited(let until, .some):
@@ -215,7 +197,6 @@ struct ProviderCard: View {
         "Last good reading, \(RelativeTime.ago(checkedAt, now: now))."
     }
 
-    /// Sign In, or what's in the way of it. A popover style's expired row shows these too.
     @ViewBuilder
     var signInControls: some View {
         if isWorking {
@@ -270,7 +251,6 @@ struct ProviderCard: View {
     private func snapshotBlock(_ snapshot: QuotaSnapshot, stale: Bool) -> some View {
         let awaiting = snapshot.windows.first.map { RelayWindow($0).isAwaitingReading(at: date) } ?? false
         if let primary = snapshot.windows.first, !primary.isMetered {
-            // A balance with no limit: the amount is the headline, no meter.
             toggleable {
                 header(value: headlineValue(snapshot), remaining: 100, stale: stale || awaiting)
             }
@@ -291,7 +271,6 @@ struct ProviderCard: View {
                     )
                 }
             }
-            // Expanded, the Resets fact below says when, to the minute.
             caption(isExpanded && !awaiting ? snapshot.primaryTitle : primaryCaption(snapshot))
             if !stale, let primary = snapshot.windows.first, let forecast = Forecast.text(for: primary, history: weeks[primary.id], checkedAt: checkedAt ?? snapshot.fetchedAt, now: date) {
                 caption(forecast)
@@ -317,7 +296,6 @@ struct ProviderCard: View {
             if let banked = snapshot.availableBanked(at: date) {
                 caption(Self.bankedText(banked, now: date))
             }
-            // One line for what's left beyond the plan and the plan itself, neither worth two.
             let plan = snapshot.planLabel.flatMap { $0 == snapshot.primaryTitle ? nil : $0 }
             let beyond = snapshot.extra.flatMap { Self.extraText($0) }
             if plan != nil || beyond != nil {
@@ -336,8 +314,6 @@ struct ProviderCard: View {
         pace.needsAttention && limitWarning == nil
     }
 
-    /// Where a reading came from when it isn't the provider's own usage call. No time: a status
-    /// line reading the direct call repeats is confirmed by that call, and "Checked …" says when.
     static func sourceCaption(_ snapshot: QuotaSnapshot) -> String? {
         if snapshot.source == "bridge" {
             return "via Claude Code's status line"
@@ -345,11 +321,9 @@ struct ProviderCard: View {
         return LocalKeys.caption(forSource: snapshot.source)
     }
 
-    /// Every window, the week behind the primary one, banked resets, and where the reading came from.
     @ViewBuilder
     private func expandedDetails(_ snapshot: QuotaSnapshot, stale: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Reset, pace against an even spread, plan, and last check, as a grid.
             UsageFactsGrid(
                 facts: UsageFacts.facts(
                     for: snapshot.windows.first.map(RelayWindow.init),
@@ -374,7 +348,6 @@ struct ProviderCard: View {
                     Sparkline(history: week, level: stale || RelayWindow(primary).isAwaitingReading(at: date) ? nil : TokenroomTokens.usageColor(usedPercent: primary.usedPercent, isStale: false))
                         .frame(height: 36)
                 }
-                // The line itself is hidden from VoiceOver; the group says what it shows.
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Usage over the last 7 days")
                 .accessibilityValue(Self.weekSummary(week))
@@ -417,18 +390,14 @@ struct ProviderCard: View {
         .padding(.top, 2)
     }
 
-    /// Read from the endpoint the provider's own app uses. Copilot read with a pasted token goes
-    /// through GitHub's documented billing API instead.
     static func readsUnofficially(_ provider: Provider, snapshot: QuotaSnapshot) -> Bool {
         provider.isUnofficial && snapshot.source != "copilot-token"
     }
 
-    /// What the week's line shows, for VoiceOver: its highest hour and the latest.
     static func weekSummary(_ week: UsageHistory) -> String {
         Sparkline.summary(week)
     }
 
-    /// The header and meter toggle the details when the popover allows it.
     @ViewBuilder
     private func toggleable<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         if let onToggleExpanded {
@@ -448,7 +417,6 @@ struct ProviderCard: View {
         header(value: percent.map { "\(QuotaStore.percentText($0))%" }, remaining: remaining, stale: stale)
     }
 
-    /// "$12.40 left" for balances, "$3.10 spent" when only spend is known.
     static func amountHeadline(_ amount: QuotaAmount) -> String? {
         ReadingText.amountHeadline(amount)
     }
@@ -487,7 +455,6 @@ struct ProviderCard: View {
         ReadingText.extra(extra)
     }
 
-    /// Tight or critical when usage runs ahead; quiet otherwise.
     private func paceColor(_ pace: Pace) -> Color {
         guard pace.needsAttention else { return Color.secondary }
         switch pace.severity {
@@ -522,7 +489,6 @@ struct ProviderCard: View {
         Array(snapshot.windows.dropFirst())
     }
 
-    /// "Session 18%", or the amount for a window without a meter.
     private func windowSummary(_ window: QuotaWindow) -> String {
         "\(window.displayTitle) \(RelayWindow(window).isAwaitingReading(at: date) ? "Reset · awaiting reading" : windowHeadline(window))"
     }
@@ -531,7 +497,6 @@ struct ProviderCard: View {
         ReadingText.headline(RelayWindow(window), now: date)
     }
 
-    /// "resets in 2h 10m · Ahead of pace".
     private func windowDetail(_ window: QuotaWindow, stale: Bool) -> String? {
         if RelayWindow(window).isAwaitingReading(at: date) { return "Reset · awaiting reading" }
         var parts: [String] = []

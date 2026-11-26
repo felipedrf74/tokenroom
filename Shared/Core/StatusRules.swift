@@ -1,10 +1,8 @@
 import Foundation
 
 extension ProviderStatus {
-    /// An expired session keeps its last reading, faded, this long.
     static let expiredGrace: TimeInterval = 24 * 3600
 
-    /// - Parameter lastChecked: when the cached reading was last confirmed.
     static func failure(_ error: ProviderError, cached: QuotaSnapshot?, lastChecked: Date?, now: Date) -> ProviderStatus {
         if error.isTransient, let cached, let checked = lastChecked ?? Optional(cached.fetchedAt),
            (0...ReadingFreshness.staleAfter).contains(now.timeIntervalSince(checked)) {
@@ -31,17 +29,13 @@ extension ProviderStatus {
         return clampedRetry(until, now: now)
     }
 
-    /// Honors Retry-After, within one minute to six hours.
     static func clampedRetry(_ until: Date?, now: Date) -> Date {
         let wait = until.map { $0.timeIntervalSince(now) } ?? TokenroomHTTP.defaultRetryAfter
         return now.addingTimeInterval(min(max(wait, 60), longestRetry))
     }
 
-    /// The longest Retry-After honored. A wait further off than this means the clock was set
-    /// back since it was saved.
     static let longestRetry: TimeInterval = 6 * 60 * 60
 
-    /// Not connected: nothing to show until the user signs in or adds a key.
     var isDisconnected: Bool {
         switch self {
         case .signedOut, .notEntitled, .expired(_, nil), .unreachable(nil):
@@ -72,11 +66,7 @@ extension ProviderError {
     }
 }
 
-// MARK: Relay records
-
 extension RelayProvider {
-    /// A provider as the user's other devices see it: readings only, never tokens, keys, or
-    /// identities.
     init(provider: Provider, status: ProviderStatus, checkedAt: Date?) {
         let snapshot = status.snapshot
         self.init(
@@ -102,13 +92,10 @@ extension RelayProvider {
         state == "live"
     }
 
-    /// Waiting for its first check, with nothing to show or say yet: listed neither as connected
-    /// nor as not connected, and any other collector's status for it wins.
     var isAwaitingFirstReading: Bool {
         state == "loading" && windows.isEmpty
     }
 
-    /// Nothing to show: signed out, not on a plan, or failed before a first reading.
     var isDisconnected: Bool {
         switch state {
         case "signedOut", "notEntitled":
@@ -122,12 +109,8 @@ extension RelayProvider {
 }
 
 extension RelayProvider {
-    /// Live Activities last about 8 hours, so only windows resetting within that are followed.
     static let followHorizon: TimeInterval = 8 * 3600
 
-    /// The window worth a Live Activity: the one on screen when it qualifies, else a session,
-    /// else the most used window at 80% or more, resetting within 8 hours.
-    /// - Parameter preferred: the window a screen shows, e.g. Next up's.
     func windowToFollow(preferring preferred: String? = nil, now: Date = .now) -> RelayWindow? {
         let soon = windows.filter { window in
             guard window.isMetered, let resetsAt = window.resetsAt else { return false }
@@ -178,7 +161,6 @@ extension RelayWindow {
 }
 
 extension ProviderStatus {
-    /// The state name relay readers switch on.
     var relayState: String {
         switch self {
         case .loading: "loading"
@@ -192,7 +174,6 @@ extension ProviderStatus {
         }
     }
 
-    /// One line for states without a fresh reading.
     func relayMessage(for provider: Provider) -> String? {
         switch self {
         case .signedOut(let hint), .expired(let hint, _), .notEntitled(let hint):

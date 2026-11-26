@@ -5,6 +5,17 @@ private final class PassthroughHostingView<Content: View>: NSHostingView<Content
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
+struct MenuBarReading: Equatable {
+    var meters: [MenuMeter]
+    var style: MenuBarStyle
+
+    @MainActor
+    init(_ store: QuotaStore) {
+        meters = store.menuMeters
+        style = store.settings.menuStyle
+    }
+}
+
 @MainActor
 final class StatusItemController: NSObject {
     private let store: QuotaStore
@@ -13,9 +24,8 @@ final class StatusItemController: NSObject {
     private let item: NSStatusItem
     private let popover = NSPopover()
     private var hosting: PassthroughHostingView<MenuBarLabel>?
-    private var lastMeters: [MenuMeter] = []
-    private var lastStyle: MenuBarStyle?
-    private var renderTask: Task<Void, Never>?
+    private var lastReading: MenuBarReading?
+    private var observation: BatchedObservation<MenuBarReading>?
     private var localClickMonitor: Any?
     private var globalClickMonitor: Any?
 
@@ -59,41 +69,21 @@ final class StatusItemController: NSObject {
         item.button?.addSubview(hosted)
         hosting = hosted
 
-        render()
-        observe()
+        let observation = BatchedObservation(
+            read: { MenuBarReading(store) },
+            apply: { [weak self] in self?.render($0) }
+        )
+        self.observation = observation
+        observation.start()
     }
 
-    private func observe() {
-        withObservationTracking {
-            _ = store.menuMeters
-            _ = store.settings.menuStyle
-        } onChange: { [weak self] in
-            Task { @MainActor in
-                self?.scheduleRender()
-                self?.observe()
-            }
-        }
-    }
-
-    private func scheduleRender() {
-        renderTask?.cancel()
-        renderTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 50_000_000)
-            guard !Task.isCancelled else { return }
-            render()
-        }
-    }
-
-    private func render() {
+    private func render(_ reading: MenuBarReading) {
         guard let button = item.button, let hosting else { return }
-        let meters = store.menuMeters
-        let style = store.settings.menuStyle
-        if meters == lastMeters, style == lastStyle {
+        if reading == lastReading {
             return
         }
-        lastMeters = meters
-        lastStyle = style
-        hosting.rootView = MenuBarLabel(meters: meters, style: style)
+        lastReading = reading
+        hosting.rootView = MenuBarLabel(meters: reading.meters, style: reading.style)
         hosting.layoutSubtreeIfNeeded()
         let fitted = hosting.fittingSize
         let height = TokenroomTokens.menuRowHeight
@@ -102,7 +92,7 @@ final class StatusItemController: NSObject {
         let y = ((buttonHeight - height) / 2).rounded(.toNearestOrAwayFromZero)
         hosting.frame = NSRect(x: 0, y: y, width: width, height: height)
         item.length = width
-        button.toolTip = MenuBarLayout.tooltip(for: meters)
+        button.toolTip = MenuBarLayout.tooltip(for: reading.meters)
     }
 
     @objc
@@ -124,8 +114,6 @@ final class StatusItemController: NSObject {
     func showPopover() {
         guard item.button != nil else { return }
         NSApp.activate()
-        // The mouse-up that opened the extra must finish first, or AppKit
-        // treats it as a click outside and closes the popover immediately.
         DispatchQueue.main.async { [weak self] in
             guard let self, let button = self.item.button else { return }
             self.popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
