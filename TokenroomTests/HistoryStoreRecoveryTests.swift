@@ -497,6 +497,61 @@ final class HistoryStoreRecoveryTests: XCTestCase {
         XCTAssertTrue(next.relayHistory(for: [.moonshot]).series.isEmpty)
     }
 
+    @MainActor
+    func testALegacyCorrectionReturningToItsOriginalBalanceWinsAfterRollback() throws {
+        let folder = try makeFolder()
+        let file = folder.appendingPathComponent(HistoryStore.fileName)
+        let clock = at(3600)
+        var legacy: [String: UsageHistory] = [:]
+        func legacyWrite(_ amount: Double) throws {
+            XCTAssertTrue(HistoryStore.fold(money(amount, at: clock), into: &legacy, now: clock))
+            try RelayEnvelope.encoder.encode(legacy).write(to: file, options: .atomic)
+        }
+        try legacyWrite(100)
+        XCTAssertEqual(chmod(file.path, 0), 0)
+        defer { chmod(file.path, 0o600) }
+        let app = HistoryStore(directory: folder)
+        app.record(money(80, at: clock), now: clock)
+        XCTAssertFalse(app.saveIfNeeded())
+        XCTAssertEqual(chmod(file.path, 0o600), 0)
+        try legacyWrite(60)
+        try legacyWrite(100)
+        XCTAssertEqual(HistoryStore.loadWithPending(from: folder, now: clock)[balanceKey]?.amountPoints.map(\.remaining), [100])
+        XCTAssertTrue(HistoryStore(directory: folder).saveIfNeeded())
+        XCTAssertEqual(balances(in: folder), [100])
+    }
+
+    @MainActor
+    func testRepeatedDirectWritesWhileReceiptsAreUnreadableUseBoundedStorage() throws {
+        let folder = try makeFolder()
+        let clock = at(3600)
+        try seed(in: folder, clock: clock)
+        let file = folder.appendingPathComponent(HistoryStore.fileName)
+        let recovery = folder.appendingPathComponent("history-recovery.json")
+        XCTAssertEqual(chmod(file.path, 0), 0)
+        defer { chmod(file.path, 0o600) }
+        let first = HistoryStore(directory: folder)
+        first.record(money(80, at: clock), now: clock)
+        XCTAssertFalse(first.saveIfNeeded())
+        XCTAssertEqual(chmod(file.path, 0o600), 0)
+        XCTAssertEqual(chmod(recovery.path, 0), 0)
+        defer { chmod(recovery.path, 0o600) }
+        for i in 1...20 {
+            let writer = HistoryStore(directory: folder)
+            writer.record(weekly(Double(i), at: clock), now: clock)
+            XCTAssertFalse(writer.saveIfNeeded())
+        }
+        let receipt = folder.appendingPathComponent("history-write-receipt.json")
+        let saved = try Data(contentsOf: receipt)
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: saved) as? [Any])?.count, 2)
+        XCTAssertLessThan(saved.count, 2048)
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: folder.path)), Set([file.lastPathComponent, recovery.lastPathComponent, receipt.lastPathComponent]))
+        XCTAssertEqual(chmod(recovery.path, 0o600), 0)
+        XCTAssertTrue(HistoryStore(directory: folder).saveIfNeeded())
+        XCTAssertEqual(balances(in: folder), [150, 80])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: receipt.path))
+    }
+
     private func at(_ seconds: TimeInterval) -> Date {
         hour.addingTimeInterval(seconds)
     }

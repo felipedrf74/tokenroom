@@ -38,7 +38,7 @@ final class HistoryStore {
             recoveryUnreadable = true
             unloaded = true
         case .missing:
-            removeRecoveryBases()
+            removeWriteReceipt()
         }
     }
 
@@ -50,12 +50,12 @@ final class HistoryStore {
         fileURL?.deletingLastPathComponent().appendingPathComponent(Self.recoveryName)
     }
 
-    private nonisolated static let basesFolder = "history-recovery-bases"
+    private nonisolated static let writeReceiptName = "history-write-receipt.json"
 
-    private func removeRecoveryBases() {
-        if let folder = fileURL?.deletingLastPathComponent().appendingPathComponent(Self.basesFolder),
-           FileManager.default.fileExists(atPath: folder.path) {
-            try? FileManager.default.removeItem(at: folder)
+    private func removeWriteReceipt() {
+        if let receipt = fileURL?.deletingLastPathComponent().appendingPathComponent(Self.writeReceiptName),
+           FileManager.default.fileExists(atPath: receipt.path) {
+            try? FileManager.default.removeItem(at: receipt)
         }
     }
 
@@ -63,10 +63,6 @@ final class HistoryStore {
         let inode: UInt64
         let modified: Double
         let size: UInt64
-
-        func reference(in directory: URL) -> URL {
-            directory.appendingPathComponent(HistoryStore.basesFolder).appendingPathComponent("\(inode)-\(modified.bitPattern)-\(size).ref")
-        }
 
         init?(_ url: URL?) {
             guard let url, let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
@@ -76,6 +72,18 @@ final class HistoryStore {
             self.inode = inode.uint64Value
             self.modified = modified.timeIntervalSinceReferenceDate
             self.size = size.uint64Value
+        }
+    }
+
+    private struct WriteReceipt: Codable {
+        let origin: FileRevision
+        let published: FileRevision
+        let writtenBalances: Set<String>
+
+        static func current(in file: URL?, revision: FileRevision?) -> Self? {
+            guard let file, let revision,
+                  case .value(let receipts) = HistoryStore.read([Self].self, from: file.deletingLastPathComponent().appendingPathComponent(HistoryStore.writeReceiptName)) else { return nil }
+            return receipts.first { $0.published == revision }
         }
     }
 
@@ -99,16 +107,13 @@ final class HistoryStore {
             }
         }
 
-        func reconciling(with saved: [String: UsageHistory], revision current: FileRevision?, baseline: [String: UsageHistory]?) -> QuotaSnapshot {
+        func reconciling(with saved: [String: UsageHistory], revision current: FileRevision?, receipt: WriteReceipt?) -> QuotaSnapshot {
             guard revision == nil || revision != current else { return snapshot }
             var result = snapshot
             for index in result.windows.indices {
                 let key = RelayHistory.key(provider: result.provider.rawValue, window: result.windows[index].id)
                 guard let primary = saved[key], primary.amountCheckedAt == result.fetchedAt else { continue }
-                let previous = baseline?[key]
-                let hour = UsageHistory.hourStart(result.fetchedAt)
-                if previous?.amountCheckedAt != primary.amountCheckedAt || previous?.amountUnit != primary.amountUnit
-                    || previous?.amountPoints.last(where: { $0.date == hour })?.remaining != primary.amountPoints.last(where: { $0.date == hour })?.remaining {
+                if receipt == nil || receipt?.origin != revision || receipt?.writtenBalances.contains(key) == true {
                     result.windows[index].amount = nil
                 }
             }
@@ -124,19 +129,8 @@ final class HistoryStore {
 
         func reconciled(with saved: [String: UsageHistory], file: URL?) -> [QuotaSnapshot] {
             let current = FileRevision(file)
-            var baselines: [FileRevision: [String: UsageHistory]] = [:]
-            return samples.map { observation in
-                if let stamp = observation.revision, stamp != current, baselines[stamp] == nil, let file {
-                    let reference = stamp.reference(in: file.deletingLastPathComponent())
-                    if FileRevision(reference) == stamp,
-                       case .value(let base) = HistoryStore.read([String: UsageHistory].self, from: reference) {
-                        baselines[stamp] = HistoryStore.migrated(base)
-                    } else {
-                        baselines[stamp] = [:]
-                    }
-                }
-                return observation.reconciling(with: saved, revision: current, baseline: observation.revision.flatMap { baselines[$0] })
-            }
+            let receipt = samples.contains { $0.revision != current } ? WriteReceipt.current(in: file, revision: current) : nil
+            return samples.map { $0.reconciling(with: saved, revision: current, receipt: receipt) }
         }
 
         func apply(to weeks: inout [String: UsageHistory], file: URL?, now: Date? = nil) {
@@ -225,12 +219,11 @@ final class HistoryStore {
                 if !unsaved.isEmpty, case .value(let saved) = Self.read([String: UsageHistory].self, from: fileURL), let fileURL {
                     var updated = Self.migrated(saved)
                     Recovery(clock: clock, samples: unsaved, claimed: [:], waiting: []).apply(to: &updated, file: fileURL)
-                    do {
-                        if updated != saved { try RelayEnvelope.encoder.encode(updated).write(to: fileURL, options: .atomic) }
+                    if writeWhileReceiptsAreUnavailable(updated, to: fileURL) {
                         weeks = updated
                         unsaved.removeAll()
                         recoveryDirty = false
-                    } catch { return false }
+                    }
                 }
                 return false
             }
@@ -267,13 +260,43 @@ final class HistoryStore {
         } catch {
             return false
         }
-        removeRecoveryBases()
+        removeWriteReceipt()
         weeks = restored
         unloaded = false
         recoveryOnDisk = false
         unsaved = []
         dirty = false
         return true
+    }
+
+    private func writeWhileReceiptsAreUnavailable(_ updated: [String: UsageHistory], to file: URL) -> Bool {
+        guard let previous = FileRevision(file) else { return false }
+        let directory = file.deletingLastPathComponent()
+        let staged = directory.appendingPathComponent("history-write-staged")
+        let receiptURL = directory.appendingPathComponent(Self.writeReceiptName)
+        let receipts: [WriteReceipt]
+        switch Self.read([WriteReceipt].self, from: receiptURL, preserveMalformed: true) {
+        case .value(let existing): receipts = existing
+        case .missing: receipts = []
+        case .unavailable: return false
+        }
+        let prior = receipts.first { $0.published == previous }
+        var balances = prior?.writtenBalances.intersection(updated.keys) ?? []
+        for observation in unsaved {
+            let snapshot = observation.snapshot
+            for window in snapshot.windows where window.amount?.remainingOrComputed != nil {
+                let key = RelayHistory.key(provider: snapshot.provider.rawValue, window: window.id)
+                if updated[key]?.amountCheckedAt == snapshot.fetchedAt { balances.insert(key) }
+            }
+        }
+        defer { try? FileManager.default.removeItem(at: staged) }
+        do {
+            try RelayEnvelope.encoder.encode(updated).write(to: staged, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            guard let next = FileRevision(staged), previous == FileRevision(file) else { return false }
+            let receipt = WriteReceipt(origin: prior?.origin ?? previous, published: next, writtenBalances: balances)
+            try RelayEnvelope.encoder.encode([prior, receipt].compactMap { $0 }).write(to: receiptURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            return rename(staged.path, file.path) == 0
+        } catch { return false }
     }
 
     private func keepUnsaved(_ snapshot: QuotaSnapshot, now: Date) {
@@ -290,19 +313,7 @@ final class HistoryStore {
         }
         let sample = QuotaSnapshot(provider: snapshot.provider, usedPercent: 0, fetchedAt: snapshot.fetchedAt,
                                    primaryTitle: "", windows: windows)
-        let stamp = FileRevision(fileURL)
-        if let fileURL, let stamp, unsaved.last?.revision != stamp {
-            let reference = stamp.reference(in: fileURL.deletingLastPathComponent())
-            if !FileManager.default.fileExists(atPath: reference.path) {
-                try? FileManager.default.createDirectory(at: reference.deletingLastPathComponent(), withIntermediateDirectories: true)
-                fileURL.withUnsafeFileSystemRepresentation { from in
-                    reference.withUnsafeFileSystemRepresentation { to in
-                        if let from, let to { _ = link(from, to) }
-                    }
-                }
-            }
-        }
-        let observation = Observation(snapshot: sample, revision: stamp)
+        let observation = Observation(snapshot: sample, revision: FileRevision(fileURL))
         if unsaved.last != observation {
             unsaved.append(observation)
         }
