@@ -45,8 +45,12 @@ enum NewsEditions {
     static let moreModelsLimit = 8
     static let itemsPerTool = 3
 
+    static func isTopStoryDate(_ date: Date, now: Date = .now) -> Bool {
+        (0...topStoryAge).contains(now.timeIntervalSince(date))
+    }
+
     static func isRecentModel(_ model: ModelRelease, now: Date = .now) -> Bool {
-        now.timeIntervalSince(model.created) <= topStoryAge
+        isTopStoryDate(model.created, now: now)
     }
 
     /// - Parameters:

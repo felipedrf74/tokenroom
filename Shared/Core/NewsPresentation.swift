@@ -49,8 +49,12 @@ enum NewsDiscovery {
         }
     }
     static func latestOfficial(_ items: [FeedItem], now: Date = .now) -> FeedItem? {
-        items.filter { ($0.kind ?? .officialAnnouncement) == .officialAnnouncement && now.timeIntervalSince($0.sortDate) <= NewsEditions.topStoryAge }
-            .sorted { $0.sortDate > $1.sortDate }.first
+        items.reduce(nil as FeedItem?) { latest, item in
+            guard (item.kind ?? .officialAnnouncement) == .officialAnnouncement,
+                  NewsEditions.isTopStoryDate(item.sortDate, now: now) else { return latest }
+            guard let latest, latest.sortDate >= item.sortDate else { return item }
+            return latest
+        }
     }
     static func stories(_ items: [FeedItem], collection: NewsCollection? = nil, query: String = "") -> [FeedItem] {
         items.filter { item in
