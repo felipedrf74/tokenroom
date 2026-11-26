@@ -209,6 +209,12 @@ struct NewsTodayBench {
         String(format: "%.3f", value)
     }
 
+    /// A CSV field (RFC 4180): quoted when it holds a comma, a quote or a line break.
+    static func csvField(_ field: String) -> String {
+        guard field.unicodeScalars.contains(where: { $0 == "," || $0 == "\"" || $0 == "\n" || $0 == "\r" }) else { return field }
+        return "\"" + field.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+    }
+
     static func compare(_ first: BenchVariant, _ second: BenchVariant, news: NewsStore, pairs: Int, checksum: Int, raw: inout [String], profile: String) {
         var samples: [BenchVariant: [Double]] = [first: [], second: []]
         var differences: [Double] = []
@@ -224,7 +230,7 @@ struct NewsTodayBench {
             samples[second]!.append(b)
             differences.append(a - b)
             if b < a { wins += 1 }
-            raw.append("\(profile),\(first.rawValue),\(second.rawValue),\(pair),\(order[0].rawValue),\(a),\(b)")
+            raw.append([profile, first.rawValue, second.rawValue, "\(pair)", order[0].rawValue, "\(a)", "\(b)"].map(csvField).joined(separator: ","))
         }
         let a = BenchStats(samples[first]!), b = BenchStats(samples[second]!), delta = BenchStats(differences)
         print("| \(first.rawValue) vs \(second.rawValue) | \(first.rawValue) | \(format(a.median)) | \(format(a.p95)) | \(format(a.minimum)) |")
