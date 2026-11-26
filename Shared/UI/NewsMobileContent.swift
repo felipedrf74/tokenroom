@@ -20,7 +20,8 @@ struct MobileNewsReaderContent: View {
     }
     @ViewBuilder private var today: some View {
         MobileNewsFreshnessView(news: news, library: library)
-        let stories = NewsDiscovery.stories(news.allAnnouncements, collection: .release)
+        let sections = NewsDiscovery.today(news.allAnnouncements)
+        let stories = sections.releases
         let latest = NewsDiscovery.latestOfficial(stories)
         let edition = NewsEditions.today(models: news.models(), announcements: stories, retiring: news.retiringModels(), since: news.visitBaseline)
         if let latest { MobileNewsHero(item: latest, news: news, library: library) }
@@ -34,9 +35,9 @@ struct MobileNewsReaderContent: View {
                 MobileNewsModelList(models: models, news: news, library: library)
             }
         }
-        let voices = NewsDiscovery.stories(news.allAnnouncements, collection: .voice)
+        let voices = sections.voices
         if !voices.isEmpty { shelf("From voices you follow", collection: .voice, items: Array(voices.prefix(3))) }
-        let status = NewsDiscovery.stories(news.allAnnouncements, collection: .status)
+        let status = sections.status
         if !status.isEmpty { shelf("Provider status", collection: .status, items: Array(status.prefix(2))) }
         if !edition.retiring.isEmpty {
             VStack(alignment: .leading, spacing: 0) {

@@ -34,7 +34,18 @@ enum NewsCollection: String, CaseIterable, Identifiable, Hashable {
     case model = "Models", release = "Releases", voice = "Voices", status = "Status", retirement = "Retirements"
     var id: String { rawValue }
 }
+struct NewsTodayStories: Equatable {
+    var releases: [FeedItem]
+    var voices: [FeedItem]
+    var status: [FeedItem]
+}
+
 enum NewsDiscovery {
+    static func today(_ items: [FeedItem]) -> NewsTodayStories {
+        NewsTodayStories(releases: stories(items, collection: .release),
+                         voices: stories(items, collection: .voice),
+                         status: stories(items, collection: .status))
+    }
     static func familyIDs(for source: FeedSource) -> Set<String> {
         let product = source.partOf ?? source.id
         return Set((FeedSource.catalog + [source]).filter { ($0.partOf ?? $0.id) == product }.map(\.id))
@@ -57,7 +68,8 @@ enum NewsDiscovery {
         }
     }
     static func stories(_ items: [FeedItem], collection: NewsCollection? = nil, query: String = "") -> [FeedItem] {
-        items.filter { item in
+        let searches = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return items.filter { item in
             let kind = item.kind ?? .officialAnnouncement
             let matches: Bool
             switch collection {
@@ -67,7 +79,7 @@ enum NewsDiscovery {
             case .model, .retirement: matches = false
             case nil: matches = true
             }
-            return matches && NewsSearch.matches(query, title: item.displayTitle, source: item.source)
+            return matches && (!searches || NewsSearch.matches(query, title: item.displayTitle, source: item.source))
         }
     }
 }

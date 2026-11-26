@@ -31,7 +31,8 @@ struct MacNewsReaderContent: View {
             MacNewsHeader(title: "Today")
             MacNewsFreshnessView(news: news, library: library)
         }
-        let stories = NewsDiscovery.stories(news.allAnnouncements, collection: .release)
+        let sections = NewsDiscovery.today(news.allAnnouncements)
+        let stories = sections.releases
         let latest = NewsDiscovery.latestOfficial(stories)
         let edition = NewsEditions.today(models: news.models(), announcements: stories, retiring: news.retiringModels(), since: news.visitBaseline)
         let updates = stories.filter { $0.stableID != latest?.stableID }
@@ -69,9 +70,9 @@ struct MacNewsReaderContent: View {
                 }
             }
         }
-        let voices = NewsDiscovery.stories(news.allAnnouncements, collection: .voice)
+        let voices = sections.voices
         if !voices.isEmpty { storyPanel("From voices you follow", collection: .voice, items: Array(voices.prefix(4))) }
-        let status = NewsDiscovery.stories(news.allAnnouncements, collection: .status)
+        let status = sections.status
         if !status.isEmpty { storyPanel("Provider status", collection: .status, items: Array(status.prefix(3))) }
         let retiring = edition.retiring
         if !retiring.isEmpty {
